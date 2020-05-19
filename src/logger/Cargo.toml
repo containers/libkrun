@@ -1,0 +1,14 @@
+[package]
+name = "logger"
+version = "0.1.0"
+authors = ["Amazon Firecracker team <firecracker-devel@amazon.com>"]
+
+[dependencies]
+lazy_static = ">=1.2"
+libc = ">=0.2.39"
+log = { version = ">=0.4", features = ["std"] }
+
+utils = { path = "../utils" }
+
+[dev-dependencies]
+libc = ">=0.2.39"

@@ -1,0 +1,9 @@
+[workspace]
+members = ["src/libkip"]
+
+[profile.dev]
+#panic = "abort"
+
+[profile.release]
+#panic = "abort"
+lto = true
