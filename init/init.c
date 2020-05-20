@@ -55,6 +55,10 @@ int main(int argc, char **argv)
         kip_init = &DEFAULT_KIP_INIT[0];
     }
     argv[0] = kip_init;
+
+    unlink("/tmp/vmlinux.kip");
+    unlink("/tmp/init.kip");
+
     execv(argv[0], argv);
 
     return 0;
