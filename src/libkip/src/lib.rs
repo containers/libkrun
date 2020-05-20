@@ -70,7 +70,7 @@ pub extern "C" fn kip_exec(config: &KipConfig) -> i32 {
     let mut boot_source = BootSourceConfig::default();
     boot_source.kernel_image_path = kernel.to_string();
     boot_source.boot_args = Some(format!(
-        "{} init=/tmp/kip-init KIP_INIT={} {} {}",
+        "{} init=/tmp/init.kip KIP_INIT={} {} {}",
         DEFAULT_KERNEL_CMDLINE, exec_path, env_line, args,
     ));
     vm_resources.set_boot_source(boot_source).unwrap();
