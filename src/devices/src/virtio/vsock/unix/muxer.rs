@@ -32,12 +32,14 @@
 ///    mapping `RawFd`s to `EpollListener`s.
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
+use std::net::Ipv4Addr;
+use std::net::TcpStream;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 
-use super::super::csm::ConnState;
+use super::super::csm::{CommonStream, ConnState};
 use super::super::defs::uapi;
 use super::super::packet::VsockPacket;
 use super::super::{
@@ -48,6 +50,9 @@ use super::muxer_killq::MuxerKillQ;
 use super::muxer_rxq::MuxerRxQ;
 use super::MuxerConnection;
 use super::{Error, Result};
+
+impl CommonStream for UnixStream {}
+impl CommonStream for TcpStream {}
 
 /// A unique identifier of a `MuxerConnection` object. Connections are stored in a hash map,
 /// keyed by a `ConnMapKey` object.
@@ -83,7 +88,7 @@ enum EpollListener {
 pub struct VsockMuxer {
     /// Guest CID.
     cid: u64,
-    /// A hash map used to store the active connections.
+    /// A hash map used to store the active UNIX connections.
     conn_map: HashMap<ConnMapKey, MuxerConnection>,
     /// A hash map used to store epoll event listeners / handlers.
     listener_map: HashMap<RawFd, EpollListener>,
@@ -196,13 +201,6 @@ impl VsockChannel for VsockMuxer {
             pkt.hdr()
         );
 
-        // If this packet has an unsupported type (!=stream), we must send back an RST.
-        //
-        if pkt.type_() != uapi::VSOCK_TYPE_STREAM {
-            self.enq_rst(pkt.dst_port(), pkt.src_port());
-            return Ok(());
-        }
-
         // We don't know how to handle packets addressed to other CIDs. We only handle the host
         // part of the guest - host communication here.
         if pkt.dst_cid() != uapi::VSOCK_HOST_CID {
@@ -217,12 +215,20 @@ impl VsockChannel for VsockMuxer {
             // This packet can't be routed to any active connection (based on its src and dst
             // ports).  The only orphan / unroutable packets we know how to handle are
             // connection requests.
-            if pkt.op() == uapi::VSOCK_OP_REQUEST {
-                // Oh, this is a connection request!
-                self.handle_peer_request_pkt(&pkt);
-            } else {
-                // Send back an RST, to let the drive know we weren't expecting this packet.
-                self.enq_rst(pkt.dst_port(), pkt.src_port());
+            match pkt.op() {
+                uapi::VSOCK_OP_REQUEST => {
+                    // Oh, this is a connection request!
+                    self.handle_peer_request_pkt(&pkt);
+                }
+                uapi::VSOCK_OP_REQUEST_EX => {
+                    // A connection request with extended parameters
+                    self.handle_peer_request_ex_pkt(&pkt)
+                        .unwrap_or_else(|_| self.enq_rst(pkt.dst_port(), pkt.src_port()))
+                }
+                _ => {
+                    // Send back an RST, to let the drive know we weren't expecting this packet.
+                    self.enq_rst(pkt.dst_port(), pkt.src_port());
+                }
             }
             return Ok(());
         }
@@ -304,7 +310,6 @@ impl VsockMuxer {
     pub fn new(cid: u64, host_sock_path: String) -> Result<Self> {
         // Open/bind on the host Unix socket, so we can accept host-initiated
         // connections.
-        println!("XXX - {}", host_sock_path);
         let host_sock = UnixListener::bind(&host_sock_path)
             .and_then(|sock| sock.set_nonblocking(true).map(|_| sock))
             .map_err(Error::UnixBind)?;
@@ -392,7 +397,7 @@ impl VsockMuxer {
                                     peer_port,
                                 },
                                 MuxerConnection::new_local_init(
-                                    stream,
+                                    Box::new(stream) as Box<dyn CommonStream>,
                                     uapi::VSOCK_HOST_CID,
                                     self.cid,
                                     local_port,
@@ -598,7 +603,7 @@ impl VsockMuxer {
                         peer_port: pkt.src_port(),
                     },
                     MuxerConnection::new_peer_init(
-                        stream,
+                        Box::new(stream) as Box<dyn CommonStream>,
                         uapi::VSOCK_HOST_CID,
                         self.cid,
                         pkt.dst_port(),
@@ -608,6 +613,70 @@ impl VsockMuxer {
                 )
             })
             .unwrap_or_else(|_| self.enq_rst(pkt.dst_port(), pkt.src_port()));
+    }
+
+    fn handle_peer_request_ex_pkt(&mut self, pkt: &VsockPacket) -> Result<()> {
+        match pkt.sa_family() {
+            Some(uapi::AF_INET) => {
+                let port = pkt.inet_port().ok_or(Error::AddressInvalidPort)?;
+                let ipv4_addr = Ipv4Addr::from(pkt.inet_addr().ok_or(Error::AddressInvalidIpv4)?);
+
+                debug!("vsock ports src={} dst={}", pkt.src_port(), pkt.dst_port());
+                debug!("should connect to {}:{}", ipv4_addr, port);
+
+                TcpStream::connect(format!("{}:{}", ipv4_addr, port))
+                    .and_then(|stream| stream.set_nonblocking(true).map(|_| stream))
+                    .map_err(Error::TcpConnect)
+                    .and_then(|stream| {
+                        self.add_connection(
+                            ConnMapKey {
+                                local_port: pkt.dst_port(),
+                                peer_port: pkt.src_port(),
+                            },
+                            MuxerConnection::new_peer_init(
+                                Box::new(stream) as Box<dyn CommonStream>,
+                                uapi::VSOCK_HOST_CID,
+                                self.cid,
+                                pkt.dst_port(),
+                                pkt.src_port(),
+                                pkt.buf_alloc(),
+                            ),
+                        )
+                    })
+            }
+            Some(uapi::AF_UNIX) => {
+                let path = pkt.unix_path().ok_or(Error::AddressInvalidPath)?;
+
+                debug!("should connect to unix socket at: {:?}", path);
+                UnixStream::connect(path)
+                    .and_then(|stream| stream.set_nonblocking(true).map(|_| stream))
+                    .map_err(Error::UnixConnect)
+                    .and_then(|stream| {
+                        self.add_connection(
+                            ConnMapKey {
+                                local_port: pkt.dst_port(),
+                                peer_port: pkt.src_port(),
+                            },
+                            MuxerConnection::new_peer_init(
+                                Box::new(stream) as Box<dyn CommonStream>,
+                                uapi::VSOCK_HOST_CID,
+                                self.cid,
+                                pkt.dst_port(),
+                                pkt.src_port(),
+                                pkt.buf_alloc(),
+                            ),
+                        )
+                    })
+            }
+            Some(_) => {
+                debug!("unknown sa_family");
+                Err(Error::AddressInvalidFamily)
+            }
+            None => {
+                debug!("invalid buffer");
+                Err(Error::AddressInvalidBuffer)
+            }
+        }
     }
 
     /// Perform an action that might mutate a connection's state.

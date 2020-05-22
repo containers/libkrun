@@ -13,6 +13,7 @@ use vmm::resources::VmResources;
 use vmm::vmm_config::boot_source::{BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
 use vmm::vmm_config::fs::FsDeviceConfig;
 use vmm::vmm_config::machine_config::VmConfig;
+use vmm::vmm_config::vsock::VsockDeviceConfig;
 
 const DEFAULT_KERNEL: &str = "/tmp/vmlinux.kip";
 const DEFAULT_INIT: &str = "/tmp/init.kip";
@@ -93,6 +94,13 @@ pub extern "C" fn kip_exec(config: &KipConfig) -> i32 {
         shared_dir: root_dir.to_string(),
     };
     vm_resources.set_fs_device(fs_device_config).unwrap();
+
+    let vsock_device_config = VsockDeviceConfig {
+        vsock_id: "vsock0".to_string(),
+        guest_cid: 3,
+        uds_path: "/tmp/vsock0".to_string(),
+    };
+    vm_resources.set_vsock_device(vsock_device_config).unwrap();
 
     let mut event_manager = EventManager::new().expect("Unable to create EventManager");
 

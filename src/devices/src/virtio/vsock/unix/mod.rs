@@ -26,6 +26,16 @@ mod defs {
 
 #[derive(Debug)]
 pub enum Error {
+    /// The IPv4 address is invalid.
+    AddressInvalidIpv4,
+    /// The buffer containing the address information is invalid.
+    AddressInvalidBuffer,
+    /// The address family is invalid.
+    AddressInvalidFamily,
+    /// The UNIX path is invalid.
+    AddressInvalidPath,
+    /// The IPv4 port is invalid.
+    AddressInvalidPort,
     /// Error registering a new epoll-listening FD.
     EpollAdd(std::io::Error),
     /// Error creating an epoll FD.
@@ -40,9 +50,12 @@ pub enum Error {
     UnixConnect(std::io::Error),
     /// Error reading from host-side Unix socket.
     UnixRead(std::io::Error),
+    /// Error connecting to a host-side TCP address.
+    TcpConnect(std::io::Error),
     /// Muxer connection limit reached.
     TooManyConnections,
 }
 
 type Result<T> = std::result::Result<T, Error>;
-type MuxerConnection = super::csm::VsockConnection<std::os::unix::net::UnixStream>;
+
+type MuxerConnection = super::csm::VsockConnection;

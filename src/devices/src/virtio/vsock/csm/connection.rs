@@ -90,11 +90,11 @@ use super::super::packet::VsockPacket;
 use super::super::{Result as VsockResult, VsockChannel, VsockEpollListener, VsockError};
 use super::defs;
 use super::txbuf::TxBuf;
-use super::{ConnState, Error, PendingRx, PendingRxSet, Result};
+use super::{CommonStream, ConnState, Error, PendingRx, PendingRxSet, Result};
 
 /// A self-managing connection object, that handles communication between a guest-side AF_VSOCK
 /// socket and a host-side `Read + Write + AsRawFd` stream.
-pub struct VsockConnection<S: Read + Write + AsRawFd> {
+pub struct VsockConnection {
     /// The current connection state.
     state: ConnState,
     /// The local CID. Most of the time this will be the constant `2` (the vsock host CID).
@@ -106,7 +106,7 @@ pub struct VsockConnection<S: Read + Write + AsRawFd> {
     /// The peer (guest) port.
     peer_port: u32,
     /// The (connected) host-side stream.
-    stream: S,
+    stream: Box<dyn CommonStream>,
     /// The TX buffer for this connection.
     tx_buf: TxBuf,
     /// Total number of bytes that have been successfully written to `self.stream`, either
@@ -129,10 +129,7 @@ pub struct VsockConnection<S: Read + Write + AsRawFd> {
     expiry: Option<Instant>,
 }
 
-impl<S> VsockChannel for VsockConnection<S>
-where
-    S: Read + Write + AsRawFd,
-{
+impl VsockChannel for VsockConnection {
     /// Fill in a vsock packet, to be delivered to our peer (the guest driver).
     ///
     /// As per the `VsockChannel` trait, this should only be called when there is data to be
@@ -376,10 +373,7 @@ where
     }
 }
 
-impl<S> AsRawFd for VsockConnection<S>
-where
-    S: Read + Write + AsRawFd,
-{
+impl AsRawFd for VsockConnection {
     /// Get the file descriptor that this connection wants polled.
     ///
     /// The connection is interested in being notified about EPOLLIN / EPOLLOUT events on the
@@ -389,10 +383,7 @@ where
     }
 }
 
-impl<S> VsockEpollListener for VsockConnection<S>
-where
-    S: Read + Write + AsRawFd,
-{
+impl VsockEpollListener for VsockConnection {
     /// Get the event set that this connection is interested in.
     ///
     /// A connection will want to be notified when:
@@ -457,13 +448,10 @@ where
     }
 }
 
-impl<S> VsockConnection<S>
-where
-    S: Read + Write + AsRawFd,
-{
+impl VsockConnection {
     /// Create a new guest-initiated connection object.
     pub fn new_peer_init(
-        stream: S,
+        stream: Box<dyn CommonStream>,
         local_cid: u64,
         peer_cid: u64,
         local_port: u32,
@@ -490,7 +478,7 @@ where
 
     /// Create a new host-initiated connection object.
     pub fn new_local_init(
-        stream: S,
+        stream: Box<dyn CommonStream>,
         local_cid: u64,
         peer_cid: u64,
         local_port: u32,

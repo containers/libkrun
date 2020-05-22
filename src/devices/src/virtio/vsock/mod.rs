@@ -68,6 +68,8 @@ mod defs {
         pub const VSOCK_OP_CREDIT_UPDATE: u16 = 6;
         /// Flow control credit update request.
         pub const VSOCK_OP_CREDIT_REQUEST: u16 = 7;
+        /// Connection request with extended parameters.
+        pub const VSOCK_OP_REQUEST_EX: u16 = 8;
 
         /// Vsock packet flags.
         /// Defined in `/include/uapi/linux/virtio_vsock.h`.
@@ -84,6 +86,10 @@ mod defs {
         pub const VSOCK_TYPE_STREAM: u16 = 1;
 
         pub const VSOCK_HOST_CID: u64 = 2;
+
+        /// UNIX sa_family
+        pub const AF_UNIX: u16 = 1;
+        pub const AF_INET: u16 = 2;
     }
 }
 

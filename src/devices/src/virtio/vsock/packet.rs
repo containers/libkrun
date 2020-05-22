@@ -14,6 +14,8 @@
 /// `VsockPacket` wraps these two buffers and provides direct access to the data stored
 /// in guest memory. This is done to avoid unnecessarily copying data from guest memory
 /// to temporary buffers, before passing it on to the vsock backend.
+use std::convert::TryInto;
+use std::ffi::CStr;
 use std::result;
 
 use utils::byte_order;
@@ -335,6 +337,41 @@ impl VsockPacket {
     pub fn set_fwd_cnt(&mut self, fwd_cnt: u32) -> &mut Self {
         byte_order::write_le_u32(&mut self.hdr_mut()[HDROFF_FWD_CNT..], fwd_cnt);
         self
+    }
+
+    pub fn sa_family(&self) -> Option<u16> {
+        if self.buf_size >= 2 {
+            Some(byte_order::read_le_u16(&self.buf().unwrap()[0..]))
+        } else {
+            None
+        }
+    }
+
+    pub fn inet_port(&self) -> Option<u16> {
+        if self.buf_size >= 4 {
+            Some(byte_order::read_be_u16(&self.buf().unwrap()[2..]))
+        } else {
+            None
+        }
+    }
+
+    pub fn inet_addr(&self) -> Option<[u8; 4]> {
+        if self.buf_size >= 8 {
+            let ptr = &self.buf().unwrap()[4];
+            let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, 4) };
+            slice[0..4].try_into().ok()
+        } else {
+            None
+        }
+    }
+
+    pub fn unix_path(&self) -> Option<&str> {
+        if self.buf_size >= 108 {
+            let cstr = unsafe { CStr::from_ptr(&self.buf().unwrap()[2] as *const _ as *const i8) };
+            cstr.to_str().ok()
+        } else {
+            None
+        }
     }
 }
 
