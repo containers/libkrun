@@ -37,11 +37,6 @@ int main(int argc, char **argv)
         exit(-1);
     }
 
-    if (mount("tmpfs", "/tmp", "tmpfs", MS_NODEV | MS_NOSUID, NULL) < 0) {
-        perror("mount(/tmp): ");
-        exit(-1);
-    }
-
     hostname = getenv("HOSTNAME");
     if (hostname) {
         sethostname(hostname, strlen(hostname));
