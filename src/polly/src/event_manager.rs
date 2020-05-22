@@ -170,6 +170,26 @@ impl EventManager {
         Ok(())
     }
 
+    /// Check if a file descriptor is pollable
+    pub fn is_pollable(&mut self, pollable: Pollable) -> bool {
+        self.epoll
+            .ctl(
+                epoll::ControlOperation::Add,
+                pollable,
+                &epoll::EpollEvent::default(),
+            )
+            .map_or(false, |_| {
+                self.epoll
+                    .ctl(
+                        epoll::ControlOperation::Delete,
+                        pollable,
+                        &epoll::EpollEvent::default(),
+                    )
+                    .unwrap();
+                true
+            })
+    }
+
     /// Wait for events, then dispatch to the registered event handlers.
     pub fn run(&mut self) -> Result<usize> {
         self.run_with_timeout(-1)

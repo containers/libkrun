@@ -166,10 +166,17 @@ impl Subscriber for Console {
     }
 
     fn interest_list(&self) -> Vec<EpollEvent> {
-        vec![
-            EpollEvent::new(EventSet::IN, self.activate_evt.as_raw_fd() as u64),
-            EpollEvent::new(EventSet::IN, self.sigwinch_evt.as_raw_fd() as u64),
-            EpollEvent::new(EventSet::IN, self.input.as_raw_fd() as u64),
-        ]
+        if self.interactive {
+            vec![
+                EpollEvent::new(EventSet::IN, self.activate_evt.as_raw_fd() as u64),
+                EpollEvent::new(EventSet::IN, self.sigwinch_evt.as_raw_fd() as u64),
+                EpollEvent::new(EventSet::IN, self.input.as_raw_fd() as u64),
+            ]
+        } else {
+            vec![
+                EpollEvent::new(EventSet::IN, self.activate_evt.as_raw_fd() as u64),
+                EpollEvent::new(EventSet::IN, self.sigwinch_evt.as_raw_fd() as u64),
+            ]
+        }
     }
 }

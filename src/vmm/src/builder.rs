@@ -709,6 +709,12 @@ fn attach_console_devices(
             .unwrap(),
     ));
 
+    // Stdin may not be pollable (i.e. when running a container without "-i"). If that's
+    // the case, disable the interactive mode in the console.
+    if !event_manager.is_pollable(io::stdin().as_raw_fd()) {
+        console.lock().unwrap().set_interactive(false)
+    }
+
     event_manager
         .add_subscriber(console.clone())
         .map_err(RegisterEvent)?;

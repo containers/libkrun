@@ -86,6 +86,7 @@ pub struct Console {
     pub(crate) input: Box<dyn ReadableFd + Send>,
     output: Box<dyn io::Write + Send>,
     configured: bool,
+    pub(crate) interactive: bool,
 }
 
 impl Console {
@@ -117,6 +118,7 @@ impl Console {
             input,
             output,
             configured: false,
+            interactive: true,
         })
     }
 
@@ -137,6 +139,10 @@ impl Console {
 
     pub fn get_sigwinch_fd(&self) -> RawFd {
         self.sigwinch_evt.as_raw_fd()
+    }
+
+    pub fn set_interactive(&mut self, interactive: bool) {
+        self.interactive = interactive;
     }
 
     /// Signal the guest driver that we've used some virtio buffers that it had previously made
