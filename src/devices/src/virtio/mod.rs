@@ -10,6 +10,7 @@ use std;
 use std::any::Any;
 use std::io::Error as IOError;
 
+pub mod balloon;
 pub mod console;
 pub mod device;
 pub mod fs;
@@ -17,6 +18,7 @@ mod mmio;
 mod queue;
 pub mod vsock;
 
+pub use self::balloon::*;
 pub use self::console::*;
 pub use self::device::*;
 pub use self::fs::*;

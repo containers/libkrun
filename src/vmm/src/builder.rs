@@ -59,6 +59,8 @@ pub enum StartMicrovmError {
     NetDeviceNotConfigured,
     /// Cannot open the block device backing file.
     OpenBlockDevice(io::Error),
+    /// Cannot initialize a MMIO Balloon device or add a device to the MMIO Bus.
+    RegisterBalloonDevice(device_manager::mmio::Error),
     /// Cannot initialize a MMIO Block Device or add a device to the MMIO Bus.
     RegisterBlockDevice(device_manager::mmio::Error),
     /// Cannot register an EventHandler.
@@ -130,6 +132,15 @@ impl Display for StartMicrovmError {
                 err_msg = err_msg.replace("\"", "");
 
                 write!(f, "Cannot open the block device backing file. {}", err_msg)
+            }
+            RegisterBalloonDevice(ref err) => {
+                let mut err_msg = format!("{}", err);
+                err_msg = err_msg.replace("\"", "");
+                write!(
+                    f,
+                    "Cannot initialize a MMIO Balloon Device or add a device to the MMIO Bus. {}",
+                    err_msg
+                )
             }
             RegisterBlockDevice(ref err) => {
                 let mut err_msg = format!("{}", err);
@@ -363,6 +374,7 @@ pub fn build_microvm(
         pio_device_manager,
     };
 
+    attach_balloon_device(&mut vmm, event_manager)?;
     attach_console_devices(&mut vmm, event_manager)?;
     attach_fs_devices(&mut vmm, &vm_resources.fs, event_manager)?;
     if let Some(vsock) = vm_resources.vsock.get() {
@@ -752,6 +764,30 @@ fn attach_unixsock_vsock_device(
         MmioTransport::new(vmm.guest_memory().clone(), unix_vsock.clone()),
     )
     .map_err(RegisterVsockDevice)?;
+
+    Ok(())
+}
+
+fn attach_balloon_device(
+    vmm: &mut Vmm,
+    event_manager: &mut EventManager,
+) -> std::result::Result<(), StartMicrovmError> {
+    use self::StartMicrovmError::*;
+
+    let balloon = Arc::new(Mutex::new(devices::virtio::Balloon::new().unwrap()));
+
+    event_manager
+        .add_subscriber(balloon.clone())
+        .map_err(RegisterEvent)?;
+
+    let id = String::from(balloon.lock().unwrap().id());
+    // The device mutex mustn't be locked here otherwise it will deadlock.
+    attach_mmio_device(
+        vmm,
+        id,
+        MmioTransport::new(vmm.guest_memory().clone(), balloon),
+    )
+    .map_err(RegisterBalloonDevice)?;
 
     Ok(())
 }
