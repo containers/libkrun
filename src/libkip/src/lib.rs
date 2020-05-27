@@ -28,6 +28,7 @@ pub struct KipConfig {
     root_dir: *const c_char,
     exec_path: *const c_char,
     args: *const c_char,
+    env_line: *const c_char,
 }
 
 #[no_mangle]
@@ -63,6 +64,18 @@ pub extern "C" fn kip_exec(config: &KipConfig) -> i32 {
     } else {
         unsafe { CStr::from_ptr(config.args).to_str().unwrap() }
     };
+    let env_line = if config.env_line.is_null() {
+        env::vars()
+            .map(|(key, value)| format!(" {}={}", key, value))
+            .collect()
+    } else {
+        unsafe {
+            CStr::from_ptr(config.env_line)
+                .to_str()
+                .unwrap()
+                .to_string()
+        }
+    };
 
     debug!(
         "Should create a vm with {} cpus, {} ram, {} as kernel and {} as root dir",
@@ -78,9 +91,6 @@ pub extern "C" fn kip_exec(config: &KipConfig) -> i32 {
     };
     vm_resources.set_vm_config(&vm_config).unwrap();
 
-    let env_line: String = env::vars()
-        .map(|(key, value)| format!(" {}={}", key, value))
-        .collect();
     let mut boot_source = BootSourceConfig::default();
     boot_source.kernel_image_path = kernel.to_string();
     boot_source.boot_args = Some(format!(

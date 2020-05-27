@@ -17,6 +17,11 @@ struct KipConfig {
     const char *exec_path;
     /* Arguments to be passed to the binary. */
     const char *args;
+   /*
+    * Environment variables in KEY=VALUE format, separated by spaces. If NULL,
+    * auto-generate a line collecting the variables present in the environment.
+    */
+    const char *env_line;
 };
 
 int kip_exec(struct KipConfig *config);
