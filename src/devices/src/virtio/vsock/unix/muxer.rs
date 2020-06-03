@@ -33,7 +33,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::net::Ipv4Addr;
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 
@@ -77,6 +77,11 @@ enum EpollListener {
     /// in `evset`. Since `MuxerConnection` implements `VsockEpollListener`, notifications will
     /// be forwarded to the listener via `VsockEpollListener::notify()`.
     Connection { key: ConnMapKey, evset: EventSet },
+
+    WrapUnix { port: u32, listener: UnixListener},
+
+    WrapTcp { port: u32, listener: TcpListener},
+
     /// A listener interested in new host-initiated connections.
     HostSock,
     /// A listener interested in reading host "connect <port>" commands from a freshly
@@ -92,6 +97,8 @@ pub struct VsockMuxer {
     conn_map: HashMap<ConnMapKey, MuxerConnection>,
     /// A hash map used to store epoll event listeners / handlers.
     listener_map: HashMap<RawFd, EpollListener>,
+    /// A hash map used to store wrapped listeners.
+    wrap_map: HashMap<u32, RawFd>,
     /// The RX queue. Items in this queue are consumed by `VsockMuxer::recv_pkt()`, and
     /// produced
     /// - by `VsockMuxer::send_pkt()` (e.g. RST in response to a connection request packet);
@@ -225,6 +232,14 @@ impl VsockChannel for VsockMuxer {
                     self.handle_peer_request_ex_pkt(&pkt)
                         .unwrap_or_else(|_| self.enq_rst(pkt.dst_port(), pkt.src_port()))
                 }
+                uapi::VSOCK_OP_WRAP_LISTEN => {
+                    // A listen request for wrapped socket with extended parameters
+                    self.handle_peer_wrap_listen(&pkt).unwrap();
+                }
+                uapi::VSOCK_OP_WRAP_CLOSE => {
+                    // A close request for wrapped socket
+                    self.handle_peer_wrap_close(&pkt);
+                }
                 _ => {
                     // Send back an RST, to let the drive know we weren't expecting this packet.
                     self.enq_rst(pkt.dst_port(), pkt.src_port());
@@ -322,6 +337,7 @@ impl VsockMuxer {
             rxq: MuxerRxQ::new(),
             conn_map: HashMap::with_capacity(defs::MAX_CONNECTIONS),
             listener_map: HashMap::with_capacity(defs::MAX_CONNECTIONS + 1),
+            wrap_map: HashMap::with_capacity(defs::MAX_CONNECTIONS),
             killq: MuxerKillQ::new(),
             local_port_last: (1u32 << 30) - 1,
             local_port_set: HashSet::with_capacity(defs::MAX_CONNECTIONS),
@@ -411,6 +427,71 @@ impl VsockMuxer {
                 }
             }
 
+            Some(EpollListener::WrapTcp { port, listener }) => {
+                let peer_port = *port;
+
+                debug!("WrapTcp: peer_port {}", peer_port);
+
+                listener.accept()
+                    .map_err(Error::UnixAccept)
+                    .and_then(|(stream, _)| {
+                        stream
+                            .set_nonblocking(true)
+                            .map(|_| stream)
+                            .map_err(Error::WrapUnixAccept)
+                    })
+                    .and_then(|stream| {
+                        let local_port = self.allocate_local_port();
+                        self.add_connection(
+                            ConnMapKey {
+                                local_port,
+                                peer_port,
+                            },
+                            MuxerConnection::new_local_init(
+                                Box::new(stream) as Box<dyn CommonStream>,
+                                uapi::VSOCK_HOST_CID,
+                                self.cid,
+                                local_port,
+                                peer_port,
+                            ),
+                        )
+                    })
+                    .unwrap_or_else(|err| {
+                        warn!("vsock: unable to accept wrapped TCP connection: {:?}", err);
+                    });
+            }
+
+            Some(EpollListener::WrapUnix { port, listener }) => {
+                let peer_port = *port;
+
+                listener.accept()
+                    .map_err(Error::UnixAccept)
+                    .and_then(|(stream, _)| {
+                        stream
+                            .set_nonblocking(true)
+                            .map(|_| stream)
+                            .map_err(Error::WrapUnixAccept)
+                    })
+                    .and_then(|stream| {
+                        let local_port = self.allocate_local_port();
+                        self.add_connection(
+                            ConnMapKey {
+                                local_port,
+                                peer_port,
+                            },
+                            MuxerConnection::new_local_init(
+                                Box::new(stream) as Box<dyn CommonStream>,
+                                uapi::VSOCK_HOST_CID,
+                                self.cid,
+                                local_port,
+                                peer_port,
+                            ),
+                        )
+                    })
+                    .unwrap_or_else(|err| {
+                        warn!("vsock: unable to accept wrapped unix connection: {:?}", err);
+                    });
+            }
             _ => {
                 info!("vsock: unexpected event: fd={:?}, evset={:?}", fd, evset);
             }
@@ -527,6 +608,8 @@ impl VsockMuxer {
     fn add_listener(&mut self, fd: RawFd, listener: EpollListener) -> Result<()> {
         let evset = match listener {
             EpollListener::Connection { evset, .. } => evset,
+            EpollListener::WrapUnix{ .. } => EventSet::IN,
+            EpollListener::WrapTcp{ .. } => EventSet::IN,
             EpollListener::LocalStream(_) => EventSet::IN,
             EpollListener::HostSock => EventSet::IN,
         };
@@ -676,6 +759,65 @@ impl VsockMuxer {
                 debug!("invalid buffer");
                 Err(Error::AddressInvalidBuffer)
             }
+        }
+    }
+
+    fn handle_peer_wrap_listen(&mut self, pkt: &VsockPacket) -> Result<()> {
+        match pkt.sa_family() {
+            Some(uapi::AF_INET) => {
+                let port = pkt.inet_port().ok_or(Error::AddressInvalidPort)?;
+                let ipv4_addr = Ipv4Addr::from(pkt.inet_addr().ok_or(Error::AddressInvalidIpv4)?);
+
+                debug!("vsock ports src={} dst={}", pkt.src_port(), pkt.dst_port());
+                debug!("should listen at {}:{}", ipv4_addr, port);
+
+                TcpListener::bind(format!("{}:{}", ipv4_addr, port))
+                    .and_then(|sock| sock.set_nonblocking(true).map(|_| sock))
+                    .map_err(Error::WrapTcpBind)
+                    .and_then(|sock| {
+                        let fd = sock.as_raw_fd();
+                        self.add_listener(fd,
+                            EpollListener::WrapTcp {
+                                port: pkt.src_port(),
+                                listener: sock
+                            })?;
+                        self.wrap_map.insert(pkt.src_port(), fd);
+                        Ok(())
+                    })
+            }
+            Some(uapi::AF_UNIX) => {
+                let path = pkt.unix_path().ok_or(Error::AddressInvalidPath)?;
+
+                debug!("should listen to unix socket at: {:?}", path);
+
+                UnixListener::bind(&path)
+                    .and_then(|sock| sock.set_nonblocking(true).map(|_| sock))
+                    .map_err(Error::WrapUnixBind)
+                    .and_then(|sock| {
+                        let fd = sock.as_raw_fd();
+                        self.add_listener(fd,
+                            EpollListener::WrapUnix {
+                                port: pkt.src_port(),
+                                listener: sock
+                            })?;
+                        self.wrap_map.insert(pkt.src_port(), fd);
+                        Ok(())
+                    })
+            }
+            Some(_) => {
+                debug!("unknown sa_family");
+                Err(Error::AddressInvalidFamily)
+            }
+            None => {
+                debug!("invalid buffer");
+                Err(Error::AddressInvalidBuffer)
+            }
+        }
+    }
+
+    fn handle_peer_wrap_close(&mut self, pkt: &VsockPacket) {
+        if let Some(fd) = self.wrap_map.remove(&pkt.src_port()) {
+            self.remove_listener(fd);
         }
     }
 

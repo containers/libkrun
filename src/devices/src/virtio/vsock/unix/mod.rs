@@ -54,6 +54,14 @@ pub enum Error {
     TcpConnect(std::io::Error),
     /// Muxer connection limit reached.
     TooManyConnections,
+    /// Error accepting a new connection from the wrapped Unix socket.
+    WrapUnixAccept(std::io::Error),
+    /// Error binding to the wrapped Unix socket.
+    WrapUnixBind(std::io::Error),
+    /// Error accepting a new connection from the wrapped TCP socket.
+    WrapTcpAccept(std::io::Error),
+    /// Error binding to the wrapped TCP socket.
+    WrapTcpBind(std::io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
