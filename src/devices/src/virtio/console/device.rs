@@ -168,7 +168,7 @@ impl Console {
     }
 
     pub fn update_console_size(&mut self, cols: u16, rows: u16) {
-        println!("update_console_size: {} {}", cols, rows);
+        debug!("update_console_size: {} {}", cols, rows);
         self.config.update_console_size(cols, rows);
         self.signal_config_update().unwrap();
     }

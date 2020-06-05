@@ -91,8 +91,7 @@ extern "C" fn sigwinch_handler(num: c_int, info: *mut siginfo_t, _unused: *mut c
 
     let val: u64 = 1;
     let console_fd = CONSOLE_SIGWINCH_FD.load(Ordering::Relaxed);
-    let ret = unsafe { libc::write(console_fd, &val as *const _ as *const c_void, 8) };
-    println!("SIGWINCH ret={}", ret);
+    let _ = unsafe { libc::write(console_fd, &val as *const _ as *const c_void, 8) };
 }
 
 pub fn register_sigwinch_handler(console_fd: RawFd) -> utils::errno::Result<()> {

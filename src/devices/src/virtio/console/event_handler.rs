@@ -113,7 +113,7 @@ impl Console {
     }
 
     fn handle_sigwinch_event(&mut self, event: &EpollEvent) {
-        println!("console: SIGWINCH event");
+        debug!("console: SIGWINCH event");
 
         let event_set = event.event_set();
         if event_set != EventSet::IN {
@@ -125,8 +125,6 @@ impl Console {
         }
 
         let (cols, rows) = get_win_size();
-        println!("Update from console: {}x{}", cols, rows);
-
         self.update_console_size(cols, rows);
     }
 }
