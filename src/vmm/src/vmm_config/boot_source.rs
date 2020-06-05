@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::fmt::{Display, Formatter, Result};
-use std::io;
 
 /// Default guest kernel command line:
 /// - `reboot=k` shut down the guest on reboot, instead of well... rebooting;
@@ -27,10 +26,6 @@ pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 pci=of
 /// microvm.
 #[derive(Debug, Default, PartialEq)]
 pub struct BootSourceConfig {
-    /// Path of the kernel image.
-    pub kernel_image_path: String,
-    /// Path of the initrd, if there is one.
-    pub initrd_path: Option<String>,
     /// The boot arguments to pass to the kernel. If this field is uninitialized, the default
     /// kernel command line is used: `reboot=k panic=1 pci=off nomodules 8250.nr_uarts=0`.
     pub boot_args: Option<String>,
@@ -39,10 +34,6 @@ pub struct BootSourceConfig {
 /// Errors associated with actions on `BootSourceConfig`.
 #[derive(Debug)]
 pub enum BootSourceConfigError {
-    /// The kernel file cannot be opened.
-    InvalidKernelPath(io::Error),
-    /// The initrd file cannot be opened.
-    InvalidInitrdPath(io::Error),
     /// The kernel command line is invalid.
     InvalidKernelCommandLine(String),
 }
@@ -51,13 +42,6 @@ impl Display for BootSourceConfigError {
     fn fmt(&self, f: &mut Formatter) -> Result {
         use self::BootSourceConfigError::*;
         match *self {
-            InvalidKernelPath(ref e) => write!(f, "The kernel file cannot be opened: {}", e),
-            InvalidInitrdPath(ref e) => write!(
-                f,
-                "The initrd file cannot be opened due to invalid path or \
-                 invalid permissions. {}",
-                e,
-            ),
             InvalidKernelCommandLine(ref e) => {
                 write!(f, "The kernel command line is invalid: {}", e.as_str())
             }
@@ -70,8 +54,4 @@ impl Display for BootSourceConfigError {
 pub struct BootConfig {
     /// The commandline validated against correctness.
     pub cmdline: kernel::cmdline::Cmdline,
-    /// The descriptor to the kernel file.
-    pub kernel_file: std::fs::File,
-    /// The descriptor to the initrd file, if there is one
-    pub initrd_file: Option<std::fs::File>,
 }

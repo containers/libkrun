@@ -15,16 +15,13 @@ use vmm::vmm_config::fs::FsDeviceConfig;
 use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
-const DEFAULT_KERNEL: &str = "/tmp/vmlinux.kip";
-const DEFAULT_INIT: &str = "/init.kip";
+const INIT_PATH: &str = "/init.kip";
 
 #[repr(C)]
 pub struct KipConfig {
     log_level: u8,
     num_vcpus: u8,
     ram_mib: u32,
-    kernel: *const c_char,
-    init: *const c_char,
     root_dir: *const c_char,
     exec_path: *const c_char,
     args: *const c_char,
@@ -47,16 +44,6 @@ pub extern "C" fn kip_exec(config: &KipConfig) -> i32 {
         .configure(Some(format!("libkip-{}", process::id())))
         .expect("Failed to register logger");
 
-    let kernel = if config.kernel.is_null() {
-        DEFAULT_KERNEL
-    } else {
-        unsafe { CStr::from_ptr(config.kernel).to_str().unwrap() }
-    };
-    let init = if config.init.is_null() {
-        DEFAULT_INIT
-    } else {
-        unsafe { CStr::from_ptr(config.init).to_str().unwrap() }
-    };
     let root_dir = unsafe { CStr::from_ptr(config.root_dir).to_str().unwrap() };
     let exec_path = unsafe { CStr::from_ptr(config.exec_path).to_str().unwrap() };
     let args = if config.args.is_null() {
@@ -78,8 +65,8 @@ pub extern "C" fn kip_exec(config: &KipConfig) -> i32 {
     };
 
     debug!(
-        "Should create a vm with {} cpus, {} ram, {} as kernel and {} as root dir",
-        config.num_vcpus, config.ram_mib, kernel, root_dir
+        "Should create a vm with {} cpus, {} ram and {} as root dir",
+        config.num_vcpus, config.ram_mib, root_dir
     );
 
     let mut vm_resources = VmResources::default();
@@ -92,10 +79,9 @@ pub extern "C" fn kip_exec(config: &KipConfig) -> i32 {
     vm_resources.set_vm_config(&vm_config).unwrap();
 
     let mut boot_source = BootSourceConfig::default();
-    boot_source.kernel_image_path = kernel.to_string();
     boot_source.boot_args = Some(format!(
         "{} init={} KIP_INIT={} {} {}",
-        DEFAULT_KERNEL_CMDLINE, init, exec_path, env_line, args,
+        DEFAULT_KERNEL_CMDLINE, INIT_PATH, exec_path, env_line, args,
     ));
     vm_resources.set_boot_source(boot_source).unwrap();
 

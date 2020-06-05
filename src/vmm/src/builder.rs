@@ -4,13 +4,12 @@
 //! Enables pre-boot setup, instantiation and booting of a Firecracker VMM.
 
 use std::fmt::{Display, Formatter};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 
 use super::{Error, Vmm};
 
-use arch::InitrdConfig;
 #[cfg(target_arch = "x86_64")]
 use device_manager::legacy::PortIODeviceManager;
 use device_manager::mmio::MMIODeviceManager;
@@ -23,8 +22,7 @@ use signal_handler::register_sigwinch_handler;
 use utils::eventfd::EventFd;
 use utils::terminal::Terminal;
 use utils::time::TimestampUs;
-use vm_memory::{mmap::GuestRegionMmap, mmap::MmapRegion, Bytes, GuestAddress, GuestMemoryMmap};
-use vmm_config::boot_source::BootConfig;
+use vm_memory::{mmap::GuestRegionMmap, mmap::MmapRegion, GuestAddress, GuestMemoryMmap};
 use vmm_config::fs::FsBuilder;
 use vstate::{KvmContext, Vcpu, VcpuConfig, Vm};
 use {device_manager, VmmEventsObserver};
@@ -293,7 +291,6 @@ pub fn build_microvm(
     )?;
     let vcpu_config = vm_resources.vcpu_config();
 
-    let initrd = load_initrd_from_config(boot_config, &guest_memory)?;
     // Clone the command-line so that a failed boot doesn't pollute the original.
     #[allow(unused_mut)]
     let mut kernel_cmdline = boot_config.cmdline.clone();
@@ -411,7 +408,7 @@ pub fn build_microvm(
     #[cfg(target_arch = "x86_64")]
     load_cmdline(&vmm)?;
 
-    vmm.configure_system(vcpus.as_slice(), &initrd)
+    vmm.configure_system(vcpus.as_slice(), &None)
         .map_err(StartMicrovmError::Internal)?;
     vmm.start_vcpus(vcpus)
         .map_err(StartMicrovmError::Internal)?;
@@ -442,65 +439,6 @@ pub fn create_guest_memory(
             )?))
         })
         .map_err(StartMicrovmError::GuestMemoryMmap)?)
-}
-
-fn load_initrd_from_config(
-    boot_cfg: &BootConfig,
-    vm_memory: &GuestMemoryMmap,
-) -> std::result::Result<Option<InitrdConfig>, StartMicrovmError> {
-    use self::StartMicrovmError::InitrdRead;
-
-    Ok(match &boot_cfg.initrd_file {
-        Some(f) => Some(load_initrd(
-            vm_memory,
-            &mut f.try_clone().map_err(InitrdRead)?,
-        )?),
-        None => None,
-    })
-}
-
-/// Loads the initrd from a file into the given memory slice.
-///
-/// * `vm_memory` - The guest memory the initrd is written to.
-/// * `image` - The initrd image.
-///
-/// Returns the result of initrd loading
-fn load_initrd<F>(
-    vm_memory: &GuestMemoryMmap,
-    image: &mut F,
-) -> std::result::Result<InitrdConfig, StartMicrovmError>
-where
-    F: Read + Seek,
-{
-    use self::StartMicrovmError::{InitrdLoad, InitrdRead};
-
-    let size: usize;
-    // Get the image size
-    match image.seek(SeekFrom::End(0)) {
-        Err(e) => return Err(InitrdRead(e)),
-        Ok(0) => {
-            return Err(InitrdRead(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Initrd image seek returned a size of zero",
-            )))
-        }
-        Ok(s) => size = s as usize,
-    };
-    // Go back to the image start
-    image.seek(SeekFrom::Start(0)).map_err(InitrdRead)?;
-
-    // Get the target address
-    let address = arch::initrd_load_addr(vm_memory, size).map_err(|_| InitrdLoad)?;
-
-    // Load the image into memory
-    vm_memory
-        .read_from(GuestAddress(address), image, size)
-        .map_err(|_| InitrdLoad)?;
-
-    Ok(InitrdConfig {
-        address: GuestAddress(address),
-        size,
-    })
 }
 
 #[cfg(target_arch = "x86_64")]

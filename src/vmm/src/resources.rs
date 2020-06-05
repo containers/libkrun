@@ -3,8 +3,6 @@
 
 //#![deny(warnings)]
 
-use std::fs::File;
-
 use vmm_config::boot_source::{
     BootConfig, BootSourceConfig, BootSourceConfigError, DEFAULT_KERNEL_CMDLINE,
 };
@@ -113,17 +111,8 @@ impl VmResources {
         &mut self,
         boot_source_cfg: BootSourceConfig,
     ) -> Result<BootSourceConfigError> {
-        use self::BootSourceConfigError::{
-            InvalidInitrdPath, InvalidKernelCommandLine, InvalidKernelPath,
-        };
+        use self::BootSourceConfigError::InvalidKernelCommandLine;
 
-        // Validate boot source config.
-        let kernel_file =
-            File::open(&boot_source_cfg.kernel_image_path).map_err(InvalidKernelPath)?;
-        let initrd_file: Option<File> = match &boot_source_cfg.initrd_path {
-            Some(path) => Some(File::open(path).map_err(InvalidInitrdPath)?),
-            None => None,
-        };
         let mut cmdline = kernel::cmdline::Cmdline::new(arch::CMDLINE_MAX_SIZE);
         let boot_args = match boot_source_cfg.boot_args.as_ref() {
             None => DEFAULT_KERNEL_CMDLINE,
@@ -133,11 +122,7 @@ impl VmResources {
             .insert_str(boot_args)
             .map_err(|e| InvalidKernelCommandLine(e.to_string()))?;
 
-        self.boot_config = Some(BootConfig {
-            cmdline,
-            kernel_file,
-            initrd_file,
-        });
+        self.boot_config = Some(BootConfig { cmdline });
         Ok(())
     }
 

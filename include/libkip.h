@@ -7,10 +7,6 @@ struct KipConfig {
     uint8_t num_vcpus;
     /* Amount of RAM for the VM. */
     uint32_t ram_mib;
-    /* Path to the kernel ELF image. If NULL, use "/tmp/vmlinux.kip". */
-    const char *kernel;
-    /* Path to the init binary. If NULL, use "/tmp/init.kip". */
-    const char *init;
     /* Directory to be used as root in the VM. */
     const char *root_dir;
     /* Path to the binary to be executed, relative to "root_dir". */
