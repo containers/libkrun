@@ -57,15 +57,32 @@ pub const MMIO_MEM_START: u64 = FIRST_ADDR_PAST_32BITS - MEM_32BIT_GAP_SIZE;
 /// These should be used to configure the GuestMemoryMmap structure for the platform.
 /// For x86_64 all addresses are valid from the start of the kernel except a
 /// carve out at the end of 32bit address space.
-pub fn arch_memory_regions(size: usize) -> Vec<(GuestAddress, usize)> {
+pub fn arch_memory_regions(
+    size: usize,
+    kernel_load_addr: usize,
+    kernel_size: usize,
+) -> Vec<(GuestAddress, usize)> {
+    if size < (kernel_load_addr + kernel_size) {
+        panic!("Kernel doesn't fit in RAM");
+    }
     // It's safe to cast MMIO_MEM_START to usize because it fits in a u32 variable
     // (It points to an address in the 32 bit space).
     match size.checked_sub(MMIO_MEM_START as usize) {
         // case1: guest memory fits before the gap
-        None | Some(0) => vec![(GuestAddress(0), size)],
+        None | Some(0) => vec![
+            (GuestAddress(0), kernel_load_addr),
+            (
+                GuestAddress((kernel_load_addr + kernel_size) as u64),
+                size - (kernel_load_addr + kernel_size),
+            ),
+        ],
         // case2: guest memory extends beyond the gap
         Some(remaining) => vec![
-            (GuestAddress(0), MMIO_MEM_START as usize),
+            (GuestAddress(0), kernel_load_addr),
+            (
+                GuestAddress((kernel_load_addr + kernel_size) as u64),
+                (MMIO_MEM_START - (kernel_load_addr + kernel_size) as u64) as usize,
+            ),
             (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
         ],
     }

@@ -17,12 +17,13 @@ use device_manager::mmio::MMIODeviceManager;
 use devices::legacy::Serial;
 use devices::virtio::{MmioTransport, Vsock, VsockUnixBackend};
 
+use libc::{c_char, size_t};
 use polly::event_manager::{Error as EventManagerError, EventManager};
 use signal_handler::register_sigwinch_handler;
 use utils::eventfd::EventFd;
 use utils::terminal::Terminal;
 use utils::time::TimestampUs;
-use vm_memory::{Bytes, GuestAddress, GuestMemoryMmap};
+use vm_memory::{mmap::GuestRegionMmap, mmap::MmapRegion, Bytes, GuestAddress, GuestMemoryMmap};
 use vmm_config::boot_source::BootConfig;
 use vmm_config::fs::FsBuilder;
 use vstate::{KvmContext, Vcpu, VcpuConfig, Vm};
@@ -242,6 +243,11 @@ impl VmmEventsObserver for SerialStdin {
     }
 }
 
+#[link(name = "kipfw")]
+extern "C" {
+    fn get_kernel_bundle(load_addr: *mut size_t, size: *mut size_t) -> *mut c_char;
+}
+
 /// Builds and starts a microVM based on the current Firecracker VmResources configuration.
 ///
 /// This is the default build recipe, one could build other microVM flavors by using the
@@ -260,14 +266,33 @@ pub fn build_microvm(
     // Timestamp for measuring microVM boot duration.
     let request_ts = TimestampUs::default();
 
+    let mut kernel_load_addr: usize = 0;
+    let mut kernel_size: usize = 0;
+    let kernel_addr = unsafe {
+        get_kernel_bundle(
+            &mut kernel_load_addr as *mut usize,
+            &mut kernel_size as *mut usize,
+        )
+    };
+    let kernel_region = MmapRegion {
+        addr: kernel_addr as *mut u8,
+        size: kernel_size,
+        file_offset: None,
+        prot: 0,
+        flags: 0,
+    };
+
     let guest_memory = create_guest_memory(
         vm_resources
             .vm_config()
             .mem_size_mib
             .ok_or(StartMicrovmError::MissingMemSizeConfig)?,
+        kernel_region,
+        kernel_load_addr,
+        kernel_size,
     )?;
     let vcpu_config = vm_resources.vcpu_config();
-    let entry_addr = load_kernel(boot_config, &guest_memory)?;
+
     let initrd = load_initrd_from_config(boot_config, &guest_memory)?;
     // Clone the command-line so that a failed boot doesn't pollute the original.
     #[allow(unused_mut)]
@@ -329,7 +354,7 @@ pub fn build_microvm(
             &vm,
             &vcpu_config,
             &guest_memory,
-            entry_addr,
+            GuestAddress(kernel_load_addr as u64),
             request_ts,
             &pio_device_manager.io_bus,
             &exit_evt,
@@ -347,7 +372,7 @@ pub fn build_microvm(
             &vm,
             &vcpu_config,
             &guest_memory,
-            entry_addr,
+            GuestAddress(kernel_load_addr as u64),
             request_ts,
             &exit_evt,
         )
@@ -402,28 +427,21 @@ pub fn build_microvm(
 /// Creates GuestMemory of `mem_size_mib` MiB in size.
 pub fn create_guest_memory(
     mem_size_mib: usize,
+    kernel_region: MmapRegion,
+    kernel_load_addr: usize,
+    kernel_size: usize,
 ) -> std::result::Result<GuestMemoryMmap, StartMicrovmError> {
     let mem_size = mem_size_mib << 20;
-    let arch_mem_regions = arch::arch_memory_regions(mem_size);
+    let arch_mem_regions = arch::arch_memory_regions(mem_size, kernel_load_addr, kernel_size);
 
     Ok(GuestMemoryMmap::from_ranges(&arch_mem_regions)
+        .and_then(|memory| {
+            memory.insert_region(Arc::new(GuestRegionMmap::new(
+                kernel_region,
+                GuestAddress(kernel_load_addr as u64),
+            )?))
+        })
         .map_err(StartMicrovmError::GuestMemoryMmap)?)
-}
-
-fn load_kernel(
-    boot_config: &BootConfig,
-    guest_memory: &GuestMemoryMmap,
-) -> std::result::Result<GuestAddress, StartMicrovmError> {
-    let mut kernel_file = boot_config
-        .kernel_file
-        .try_clone()
-        .map_err(|e| StartMicrovmError::Internal(Error::KernelFile(e)))?;
-
-    let entry_addr =
-        kernel::loader::load_kernel(guest_memory, &mut kernel_file, arch::get_kernel_start())
-            .map_err(StartMicrovmError::KernelLoader)?;
-
-    Ok(entry_addr)
 }
 
 fn load_initrd_from_config(
