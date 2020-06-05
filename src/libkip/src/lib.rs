@@ -16,7 +16,7 @@ use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
 const DEFAULT_KERNEL: &str = "/tmp/vmlinux.kip";
-const DEFAULT_INIT: &str = "/tmp/init.kip";
+const DEFAULT_INIT: &str = "/init.kip";
 
 #[repr(C)]
 pub struct KipConfig {

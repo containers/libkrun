@@ -28,6 +28,9 @@ const CURRENT_DIR_CSTR: &[u8] = b".\0";
 const PARENT_DIR_CSTR: &[u8] = b"..\0";
 const EMPTY_CSTR: &[u8] = b"\0";
 const PROC_CSTR: &[u8] = b"/proc/self/fd\0";
+const INIT_CSTR: &[u8] = b"init.kip\0";
+
+static INIT_BINARY: &[u8] = include_bytes!("../../../../../init/init");
 
 type Inode = u64;
 type Handle = u64;
@@ -272,11 +275,13 @@ pub struct PassthroughFs {
     // do with an fd opened with this flag.
     inodes: RwLock<MultikeyBTreeMap<Inode, InodeAltKey, Arc<InodeData>>>,
     next_inode: AtomicU64,
+    init_inode: u64,
 
     // File descriptors for open files and directories. Unlike the fds in `inodes`, these _can_ be
     // used for reading and writing data.
     handles: RwLock<BTreeMap<Handle, Arc<HandleData>>>,
     next_handle: AtomicU64,
+    init_handle: u64,
 
     // File descriptor pointing to the `/proc/self/fd` directory. This is used to convert an fd from
     // `inodes` into one that can go into `handles`. This is accomplished by reading the
@@ -319,10 +324,12 @@ impl PassthroughFs {
 
         Ok(PassthroughFs {
             inodes: RwLock::new(MultikeyBTreeMap::new()),
-            next_inode: AtomicU64::new(fuse::ROOT_ID + 1),
+            next_inode: AtomicU64::new(fuse::ROOT_ID + 2),
+            init_inode: fuse::ROOT_ID + 1,
 
             handles: RwLock::new(BTreeMap::new()),
-            next_handle: AtomicU64::new(0),
+            next_handle: AtomicU64::new(1),
+            init_handle: 0,
 
             proc_self_fd,
 
@@ -749,7 +756,25 @@ impl FileSystem for PassthroughFs {
     }
 
     fn lookup(&self, _ctx: Context, parent: Inode, name: &CStr) -> io::Result<Entry> {
-        self.do_lookup(parent, name)
+        debug!("do_lookup: {:?}", name);
+        let init_name = unsafe { CStr::from_bytes_with_nul_unchecked(INIT_CSTR) };
+
+        if self.init_inode != 0 && name == init_name {
+            let mut st: libc::stat64 = unsafe { mem::zeroed() };
+            st.st_size = INIT_BINARY.len() as i64;
+            st.st_ino = self.init_inode;
+            st.st_mode = 0o100_755;
+
+            Ok(Entry {
+                inode: self.init_inode,
+                generation: 0,
+                attr: st,
+                attr_timeout: self.cfg.attr_timeout,
+                entry_timeout: self.cfg.entry_timeout,
+            })
+        } else {
+            self.do_lookup(parent, name)
+        }
     }
 
     fn forget(&self, _ctx: Context, inode: Inode, count: u64) {
@@ -862,7 +887,11 @@ impl FileSystem for PassthroughFs {
         inode: Inode,
         flags: u32,
     ) -> io::Result<(Option<Handle>, OpenOptions)> {
-        self.do_open(inode, flags)
+        if inode == self.init_inode {
+            Ok((Some(self.init_handle), OpenOptions::empty()))
+        } else {
+            self.do_open(inode, flags)
+        }
     }
 
     fn release(
@@ -950,6 +979,10 @@ impl FileSystem for PassthroughFs {
         _flags: u32,
     ) -> io::Result<usize> {
         debug!("read: {:?}", inode);
+        if inode == self.init_inode {
+            return w.write(&INIT_BINARY[offset as usize..(offset + (size as u64)) as usize]);
+        }
+
         let data = self
             .handles
             .read()
