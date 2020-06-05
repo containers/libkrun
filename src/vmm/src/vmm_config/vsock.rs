@@ -83,6 +83,7 @@ impl VsockBuilder {
 
     /// Creates a Vsock device from a VsockDeviceConfig.
     pub fn create_unixsock_vsock(cfg: VsockDeviceConfig) -> Result<Vsock<VsockUnixBackend>> {
+        let _ = std::fs::remove_file(&cfg.uds_path);
         let backend = VsockUnixBackend::new(u64::from(cfg.guest_cid), cfg.uds_path)
             .map_err(VsockConfigError::CreateVsockBackend)?;
 
