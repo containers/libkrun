@@ -447,7 +447,7 @@ impl VsockMuxer {
                                 local_port,
                                 peer_port,
                             },
-                            MuxerConnection::new_local_init(
+                            MuxerConnection::new_local_wrap_init(
                                 Box::new(stream) as Box<dyn CommonStream>,
                                 uapi::VSOCK_HOST_CID,
                                 self.cid,
@@ -479,7 +479,7 @@ impl VsockMuxer {
                                 local_port,
                                 peer_port,
                             },
-                            MuxerConnection::new_local_init(
+                            MuxerConnection::new_local_wrap_init(
                                 Box::new(stream) as Box<dyn CommonStream>,
                                 uapi::VSOCK_HOST_CID,
                                 self.cid,

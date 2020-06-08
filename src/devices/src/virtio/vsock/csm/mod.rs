@@ -40,6 +40,8 @@ type Result<T> = std::result::Result<T, Error>;
 pub enum ConnState {
     /// The connection has been initiated by the host end, but is yet to be confirmed by the guest.
     LocalInit,
+    /// The connection has been initiated by the host end on a wrapped socket.
+    LocalWrapInit,
     /// The connection has been initiated by the guest, but we are yet to confirm it, by sending
     /// a response packet (VSOCK_OP_RESPONSE).
     PeerInit,

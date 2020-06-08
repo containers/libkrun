@@ -308,6 +308,11 @@ impl VsockChannel for VsockConnection {
                 self.state = ConnState::Established;
             }
 
+            ConnState::LocalWrapInit if pkt.op() == uapi::VSOCK_OP_RESPONSE => {
+                self.expiry = None;
+                self.state = ConnState::Established;
+            }
+
             // The peer wants to shut down an established connection.  If they have nothing
             // more to send nor receive, and we don't have to wait to drain our TX buffer, we
             // can schedule an RST packet (to terminate the connection on the next recv call).
@@ -491,6 +496,32 @@ impl VsockConnection {
             peer_port,
             stream,
             state: ConnState::LocalInit,
+            tx_buf: TxBuf::new(),
+            fwd_cnt: Wrapping(0),
+            peer_buf_alloc: 0,
+            peer_fwd_cnt: Wrapping(0),
+            rx_cnt: Wrapping(0),
+            last_fwd_cnt_to_peer: Wrapping(0),
+            pending_rx: PendingRxSet::from(PendingRx::Request),
+            expiry: None,
+        }
+    }
+
+    /// Create a new host-initiated connection object.
+    pub fn new_local_wrap_init(
+        stream: Box<dyn CommonStream>,
+        local_cid: u64,
+        peer_cid: u64,
+        local_port: u32,
+        peer_port: u32,
+    ) -> Self {
+        Self {
+            local_cid,
+            peer_cid,
+            local_port,
+            peer_port,
+            stream,
+            state: ConnState::LocalWrapInit,
             tx_buf: TxBuf::new(),
             fwd_cnt: Wrapping(0),
             peer_buf_alloc: 0,
