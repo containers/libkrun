@@ -74,6 +74,8 @@ enum PendingRx {
     Rw = 3,
     /// We need to yield a credit update packet (VSOCK_OP_CREDIT_UPDATE).
     CreditUpdate = 4,
+    /// We need to yield a connection request packet with extended parameters (VSOCK_OP_REQUEST_EX).
+    RequestEx = 5,
 }
 impl PendingRx {
     /// Transform the enum value into a bitmask, that can be used for set operations.

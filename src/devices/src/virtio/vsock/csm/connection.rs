@@ -85,6 +85,8 @@ use std::time::{Duration, Instant};
 
 use utils::epoll::EventSet;
 
+use libc::{getpeername, sockaddr, socklen_t};
+
 use super::super::defs::uapi;
 use super::super::packet::VsockPacket;
 use super::super::{Result as VsockResult, VsockChannel, VsockEpollListener, VsockError};
@@ -172,6 +174,23 @@ impl VsockChannel for VsockConnection {
             self.expiry =
                 Some(Instant::now() + Duration::from_millis(defs::CONN_REQUEST_TIMEOUT_MS));
             pkt.set_op(uapi::VSOCK_OP_REQUEST);
+            return Ok(());
+        }
+
+        if self.pending_rx.remove(PendingRx::RequestEx) {
+            self.expiry =
+                Some(Instant::now() + Duration::from_millis(defs::CONN_REQUEST_TIMEOUT_MS));
+
+            let fd = self.as_raw_fd();
+            let buf = pkt.buf_mut().ok_or(VsockError::PktBufMissing)?;
+            let mut len: socklen_t = buf.len() as u32;
+
+            let res = unsafe { getpeername(fd, buf.as_mut_ptr() as *mut sockaddr, &mut len as *mut socklen_t) };
+            if res != 0 {
+                return Err(VsockError::NoData); //TODO
+            }
+
+            pkt.set_op(uapi::VSOCK_OP_REQUEST_EX).set_len(len);
             return Ok(());
         }
 
@@ -528,7 +547,7 @@ impl VsockConnection {
             peer_fwd_cnt: Wrapping(0),
             rx_cnt: Wrapping(0),
             last_fwd_cnt_to_peer: Wrapping(0),
-            pending_rx: PendingRxSet::from(PendingRx::Request),
+            pending_rx: PendingRxSet::from(PendingRx::RequestEx),
             expiry: None,
         }
     }
