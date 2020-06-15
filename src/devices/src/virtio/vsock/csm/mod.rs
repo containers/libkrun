@@ -40,6 +40,8 @@ type Result<T> = std::result::Result<T, Error>;
 pub enum ConnState {
     /// The connection has been initiated by the host end, but is yet to be confirmed by the guest.
     LocalInit,
+    /// The connection has been initiated by the host end on a wrapped socket.
+    LocalWrapInit,
     /// The connection has been initiated by the guest, but we are yet to confirm it, by sending
     /// a response packet (VSOCK_OP_RESPONSE).
     PeerInit,
@@ -72,6 +74,8 @@ enum PendingRx {
     Rw = 3,
     /// We need to yield a credit update packet (VSOCK_OP_CREDIT_UPDATE).
     CreditUpdate = 4,
+    /// We need to yield a connection request packet with extended parameters (VSOCK_OP_REQUEST_EX).
+    RequestEx = 5,
 }
 impl PendingRx {
     /// Transform the enum value into a bitmask, that can be used for set operations.

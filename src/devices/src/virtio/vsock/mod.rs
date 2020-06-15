@@ -70,6 +70,10 @@ mod defs {
         pub const VSOCK_OP_CREDIT_REQUEST: u16 = 7;
         /// Connection request with extended parameters.
         pub const VSOCK_OP_REQUEST_EX: u16 = 8;
+        /// Listen request for wrapped socket with extended parameters.
+        pub const VSOCK_OP_WRAP_LISTEN: u16 = 9;
+        /// Close request for wrapped socket.
+        pub const VSOCK_OP_WRAP_CLOSE: u16 = 10;
 
         /// Vsock packet flags.
         /// Defined in `/include/uapi/linux/virtio_vsock.h`.
