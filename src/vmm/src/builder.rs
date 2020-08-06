@@ -23,6 +23,7 @@ use utils::eventfd::EventFd;
 use utils::terminal::Terminal;
 use utils::time::TimestampUs;
 use vm_memory::{mmap::GuestRegionMmap, mmap::MmapRegion, GuestAddress, GuestMemoryMmap};
+use vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
 use vmm_config::fs::FsBuilder;
 use vstate::{KvmContext, Vcpu, VcpuConfig, Vm};
 use {device_manager, VmmEventsObserver};
@@ -257,10 +258,6 @@ pub fn build_microvm(
     vm_resources: &super::resources::VmResources,
     event_manager: &mut EventManager,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
-    let boot_config = vm_resources
-        .boot_source()
-        .ok_or(StartMicrovmError::MissingKernelConfig)?;
-
     // Timestamp for measuring microVM boot duration.
     let request_ts = TimestampUs::default();
 
@@ -293,7 +290,11 @@ pub fn build_microvm(
 
     // Clone the command-line so that a failed boot doesn't pollute the original.
     #[allow(unused_mut)]
-    let mut kernel_cmdline = boot_config.cmdline.clone();
+    let mut kernel_cmdline = kernel::cmdline::Cmdline::new(arch::CMDLINE_MAX_SIZE);
+    match &vm_resources.boot_config.kernel_cmdline_prolog {
+        None => kernel_cmdline.insert_str(DEFAULT_KERNEL_CMDLINE).unwrap(),
+        Some(s) => kernel_cmdline.insert_str(s).unwrap(),
+    };
     let mut vm = setup_kvm_vm(&guest_memory)?;
 
     // On x86_64 always create a serial device,
@@ -402,6 +403,10 @@ pub fn build_microvm(
     if let Some(vsock) = vm_resources.vsock.get() {
         attach_unixsock_vsock_device(&mut vmm, vsock, event_manager)?;
     }
+
+    if let Some(s) = &vm_resources.boot_config.kernel_cmdline_epilog {
+        vmm.kernel_cmdline.insert_str(s).unwrap();
+    };
 
     // Write the kernel command line to guest memory. This is x86_64 specific, since on
     // aarch64 the command line will be specified through the FDT.

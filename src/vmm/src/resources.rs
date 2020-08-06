@@ -3,9 +3,7 @@
 
 //#![deny(warnings)]
 
-use vmm_config::boot_source::{
-    BootConfig, BootSourceConfig, BootSourceConfigError, DEFAULT_KERNEL_CMDLINE,
-};
+use vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
 use vmm_config::fs::*;
 use vmm_config::logger::LoggerConfigError;
 use vmm_config::machine_config::{VmConfig, VmConfigError};
@@ -38,7 +36,7 @@ pub struct VmResources {
     /// The vCpu and memory configuration for this microVM.
     vm_config: VmConfig,
     /// The boot configuration for this microVM.
-    boot_config: Option<BootConfig>,
+    pub boot_config: BootSourceConfig,
     /// The fs device.
     pub fs: FsBuilder,
     /// The vsock device.
@@ -101,28 +99,12 @@ impl VmResources {
         Ok(())
     }
 
-    /// Gets a reference to the boot source configuration.
-    pub fn boot_source(&self) -> Option<&BootConfig> {
-        self.boot_config.as_ref()
-    }
-
     /// Set the guest boot source configuration.
     pub fn set_boot_source(
         &mut self,
         boot_source_cfg: BootSourceConfig,
     ) -> Result<BootSourceConfigError> {
-        use self::BootSourceConfigError::InvalidKernelCommandLine;
-
-        let mut cmdline = kernel::cmdline::Cmdline::new(arch::CMDLINE_MAX_SIZE);
-        let boot_args = match boot_source_cfg.boot_args.as_ref() {
-            None => DEFAULT_KERNEL_CMDLINE,
-            Some(str) => str.as_str(),
-        };
-        cmdline
-            .insert_str(boot_args)
-            .map_err(|e| InvalidKernelCommandLine(e.to_string()))?;
-
-        self.boot_config = Some(BootConfig { cmdline });
+        self.boot_config = boot_source_cfg;
         Ok(())
     }
 

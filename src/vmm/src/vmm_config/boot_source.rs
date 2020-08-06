@@ -28,7 +28,8 @@ pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 pci=of
 pub struct BootSourceConfig {
     /// The boot arguments to pass to the kernel. If this field is uninitialized, the default
     /// kernel command line is used: `reboot=k panic=1 pci=off nomodules 8250.nr_uarts=0`.
-    pub boot_args: Option<String>,
+    pub kernel_cmdline_prolog: Option<String>,
+    pub kernel_cmdline_epilog: Option<String>,
 }
 
 /// Errors associated with actions on `BootSourceConfig`.

@@ -79,10 +79,11 @@ pub extern "C" fn kip_exec(config: &KipConfig) -> i32 {
     vm_resources.set_vm_config(&vm_config).unwrap();
 
     let mut boot_source = BootSourceConfig::default();
-    boot_source.boot_args = Some(format!(
-        "{} init={} KIP_INIT={} {} {}",
-        DEFAULT_KERNEL_CMDLINE, INIT_PATH, exec_path, env_line, args,
+    boot_source.kernel_cmdline_prolog = Some(format!(
+        "{} init={} KIP_INIT={} {}",
+        DEFAULT_KERNEL_CMDLINE, INIT_PATH, exec_path, env_line,
     ));
+    boot_source.kernel_cmdline_epilog = Some(format!(" -- {}", args));
     vm_resources.set_boot_source(boot_source).unwrap();
 
     let fs_device_config = FsDeviceConfig {
