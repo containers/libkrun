@@ -116,35 +116,3 @@ pub fn register_signal_handlers() -> utils::errno::Result<()> {
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use libc::{cpu_set_t, syscall};
-    use std::{convert::TryInto, mem, process, thread};
-
-    // This function is used when running unit tests, so all the unsafes are safe.
-    fn cpu_count() -> usize {
-        let mut cpuset: cpu_set_t = unsafe { mem::zeroed() };
-        unsafe {
-            libc::CPU_ZERO(&mut cpuset);
-        }
-        let ret = unsafe {
-            libc::sched_getaffinity(
-                0,
-                mem::size_of::<cpu_set_t>(),
-                &mut cpuset as *mut cpu_set_t,
-            )
-        };
-        assert_eq!(ret, 0);
-
-        let mut num = 0;
-        for i in 0..libc::CPU_SETSIZE as usize {
-            if unsafe { libc::CPU_ISSET(i, &cpuset) } {
-                num += 1;
-            }
-        }
-        num
-    }
-}

@@ -280,7 +280,7 @@ mod tests {
     use super::super::super::builder;
     use super::*;
     use arch;
-    use devices::virtio::{ActivateResult, Queue, VirtioDevice, TYPE_BLOCK};
+    use devices::virtio::{ActivateResult, Queue, VirtioDevice};
     use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
     use utils::errno;
@@ -305,23 +305,6 @@ mod tests {
             #[cfg(target_arch = "x86_64")]
             self.add_device_to_cmdline(cmdline, mmio_base, _irq)?;
             Ok(mmio_base)
-        }
-
-        fn update_drive(&self, device_id: &str, new_size: u64) -> Result<()> {
-            match self.get_device(DeviceType::Virtio(TYPE_BLOCK), device_id) {
-                Some(device) => {
-                    let data = devices::virtio::block::device::build_config_space(new_size);
-                    let mut busdev = device.lock().map_err(|_| Error::UpdateFailed)?;
-
-                    busdev.write(MMIO_CFG_SPACE_OFF, &data[..]);
-                    busdev
-                        .interrupt(devices::virtio::VIRTIO_MMIO_INT_CONFIG)
-                        .unwrap();
-
-                    Ok(())
-                }
-                None => Err(Error::DeviceNotFound),
-            }
         }
     }
 
@@ -526,29 +509,6 @@ mod tests {
             format!("{}", Error::RegisterIrqFd(errno::Error::new(0))),
             format!("failed to register irqfd: {}", errno::Error::new(0))
         );
-    }
-
-    #[test]
-    fn test_update_drive() {
-        let start_addr1 = GuestAddress(0x0);
-        let start_addr2 = GuestAddress(0x1000);
-        let guest_mem =
-            GuestMemoryMmap::from_ranges(&[(start_addr1, 0x1000), (start_addr2, 0x1000)]).unwrap();
-        let vm = builder::setup_kvm_vm(&guest_mem).unwrap();
-        let mut device_manager =
-            MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
-        let mut cmdline = kernel_cmdline::Cmdline::new(4096);
-        let dummy = Arc::new(Mutex::new(DummyDevice::new()));
-
-        if device_manager
-            .register_virtio_device(vm.fd(), guest_mem, dummy, &mut cmdline, TYPE_BLOCK, "foo")
-            .is_ok()
-        {
-            assert!(device_manager.update_drive("foo", 1_048_576).is_ok());
-        }
-        assert!(device_manager
-            .update_drive("invalid_id", 1_048_576)
-            .is_err());
     }
 
     #[test]

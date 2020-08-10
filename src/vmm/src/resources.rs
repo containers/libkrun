@@ -120,76 +120,26 @@ impl VmResources {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
-    use std::os::linux::fs::MetadataExt;
-
-    use super::*;
-    use logger::{LevelFilter, LOGGER};
     use resources::VmResources;
     use utils::tempfile::TempFile;
-    use vmm_config::boot_source::{BootConfig, BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
+    use vmm_config::boot_source::BootSourceConfig;
     use vmm_config::machine_config::{CpuFeaturesTemplate, VmConfig, VmConfigError};
-    use vmm_config::net::{NetBuilder, NetworkInterfaceConfig};
     use vmm_config::vsock::tests::{default_config, TempSockFile};
-    use vmm_config::RateLimiterConfig;
     use vstate::VcpuConfig;
 
-    fn default_net_cfg() -> NetworkInterfaceConfig {
-        NetworkInterfaceConfig {
-            iface_id: "net_if1".to_string(),
-            // TempFile::new_with_prefix("") generates a random file name used as random net_if name.
-            host_dev_name: TempFile::new_with_prefix("")
-                .unwrap()
-                .as_path()
-                .to_str()
-                .unwrap()
-                .to_string(),
-            guest_mac: Some(MacAddr::parse_str("01:23:45:67:89:0a").unwrap()),
-            allow_mmds_requests: false,
-        }
-    }
-
-    fn default_boot_cfg() -> BootConfig {
-        let mut kernel_cmdline = kernel::cmdline::Cmdline::new(4096);
-        kernel_cmdline.insert_str(DEFAULT_KERNEL_CMDLINE).unwrap();
-        let tmp_file = TempFile::new().unwrap();
-        BootConfig {
-            cmdline: kernel_cmdline,
-            kernel_file: Some(File::open(tmp_file.as_path()).unwrap()),
-            initrd_file: Some(File::open(tmp_file.as_path()).unwrap()),
+    fn default_boot_cfg() -> BootSourceConfig {
+        BootSourceConfig {
+            kernel_cmdline_prolog: None,
+            kernel_cmdline_epilog: None,
         }
     }
 
     fn default_vm_resources() -> VmResources {
         VmResources {
             vm_config: VmConfig::default(),
-            boot_config: Some(default_boot_cfg()),
-            block: default_blocks(),
+            boot_config: default_boot_cfg(),
+            fs: Default::default(),
             vsock: Default::default(),
-            net_builder: default_net_builder(),
-            mmds_config: None,
-        }
-    }
-
-    impl PartialEq for BootConfig {
-        fn eq(&self, other: &Self) -> bool {
-            self.cmdline.as_str().eq(other.cmdline.as_str())
-                && self.kernel_file.metadata().unwrap().st_ino()
-                    == other.kernel_file.metadata().unwrap().st_ino()
-                && self
-                    .initrd_file
-                    .as_ref()
-                    .unwrap()
-                    .metadata()
-                    .unwrap()
-                    .st_ino()
-                    == other
-                        .initrd_file
-                        .as_ref()
-                        .unwrap()
-                        .metadata()
-                        .unwrap()
-                        .st_ino()
         }
     }
 
@@ -250,70 +200,6 @@ mod tests {
     }
 
     #[test]
-    fn test_boot_config() {
-        let vm_resources = default_vm_resources();
-        let expected_boot_cfg = vm_resources.boot_config.as_ref().unwrap();
-        let actual_boot_cfg = vm_resources.boot_source().unwrap();
-
-        assert_eq!(actual_boot_cfg, expected_boot_cfg);
-    }
-
-    #[test]
-    fn test_set_boot_source() {
-        let tmp_file = TempFile::new().unwrap();
-        let cmdline = "reboot=k panic=1 pci=off nomodules 8250.nr_uarts=0";
-        let expected_boot_cfg = BootSourceConfig {
-            kernel_image_path: String::from(tmp_file.as_path().to_str().unwrap()),
-            initrd_path: Some(String::from(tmp_file.as_path().to_str().unwrap())),
-            boot_args: Some(cmdline.to_string()),
-        };
-
-        let mut vm_resources = default_vm_resources();
-        let boot_cfg = vm_resources.boot_source().unwrap();
-        let tmp_ino = tmp_file.as_file().metadata().unwrap().st_ino();
-
-        assert_ne!(boot_cfg.cmdline.as_str(), cmdline);
-        assert_ne!(boot_cfg.kernel_file.metadata().unwrap().st_ino(), tmp_ino);
-        assert_ne!(
-            boot_cfg
-                .initrd_file
-                .as_ref()
-                .unwrap()
-                .metadata()
-                .unwrap()
-                .st_ino(),
-            tmp_ino
-        );
-
-        vm_resources.set_boot_source(expected_boot_cfg).unwrap();
-        let boot_cfg = vm_resources.boot_source().unwrap();
-        assert_eq!(boot_cfg.cmdline.as_str(), cmdline);
-        assert_eq!(boot_cfg.kernel_file.metadata().unwrap().st_ino(), tmp_ino);
-        assert_eq!(
-            boot_cfg
-                .initrd_file
-                .as_ref()
-                .unwrap()
-                .metadata()
-                .unwrap()
-                .st_ino(),
-            tmp_ino
-        );
-    }
-
-    #[test]
-    fn test_set_block_device() {
-        let mut vm_resources = default_vm_resources();
-        let (mut new_block_device_cfg, _file) = default_block_cfg();
-        let tmp_file = TempFile::new().unwrap();
-        new_block_device_cfg.drive_id = "block2".to_string();
-        new_block_device_cfg.path_on_host = tmp_file.as_path().to_str().unwrap().to_string();
-        assert_eq!(vm_resources.block.list.len(), 1);
-        vm_resources.set_block_device(new_block_device_cfg).unwrap();
-        assert_eq!(vm_resources.block.list.len(), 2);
-    }
-
-    #[test]
     fn test_set_vsock_device() {
         let mut vm_resources = default_vm_resources();
         let tmp_sock_file = TempSockFile::new(TempFile::new().unwrap());
@@ -327,20 +213,5 @@ mod tests {
             actual_vsock_cfg.lock().unwrap().id(),
             &new_vsock_cfg.vsock_id
         );
-    }
-
-    #[test]
-    fn test_set_net_device() {
-        let mut vm_resources = default_vm_resources();
-
-        // Clone the existing net config in order to obtain a new one.
-        let mut new_net_device_cfg = default_net_cfg();
-        new_net_device_cfg.iface_id = "new_net_if".to_string();
-        new_net_device_cfg.guest_mac = Some(MacAddr::parse_str("01:23:45:67:89:0c").unwrap());
-        new_net_device_cfg.host_dev_name = "dummy_path2".to_string();
-        assert_eq!(vm_resources.net_builder.len(), 1);
-
-        vm_resources.build_net_device(new_net_device_cfg).unwrap();
-        assert_eq!(vm_resources.net_builder.len(), 2);
     }
 }

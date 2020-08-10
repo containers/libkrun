@@ -755,42 +755,15 @@ fn attach_balloon_device(
 
 #[cfg(test)]
 pub mod tests {
-    use std::io::Cursor;
-
     use super::*;
     use arch::DeviceType;
-    use devices::virtio::{TYPE_BLOCK, TYPE_VSOCK};
+    use devices::virtio::TYPE_VSOCK;
     use kernel::cmdline::Cmdline;
     use polly::event_manager::EventManager;
     use utils::tempfile::TempFile;
     use vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
-    use vmm_config::drive::BlockDeviceConfig;
-    use vmm_config::net::NetworkInterfaceConfig;
     use vmm_config::vsock::tests::{default_config, TempSockFile};
     use vmm_config::vsock::VsockBuilder;
-
-    struct CustomBlockConfig {
-        drive_id: String,
-        is_root_device: bool,
-        partuuid: Option<String>,
-        is_read_only: bool,
-    }
-
-    impl CustomBlockConfig {
-        fn new(
-            drive_id: String,
-            is_root_device: bool,
-            partuuid: Option<String>,
-            is_read_only: bool,
-        ) -> Self {
-            CustomBlockConfig {
-                drive_id,
-                is_root_device,
-                partuuid,
-                is_read_only,
-            }
-        }
-    }
 
     fn default_mmio_device_manager() -> MMIODeviceManager {
         MMIODeviceManager::new(
@@ -802,9 +775,9 @@ pub mod tests {
     #[cfg(target_arch = "x86_64")]
     fn default_portio_device_manager() -> PortIODeviceManager {
         PortIODeviceManager::new(
-            Arc::new(Mutex::new(Serial::new_sink(
+            Some(Arc::new(Mutex::new(Serial::new_sink(
                 EventFd::new(libc::EFD_NONBLOCK).unwrap(),
-            ))),
+            )))),
             EventFd::new(libc::EFD_NONBLOCK).unwrap(),
         )
         .unwrap()
@@ -816,8 +789,30 @@ pub mod tests {
         kernel_cmdline
     }
 
+    fn default_guest_memory(
+        mem_size_mib: usize,
+    ) -> std::result::Result<GuestMemoryMmap, StartMicrovmError> {
+        let mut kernel_load_addr: usize = 0;
+        let mut kernel_size: usize = 0;
+        let kernel_addr = unsafe {
+            get_kernel_bundle(
+                &mut kernel_load_addr as *mut usize,
+                &mut kernel_size as *mut usize,
+            )
+        };
+        let kernel_region = MmapRegion {
+            addr: kernel_addr as *mut u8,
+            size: kernel_size,
+            file_offset: None,
+            prot: 0,
+            flags: 0,
+        };
+
+        create_guest_memory(mem_size_mib, kernel_region, kernel_load_addr, kernel_size)
+    }
+
     fn default_vmm() -> Vmm {
-        let guest_memory = create_guest_memory(128).unwrap();
+        let guest_memory = default_guest_memory(128).unwrap();
         let kernel_cmdline = default_kernel_cmdline();
 
         let exit_evt = EventFd::new(libc::EFD_NONBLOCK)
@@ -830,7 +825,7 @@ pub mod tests {
         #[cfg(target_arch = "x86_64")]
         let pio_device_manager = default_portio_device_manager();
 
-        oVmm {
+        Vmm {
             //events_observer: Some(Box::new(SerialStdin::get())),
             guest_memory,
             kernel_cmdline,
@@ -841,66 +836,6 @@ pub mod tests {
             #[cfg(target_arch = "x86_64")]
             pio_device_manager,
         }
-    }
-
-    fn make_test_bin() -> Vec<u8> {
-        let mut fake_bin = Vec::new();
-        fake_bin.resize(1_000_000, 0xAA);
-        fake_bin
-    }
-
-    fn create_guest_mem_at(at: GuestAddress, size: usize) -> GuestMemoryMmap {
-        GuestMemoryMmap::from_ranges(&[(at, size)]).unwrap()
-    }
-
-    fn create_guest_mem_with_size(size: usize) -> GuestMemoryMmap {
-        create_guest_mem_at(GuestAddress(0x0), size)
-    }
-
-    #[test]
-    // Test that loading the initrd is successful on different archs.
-    fn test_load_initrd() {
-        use vm_memory::GuestMemory;
-        let image = make_test_bin();
-
-        let mem_size: usize = image.len() * 2 + arch::PAGE_SIZE;
-
-        #[cfg(target_arch = "x86_64")]
-        let gm = create_guest_mem_with_size(mem_size);
-
-        #[cfg(target_arch = "aarch64")]
-        let gm = create_guest_mem_with_size(mem_size + arch::aarch64::layout::FDT_MAX_SIZE);
-
-        let res = load_initrd(&gm, &mut Cursor::new(&image));
-        assert!(res.is_ok());
-        let initrd = res.unwrap();
-        assert!(gm.address_in_range(initrd.address));
-        assert_eq!(initrd.size, image.len());
-    }
-
-    #[test]
-    fn test_load_initrd_no_memory() {
-        let gm = create_guest_mem_with_size(79);
-        let image = make_test_bin();
-        let res = load_initrd(&gm, &mut Cursor::new(&image));
-        assert!(res.is_err());
-        assert_eq!(
-            StartMicrovmError::InitrdLoad.to_string(),
-            res.err().unwrap().to_string()
-        );
-    }
-
-    #[test]
-    fn test_load_initrd_unaligned() {
-        let image = vec![1, 2, 3, 4];
-        let gm = create_guest_mem_at(GuestAddress(arch::PAGE_SIZE as u64 + 1), image.len() * 2);
-
-        let res = load_initrd(&gm, &mut Cursor::new(&image));
-        assert!(res.is_err());
-        assert_eq!(
-            StartMicrovmError::InitrdLoad.to_string(),
-            res.err().unwrap().to_string()
-        );
     }
 
     #[test]
@@ -914,7 +849,7 @@ pub mod tests {
     fn test_create_vcpus_x86_64() {
         let vcpu_count = 2;
 
-        let guest_memory = create_guest_memory(128).unwrap();
+        let guest_memory = default_guest_memory(128).unwrap();
         let mut vm = setup_kvm_vm(&guest_memory).unwrap();
         setup_interrupt_controller(&mut vm).unwrap();
         let vcpu_config = VcpuConfig {
@@ -964,158 +899,6 @@ pub mod tests {
         )
         .unwrap();
         assert_eq!(vcpu_vec.len(), vcpu_count as usize);
-    }
-
-    #[test]
-    fn test_attach_net_devices() {
-        let mut event_manager = EventManager::new().expect("Unable to create EventManager");
-        let mut vmm = default_vmm();
-
-        #[cfg(target_arch = "x86_64")]
-        setup_interrupt_controller(&mut vmm.vm).unwrap();
-
-        #[cfg(target_arch = "aarch64")]
-        setup_interrupt_controller(&mut vmm.vm, 1).unwrap();
-
-        let network_interface = NetworkInterfaceConfig {
-            iface_id: String::from("netif"),
-            host_dev_name: String::from("hostname"),
-            guest_mac: None,
-            allow_mmds_requests: true,
-        };
-
-        let mut net_builder = NetBuilder::new();
-        net_builder.build(network_interface).unwrap();
-        assert!(attach_net_devices(&mut vmm, &net_builder, &mut event_manager).is_ok());
-
-        // We can not attach it once more.
-        assert!(attach_net_devices(&mut vmm, &net_builder, &mut event_manager).is_err());
-    }
-
-    #[test]
-    fn test_attach_block_devices() {
-        let mut event_manager = EventManager::new().expect("Unable to create EventManager");
-
-        // Use case 1: root block device is not specified through PARTUUID.
-        {
-            let drive_id = String::from("root");
-            let block_configs = vec![CustomBlockConfig::new(drive_id.clone(), true, None, true)];
-            let vmm = vmm_with_block_devices(&mut event_manager, block_configs);
-            assert!(vmm.kernel_cmdline.as_str().contains("root=/dev/vda ro"));
-            assert!(vmm
-                .mmio_device_manager
-                .get_device(DeviceType::Virtio(TYPE_BLOCK), drive_id.as_str())
-                .is_some());
-        }
-
-        // Use case 2: root block device is specified through PARTUUID.
-        {
-            let drive_id = String::from("root");
-            let block_configs = vec![CustomBlockConfig::new(
-                drive_id.clone(),
-                true,
-                Some("0eaa91a0-01".to_string()),
-                false,
-            )];
-            let vmm = vmm_with_block_devices(&mut event_manager, block_configs);
-            assert!(vmm
-                .kernel_cmdline
-                .as_str()
-                .contains("root=PARTUUID=0eaa91a0-01 rw"));
-            assert!(vmm
-                .mmio_device_manager
-                .get_device(DeviceType::Virtio(TYPE_BLOCK), drive_id.as_str())
-                .is_some());
-        }
-
-        // Use case 3: root block device is not added at all.
-        {
-            let drive_id = String::from("non_root");
-            let block_configs = vec![CustomBlockConfig::new(
-                drive_id.clone(),
-                false,
-                Some("0eaa91a0-01".to_string()),
-                false,
-            )];
-            let vmm = vmm_with_block_devices(&mut event_manager, block_configs);
-            assert!(!vmm.kernel_cmdline.as_str().contains("root=PARTUUID="));
-            assert!(!vmm.kernel_cmdline.as_str().contains("root=/dev/vda"));
-            assert!(vmm
-                .mmio_device_manager
-                .get_device(DeviceType::Virtio(TYPE_BLOCK), drive_id.as_str())
-                .is_some());
-        }
-
-        // Use case 4: rw root block device and other rw and ro drives.
-        {
-            let drive_configs = vec![
-                CustomBlockConfig::new(
-                    String::from("root"),
-                    true,
-                    Some("0eaa91a0-01".to_string()),
-                    false,
-                ),
-                CustomBlockConfig::new(String::from("secondary"), false, None, true),
-                CustomBlockConfig::new(String::from("third"), false, None, false),
-            ];
-            let vmm = vmm_with_block_devices(&mut event_manager, drive_configs);
-
-            assert!(vmm
-                .kernel_cmdline
-                .as_str()
-                .contains("root=PARTUUID=0eaa91a0-01 rw"));
-            assert!(vmm
-                .mmio_device_manager
-                .get_device(DeviceType::Virtio(TYPE_BLOCK), "root")
-                .is_some());
-            assert!(vmm
-                .mmio_device_manager
-                .get_device(DeviceType::Virtio(TYPE_BLOCK), "secondary")
-                .is_some());
-            assert!(vmm
-                .mmio_device_manager
-                .get_device(DeviceType::Virtio(TYPE_BLOCK), "third")
-                .is_some());
-
-            // Check if these three block devices are inserted in kernel_cmdline.
-            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            assert!(vmm
-                .kernel_cmdline
-                .as_str()
-                .contains("virtio_mmio.device=4K@0xd0000000:5 virtio_mmio.device=4K@0xd0001000:6 virtio_mmio.device=4K@0xd0002000:7"));
-        }
-
-        // Use case 5: root block device is rw.
-        {
-            let drive_id = String::from("root");
-            let block_configs = vec![CustomBlockConfig::new(drive_id.clone(), true, None, false)];
-            let vmm = vmm_with_block_devices(&mut event_manager, block_configs);
-            assert!(vmm.kernel_cmdline.as_str().contains("root=/dev/vda rw"));
-            assert!(vmm
-                .mmio_device_manager
-                .get_device(DeviceType::Virtio(TYPE_BLOCK), drive_id.as_str())
-                .is_some());
-        }
-
-        // Use case 6: root block device is ro, with PARTUUID.
-        {
-            let drive_id = String::from("root");
-            let block_configs = vec![CustomBlockConfig::new(
-                drive_id.clone(),
-                true,
-                Some("0eaa91a0-01".to_string()),
-                true,
-            )];
-            let vmm = vmm_with_block_devices(&mut event_manager, block_configs);
-            assert!(vmm
-                .kernel_cmdline
-                .as_str()
-                .contains("root=PARTUUID=0eaa91a0-01 ro"));
-            assert!(vmm
-                .mmio_device_manager
-                .get_device(DeviceType::Virtio(TYPE_BLOCK), drive_id.as_str())
-                .is_some());
-        }
     }
 
     #[test]

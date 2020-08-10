@@ -1306,13 +1306,9 @@ enum VcpuEmulation {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_arch = "x86_64")]
-    use std::convert::TryInto;
     use std::fs::File;
     #[cfg(target_arch = "x86_64")]
     use std::os::unix::io::AsRawFd;
-    #[cfg(target_arch = "x86_64")]
-    use std::path::PathBuf;
     #[cfg(target_arch = "x86_64")]
     use std::sync::mpsc;
     use std::sync::{Arc, Barrier};
@@ -1620,39 +1616,6 @@ mod tests {
     }
 
     #[cfg(target_arch = "x86_64")]
-    fn load_good_kernel(vm_memory: &GuestMemoryMmap) -> GuestAddress {
-        use vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
-
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let parent = path.parent().unwrap();
-
-        let kernel_path: PathBuf = [parent.to_str().unwrap(), "kernel/src/loader/test_elf.bin"]
-            .iter()
-            .collect();
-
-        let mut kernel_file = File::open(kernel_path).expect("Cannot open kernel file");
-        let mut cmdline = kernel::cmdline::Cmdline::new(arch::CMDLINE_MAX_SIZE);
-        assert!(cmdline.insert_str(DEFAULT_KERNEL_CMDLINE).is_ok());
-        let cmdline_addr = GuestAddress(arch::x86_64::layout::CMDLINE_START);
-
-        let entry_addr = kernel::loader::load_kernel(
-            vm_memory,
-            &mut kernel_file,
-            arch::x86_64::layout::HIMEM_START,
-        )
-        .expect("failed to load kernel");
-
-        kernel::loader::load_cmdline(
-            vm_memory,
-            cmdline_addr,
-            &cmdline.as_cstring().expect("failed to convert to cstring"),
-        )
-        .expect("failed to load cmdline");
-
-        entry_addr
-    }
-
-    #[cfg(target_arch = "x86_64")]
     // Sends an event to a vcpu and expects a particular response.
     fn queue_event_expect_response(handle: &VcpuHandle, event: VcpuEvent, response: VcpuResponse) {
         handle
@@ -1679,55 +1642,6 @@ mod tests {
                 .recv_timeout(Duration::from_millis(100)),
             Err(mpsc::RecvTimeoutError::Timeout)
         );
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn test_vcpu_pause_resume() {
-        Vcpu::register_kick_signal_handler();
-        // Need enough mem to boot linux.
-        let mem_size = 64 << 20;
-        let (_vm, mut vcpu, vm_mem) = setup_vcpu(mem_size);
-
-        let vcpu_exit_evt = vcpu.exit_evt.try_clone().unwrap();
-
-        // Needs a kernel since we'll actually run this vcpu.
-        let entry_addr = load_good_kernel(&vm_mem);
-
-        let vcpu_config = VcpuConfig {
-            vcpu_count: 1,
-            ht_enabled: false,
-            cpu_template: None,
-        };
-        vcpu.configure_x86_64(&vm_mem, entry_addr, &vcpu_config)
-            .expect("failed to configure vcpu");
-
-        let vcpu_handle = vcpu.start_threaded().expect("failed to start vcpu");
-
-        // Queue a Resume event, expect a response.
-        queue_event_expect_response(&vcpu_handle, VcpuEvent::Resume, VcpuResponse::Resumed);
-
-        // Queue a Pause event, expect a response.
-        queue_event_expect_response(&vcpu_handle, VcpuEvent::Pause, VcpuResponse::Paused);
-
-        // Validate vcpu handled the EINTR gracefully and didn't exit.
-        let err = vcpu_exit_evt.read().unwrap_err();
-        assert_eq!(err.raw_os_error().unwrap(), libc::EAGAIN);
-
-        // Queue another Pause event, expect no answer.
-        queue_event_expect_timeout(&vcpu_handle, VcpuEvent::Pause);
-
-        // Queue a Resume event, expect a response.
-        queue_event_expect_response(&vcpu_handle, VcpuEvent::Resume, VcpuResponse::Resumed);
-
-        // Queue another Resume event, expect a response.
-        queue_event_expect_response(&vcpu_handle, VcpuEvent::Resume, VcpuResponse::Resumed);
-
-        // Queue another Pause event, expect a response.
-        queue_event_expect_response(&vcpu_handle, VcpuEvent::Pause, VcpuResponse::Paused);
-
-        // Queue a Resume event, expect a response.
-        queue_event_expect_response(&vcpu_handle, VcpuEvent::Resume, VcpuResponse::Resumed);
     }
 
     #[test]
