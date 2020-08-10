@@ -91,126 +91,12 @@ pub fn load_cmdline(
 mod tests {
     use super::super::cmdline::Cmdline;
     use super::*;
-    use std::io::Cursor;
     use vm_memory::{GuestAddress, GuestMemoryMmap};
 
     const MEM_SIZE: usize = 0x18_0000;
 
     fn create_guest_mem() -> GuestMemoryMmap {
         GuestMemoryMmap::from_ranges(&[(GuestAddress(0x0), MEM_SIZE)]).unwrap()
-    }
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    fn make_test_bin() -> Vec<u8> {
-        include_bytes!("test_elf.bin").to_vec()
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    fn make_test_bin() -> Vec<u8> {
-        include_bytes!("test_pe.bin").to_vec()
-    }
-
-    #[test]
-    // Tests that loading the kernel is successful on different archs.
-    fn test_load_kernel() {
-        let gm = create_guest_mem();
-        let image = make_test_bin();
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        let load_addr = 0x10_0000;
-        #[cfg(target_arch = "aarch64")]
-        let load_addr = 0x8_0000;
-        assert_eq!(
-            Ok(GuestAddress(load_addr)),
-            load_kernel(&gm, &mut Cursor::new(&image), 0)
-        );
-    }
-
-    #[test]
-    fn test_load_kernel_no_memory() {
-        let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0x0), 79)]).unwrap();
-        let image = make_test_bin();
-        assert_eq!(
-            Err(Error::ReadKernelImage),
-            load_kernel(&gm, &mut Cursor::new(&image), 0)
-        );
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    #[test]
-    fn test_load_bad_kernel() {
-        let gm = create_guest_mem();
-        let mut bad_image = make_test_bin();
-        bad_image.truncate(56);
-        assert_eq!(
-            Err(Error::ReadKernelDataStruct("Failed to read magic number")),
-            load_kernel(&gm, &mut Cursor::new(&bad_image), 0)
-        );
-    }
-
-    #[test]
-    fn test_bad_kernel_magic() {
-        let gm = create_guest_mem();
-        let mut bad_image = make_test_bin();
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        let offset = 0x1;
-        #[cfg(target_arch = "aarch64")]
-        let offset = 0x38;
-        bad_image[offset] = 0x33;
-        assert_eq!(
-            Err(Error::InvalidElfMagicNumber),
-            load_kernel(&gm, &mut Cursor::new(&bad_image), 0)
-        );
-    }
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    #[test]
-    fn test_bad_kernel_endian() {
-        // Only little endian is supported.
-        let gm = create_guest_mem();
-        let mut bad_image = make_test_bin();
-        bad_image[0x5] = 2;
-        assert_eq!(
-            Err(Error::BigEndianElfOnLittle),
-            load_kernel(&gm, &mut Cursor::new(&bad_image), 0)
-        );
-    }
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    #[test]
-    fn test_bad_kernel_phsize() {
-        // program header has to be past the end of the elf header
-        let gm = create_guest_mem();
-        let mut bad_image = make_test_bin();
-        bad_image[0x36] = 0x10;
-        assert_eq!(
-            Err(Error::InvalidProgramHeaderSize),
-            load_kernel(&gm, &mut Cursor::new(&bad_image), 0)
-        );
-    }
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    #[test]
-    fn test_bad_kernel_phoff() {
-        // program header has to be past the end of the elf header
-        let gm = create_guest_mem();
-        let mut bad_image = make_test_bin();
-        bad_image[0x20] = 0x10;
-        assert_eq!(
-            Err(Error::InvalidProgramHeaderOffset),
-            load_kernel(&gm, &mut Cursor::new(&bad_image), 0)
-        );
-    }
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    #[test]
-    fn test_bad_kernel_invalid_entry() {
-        // program header has to be past the end of the elf header
-        let gm = create_guest_mem();
-        let bad_image = make_test_bin();
-        assert_eq!(
-            Err(Error::InvalidEntryAddress),
-            load_kernel(&gm, &mut Cursor::new(&bad_image), std::u64::MAX)
-        );
     }
 
     #[test]
