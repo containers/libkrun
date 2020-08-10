@@ -56,7 +56,9 @@ pub enum ConnState {
     Killed,
 }
 
-pub trait CommonStream: std::io::Read + std::io::Write + std::os::unix::io::AsRawFd + Send {}
+pub trait CommonStream: std::io::Read + std::io::Write + std::os::unix::io::AsRawFd + Send {
+    fn get_write_buf(&self) -> Option<Vec<u8>>;
+}
 
 /// An RX indication, used by `VsockConnection` to schedule future `recv_pkt()` responses.
 /// For instance, after being notified that there is available data to be read from the host stream

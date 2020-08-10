@@ -185,7 +185,13 @@ impl VsockChannel for VsockConnection {
             let buf = pkt.buf_mut().ok_or(VsockError::PktBufMissing)?;
             let mut len: socklen_t = buf.len() as u32;
 
-            let res = unsafe { getpeername(fd, buf.as_mut_ptr() as *mut sockaddr, &mut len as *mut socklen_t) };
+            let res = unsafe {
+                getpeername(
+                    fd,
+                    buf.as_mut_ptr() as *mut sockaddr,
+                    &mut len as *mut socklen_t,
+                )
+            };
             if res != 0 {
                 return Err(VsockError::NoData); //TODO
             }
@@ -756,6 +762,12 @@ mod tests {
         }
     }
 
+    impl CommonStream for TestStream {
+        fn get_write_buf(&self) -> Option<Vec<u8>> {
+            Some(self.write_buf.clone())
+        }
+    }
+
     fn init_pkt(pkt: &mut VsockPacket, op: u16, len: u32) -> &mut VsockPacket {
         for b in pkt.hdr_mut() {
             *b = 0;
@@ -782,7 +794,7 @@ mod tests {
     struct CsmTestContext {
         _vsock_test_ctx: TestContext,
         pkt: VsockPacket,
-        conn: VsockConnection<TestStream>,
+        conn: VsockConnection,
     }
 
     impl CsmTestContext {
@@ -801,20 +813,24 @@ mod tests {
             )
             .unwrap();
             let conn = match conn_state {
-                ConnState::PeerInit => VsockConnection::<TestStream>::new_peer_init(
-                    stream,
+                ConnState::PeerInit => VsockConnection::new_peer_init(
+                    Box::new(stream),
                     LOCAL_CID,
                     PEER_CID,
                     LOCAL_PORT,
                     PEER_PORT,
                     PEER_BUF_ALLOC,
                 ),
-                ConnState::LocalInit => VsockConnection::<TestStream>::new_local_init(
-                    stream, LOCAL_CID, PEER_CID, LOCAL_PORT, PEER_PORT,
+                ConnState::LocalInit => VsockConnection::new_local_init(
+                    Box::new(stream),
+                    LOCAL_CID,
+                    PEER_CID,
+                    LOCAL_PORT,
+                    PEER_PORT,
                 ),
                 ConnState::Established => {
-                    let mut conn = VsockConnection::<TestStream>::new_peer_init(
-                        stream,
+                    let mut conn = VsockConnection::new_peer_init(
+                        Box::new(stream),
                         LOCAL_CID,
                         PEER_CID,
                         LOCAL_PORT,
@@ -837,7 +853,7 @@ mod tests {
         }
 
         fn set_stream(&mut self, stream: TestStream) {
-            self.conn.stream = stream;
+            self.conn.stream = Box::new(stream);
         }
 
         fn set_peer_credit(&mut self, credit: u32) {
@@ -1013,7 +1029,7 @@ mod tests {
 
             ctx.init_data_pkt(data);
             ctx.send();
-            assert_eq!(ctx.conn.stream.write_buf.len(), 0);
+            assert_eq!(ctx.conn.stream.get_write_buf().unwrap().len(), 0);
             assert!(ctx.conn.tx_buf.is_empty());
         }
 
@@ -1028,7 +1044,7 @@ mod tests {
             let data = &[1, 2, 3, 4];
             ctx.init_data_pkt(data);
             ctx.send();
-            assert_eq!(ctx.conn.stream.write_buf, data.to_vec());
+            assert_eq!(ctx.conn.stream.get_write_buf().unwrap(), data);
 
             ctx.notify_epollin();
             ctx.recv();
@@ -1133,7 +1149,7 @@ mod tests {
             ctx.set_stream(TestStream::new());
             ctx.conn.notify(EventSet::OUT);
             assert!(ctx.conn.tx_buf.is_empty());
-            assert_eq!(ctx.conn.stream.write_buf, data);
+            assert_eq!(ctx.conn.stream.get_write_buf().unwrap(), data);
         }
     }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
+use libc::unlink;
 /// `VsockMuxer` is the device-facing component of the Unix domain sockets vsock backend. I.e.
 /// by implementing the `VsockBackend` trait, it abstracts away the gory details of translating
 /// between AF_VSOCK and AF_UNIX, and presents a clean interface to the rest of the vsock
@@ -36,7 +37,6 @@ use std::net::Ipv4Addr;
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
-use libc::unlink;
 
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 
@@ -52,8 +52,16 @@ use super::muxer_rxq::MuxerRxQ;
 use super::MuxerConnection;
 use super::{Error, Result};
 
-impl CommonStream for UnixStream {}
-impl CommonStream for TcpStream {}
+impl CommonStream for UnixStream {
+    fn get_write_buf(&self) -> Option<Vec<u8>> {
+        None
+    }
+}
+impl CommonStream for TcpStream {
+    fn get_write_buf(&self) -> Option<Vec<u8>> {
+        None
+    }
+}
 
 /// A unique identifier of a `MuxerConnection` object. Connections are stored in a hash map,
 /// keyed by a `ConnMapKey` object.
@@ -77,11 +85,20 @@ enum EpollListener {
     /// The listener is a `MuxerConnection`, identified by `key`, and interested in the events
     /// in `evset`. Since `MuxerConnection` implements `VsockEpollListener`, notifications will
     /// be forwarded to the listener via `VsockEpollListener::notify()`.
-    Connection { key: ConnMapKey, evset: EventSet },
+    Connection {
+        key: ConnMapKey,
+        evset: EventSet,
+    },
 
-    WrapUnix { port: u32, listener: UnixListener},
+    WrapUnix {
+        port: u32,
+        listener: UnixListener,
+    },
 
-    WrapTcp { port: u32, listener: TcpListener},
+    WrapTcp {
+        port: u32,
+        listener: TcpListener,
+    },
 
     /// A listener interested in new host-initiated connections.
     HostSock,
@@ -433,7 +450,8 @@ impl VsockMuxer {
 
                 debug!("WrapTcp: peer_port {}", peer_port);
 
-                listener.accept()
+                listener
+                    .accept()
                     .map_err(Error::UnixAccept)
                     .and_then(|(stream, _)| {
                         stream
@@ -465,7 +483,8 @@ impl VsockMuxer {
             Some(EpollListener::WrapUnix { port, listener }) => {
                 let peer_port = *port;
 
-                listener.accept()
+                listener
+                    .accept()
                     .map_err(Error::UnixAccept)
                     .and_then(|(stream, _)| {
                         stream
@@ -609,8 +628,8 @@ impl VsockMuxer {
     fn add_listener(&mut self, fd: RawFd, listener: EpollListener) -> Result<()> {
         let evset = match listener {
             EpollListener::Connection { evset, .. } => evset,
-            EpollListener::WrapUnix{ .. } => EventSet::IN,
-            EpollListener::WrapTcp{ .. } => EventSet::IN,
+            EpollListener::WrapUnix { .. } => EventSet::IN,
+            EpollListener::WrapTcp { .. } => EventSet::IN,
             EpollListener::LocalStream(_) => EventSet::IN,
             EpollListener::HostSock => EventSet::IN,
         };
@@ -777,11 +796,13 @@ impl VsockMuxer {
                     .map_err(Error::WrapTcpBind)
                     .and_then(|sock| {
                         let fd = sock.as_raw_fd();
-                        self.add_listener(fd,
+                        self.add_listener(
+                            fd,
                             EpollListener::WrapTcp {
                                 port: pkt.src_port(),
-                                listener: sock
-                            })?;
+                                listener: sock,
+                            },
+                        )?;
                         self.wrap_map.insert(pkt.src_port(), fd);
                         Ok(())
                     })
@@ -801,11 +822,13 @@ impl VsockMuxer {
                     .map_err(Error::WrapUnixBind)
                     .and_then(|sock| {
                         let fd = sock.as_raw_fd();
-                        self.add_listener(fd,
+                        self.add_listener(
+                            fd,
                             EpollListener::WrapUnix {
                                 port: pkt.src_port(),
-                                listener: sock
-                            })?;
+                                listener: sock,
+                            },
+                        )?;
                         self.wrap_map.insert(pkt.src_port(), fd);
                         Ok(())
                     })
