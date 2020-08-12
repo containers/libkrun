@@ -269,13 +269,7 @@ pub fn build_microvm(
             &mut kernel_size as *mut usize,
         )
     };
-    let kernel_region = MmapRegion {
-        addr: kernel_addr as *mut u8,
-        size: kernel_size,
-        file_offset: None,
-        prot: 0,
-        flags: 0,
-    };
+    let kernel_region = unsafe { MmapRegion::build_raw(kernel_addr as *mut u8, kernel_size, 0, 0) };
 
     let guest_memory = create_guest_memory(
         vm_resources
@@ -800,13 +794,8 @@ pub mod tests {
                 &mut kernel_size as *mut usize,
             )
         };
-        let kernel_region = MmapRegion {
-            addr: kernel_addr as *mut u8,
-            size: kernel_size,
-            file_offset: None,
-            prot: 0,
-            flags: 0,
-        };
+        let kernel_region =
+            unsafe { MmapRegion::build_raw(kernel_addr as *mut u8, kernel_size, 0, 0) };
 
         create_guest_memory(mem_size_mib, kernel_region, kernel_load_addr, kernel_size)
     }
