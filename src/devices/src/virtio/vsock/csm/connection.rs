@@ -148,6 +148,7 @@ impl VsockChannel for VsockConnection {
     ///    packet;
     /// - `Err(VsockError::PktBufMissing)`: the packet would've been filled in with data, but
     ///    it is missing the data buffer.
+    #[allow(clippy::cast_ptr_alignment)]
     fn recv_pkt(&mut self, pkt: &mut VsockPacket) -> VsockResult<()> {
         // Perform some generic initialization that is the same for any packet operation (e.g.
         // source, destination, credit, etc).
