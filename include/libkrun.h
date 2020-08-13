@@ -1,6 +1,6 @@
 #include <inttypes.h>
 
-struct KipConfig {
+struct krun_config {
     /* Verbosity of the library, from 0=Off to 5=Trace. */
     uint8_t log_level;
     /* Number of vCPUs for the VM. */
@@ -20,4 +20,4 @@ struct KipConfig {
     const char *env_line;
 };
 
-int kip_exec(struct KipConfig *config);
+int krun_exec(struct krun_config *config);

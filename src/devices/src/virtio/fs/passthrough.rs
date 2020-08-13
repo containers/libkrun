@@ -28,7 +28,7 @@ const CURRENT_DIR_CSTR: &[u8] = b".\0";
 const PARENT_DIR_CSTR: &[u8] = b"..\0";
 const EMPTY_CSTR: &[u8] = b"\0";
 const PROC_CSTR: &[u8] = b"/proc/self/fd\0";
-const INIT_CSTR: &[u8] = b"init.kip\0";
+const INIT_CSTR: &[u8] = b"init.krun\0";
 
 static INIT_BINARY: &[u8] = include_bytes!("../../../../../init/init");
 

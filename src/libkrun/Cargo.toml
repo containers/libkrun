@@ -1,5 +1,5 @@
 [package]
-name = "libkip"
+name = "libkrun"
 version = "0.1.0"
 authors = ["Sergio Lopez <slp@redhat.com>"]
 edition = "2018"
@@ -17,5 +17,5 @@ vmm = { path = "../vmm" }
 cc = "1.0"
 
 [lib]
-name = "kip"
+name = "krun"
 crate-type = ["cdylib"]

@@ -104,7 +104,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99e85c08494b21a9054e7fe1374a732aeadaff3980b6990b94bfd3a70f690005"
 
 [[package]]
-name = "libkip"
+name = "libkrun"
 version = "0.1.0"
 dependencies = [
  "cc",

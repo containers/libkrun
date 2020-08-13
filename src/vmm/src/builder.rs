@@ -242,7 +242,7 @@ impl VmmEventsObserver for SerialStdin {
     }
 }
 
-#[link(name = "kipfw")]
+#[link(name = "krunfw")]
 extern "C" {
     fn get_kernel_bundle(load_addr: *mut size_t, size: *mut size_t) -> *mut c_char;
 }

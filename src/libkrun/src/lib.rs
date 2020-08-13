@@ -15,7 +15,7 @@ use vmm::vmm_config::fs::FsDeviceConfig;
 use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
-const INIT_PATH: &str = "/init.kip";
+const INIT_PATH: &str = "/init.krun";
 
 #[repr(C)]
 pub struct KipConfig {
@@ -29,7 +29,7 @@ pub struct KipConfig {
 }
 
 #[no_mangle]
-pub extern "C" fn kip_exec(config: &KipConfig) -> i32 {
+pub extern "C" fn krun_exec(config: &KipConfig) -> i32 {
     let log_level = match config.log_level {
         0 => LevelFilter::Off,
         1 => LevelFilter::Error,
@@ -41,7 +41,7 @@ pub extern "C" fn kip_exec(config: &KipConfig) -> i32 {
 
     LOGGER
         .set_max_level(log_level)
-        .configure(Some(format!("libkip-{}", process::id())))
+        .configure(Some(format!("libkrun-{}", process::id())))
         .expect("Failed to register logger");
 
     let root_dir = unsafe { CStr::from_ptr(config.root_dir).to_str().unwrap() };
@@ -80,7 +80,7 @@ pub extern "C" fn kip_exec(config: &KipConfig) -> i32 {
 
     let mut boot_source = BootSourceConfig::default();
     boot_source.kernel_cmdline_prolog = Some(format!(
-        "{} init={} KIP_INIT={} {}",
+        "{} init={} KRUN_INIT={} {}",
         DEFAULT_KERNEL_CMDLINE, INIT_PATH, exec_path, env_line,
     ));
     boot_source.kernel_cmdline_epilog = Some(format!(" -- {}", args));

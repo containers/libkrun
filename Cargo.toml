@@ -1,5 +1,5 @@
 [workspace]
-members = ["src/libkip"]
+members = ["src/libkrun"]
 
 [profile.dev]
 #panic = "abort"

@@ -7,12 +7,12 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-char DEFAULT_KIP_INIT[] = "/bin/sh";
+char DEFAULT_KRUN_INIT[] = "/bin/sh";
 
 int main(int argc, char **argv)
 {
     char *hostname;
-    char *kip_init;
+    char *krun_init;
 
     if (mount("proc", "/proc", "proc",
               MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
@@ -45,14 +45,11 @@ int main(int argc, char **argv)
     setsid();
     ioctl(0, TIOCSCTTY, 1);
 
-    kip_init = getenv("KIP_INIT");
-    if (!kip_init) {
-        kip_init = &DEFAULT_KIP_INIT[0];
+    krun_init = getenv("KRUN_INIT");
+    if (!krun_init) {
+        krun_init = &DEFAULT_KRUN_INIT[0];
     }
-    argv[0] = kip_init;
-
-    unlink("/tmp/vmlinux.kip");
-    unlink("/tmp/init.kip");
+    argv[0] = krun_init;
 
     execv(argv[0], argv);
 
