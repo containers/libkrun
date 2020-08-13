@@ -7,3 +7,4 @@ __pycache__
 *.pyc
 *~
 init/init
+examples/chroot_vm
