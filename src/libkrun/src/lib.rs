@@ -19,6 +19,7 @@ const INIT_PATH: &str = "/init.krun";
 
 #[repr(C)]
 pub struct KipConfig {
+    config_size: usize,
     log_level: u8,
     num_vcpus: u8,
     ram_mib: u32,
@@ -43,6 +44,13 @@ pub extern "C" fn krun_exec(config: &KipConfig) -> i32 {
         .set_max_level(log_level)
         .configure(Some(format!("libkrun-{}", process::id())))
         .expect("Failed to register logger");
+
+    if config.config_size != std::mem::size_of::<KipConfig>() {
+        println!(
+            "Invalid configuration, the specified struct size is invalid"
+        );
+        process::exit(i32::from(vmm::FC_EXIT_CODE_BAD_CONFIGURATION));
+    }
 
     let root_dir = unsafe { CStr::from_ptr(config.root_dir).to_str().unwrap() };
     let exec_path = unsafe { CStr::from_ptr(config.exec_path).to_str().unwrap() };
