@@ -27,6 +27,8 @@ int main(int argc, void **argv)
 
     memset(&config, 0,  sizeof(config));
 
+    // Set the size of the config struct known at build time.
+    config.config_size = sizeof(config);
     // Set the krun's verbosity to the minimum.
     config.log_level = 0;
     // Request a single vCPU.

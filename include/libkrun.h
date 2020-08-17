@@ -1,6 +1,8 @@
 #include <inttypes.h>
 
 struct krun_config {
+    /* Size of the krun_config struct. */
+    size_t config_size;
     /* Verbosity of the library, from 0=Off to 5=Trace. */
     uint8_t log_level;
     /* Number of vCPUs for the VM. */
