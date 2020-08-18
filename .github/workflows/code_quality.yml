@@ -1,0 +1,30 @@
+name: Code Quality (rustfmt and clippy)
+on: [pull_request, create]
+
+jobs:
+  build:
+    if: github.event_name == 'pull_request'
+    name: Code Quality (clippy, rustfmt)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+        target:
+          - x86_64-unknown-linux-gnu
+    steps:
+      - name: Code checkout
+        uses: actions/checkout@v2
+      - name: Install Rust toolchain (${{ matrix.rust }})
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: ${{ matrix.rust }}
+            target: ${{ matrix.target }}
+            override: true
+            components: rustfmt, clippy
+      
+      - name: Formatting (rustfmt)
+        run: cargo fmt -- --check
+
+      - name: Clippy (all features)
+        run: cargo clippy --all-targets --all-features
