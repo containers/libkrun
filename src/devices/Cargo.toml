@@ -8,7 +8,7 @@ edition = "2018"
 bitflags = "1.2.0"
 libc = ">=0.2.39"
 logger = { path = "../logger" }
-vm-memory = { git = "https://github.com/libkrun/vm-memory", features = ["backend-mmap"] }
+vm-memory = { git = "https://github.com/containers/vm-memory", features = ["backend-mmap"] }
 utils = { path = "../utils" }
 polly = { path = "../polly" }
 virtio_gen = { path = "../virtio_gen" }

@@ -10,7 +10,7 @@ libc = ">=0.2.39"
 utils = { path = "../utils" }
 
 arch_gen = { path = "../arch_gen" }
-vm-memory = { git = "https://github.com/libkrun/vm-memory", features = ["backend-mmap"] }
+vm-memory = { git = "https://github.com/containers/vm-memory", features = ["backend-mmap"] }
 
 [dev-dependencies]
 utils = { path = "../utils" }

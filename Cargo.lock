@@ -159,7 +159,7 @@ version = "0.1.0"
 [[package]]
 name = "vm-memory"
 version = "0.2.0"
-source = "git+https://github.com/libkrun/vm-memory#2a6da794f19f05ae6697ef9d5b50fb03d72cde40"
+source = "git+https://github.com/containers/vm-memory#2a6da794f19f05ae6697ef9d5b50fb03d72cde40"
 dependencies = [
  "libc",
  "winapi",
