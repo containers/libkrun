@@ -18,7 +18,7 @@ use vmm::vmm_config::vsock::VsockDeviceConfig;
 const INIT_PATH: &str = "/init.krun";
 
 #[repr(C)]
-pub struct KipConfig {
+pub struct KrunConfig {
     config_size: usize,
     log_level: u8,
     num_vcpus: u8,
@@ -30,7 +30,7 @@ pub struct KipConfig {
 }
 
 #[no_mangle]
-pub extern "C" fn krun_exec(config: &KipConfig) -> i32 {
+pub extern "C" fn krun_exec(config: &KrunConfig) -> i32 {
     let log_level = match config.log_level {
         0 => LevelFilter::Off,
         1 => LevelFilter::Error,
@@ -45,10 +45,8 @@ pub extern "C" fn krun_exec(config: &KipConfig) -> i32 {
         .configure(Some(format!("libkrun-{}", process::id())))
         .expect("Failed to register logger");
 
-    if config.config_size != std::mem::size_of::<KipConfig>() {
-        println!(
-            "Invalid configuration, the specified struct size is invalid"
-        );
+    if config.config_size != std::mem::size_of::<KrunConfig>() {
+        println!("Invalid configuration, the specified struct size is invalid");
         process::exit(i32::from(vmm::FC_EXIT_CODE_BAD_CONFIGURATION));
     }
 
