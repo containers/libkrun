@@ -39,7 +39,7 @@ It integrates a VMM (Virtual Machine Monitor, the userspace side of an Hyperviso
 
 In ```libkrun```, networking is implemented using a novel technique called **socket-to-vsock impersonation**. This allows the VM to have network connectivity without a virtual interface (hence, ```virtio-net``` is not among the list of supported devices).
 
-The current implementation of this technique, found part in this repository and the other part in the kernel patches included with [libkrunfw](https://github.com/libkrun/libkrunfw) is just a **proof-of-concept**. It's limited to IPv4 TCP and UNIX connections, only supports recv/send operations, and the implementation itself is still quite hacky. We expect this technique to mature within ```libkrun```, so it can be eventually upstreamed into the Linux kernel and other VMMs.
+The current implementation of this technique, found part in this repository and the other part in the kernel patches included with [libkrunfw](https://github.com/containers/libkrunfw) is just a **proof-of-concept**. It's limited to IPv4 TCP and UNIX connections, only supports recv/send operations, and the implementation itself is still quite hacky. We expect this technique to mature within ```libkrun```, so it can be eventually upstreamed into the Linux kernel and other VMMs.
 
 #### DNS resolutions issues
 
@@ -53,7 +53,7 @@ options use-vc
 
 ### Requirements
 
-* [libkrunfw](https://github.com/libkrun/libkrunfw)
+* [libkrunfw](https://github.com/containers/libkrunfw)
 * A working [Rust](https://www.rust-lang.org/) toolchain
 
 ### Compiling
