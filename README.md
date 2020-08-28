@@ -102,6 +102,18 @@ Now you can use ```chroot_vm``` to run a process within this new root filesystem
 ./chroot_vm ./rootfs /bin/sh
 ```
 
+If the ```libkrun``` and/or ```libkrunfw``` libraries were installed on a path that's not included in your ```/etc/ld.so.conf``` configuration, you may get an error like this one:
+
+```
+./chroot_vm: error while loading shared libraries: libkrun.so: cannot open shared object file: No such file or directory
+```
+
+To avoid this problem, use the ```LD_LIBRARY_PATH``` environment variable to point to the location where the libraries were installed. For example, if the libraries were installed in ```/usr/local/lib64```, use something like this:
+
+```
+LD_LIBRARY_PATH=/usr/local/lib64 ./chroot_vm rootfs/ /bin/sh
+```
+
 ## Status
 
 While functional, ```libkrun``` is still in a **very early development stage**.
