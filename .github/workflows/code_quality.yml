@@ -22,7 +22,10 @@ jobs:
             target: ${{ matrix.target }}
             override: true
             components: rustfmt, clippy
-      
+
+      - name: Create a fake init
+        run: touch init/init
+
       - name: Formatting (rustfmt)
         run: cargo fmt -- --check
 
