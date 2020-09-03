@@ -12,7 +12,7 @@ arch = { path = "../arch" }
 devices = { path = "../devices" }
 kernel = { path = "../kernel" }
 logger = { path = "../logger" }
-vm-memory = { git = "https://github.com/containers/vm-memory", features = ["backend-mmap"] }
+vm-memory = { git = "https://github.com/rust-vmm/vm-memory", features = ["backend-mmap"] }
 utils = { path = "../utils"}
 polly = { path = "../polly" }
 

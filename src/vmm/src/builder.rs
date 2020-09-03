@@ -45,8 +45,8 @@ pub enum StartMicrovmError {
     Internal(Error),
     /// The kernel command line is invalid.
     KernelCmdline(String),
-    /// Cannot load kernel due to invalid memory configuration or invalid kernel image.
-    KernelLoader(kernel::loader::Error),
+    /// Cannot inject the kernel into the guest memory due to a problem with the bundle.
+    KernelBundle(vm_memory::mmap::MmapRegionError),
     /// Cannot load command line string.
     LoadCommandline(kernel::cmdline::Error),
     /// The start command was issued more than once.
@@ -104,13 +104,13 @@ impl Display for StartMicrovmError {
             InitrdRead(ref err) => write!(f, "Cannot load initrd due to an invalid image: {}", err),
             Internal(ref err) => write!(f, "Internal error while starting microVM: {:?}", err),
             KernelCmdline(ref err) => write!(f, "Invalid kernel command line: {}", err),
-            KernelLoader(ref err) => {
+            KernelBundle(ref err) => {
                 let mut err_msg = format!("{}", err);
                 err_msg = err_msg.replace("\"", "");
                 write!(
                     f,
-                    "Cannot load kernel due to invalid memory configuration or invalid kernel \
-                     image. {}",
+                    "Cannot inject the kernel into the guest memory due to a problem with the \
+                     bundle. {}",
                     err_msg
                 )
             }
@@ -269,7 +269,10 @@ pub fn build_microvm(
             &mut kernel_size as *mut usize,
         )
     };
-    let kernel_region = unsafe { MmapRegion::build_raw(kernel_addr as *mut u8, kernel_size, 0, 0) };
+    let kernel_region = unsafe {
+        MmapRegion::build_raw(kernel_addr as *mut u8, kernel_size, 0, 0)
+            .map_err(StartMicrovmError::KernelBundle)?
+    };
 
     let guest_memory = create_guest_memory(
         vm_resources
@@ -795,7 +798,7 @@ pub mod tests {
             )
         };
         let kernel_region =
-            unsafe { MmapRegion::build_raw(kernel_addr as *mut u8, kernel_size, 0, 0) };
+            unsafe { MmapRegion::build_raw(kernel_addr as *mut u8, kernel_size, 0, 0).unwrap() };
 
         create_guest_memory(mem_size_mib, kernel_region, kernel_load_addr, kernel_size)
     }
@@ -930,7 +933,7 @@ pub mod tests {
         let err = KernelCmdline(String::from("dummy --cmdline"));
         let _ = format!("{}{:?}", err, err);
 
-        let err = KernelLoader(kernel::loader::Error::InvalidElfMagicNumber);
+        let err = KernelBundle(vm_memory::mmap::MmapRegionError::InvalidPointer);
         let _ = format!("{}{:?}", err, err);
 
         let err = LoadCommandline(kernel::cmdline::Error::TooLarge);
