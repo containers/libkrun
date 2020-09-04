@@ -59,10 +59,10 @@ pub const MMIO_MEM_START: u64 = FIRST_ADDR_PAST_32BITS - MEM_32BIT_GAP_SIZE;
 /// carve out at the end of 32bit address space.
 pub fn arch_memory_regions(
     size: usize,
-    kernel_load_addr: usize,
+    kernel_load_addr: u64,
     kernel_size: usize,
 ) -> Vec<(GuestAddress, usize)> {
-    if size < (kernel_load_addr + kernel_size) {
+    if size < (kernel_load_addr + kernel_size as u64) as usize {
         panic!("Kernel doesn't fit in RAM");
     }
     // It's safe to cast MMIO_MEM_START to usize because it fits in a u32 variable
@@ -70,15 +70,15 @@ pub fn arch_memory_regions(
     match size.checked_sub(MMIO_MEM_START as usize) {
         // case1: guest memory fits before the gap
         None | Some(0) => vec![
-            (GuestAddress(0), kernel_load_addr),
-            (GuestAddress((kernel_load_addr + kernel_size) as u64), size),
+            (GuestAddress(0), kernel_load_addr as usize),
+            (GuestAddress(kernel_load_addr + kernel_size as u64), size),
         ],
         // case2: guest memory extends beyond the gap
         Some(remaining) => vec![
-            (GuestAddress(0), kernel_load_addr),
+            (GuestAddress(0), kernel_load_addr as usize),
             (
-                GuestAddress((kernel_load_addr + kernel_size) as u64),
-                (MMIO_MEM_START - (kernel_load_addr + kernel_size) as u64) as usize,
+                GuestAddress(kernel_load_addr + kernel_size as u64),
+                (MMIO_MEM_START - (kernel_load_addr + kernel_size as u64)) as usize,
             ),
             (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
         ],
@@ -214,7 +214,7 @@ mod tests {
     use super::*;
     use arch_gen::x86::bootparam::e820entry;
 
-    const KERNEL_LOAD_ADDR: usize = 0x1_000_000;
+    const KERNEL_LOAD_ADDR: u64 = 0x1_000_000;
     const KERNEL_SIZE: usize = 0x1E00_000;
 
     #[test]
@@ -222,9 +222,9 @@ mod tests {
         let regions = arch_memory_regions(1usize << 29, KERNEL_LOAD_ADDR, KERNEL_SIZE);
         assert_eq!(2, regions.len());
         assert_eq!(GuestAddress(0), regions[0].0);
-        assert_eq!(KERNEL_LOAD_ADDR, regions[0].1);
+        assert_eq!(KERNEL_LOAD_ADDR as usize, regions[0].1);
         assert_eq!(
-            GuestAddress((KERNEL_LOAD_ADDR + KERNEL_SIZE) as u64),
+            GuestAddress(KERNEL_LOAD_ADDR + KERNEL_SIZE as u64),
             regions[1].0
         );
         assert_eq!(1usize << 29, regions[1].1);
@@ -235,9 +235,9 @@ mod tests {
         let regions = arch_memory_regions((1usize << 32) + 0x8000, KERNEL_LOAD_ADDR, KERNEL_SIZE);
         assert_eq!(3, regions.len());
         assert_eq!(GuestAddress(0), regions[0].0);
-        assert_eq!(KERNEL_LOAD_ADDR, regions[0].1);
+        assert_eq!(KERNEL_LOAD_ADDR as usize, regions[0].1);
         assert_eq!(
-            GuestAddress((KERNEL_LOAD_ADDR + KERNEL_SIZE) as u64),
+            GuestAddress(KERNEL_LOAD_ADDR + KERNEL_SIZE as u64),
             regions[1].0
         );
         assert_eq!(GuestAddress(1u64 << 32), regions[2].0);

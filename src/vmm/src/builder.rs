@@ -16,7 +16,6 @@ use device_manager::mmio::MMIODeviceManager;
 use devices::legacy::Serial;
 use devices::virtio::{MmioTransport, Vsock, VsockUnixBackend};
 
-use libc::{c_char, size_t};
 use polly::event_manager::{Error as EventManagerError, EventManager};
 use signal_handler::register_sigwinch_handler;
 use utils::eventfd::EventFd;
@@ -242,11 +241,6 @@ impl VmmEventsObserver for SerialStdin {
     }
 }
 
-#[link(name = "krunfw")]
-extern "C" {
-    fn get_kernel_bundle(load_addr: *mut size_t, size: *mut size_t) -> *mut c_char;
-}
-
 /// Builds and starts a microVM based on the current Firecracker VmResources configuration.
 ///
 /// This is the default build recipe, one could build other microVM flavors by using the
@@ -261,16 +255,11 @@ pub fn build_microvm(
     // Timestamp for measuring microVM boot duration.
     let request_ts = TimestampUs::default();
 
-    let mut kernel_load_addr: usize = 0;
-    let mut kernel_size: usize = 0;
-    let kernel_addr = unsafe {
-        get_kernel_bundle(
-            &mut kernel_load_addr as *mut usize,
-            &mut kernel_size as *mut usize,
-        )
-    };
+    let kernel_bundle = vm_resources
+        .kernel_bundle()
+        .ok_or(StartMicrovmError::MissingKernelConfig)?;
     let kernel_region = unsafe {
-        MmapRegion::build_raw(kernel_addr as *mut u8, kernel_size, 0, 0)
+        MmapRegion::build_raw(kernel_bundle.host_addr as *mut u8, kernel_bundle.size, 0, 0)
             .map_err(StartMicrovmError::KernelBundle)?
     };
 
@@ -280,8 +269,8 @@ pub fn build_microvm(
             .mem_size_mib
             .ok_or(StartMicrovmError::MissingMemSizeConfig)?,
         kernel_region,
-        kernel_load_addr,
-        kernel_size,
+        kernel_bundle.guest_addr,
+        kernel_bundle.size,
     )?;
     let vcpu_config = vm_resources.vcpu_config();
 
@@ -349,7 +338,7 @@ pub fn build_microvm(
             &vm,
             &vcpu_config,
             &guest_memory,
-            GuestAddress(kernel_load_addr as u64),
+            GuestAddress(kernel_bundle.guest_addr),
             request_ts,
             &pio_device_manager.io_bus,
             &exit_evt,
@@ -367,7 +356,7 @@ pub fn build_microvm(
             &vm,
             &vcpu_config,
             &guest_memory,
-            GuestAddress(kernel_load_addr as u64),
+            GuestAddress(kernel.guest_addr),
             request_ts,
             &exit_evt,
         )
@@ -427,7 +416,7 @@ pub fn build_microvm(
 pub fn create_guest_memory(
     mem_size_mib: usize,
     kernel_region: MmapRegion,
-    kernel_load_addr: usize,
+    kernel_load_addr: u64,
     kernel_size: usize,
 ) -> std::result::Result<GuestMemoryMmap, StartMicrovmError> {
     let mem_size = mem_size_mib << 20;
@@ -789,18 +778,15 @@ pub mod tests {
     fn default_guest_memory(
         mem_size_mib: usize,
     ) -> std::result::Result<GuestMemoryMmap, StartMicrovmError> {
-        let mut kernel_load_addr: usize = 0;
-        let mut kernel_size: usize = 0;
-        let kernel_addr = unsafe {
-            get_kernel_bundle(
-                &mut kernel_load_addr as *mut usize,
-                &mut kernel_size as *mut usize,
-            )
-        };
-        let kernel_region =
-            unsafe { MmapRegion::build_raw(kernel_addr as *mut u8, kernel_size, 0, 0).unwrap() };
+        let kernel_guest_addr: u64 = 0x1000;
+        let kernel_size: usize = 0x1000;
+        let kernel_host_addr: u64 = 0x1000;
 
-        create_guest_memory(mem_size_mib, kernel_region, kernel_load_addr, kernel_size)
+        let kernel_region = unsafe {
+            MmapRegion::build_raw(kernel_host_addr as *mut _, kernel_size, 0, 0).unwrap()
+        };
+
+        create_guest_memory(mem_size_mib, kernel_region, kernel_guest_addr, kernel_size)
     }
 
     fn default_vmm() -> Vmm {

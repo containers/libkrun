@@ -1,0 +1,32 @@
+name: Unit Tests
+on: [pull_request, create]
+
+jobs:
+  build:
+    if: github.event_name == 'pull_request'
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+        target:
+          - x86_64-unknown-linux-gnu
+    steps:
+      - name: Code checkout
+        uses: actions/checkout@v2
+      - name: Install Rust toolchain (${{ matrix.rust }})
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: ${{ matrix.rust }}
+            target: ${{ matrix.target }}
+            override: true
+
+      - name: Create a fake init
+        run: touch init/init
+
+      - name: Grab a libkrunfw release
+        run: curl -L -o /usr/lib/libkrunfw.so https://github.com/containers/libkrunfw/releases/download/v0.1/libkrunfw.so
+
+      - name: Run Unit Tests (all features)
+        run: cargo test --all-targets --all-features
