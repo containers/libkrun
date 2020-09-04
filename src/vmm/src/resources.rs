@@ -5,6 +5,7 @@
 
 use vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
 use vmm_config::fs::*;
+use vmm_config::kernel_bundle::{KernelBundle, KernelBundleError};
 use vmm_config::logger::LoggerConfigError;
 use vmm_config::machine_config::{VmConfig, VmConfigError};
 use vmm_config::vsock::*;
@@ -37,6 +38,8 @@ pub struct VmResources {
     vm_config: VmConfig,
     /// The boot configuration for this microVM.
     pub boot_config: BootSourceConfig,
+    /// The parameters for the kernel bundle to be loaded in this microVM.
+    pub kernel_bundle: Option<KernelBundle>,
     /// The fs device.
     pub fs: FsBuilder,
     /// The vsock device.
@@ -108,6 +111,31 @@ impl VmResources {
         Ok(())
     }
 
+    pub fn kernel_bundle(&self) -> Option<&KernelBundle> {
+        self.kernel_bundle.as_ref()
+    }
+
+    pub fn set_kernel_bundle(&mut self, kernel_bundle: KernelBundle) -> Result<KernelBundleError> {
+        // Safe because this call just returns the page size and doesn't have any side effects.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize };
+
+        if kernel_bundle.host_addr == 0 || (kernel_bundle.host_addr as usize) & (page_size - 1) != 0
+        {
+            return Err(KernelBundleError::InvalidHostAddress);
+        }
+
+        if (kernel_bundle.guest_addr as usize) & (page_size - 1) != 0 {
+            return Err(KernelBundleError::InvalidGuestAddress);
+        }
+
+        if kernel_bundle.size & (page_size - 1) != 0 {
+            return Err(KernelBundleError::InvalidSize);
+        }
+
+        self.kernel_bundle = Some(kernel_bundle);
+        Ok(())
+    }
+
     pub fn set_fs_device(&mut self, config: FsDeviceConfig) -> Result<FsConfigError> {
         self.fs.insert(config)
     }
@@ -138,6 +166,7 @@ mod tests {
         VmResources {
             vm_config: VmConfig::default(),
             boot_config: default_boot_cfg(),
+            kernel_bundle: Default::default(),
             fs: Default::default(),
             vsock: Default::default(),
         }

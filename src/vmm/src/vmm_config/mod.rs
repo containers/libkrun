@@ -14,6 +14,8 @@ pub mod boot_source;
 pub mod fs;
 /// Wrapper over the microVM general information attached to the microVM.
 pub mod instance_info;
+/// Wrapper for configuring the kernel bundle to be loaded in the microVM.
+pub mod kernel_bundle;
 /// Wrapper for configuring the logger.
 pub mod logger;
 /// Wrapper for configuring the memory and CPU of the microVM.

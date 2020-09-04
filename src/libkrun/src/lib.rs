@@ -4,18 +4,26 @@ extern crate logger;
 use std::convert::TryInto;
 use std::env;
 use std::ffi::CStr;
-use std::os::raw::c_char;
 use std::process;
 
+use libc::{c_char, size_t};
 use logger::{LevelFilter, LOGGER};
 use polly::event_manager::EventManager;
 use vmm::resources::VmResources;
 use vmm::vmm_config::boot_source::{BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
 use vmm::vmm_config::fs::FsDeviceConfig;
+use vmm::vmm_config::kernel_bundle::KernelBundle;
 use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
 const INIT_PATH: &str = "/init.krun";
+const KRUNFW_MIN_VERSION: u32 = 1;
+
+#[link(name = "krunfw")]
+extern "C" {
+    fn krunfw_get_kernel(load_addr: *mut u64, size: *mut size_t) -> *mut c_char;
+    fn krunfw_get_version() -> u32;
+}
 
 #[repr(C)]
 pub struct KrunConfig {
@@ -75,6 +83,12 @@ pub extern "C" fn krun_exec(config: &KrunConfig) -> i32 {
         config.num_vcpus, config.ram_mib, root_dir
     );
 
+    let krunfw_version = unsafe { krunfw_get_version() };
+    if krunfw_version < KRUNFW_MIN_VERSION {
+        info!("Unsupported libkrunfw version: {}", krunfw_version);
+        return -1;
+    }
+
     let mut vm_resources = VmResources::default();
     let vm_config = VmConfig {
         vcpu_count: Some(config.num_vcpus),
@@ -91,6 +105,22 @@ pub extern "C" fn krun_exec(config: &KrunConfig) -> i32 {
     ));
     boot_source.kernel_cmdline_epilog = Some(format!(" -- {}", args));
     vm_resources.set_boot_source(boot_source).unwrap();
+
+    let mut kernel_guest_addr: u64 = 0;
+    let mut kernel_size: usize = 0;
+    let kernel_host_addr = unsafe {
+        krunfw_get_kernel(
+            &mut kernel_guest_addr as *mut u64,
+            &mut kernel_size as *mut usize,
+        )
+    };
+
+    let kernel_bundle = KernelBundle {
+        host_addr: kernel_host_addr as u64,
+        guest_addr: kernel_guest_addr,
+        size: kernel_size,
+    };
+    vm_resources.set_kernel_bundle(kernel_bundle).unwrap();
 
     let fs_device_config = FsDeviceConfig {
         fs_id: "/dev/root".to_string(),
