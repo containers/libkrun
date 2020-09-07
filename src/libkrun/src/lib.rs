@@ -1,13 +1,18 @@
 #[macro_use]
 extern crate logger;
 
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::env;
 use std::ffi::CStr;
 use std::process;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Mutex;
 
 use libc::{c_char, size_t};
 use logger::{LevelFilter, LOGGER};
+use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
 use vmm::resources::VmResources;
 use vmm::vmm_config::boot_source::{BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
@@ -16,8 +21,16 @@ use vmm::vmm_config::kernel_bundle::KernelBundle;
 use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
-const INIT_PATH: &str = "/init.krun";
+// Minimum krunfw version we require.
 const KRUNFW_MIN_VERSION: u32 = 1;
+// Value returned on success. We use libc's errors otherwise.
+const KRUN_SUCCESS: i32 = 0;
+
+// Path to the init binary to be executed inside the VM.
+const INIT_PATH: &str = "/init.krun";
+
+static VMR_MAP: Lazy<Mutex<HashMap<u32, VmResources>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static VMR_IDS: AtomicI32 = AtomicI32::new(0);
 
 #[link(name = "krunfw")]
 extern "C" {
@@ -25,21 +38,9 @@ extern "C" {
     fn krunfw_get_version() -> u32;
 }
 
-#[repr(C)]
-pub struct KrunConfig {
-    config_size: usize,
-    log_level: u8,
-    num_vcpus: u8,
-    ram_mib: u32,
-    root_dir: *const c_char,
-    exec_path: *const c_char,
-    args: *const c_char,
-    env_line: *const c_char,
-}
-
 #[no_mangle]
-pub extern "C" fn krun_exec(config: &KrunConfig) -> i32 {
-    let log_level = match config.log_level {
+pub extern "C" fn krun_set_log_level(level: u32) -> i32 {
+    let log_level = match level {
         0 => LevelFilter::Off,
         1 => LevelFilter::Error,
         2 => LevelFilter::Warn,
@@ -48,63 +49,24 @@ pub extern "C" fn krun_exec(config: &KrunConfig) -> i32 {
         _ => LevelFilter::Trace,
     };
 
-    LOGGER
+    if LOGGER
         .set_max_level(log_level)
         .configure(Some(format!("libkrun-{}", process::id())))
-        .expect("Failed to register logger");
-
-    if config.config_size != std::mem::size_of::<KrunConfig>() {
-        println!("Invalid configuration, the specified struct size is invalid");
-        process::exit(i32::from(vmm::FC_EXIT_CODE_BAD_CONFIGURATION));
+        .is_err()
+    {
+        return -libc::EINVAL;
     }
 
-    let root_dir = unsafe { CStr::from_ptr(config.root_dir).to_str().unwrap() };
-    let exec_path = unsafe { CStr::from_ptr(config.exec_path).to_str().unwrap() };
-    let args = if config.args.is_null() {
-        ""
-    } else {
-        unsafe { CStr::from_ptr(config.args).to_str().unwrap() }
-    };
-    let env_line = if config.env_line.is_null() {
-        env::vars()
-            .map(|(key, value)| format!(" {}={}", key, value))
-            .collect()
-    } else {
-        unsafe {
-            CStr::from_ptr(config.env_line)
-                .to_str()
-                .unwrap()
-                .to_string()
-        }
-    };
+    KRUN_SUCCESS
+}
 
-    debug!(
-        "Should create a vm with {} cpus, {} ram and {} as root dir",
-        config.num_vcpus, config.ram_mib, root_dir
-    );
-
+#[no_mangle]
+pub extern "C" fn krun_create_ctx() -> i32 {
     let krunfw_version = unsafe { krunfw_get_version() };
     if krunfw_version < KRUNFW_MIN_VERSION {
-        info!("Unsupported libkrunfw version: {}", krunfw_version);
-        return -1;
+        warn!("Unsupported libkrunfw version: {}", krunfw_version);
+        return -libc::EINVAL;
     }
-
-    let mut vm_resources = VmResources::default();
-    let vm_config = VmConfig {
-        vcpu_count: Some(config.num_vcpus),
-        mem_size_mib: Some(config.ram_mib.try_into().unwrap()),
-        ht_enabled: Some(false),
-        cpu_template: None,
-    };
-    vm_resources.set_vm_config(&vm_config).unwrap();
-
-    let mut boot_source = BootSourceConfig::default();
-    boot_source.kernel_cmdline_prolog = Some(format!(
-        "{} init={} KRUN_INIT={} {}",
-        DEFAULT_KERNEL_CMDLINE, INIT_PATH, exec_path, env_line,
-    ));
-    boot_source.kernel_cmdline_epilog = Some(format!(" -- {}", args));
-    vm_resources.set_boot_source(boot_source).unwrap();
 
     let mut kernel_guest_addr: u64 = 0;
     let mut kernel_size: usize = 0;
@@ -115,18 +77,14 @@ pub extern "C" fn krun_exec(config: &KrunConfig) -> i32 {
         )
     };
 
+    let mut vm_resources = VmResources::default();
+
     let kernel_bundle = KernelBundle {
         host_addr: kernel_host_addr as u64,
         guest_addr: kernel_guest_addr,
         size: kernel_size,
     };
     vm_resources.set_kernel_bundle(kernel_bundle).unwrap();
-
-    let fs_device_config = FsDeviceConfig {
-        fs_id: "/dev/root".to_string(),
-        shared_dir: root_dir.to_string(),
-    };
-    vm_resources.set_fs_device(fs_device_config).unwrap();
 
     let vsock_device_config = VsockDeviceConfig {
         vsock_id: "vsock0".to_string(),
@@ -135,18 +93,169 @@ pub extern "C" fn krun_exec(config: &KrunConfig) -> i32 {
     };
     vm_resources.set_vsock_device(vsock_device_config).unwrap();
 
-    let mut event_manager = EventManager::new().expect("Unable to create EventManager");
+    let ctx_id = VMR_IDS.fetch_add(1, Ordering::SeqCst);
+    if ctx_id == i32::MAX || VMR_MAP.lock().unwrap().contains_key(&(ctx_id as u32)) {
+        // libkrun is not intended to be used as a daemon for managing VMs.
+        panic!("Context ID namespace exhausted");
+    }
+    VMR_MAP.lock().unwrap().insert(ctx_id as u32, vm_resources);
 
-    let _vmm =
-        vmm::builder::build_microvm(&vm_resources, &mut event_manager).unwrap_or_else(|err| {
-            println!(
-                "Building VMM configured from cmdline json failed: {:?}",
-                err
-            );
-            process::exit(i32::from(vmm::FC_EXIT_CODE_BAD_CONFIGURATION));
-        });
+    ctx_id
+}
+
+#[no_mangle]
+pub extern "C" fn krun_free_ctx(ctx_id: u32) -> i32 {
+    match VMR_MAP.lock().unwrap().remove(&ctx_id) {
+        Some(_) => KRUN_SUCCESS,
+        None => -libc::ENOENT,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn krun_set_vm_config(ctx_id: u32, num_vcpus: u8, ram_mib: u32) -> i32 {
+    let mem_size_mib: usize = match ram_mib.try_into() {
+        Ok(size) => size,
+        Err(e) => {
+            warn!("Error parsing the amount of RAM: {:?}", e);
+            return -libc::EINVAL;
+        }
+    };
+
+    let vm_config = VmConfig {
+        vcpu_count: Some(num_vcpus),
+        mem_size_mib: Some(mem_size_mib),
+        ht_enabled: Some(false),
+        cpu_template: None,
+    };
+
+    match VMR_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut vmr) => {
+            if vmr.get_mut().set_vm_config(&vm_config).is_err() {
+                return -libc::EINVAL;
+            }
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) -> i32 {
+    let root_path = match CStr::from_ptr(c_root_path).to_str() {
+        Ok(root) => root,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    let fs_device_config = FsDeviceConfig {
+        fs_id: "/dev/root".to_string(),
+        shared_dir: root_path.to_string(),
+    };
+
+    match VMR_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut vmr) => {
+            if vmr.get_mut().set_fs_device(fs_device_config).is_err() {
+                return -libc::EINVAL;
+            }
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_exec(
+    ctx_id: u32,
+    c_exec_path: *const c_char,
+    c_args: *const c_char,
+    c_env_line: *const c_char,
+) -> i32 {
+    let exec_path = match CStr::from_ptr(c_exec_path).to_str() {
+        Ok(path) => path,
+        Err(e) => {
+            debug!("Error parsing exec_path: {:?}", e);
+            return -libc::EINVAL;
+        }
+    };
+
+    let args = if c_args.is_null() {
+        ""
+    } else {
+        match CStr::from_ptr(c_args).to_str() {
+            Ok(args) => args,
+            Err(e) => {
+                debug!("Error parsing args: {:?}", e);
+                return -libc::EINVAL;
+            }
+        }
+    };
+
+    let env_line = if c_env_line.is_null() {
+        env::vars()
+            .map(|(key, value)| format!(" {}={}", key, value))
+            .collect()
+    } else {
+        match CStr::from_ptr(c_env_line).to_str() {
+            Ok(env) => env.to_string(),
+            Err(e) => {
+                debug!("Error parsing env_line: {:?}", e);
+                return -libc::EINVAL;
+            }
+        }
+    };
+
+    let mut boot_source = BootSourceConfig::default();
+    boot_source.kernel_cmdline_prolog = Some(format!(
+        "{} init={} KRUN_INIT={} {}",
+        DEFAULT_KERNEL_CMDLINE, INIT_PATH, exec_path, env_line,
+    ));
+    boot_source.kernel_cmdline_epilog = Some(format!(" -- {}", args));
+
+    match VMR_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut vmr) => {
+            if vmr.get_mut().set_boot_source(boot_source).is_err() {
+                return -libc::EINVAL;
+            }
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
+    let mut event_manager = match EventManager::new() {
+        Ok(em) => em,
+        Err(e) => {
+            warn!("Unable to create EventManager: {:?}", e);
+            return -libc::EINVAL;
+        }
+    };
+
+    let vmr = match VMR_MAP.lock().unwrap().remove(&ctx_id) {
+        Some(vmr) => vmr,
+        None => return -libc::ENOENT,
+    };
+
+    let _vmm = match vmm::builder::build_microvm(&vmr, &mut event_manager) {
+        Ok(vmm) => vmm,
+        Err(e) => {
+            warn!("Building the microVM failed: {:?}", e);
+            return -libc::EINVAL;
+        }
+    };
 
     loop {
-        event_manager.run().unwrap();
+        match event_manager.run() {
+            Ok(_) => {}
+            Err(e) => {
+                warn!("Error in EventManager loop: {:?}", e);
+                return -libc::EINVAL;
+            }
+        }
     }
 }

@@ -108,9 +108,9 @@ name = "libkrun"
 version = "0.1.0"
 dependencies = [
  "cc",
- "lazy_static",
  "libc",
  "logger",
+ "once_cell",
  "polly",
  "utils",
  "vmm",
@@ -134,6 +134,12 @@ dependencies = [
  "log",
  "utils",
 ]
+
+[[package]]
+name = "once_cell"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "260e51e7efe62b592207e9e13a68e43692a7a279171d6ba57abd208bf23645ad"
 
 [[package]]
 name = "polly"

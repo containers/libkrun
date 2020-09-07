@@ -5,6 +5,7 @@
  * Virtual Machine created and managed by libkrun.
  */
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <libkrun.h>
@@ -13,10 +14,13 @@
 
 int main(int argc, void **argv)
 {
-    struct krun_config config;
-    char args[MAX_ARGS_LEN] = "\0";
+    // Use an empty NULL-terminated string as env_line, so libkrun won't inject the variables
+    // currently present in the environment into the microVM.
     char env_line[] = "\0";
+    char args[MAX_ARGS_LEN] = "\0";
     int args_len = 0;
+    int ctx_id;
+    int err;
     int i;
 
     if (argc < 3) {
@@ -25,22 +29,35 @@ int main(int argc, void **argv)
         return -1;
     }
 
-    memset(&config, 0,  sizeof(config));
+    // Set the log level to "off".
+    err = krun_set_log_level(0);
+    if (err) {
+        errno = -err;
+        perror("Error configuring log level");
+        return -1;
+    }
 
-    // Set the size of the config struct known at build time.
-    config.config_size = sizeof(config);
-    // Set the krun's verbosity to the minimum.
-    config.log_level = 0;
-    // Request a single vCPU.
-    config.num_vcpus = 1;
-    // Request 512 MB.
-    config.ram_mib = 512;
-    // Use the first argument as the root directory.
-    config.root_dir = argv[1];
-    // Use the second argument as the process to be isolated.
-    config.exec_path = argv[2];
-    // Point the arguments line to our own (empty, for the moment) args string.
-    config.args = &args[0];
+    // Create the configuration context.
+    ctx_id = krun_create_ctx();
+    if (ctx_id < 0) {
+        errno = -err;
+        perror("Error creating configuration context");
+        return -1;
+    }
+
+    // Configure the number of vCPUs (1) and the amount of RAM (512 MiB).
+    if (err = krun_set_vm_config(ctx_id, 1, 512)) {
+        errno = -err;
+        perror("Error configuring the number of vCPUs and/or the amount of RAM");
+        return -1;
+    }
+
+    // Use the first command line argument as the path to be used as root.
+    if (err = krun_set_root(ctx_id, argv[1])) {
+        errno = -err;
+        perror("Error configuring as root path");
+        return -1;
+    }
 
     // If we have additional arguments, collect them into "args".
     for (i = 3; i < argc; i++) {
@@ -58,11 +75,22 @@ int main(int argc, void **argv)
     }
     args[args_len] = '\0';
 
-    // Pass an empty string so libkrun won't autogenerate the environment
-    // line by collecting this process environment variables.
-    config.env_line = &env_line[0];
+    // Use the second argument as the path of the binary to be executed in the isolated
+    // context, relative to the root path.
+    if (err = krun_set_exec(ctx_id, argv[2], &args[0], &env_line[0])) {
+        errno = -err;
+        perror("Error configuring the parameters for the executable to be run");
+        return -1;
+    }
 
-    krun_exec(&config);
+    // Start and enter the microVM. Unless there is some error while creating the microVM
+    // this function never returns.
+    if (err = krun_start_enter(ctx_id)) {
+        errno = -err;
+        perror("Error creating the microVM");
+        return -1;
+    }
 
+    // Not reached.
     return 0;
 }
