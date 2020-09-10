@@ -1,0 +1,14 @@
+container:
+  image: rust:latest
+  kvm: true
+
+task:
+  name: Unit Tests (x86_64)
+  fake_init_script: touch init/init
+  download_libkrunfw_script:
+    - curl -L -o /usr/lib/x86_64-linux-gnu/libkrunfw.so https://github.com/containers/libkrunfw/releases/download/v0.1/libkrunfw.so
+  cargo_cache:
+    folder: $CARGO_HOME/registry
+    fingerprint_script: cat Cargo.lock
+  test_script: cargo test --all-features --all-targets
+  before_cache_script: rm -rf $CARGO_HOME/registry/index
