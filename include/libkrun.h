@@ -68,19 +68,18 @@ int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
  *  "exec_path" - the path to the executable, relative to the root configured with "krun_set_root".
- *  "args"      - a null-terminated string representing the arguments to be passed to the
- *                executable.
- *  "env_line"  - a null-terminated string with the variables to be injected into the context of
- *                the executable, with "KEY=VALUE" format. If NULL, it will auto-generate a line
- *                collecting the variables currently present in the environment.
+ *  "argv"      - an array of string pointers to be passed as arguments.
+ *  "envp"      - an array of string pointers to be injected as environment variables into the
+ *                context of the executable. If NULL, it will auto-generate an array collecting the
+ *                the variables currently present in the environment.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_set_exec(uint32_t ctx_id,
                       const char *exec_path,
-                      const char *args,
-                      const char *env_line);
+                      char *const argv[],
+                      char *const envp[]);
 
 /*
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over

@@ -7,6 +7,7 @@ use std::convert::TryInto;
 use std::env;
 use std::ffi::CStr;
 use std::process;
+use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Mutex;
 
@@ -25,6 +26,8 @@ use vmm::vmm_config::vsock::VsockDeviceConfig;
 const KRUNFW_MIN_VERSION: u32 = 1;
 // Value returned on success. We use libc's errors otherwise.
 const KRUN_SUCCESS: i32 = 0;
+// Maximum number of arguments/environment variables we allow
+const MAX_ARGS: usize = 4096;
 
 // Path to the init binary to be executed inside the VM.
 const INIT_PATH: &str = "/init.krun";
@@ -165,13 +168,28 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
     KRUN_SUCCESS
 }
 
+unsafe fn collapse_str_array(array: &[*const c_char]) -> Result<String, std::str::Utf8Error> {
+    let mut strvec = Vec::new();
+
+    for item in array.iter().take(MAX_ARGS) {
+        if item.is_null() {
+            break;
+        } else {
+            let s = CStr::from_ptr(*item).to_str()?;
+            strvec.push(format!("\"{}\"", s));
+        }
+    }
+
+    Ok(strvec.join(" "))
+}
+
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_set_exec(
     ctx_id: u32,
     c_exec_path: *const c_char,
-    c_args: *const c_char,
-    c_env_line: *const c_char,
+    c_argv: *const *const c_char,
+    c_envp: *const *const c_char,
 ) -> i32 {
     let exec_path = match CStr::from_ptr(c_exec_path).to_str() {
         Ok(path) => path,
@@ -181,36 +199,38 @@ pub unsafe extern "C" fn krun_set_exec(
         }
     };
 
-    let args = if c_args.is_null() {
-        ""
-    } else {
-        match CStr::from_ptr(c_args).to_str() {
-            Ok(args) => args,
+    let args = if !c_argv.is_null() {
+        let argv_array: &[*const c_char] = slice::from_raw_parts(c_argv, MAX_ARGS);
+        match collapse_str_array(argv_array) {
+            Ok(s) => s,
             Err(e) => {
                 debug!("Error parsing args: {:?}", e);
                 return -libc::EINVAL;
             }
         }
+    } else {
+        "".to_string()
     };
 
-    let env_line = if c_env_line.is_null() {
-        env::vars()
-            .map(|(key, value)| format!(" {}={}", key, value))
-            .collect()
-    } else {
-        match CStr::from_ptr(c_env_line).to_str() {
-            Ok(env) => env.to_string(),
+    let env = if !c_envp.is_null() {
+        let envp_array: &[*const c_char] = slice::from_raw_parts(c_envp, MAX_ARGS);
+        match collapse_str_array(envp_array) {
+            Ok(s) => s,
             Err(e) => {
-                debug!("Error parsing env_line: {:?}", e);
+                debug!("Error parsing args: {:?}", e);
                 return -libc::EINVAL;
             }
         }
+    } else {
+        env::vars()
+            .map(|(key, value)| format!(" {}={}", key, value))
+            .collect()
     };
 
     let mut boot_source = BootSourceConfig::default();
     boot_source.kernel_cmdline_prolog = Some(format!(
         "{} init={} KRUN_INIT={} {}",
-        DEFAULT_KERNEL_CMDLINE, INIT_PATH, exec_path, env_line,
+        DEFAULT_KERNEL_CMDLINE, INIT_PATH, exec_path, env,
     ));
     boot_source.kernel_cmdline_epilog = Some(format!(" -- {}", args));
 

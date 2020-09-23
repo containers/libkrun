@@ -12,13 +12,13 @@
 
 #define MAX_ARGS_LEN 4096
 
-int main(int argc, void **argv)
+int main(int argc, char *const argv[])
 {
-    // Use an empty NULL-terminated string as env_line, so libkrun won't inject the variables
-    // currently present in the environment into the microVM.
-    char env_line[] = "\0";
-    char args[MAX_ARGS_LEN] = "\0";
-    int args_len = 0;
+    char *const envp[] =
+    {
+        "TEST=works",
+        0
+    };
     int ctx_id;
     int err;
     int i;
@@ -59,25 +59,9 @@ int main(int argc, void **argv)
         return -1;
     }
 
-    // If we have additional arguments, collect them into "args".
-    for (i = 3; i < argc; i++) {
-        // We need to add an space as a separator.
-        int len = strlen(argv[i]) + 1;
-
-        if ((len + args_len) >= (MAX_ARGS_LEN - 1)) {
-            printf("Too many arguments\n");
-            return -1;
-        }
-
-        strncpy(&args[args_len], argv[i], MAX_ARGS_LEN - args_len - 1);
-        args_len += len;
-        args[args_len - 1] = ' ';
-    }
-    args[args_len] = '\0';
-
     // Use the second argument as the path of the binary to be executed in the isolated
     // context, relative to the root path.
-    if (err = krun_set_exec(ctx_id, argv[2], &args[0], &env_line[0])) {
+    if (err = krun_set_exec(ctx_id, argv[2], &argv[3], &envp[0])) {
         errno = -err;
         perror("Error configuring the parameters for the executable to be run");
         return -1;
