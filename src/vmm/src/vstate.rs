@@ -868,15 +868,24 @@ impl Vcpu {
     pub fn start_threaded(mut self) -> Result<VcpuHandle> {
         let event_sender = self.event_sender.take().unwrap();
         let response_receiver = self.response_receiver.take().unwrap();
+        let (init_tls_sender, init_tls_receiver) = channel();
         let vcpu_thread = thread::Builder::new()
             .name(format!("fc_vcpu {}", self.cpu_index()))
             .spawn(move || {
                 self.init_thread_local_data()
                     .expect("Cannot cleanly initialize vcpu TLS.");
 
+                init_tls_sender
+                    .send(true)
+                    .expect("Cannot notify vcpu TLS initialization.");
+
                 self.run();
             })
             .map_err(Error::VcpuSpawn)?;
+
+        init_tls_receiver
+            .recv()
+            .expect("Error waiting for TLS initialization.");
 
         Ok(VcpuHandle::new(
             event_sender,
