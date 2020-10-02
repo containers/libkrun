@@ -460,6 +460,12 @@ impl VsockMuxer {
                             .map_err(Error::WrapUnixAccept)
                     })
                     .and_then(|stream| {
+                        stream
+                            .set_nodelay(true)
+                            .map(|_| stream)
+                            .map_err(Error::WrapUnixAccept)
+                    })
+                    .and_then(|stream| {
                         let local_port = self.allocate_local_port();
                         self.add_connection(
                             ConnMapKey {
