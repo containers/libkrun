@@ -19,6 +19,7 @@ use super::fuse::*;
 use super::{FsError as Error, Result};
 
 const MAX_BUFFER_SIZE: u32 = 1 << 20;
+const BUFFER_HEADER_SIZE: u32 = 0x1000;
 const DIRENT_PADDING: [u8; 8] = [0; 8];
 
 struct ZCReader<'a>(Reader<'a>);
@@ -66,7 +67,7 @@ impl<F: FileSystem + Sync> Server<F> {
     pub fn handle_message(&self, mut r: Reader, w: Writer) -> Result<usize> {
         let in_header: InHeader = r.read_obj().map_err(Error::DecodeMessage)?;
 
-        if in_header.len > MAX_BUFFER_SIZE {
+        if in_header.len > (MAX_BUFFER_SIZE + BUFFER_HEADER_SIZE) {
             return reply_error(
                 io::Error::from_raw_os_error(libc::ENOMEM),
                 in_header.unique,
