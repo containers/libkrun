@@ -5,7 +5,7 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::env;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::process;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -248,6 +248,12 @@ pub unsafe extern "C" fn krun_set_exec(
 
 #[no_mangle]
 pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
+    let prname = match env::var("HOSTNAME") {
+        Ok(val) => CString::new(format!("VM:{}", val)).unwrap(),
+        Err(_) => CString::new("libkrun VM").unwrap(),
+    };
+    unsafe { libc::prctl(libc::PR_SET_NAME, prname.as_ptr()) };
+
     let mut event_manager = match EventManager::new() {
         Ok(em) => em,
         Err(e) => {
