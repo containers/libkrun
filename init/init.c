@@ -37,6 +37,9 @@ int main(int argc, char **argv)
         exit(-1);
     }
 
+    /* May fail if already exists and that's fine. */
+    symlink("/proc/self/fd", "/dev/fd");
+
     hostname = getenv("HOSTNAME");
     if (hostname) {
         sethostname(hostname, strlen(hostname));
