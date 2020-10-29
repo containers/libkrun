@@ -8,6 +8,8 @@ mod txbuf;
 
 pub use connection::VsockConnection;
 
+use std::net::Shutdown;
+
 pub mod defs {
     /// Vsock connection TX buffer capacity.
     pub const CONN_TX_BUF_SIZE: usize = 64 * 1024;
@@ -58,6 +60,7 @@ pub enum ConnState {
 
 pub trait CommonStream: std::io::Read + std::io::Write + std::os::unix::io::AsRawFd + Send {
     fn get_write_buf(&self) -> Option<Vec<u8>>;
+    fn cs_shutdown(&self, how: Shutdown) -> Result<()>;
 }
 
 /// An RX indication, used by `VsockConnection` to schedule future `recv_pkt()` responses.

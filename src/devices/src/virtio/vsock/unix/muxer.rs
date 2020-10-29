@@ -34,13 +34,14 @@ use libc::unlink;
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::net::Ipv4Addr;
+use std::net::Shutdown;
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 
-use super::super::csm::{CommonStream, ConnState};
+use super::super::csm::{CommonStream, ConnState, Error as CsmError};
 use super::super::defs::uapi;
 use super::super::packet::VsockPacket;
 use super::super::{
@@ -56,10 +57,18 @@ impl CommonStream for UnixStream {
     fn get_write_buf(&self) -> Option<Vec<u8>> {
         None
     }
+
+    fn cs_shutdown(&self, how: Shutdown) -> std::result::Result<(), CsmError> {
+        self.shutdown(how).map_err(CsmError::StreamWrite)
+    }
 }
 impl CommonStream for TcpStream {
     fn get_write_buf(&self) -> Option<Vec<u8>> {
         None
+    }
+
+    fn cs_shutdown(&self, how: Shutdown) -> std::result::Result<(), CsmError> {
+        self.shutdown(how).map_err(CsmError::StreamWrite)
     }
 }
 

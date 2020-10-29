@@ -79,6 +79,7 @@
 //             it thinks its peer's information is out of date.
 //          Our implementation uses the proactive approach.
 use std::io::{ErrorKind, Read, Write};
+use std::net::Shutdown;
 use std::num::Wrapping;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::time::{Duration, Instant};
@@ -354,6 +355,15 @@ impl VsockChannel for VsockConnection {
                         self.expiry = Some(
                             Instant::now() + Duration::from_millis(defs::CONN_SHUTDOWN_TIMEOUT_MS),
                         );
+                    }
+                } else {
+                    let how = if recv_off {
+                        Shutdown::Read
+                    } else {
+                        Shutdown::Write
+                    };
+                    if self.stream.cs_shutdown(how).is_err() {
+                        self.pending_rx.insert(PendingRx::Rst);
                     }
                 }
             }
@@ -672,6 +682,7 @@ impl VsockConnection {
 #[cfg(test)]
 mod tests {
     use std::io::{Error as IoError, ErrorKind, Read, Result as IoResult, Write};
+    use std::net::Shutdown;
     use std::os::unix::io::RawFd;
     use std::time::{Duration, Instant};
     use utils::eventfd::EventFd;
@@ -766,6 +777,10 @@ mod tests {
     impl CommonStream for TestStream {
         fn get_write_buf(&self) -> Option<Vec<u8>> {
             Some(self.write_buf.clone())
+        }
+
+        fn cs_shutdown(&self, _how: Shutdown) -> std::result::Result<(), Error> {
+            Ok(())
         }
     }
 
