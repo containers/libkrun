@@ -257,7 +257,7 @@ impl Default for Config {
             cache_policy: Default::default(),
             writeback: false,
             root_dir: String::from("/"),
-            xattr: false,
+            xattr: true,
             proc_sfd_rawfd: None,
         }
     }
@@ -1524,6 +1524,10 @@ impl FileSystem for PassthroughFs {
     ) -> io::Result<GetxattrReply> {
         if !self.cfg.xattr {
             return Err(io::Error::from_raw_os_error(libc::ENOSYS));
+        }
+
+        if inode == self.init_inode {
+            return Err(io::Error::from_raw_os_error(libc::ENODATA));
         }
 
         // The f{set,get,remove,list}xattr functions don't work on an fd opened with `O_PATH` so we
