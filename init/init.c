@@ -13,6 +13,7 @@ int main(int argc, char **argv)
 {
     char *hostname;
     char *krun_init;
+    char *workdir;
 
     if (mount("proc", "/proc", "proc",
               MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
@@ -47,6 +48,11 @@ int main(int argc, char **argv)
 
     setsid();
     ioctl(0, TIOCSCTTY, 1);
+
+    workdir = getenv("KRUN_WORKDIR");
+    if (workdir) {
+        chdir(workdir);
+    }
 
     krun_init = getenv("KRUN_INIT");
     if (!krun_init) {

@@ -62,6 +62,20 @@ int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus, uint32_t ram_mib)
 int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
 
 /*
+ * Sets the working directory for the executable to be run inside the microVM.
+ *
+ * Arguments:
+ *  "ctx_id"        - the configuration context ID.
+ *  "workdir_path"  - the path to the working directory, relative to the root configured with
+ *                    "krun_set_root".
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_workdir(uint32_t ctx_id,
+                         const char *workdir_path);
+
+/*
  * Sets the path to the executable to be run inside the microVM, the arguments to be passed to the
  * executable, and the environment variables to be configured in the context of the executable.
  *

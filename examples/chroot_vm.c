@@ -55,7 +55,14 @@ int main(int argc, char *const argv[])
     // Use the first command line argument as the path to be used as root.
     if (err = krun_set_root(ctx_id, argv[1])) {
         errno = -err;
-        perror("Error configuring as root path");
+        perror("Error configuring root path");
+        return -1;
+    }
+
+    // Set the working directory to "/", just for the sake of completeness.
+    if (err = krun_set_workdir(ctx_id, "/")) {
+        errno = -err;
+        perror("Error configuring \"/\" as working directory");
         return -1;
     }
 
