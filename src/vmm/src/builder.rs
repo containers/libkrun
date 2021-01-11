@@ -356,7 +356,7 @@ pub fn build_microvm(
             &vm,
             &vcpu_config,
             &guest_memory,
-            GuestAddress(kernel.guest_addr),
+            GuestAddress(kernel_bundle.guest_addr),
             request_ts,
             &exit_evt,
         )

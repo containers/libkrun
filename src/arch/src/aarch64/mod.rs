@@ -36,9 +36,16 @@ use DeviceType;
 
 /// Returns a Vec of the valid memory addresses for aarch64.
 /// See [`layout`](layout) module for a drawing of the specific memory model for this platform.
-pub fn arch_memory_regions(size: usize) -> Vec<(GuestAddress, usize)> {
+pub fn arch_memory_regions(
+    size: usize,
+    _kernel_load_addr: u64,
+    kernel_size: usize,
+) -> Vec<(GuestAddress, usize)> {
     let dram_size = min(size as u64, layout::DRAM_MEM_MAX_SIZE) as usize;
-    vec![(GuestAddress(layout::DRAM_MEM_START), dram_size)]
+    vec![(
+        GuestAddress(layout::DRAM_MEM_START + kernel_size as u64),
+        dram_size,
+    )]
 }
 
 /// Configures the system and should be called once per vm before starting vcpu threads.

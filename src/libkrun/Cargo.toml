@@ -3,6 +3,7 @@ name = "libkrun"
 version = "0.1.1"
 authors = ["Sergio Lopez <slp@redhat.com>"]
 edition = "2018"
+build = "build.rs"
 
 [dependencies]
 libc = ">=0.2.39"
