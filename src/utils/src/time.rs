@@ -65,7 +65,10 @@ impl LocalTime {
             tm_yday: 0,
             tm_isdst: 0,
             tm_gmtoff: 0,
+            #[cfg(target_os = "linux")]
             tm_zone: std::ptr::null(),
+            #[cfg(target_os = "macos")]
+            tm_zone: std::ptr::null_mut(),
         };
 
         // Safe because the parameters are valid.
