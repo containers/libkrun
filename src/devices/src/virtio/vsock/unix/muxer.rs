@@ -36,6 +36,7 @@ use std::io::Read;
 use std::net::Ipv4Addr;
 use std::net::Shutdown;
 use std::net::{TcpListener, TcpStream};
+use std::os::raw::c_char;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 
@@ -830,7 +831,7 @@ impl VsockMuxer {
                 // HACK: FS is shared between VMM and guest, so if we don't
                 // unlink() the path , the bind() will receive "AddrInUse"
                 // error.
-                let _ = unsafe { unlink(path.as_ptr() as *const i8) };
+                let _ = unsafe { unlink(path.as_ptr() as *const c_char) };
 
                 UnixListener::bind(&path)
                     .and_then(|sock| sock.set_nonblocking(true).map(|_| sock))
