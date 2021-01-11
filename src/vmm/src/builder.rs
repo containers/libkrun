@@ -356,7 +356,7 @@ pub fn build_microvm(
             &vm,
             &vcpu_config,
             &guest_memory,
-            GuestAddress(kernel.guest_addr),
+            GuestAddress(kernel_bundle.guest_addr),
             request_ts,
             &exit_evt,
         )
@@ -619,14 +619,14 @@ fn attach_mmio_device(
         .lock()
         .expect("Poisoned device lock")
         .device_type();
-    let cmdline = &mut vmm.kernel_cmdline;
+    let _cmdline = &mut vmm.kernel_cmdline;
 
     let (_mmio_base, _irq) =
         vmm.mmio_device_manager
             .register_mmio_device(vmm.vm.fd(), device, type_id, id)?;
     #[cfg(target_arch = "x86_64")]
     vmm.mmio_device_manager
-        .add_device_to_cmdline(cmdline, _mmio_base, _irq)?;
+        .add_device_to_cmdline(_cmdline, _mmio_base, _irq)?;
 
     Ok(())
 }

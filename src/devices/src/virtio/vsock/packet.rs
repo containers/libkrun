@@ -16,6 +16,7 @@
 /// to temporary buffers, before passing it on to the vsock backend.
 use std::convert::TryInto;
 use std::ffi::CStr;
+use std::os::raw::c_char;
 use std::result;
 
 use utils::byte_order;
@@ -367,7 +368,8 @@ impl VsockPacket {
 
     pub fn unix_path(&self) -> Option<&str> {
         if self.buf_size >= 108 {
-            let cstr = unsafe { CStr::from_ptr(&self.buf().unwrap()[2] as *const _ as *const i8) };
+            let cstr =
+                unsafe { CStr::from_ptr(&self.buf().unwrap()[2] as *const _ as *const c_char) };
             cstr.to_str().ok()
         } else {
             None
