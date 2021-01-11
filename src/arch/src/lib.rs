@@ -1,10 +1,11 @@
 // Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#![deny(missing_docs)]
 //! Implements platform specific functionality.
 //! Supported platforms: x86_64 and aarch64.
+#[cfg(target_os = "linux")]
 extern crate kvm_bindings;
+#[cfg(target_os = "linux")]
 extern crate kvm_ioctls;
 extern crate libc;
 

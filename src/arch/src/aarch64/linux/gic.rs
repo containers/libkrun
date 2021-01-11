@@ -95,7 +95,7 @@ pub trait GICDevice {
         /* We need to tell the kernel how many irqs to support with this vgic.
          * See the `layout` module for details.
          */
-        let nr_irqs: u32 = super::layout::IRQ_MAX - super::layout::IRQ_BASE + 1;
+        let nr_irqs: u32 = super::super::layout::IRQ_MAX - super::super::layout::IRQ_BASE + 1;
         let nr_irqs_ptr = &nr_irqs as *const u32;
         Self::set_device_attribute(
             gic_device.device_fd(),

@@ -75,5 +75,11 @@ pub const IRQ_BASE: u32 = 32;
 /// Last usable interrupt on aarch64.
 pub const IRQ_MAX: u32 = 159;
 
+/// Timer interrupts
+pub const GTIMER_SEC: u32 = 13;
+pub const GTIMER_HYP: u32 = 14;
+pub const GTIMER_VIRT: u32 = 11;
+pub const GTIMER_PHYS: u32 = 12;
+
 /// Below this address will reside the GIC, above this address will reside the MMIO devices.
 pub const MAPPED_IO_START: u64 = 1 << 30; // 1 GB
