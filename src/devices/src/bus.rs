@@ -262,7 +262,7 @@ mod tests {
         assert!(BusRange(0x10, 2) < BusRange(0x12, 3));
 
         let bus_range = BusRange(0x10, 2);
-        assert_eq!(bus_range, bus_range);
+        assert_eq!(bus_range, BusRange(0x10, 2));
 
         let mut bus = Bus::new();
         let mut data = [1, 2, 3, 4];
