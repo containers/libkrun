@@ -62,10 +62,10 @@ impl PortIODeviceManager {
                 .try_clone()
                 .map_err(Error::EventFd)?
         } else {
-            EventFd::new(libc::EFD_NONBLOCK).map_err(Error::EventFd)?
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(Error::EventFd)?
         };
-        let com_evt_2_4 = EventFd::new(libc::EFD_NONBLOCK).map_err(Error::EventFd)?;
-        let kbd_evt = EventFd::new(libc::EFD_NONBLOCK).map_err(Error::EventFd)?;
+        let com_evt_2_4 = EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(Error::EventFd)?;
+        let kbd_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(Error::EventFd)?;
 
         let i8042 = Arc::new(Mutex::new(devices::legacy::I8042Device::new(
             i8042_reset_evfd,
@@ -129,10 +129,10 @@ mod tests {
 
     #[test]
     fn test_register_legacy_devices() {
-        let serial = devices::legacy::Serial::new_sink(EventFd::new(libc::EFD_NONBLOCK).unwrap());
+        let serial = devices::legacy::Serial::new_sink(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap());
         let ldm = PortIODeviceManager::new(
             Some(Arc::new(Mutex::new(serial))),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         );
         assert!(ldm.is_ok());
         assert!(&ldm.unwrap().register_devices().is_ok());

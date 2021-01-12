@@ -300,7 +300,7 @@ pub fn build_microvm(
      */
     let serial_device = None;
 
-    let exit_evt = EventFd::new(libc::EFD_NONBLOCK)
+    let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
         .map_err(Error::EventFd)
         .map_err(StartMicrovmError::Internal)?;
 
@@ -484,7 +484,7 @@ pub fn setup_serial_device(
     input: Box<dyn devices::legacy::ReadableFd + Send>,
     out: Box<dyn io::Write + Send>,
 ) -> std::result::Result<Arc<Mutex<Serial>>, StartMicrovmError> {
-    let interrupt_evt = EventFd::new(libc::EFD_NONBLOCK)
+    let interrupt_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
         .map_err(Error::EventFd)
         .map_err(StartMicrovmError::Internal)?;
     let serial = Arc::new(Mutex::new(Serial::new_in_out(interrupt_evt, input, out)));
@@ -762,9 +762,9 @@ pub mod tests {
     fn default_portio_device_manager() -> PortIODeviceManager {
         PortIODeviceManager::new(
             Some(Arc::new(Mutex::new(Serial::new_sink(
-                EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+                EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
             )))),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         )
         .unwrap()
     }
@@ -793,7 +793,7 @@ pub mod tests {
         let guest_memory = default_guest_memory(128).unwrap();
         let kernel_cmdline = default_kernel_cmdline();
 
-        let exit_evt = EventFd::new(libc::EFD_NONBLOCK)
+        let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
             .map_err(Error::EventFd)
             .map_err(StartMicrovmError::Internal)
             .unwrap();
@@ -846,7 +846,7 @@ pub mod tests {
             entry_addr,
             TimestampUs::default(),
             &bus,
-            &EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            &EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         )
         .unwrap();
         assert_eq!(vcpu_vec.len(), vcpu_count as usize);
@@ -873,7 +873,7 @@ pub mod tests {
             &guest_memory,
             entry_addr,
             TimestampUs::default(),
-            &EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            &EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         )
         .unwrap();
         assert_eq!(vcpu_vec.len(), vcpu_count as usize);

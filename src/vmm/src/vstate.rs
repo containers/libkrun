@@ -1349,7 +1349,7 @@ mod tests {
         let mut vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
         assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
 
-        let exit_evt = EventFd::new(libc::EFD_NONBLOCK).unwrap();
+        let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
 
         let vcpu;
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -1434,7 +1434,7 @@ mod tests {
             vm.supported_cpuid().clone(),
             vm.supported_msrs().clone(),
             devices::Bus::new(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
             super::super::TimestampUs::default(),
         )
         .unwrap();
@@ -1452,7 +1452,7 @@ mod tests {
         let _vcpu = Vcpu::new_aarch64(
             1,
             vm.fd(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
             super::super::TimestampUs::default(),
         )
         .unwrap();
@@ -1502,7 +1502,7 @@ mod tests {
         let mut vcpu = Vcpu::new_aarch64(
             0,
             vm.fd(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
             super::super::TimestampUs::default(),
         )
         .unwrap();
@@ -1515,7 +1515,7 @@ mod tests {
         let mut vcpu = Vcpu::new_aarch64(
             1,
             vm.fd(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
             super::super::TimestampUs::default(),
         )
         .unwrap();
