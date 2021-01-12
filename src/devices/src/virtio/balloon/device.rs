@@ -3,7 +3,7 @@ use std::convert::TryInto;
 use std::io::Write;
 use std::result;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use utils::eventfd::EventFd;
 use vm_memory::{ByteValued, GuestMemory, GuestMemoryMmap};
@@ -13,6 +13,7 @@ use super::super::{
     VIRTIO_MMIO_INT_VRING,
 };
 use super::{defs, defs::uapi};
+use crate::legacy::Gic;
 use crate::Error as DeviceError;
 
 // Inflate queue.
@@ -58,13 +59,16 @@ pub struct Balloon {
     pub(crate) activate_evt: EventFd,
     pub(crate) device_state: DeviceState,
     config: VirtioBalloonConfig,
+    intc: Option<Arc<Mutex<Gic>>>,
+    irq_line: Option<u32>,
 }
 
 impl Balloon {
     pub(crate) fn with_queues(queues: Vec<VirtQueue>) -> super::Result<Balloon> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
-            queue_events.push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(BalloonError::EventFd)?);
+            queue_events
+                .push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(BalloonError::EventFd)?);
         }
 
         let config = VirtioBalloonConfig::default();
@@ -75,10 +79,14 @@ impl Balloon {
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
             interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(BalloonError::EventFd)?,
-            activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(BalloonError::EventFd)?,
+            interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
+                .map_err(BalloonError::EventFd)?,
+            activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
+                .map_err(BalloonError::EventFd)?,
             device_state: DeviceState::Inactive,
             config,
+            intc: None,
+            irq_line: None,
         })
     }
 
@@ -94,14 +102,23 @@ impl Balloon {
         defs::BALLOON_DEV_ID
     }
 
+    pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
+        self.intc = Some(intc);
+    }
+
     pub fn signal_used_queue(&self) -> result::Result<(), DeviceError> {
         debug!("balloon: raising IRQ");
         self.interrupt_status
             .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-        self.interrupt_evt.write(1).map_err(|e| {
-            error!("Failed to signal used queue: {:?}", e);
-            DeviceError::FailedSignalingUsedQueue(e)
-        })
+        if let Some(intc) = &self.intc {
+            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
+            Ok(())
+        } else {
+            self.interrupt_evt.write(1).map_err(|e| {
+                error!("Failed to signal used queue: {:?}", e);
+                DeviceError::FailedSignalingUsedQueue(e)
+            })
+        }
     }
 
     pub fn process_frq(&mut self) -> bool {
@@ -174,6 +191,10 @@ impl VirtioDevice for Balloon {
 
     fn interrupt_status(&self) -> Arc<AtomicUsize> {
         self.interrupt_status.clone()
+    }
+
+    fn set_irq_line(&mut self, irq: u32) {
+        self.irq_line = Some(irq);
     }
 
     fn read_config(&self, offset: u64, mut data: &mut [u8]) {

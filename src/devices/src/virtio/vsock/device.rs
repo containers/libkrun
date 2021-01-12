@@ -21,7 +21,7 @@ use std::result;
 /// - an event queue FD; and
 /// - a backend FD.
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use utils::byte_order;
 use utils::eventfd::EventFd;
@@ -35,6 +35,7 @@ use super::super::{
 use super::packet::VsockPacket;
 use super::VsockBackend;
 use super::{defs, defs::uapi};
+use crate::legacy::Gic;
 
 pub(crate) const RXQ_INDEX: usize = 0;
 pub(crate) const TXQ_INDEX: usize = 1;
@@ -63,6 +64,8 @@ pub struct Vsock<B> {
     // continuous triggers from happening before the device gets activated.
     pub(crate) activate_evt: EventFd,
     pub(crate) device_state: DeviceState,
+    intc: Option<Arc<Mutex<Gic>>>,
+    irq_line: Option<u32>,
 }
 
 // TODO: Detect / handle queue deadlock:
@@ -81,7 +84,8 @@ where
     ) -> super::Result<Vsock<B>> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
-            queue_events.push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(VsockError::EventFd)?);
+            queue_events
+                .push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(VsockError::EventFd)?);
         }
 
         Ok(Vsock {
@@ -92,9 +96,13 @@ where
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
             interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(VsockError::EventFd)?,
-            activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(VsockError::EventFd)?,
+            interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
+                .map_err(VsockError::EventFd)?,
+            activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
+                .map_err(VsockError::EventFd)?,
             device_state: DeviceState::Inactive,
+            intc: None,
+            irq_line: None,
         })
     }
 
@@ -111,6 +119,10 @@ where
         defs::VSOCK_DEV_ID
     }
 
+    pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
+        self.intc = Some(intc);
+    }
+
     pub fn cid(&self) -> u64 {
         self.cid
     }
@@ -125,10 +137,15 @@ where
         debug!("vsock: raising IRQ");
         self.interrupt_status
             .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-        self.interrupt_evt.write(1).map_err(|e| {
-            error!("Failed to signal used queue: {:?}", e);
-            DeviceError::FailedSignalingUsedQueue(e)
-        })
+        if let Some(intc) = &self.intc {
+            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
+            Ok(())
+        } else {
+            self.interrupt_evt.write(1).map_err(|e| {
+                error!("Failed to signal used queue: {:?}", e);
+                DeviceError::FailedSignalingUsedQueue(e)
+            })
+        }
     }
 
     /// Walk the driver-provided RX queue buffers and attempt to fill them up with any data that we
@@ -244,6 +261,10 @@ where
 
     fn interrupt_status(&self) -> Arc<AtomicUsize> {
         self.interrupt_status.clone()
+    }
+
+    fn set_irq_line(&mut self, irq: u32) {
+        self.irq_line = Some(irq);
     }
 
     fn read_config(&self, offset: u64, data: &mut [u8]) {

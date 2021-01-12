@@ -5,6 +5,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -14,6 +15,7 @@ use vm_memory::{GuestAddress, GuestMemoryMmap};
 use super::device_status;
 use super::*;
 use crate::bus::BusDevice;
+use utils::eventfd::EventFd;
 
 //TODO crosvm uses 0 here, but IIRC virtio specified some other vendor id that should be used
 const VENDOR_ID: u32 = 0;
@@ -38,7 +40,6 @@ const MMIO_VERSION: u32 = 2;
 ///
 /// Typically one page (4096 bytes) of MMIO address space is sufficient to handle this transport
 /// and inner virtio device.
-#[derive(Debug)]
 pub struct MmioTransport {
     device: Arc<Mutex<dyn VirtioDevice>>,
     // The register where feature bits are stored.
@@ -50,6 +51,7 @@ pub struct MmioTransport {
     pub(crate) config_generation: u32,
     mem: GuestMemoryMmap,
     pub(crate) interrupt_status: Arc<AtomicUsize>,
+    queue_evts: HashMap<u32, EventFd>,
 }
 
 impl MmioTransport {
@@ -69,6 +71,7 @@ impl MmioTransport {
             config_generation: 0,
             mem,
             interrupt_status,
+            queue_evts: HashMap::new(),
         }
     }
 
@@ -79,6 +82,10 @@ impl MmioTransport {
     // Gets the encapsulated VirtioDevice.
     pub fn device(&self) -> Arc<Mutex<dyn VirtioDevice>> {
         self.device.clone()
+    }
+
+    pub fn register_queue_evt(&mut self, queue_evt: EventFd, id: u32) {
+        self.queue_evts.insert(id, queue_evt);
     }
 
     fn check_device_status(&self, set: u32, clr: u32) -> bool {
@@ -287,6 +294,11 @@ impl BusDevice for MmioTransport {
                     0x30 => self.queue_select = v,
                     0x38 => self.update_queue_field(|q| q.size = v as u16),
                     0x44 => self.update_queue_field(|q| q.ready = v == 1),
+                    0x50 => {
+                        if let Some(eventfd) = self.queue_evts.get(&v) {
+                            eventfd.write(v as u64).unwrap();
+                        }
+                    }
                     0x64 => {
                         if self.check_device_status(device_status::DRIVER_OK, 0) {
                             self.interrupt_status
