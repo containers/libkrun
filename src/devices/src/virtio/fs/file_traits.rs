@@ -8,10 +8,9 @@ use std::os::unix::io::AsRawFd;
 
 use vm_memory::VolatileSlice;
 
-use libc::{
-    c_int, c_void, off64_t, pread64, preadv64, pwrite64, pwritev64, read, readv, size_t, write,
-    writev,
-};
+use libc::{c_int, c_void, read, readv, size_t, write, writev};
+
+use super::bindings::{off64_t, pread64, preadv64, pwrite64, pwritev64};
 
 /// A trait for setting the size of a file.
 /// This is equivalent to File's `set_len` method, but

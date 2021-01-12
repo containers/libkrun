@@ -8,6 +8,7 @@
 //! Emulates virtual and hardware devices.
 
 extern crate libc;
+extern crate lru;
 
 #[macro_use]
 extern crate logger;

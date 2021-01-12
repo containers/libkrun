@@ -1,12 +1,24 @@
+#[allow(dead_code)]
+#[allow(non_camel_case_types)]
+mod bindings;
 pub mod descriptor_utils;
 mod device;
 mod event_handler;
 mod file_traits;
+#[allow(dead_code)]
 mod filesystem;
 pub mod fuse;
 mod multikey;
-mod passthrough;
 mod server;
+
+#[cfg(target_os = "linux")]
+pub mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::passthrough;
+#[cfg(target_os = "macos")]
+pub mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::passthrough;
 
 pub use self::defs::uapi::VIRTIO_ID_FS as TYPE_FS;
 pub use self::device::Fs;
