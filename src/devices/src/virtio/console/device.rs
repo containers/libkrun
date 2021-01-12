@@ -97,7 +97,7 @@ impl Console {
     ) -> super::Result<Console> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
-            queue_events.push(EventFd::new(libc::EFD_NONBLOCK).map_err(ConsoleError::EventFd)?);
+            queue_events.push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(ConsoleError::EventFd)?);
         }
 
         let (cols, rows) = get_win_size();
@@ -109,9 +109,9 @@ impl Console {
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
             interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(ConsoleError::EventFd)?,
-            activate_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(ConsoleError::EventFd)?,
-            sigwinch_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(ConsoleError::EventFd)?,
+            interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(ConsoleError::EventFd)?,
+            activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(ConsoleError::EventFd)?,
+            sigwinch_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(ConsoleError::EventFd)?,
             device_state: DeviceState::Inactive,
             in_buffer: VecDeque::new(),
             config,

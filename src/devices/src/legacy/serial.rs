@@ -334,7 +334,7 @@ mod tests {
                 internal: Arc::new(Mutex::new(SharedBufferInternal {
                     read_buf: Vec::new(),
                     write_buf: Vec::new(),
-                    evfd: EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+                    evfd: EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
                 })),
             }
         }
@@ -365,7 +365,7 @@ mod tests {
     fn test_event_handling_no_in() {
         let mut event_manager = EventManager::new().unwrap();
 
-        let intr_evt = EventFd::new(libc::EFD_NONBLOCK).unwrap();
+        let intr_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
         let serial_out = SharedBuffer::new();
 
         let mut serial = Serial::new_out(intr_evt, Box::new(serial_out.clone()));
@@ -380,7 +380,7 @@ mod tests {
     fn test_event_handling_with_in() {
         let mut event_manager = EventManager::new().unwrap();
 
-        let intr_evt = EventFd::new(libc::EFD_NONBLOCK).unwrap();
+        let intr_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
         let serial_in_out = SharedBuffer::new();
 
         let mut serial = Serial::new_in_out(
@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_serial_output() {
-        let intr_evt = EventFd::new(libc::EFD_NONBLOCK).unwrap();
+        let intr_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
         let serial_out = SharedBuffer::new();
 
         let mut serial = Serial::new_out(intr_evt, Box::new(serial_out.clone()));
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_serial_raw_input() {
-        let intr_evt = EventFd::new(libc::EFD_NONBLOCK).unwrap();
+        let intr_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
         let serial_out = SharedBuffer::new();
 
         let mut serial = Serial::new_out(intr_evt.try_clone().unwrap(), Box::new(serial_out));
@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn test_serial_input() {
-        let intr_evt = EventFd::new(libc::EFD_NONBLOCK).unwrap();
+        let intr_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
         let serial_in_out = SharedBuffer::new();
 
         let mut serial = Serial::new_in_out(
@@ -503,7 +503,7 @@ mod tests {
 
     #[test]
     fn test_serial_thr() {
-        let intr_evt = EventFd::new(libc::EFD_NONBLOCK).unwrap();
+        let intr_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
         let mut serial = Serial::new_sink(intr_evt.try_clone().unwrap());
 
         // write 1 to the interrupt event fd, so that read doesn't block in case the event fd
@@ -522,7 +522,7 @@ mod tests {
 
     #[test]
     fn test_serial_dlab() {
-        let mut serial = Serial::new_sink(EventFd::new(libc::EFD_NONBLOCK).unwrap());
+        let mut serial = Serial::new_sink(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap());
 
         serial.write(u64::from(LCR), &[LCR_DLAB_BIT as u8]);
         serial.write(u64::from(DLAB_LOW), &[0x12 as u8]);
@@ -539,7 +539,7 @@ mod tests {
 
     #[test]
     fn test_serial_modem() {
-        let mut serial = Serial::new_sink(EventFd::new(libc::EFD_NONBLOCK).unwrap());
+        let mut serial = Serial::new_sink(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap());
 
         serial.write(u64::from(MCR), &[MCR_LOOP_BIT as u8]);
         serial.write(u64::from(DATA), &[b'a']);
@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn test_serial_scratch() {
-        let mut serial = Serial::new_sink(EventFd::new(libc::EFD_NONBLOCK).unwrap());
+        let mut serial = Serial::new_sink(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap());
 
         serial.write(u64::from(SCR), &[0x12 as u8]);
 

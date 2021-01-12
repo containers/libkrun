@@ -64,7 +64,7 @@ impl Balloon {
     pub(crate) fn with_queues(queues: Vec<VirtQueue>) -> super::Result<Balloon> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
-            queue_events.push(EventFd::new(libc::EFD_NONBLOCK).map_err(BalloonError::EventFd)?);
+            queue_events.push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(BalloonError::EventFd)?);
         }
 
         let config = VirtioBalloonConfig::default();
@@ -75,8 +75,8 @@ impl Balloon {
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
             interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(BalloonError::EventFd)?,
-            activate_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(BalloonError::EventFd)?,
+            interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(BalloonError::EventFd)?,
+            activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(BalloonError::EventFd)?,
             device_state: DeviceState::Inactive,
             config,
         })

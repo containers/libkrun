@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn test_rtc_read_write_and_event() {
-        let mut rtc = RTC::new(EventFd::new(libc::EFD_NONBLOCK).unwrap());
+        let mut rtc = RTC::new(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap());
         let mut data = [0; 4];
 
         // Read and write to the MR register.

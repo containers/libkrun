@@ -81,7 +81,7 @@ where
     ) -> super::Result<Vsock<B>> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
-            queue_events.push(EventFd::new(libc::EFD_NONBLOCK).map_err(VsockError::EventFd)?);
+            queue_events.push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(VsockError::EventFd)?);
         }
 
         Ok(Vsock {
@@ -92,8 +92,8 @@ where
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
             interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(VsockError::EventFd)?,
-            activate_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(VsockError::EventFd)?,
+            interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(VsockError::EventFd)?,
+            activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(VsockError::EventFd)?,
             device_state: DeviceState::Inactive,
         })
     }

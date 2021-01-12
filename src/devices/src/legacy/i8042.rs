@@ -316,8 +316,8 @@ mod tests {
     #[test]
     fn test_i8042_read_write_and_event() {
         let mut i8042 = I8042Device::new(
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         );
         let reset_evt = i8042.get_reset_evt_clone().unwrap();
 
@@ -344,8 +344,8 @@ mod tests {
     #[test]
     fn test_i8042_commands() {
         let mut i8042 = I8042Device::new(
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         );
         let mut data = [1];
 
@@ -384,8 +384,8 @@ mod tests {
     #[test]
     fn test_i8042_buffer() {
         let mut i8042 = I8042Device::new(
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         );
 
         // Test push/pop.
@@ -408,8 +408,8 @@ mod tests {
     #[test]
     fn test_i8042_kbd() {
         let mut i8042 = I8042Device::new(
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         );
 
         fn expect_key(i8042: &mut I8042Device, key: u16) {

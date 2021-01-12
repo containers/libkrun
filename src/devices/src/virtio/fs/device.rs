@@ -63,7 +63,7 @@ impl Fs {
     ) -> super::Result<Fs> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
-            queue_events.push(EventFd::new(libc::EFD_NONBLOCK).map_err(FsError::EventFd)?);
+            queue_events.push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(FsError::EventFd)?);
         }
 
         let tag = fs_id.into_bytes();
@@ -82,8 +82,8 @@ impl Fs {
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
             interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(FsError::EventFd)?,
-            activate_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(FsError::EventFd)?,
+            interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(FsError::EventFd)?,
+            activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(FsError::EventFd)?,
             device_state: DeviceState::Inactive,
             config,
             server: Server::new(PassthroughFs::new(fs_cfg).unwrap()),

@@ -357,11 +357,11 @@ pub(crate) mod tests {
             DummyDevice {
                 acked_features: 0,
                 avail_features: 0,
-                interrupt_evt: EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+                interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
                 interrupt_status: Arc::new(AtomicUsize::new(0)),
                 queue_evts: vec![
-                    EventFd::new(libc::EFD_NONBLOCK).unwrap(),
-                    EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+                    EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+                    EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
                 ],
                 queues: vec![Queue::new(16), Queue::new(32)],
                 device_activated: false,
