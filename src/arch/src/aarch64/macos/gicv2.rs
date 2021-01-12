@@ -27,22 +27,22 @@ impl GICv2 {
     const GIC_V2_MAINT_IRQ: u32 = 8;
 
     /// Get the address of the GICv2 distributor.
-    const fn get_dist_addr() -> u64 {
+    pub const fn get_dist_addr() -> u64 {
         super::super::layout::MAPPED_IO_START - GICv2::GIC_V2_DIST_SIZE
     }
 
     /// Get the size of the GIC_v2 distributor.
-    const fn get_dist_size() -> u64 {
+    pub const fn get_dist_size() -> u64 {
         GICv2::GIC_V2_DIST_SIZE
     }
 
     /// Get the address of the GIC_v2 CPU.
-    const fn get_cpu_addr() -> u64 {
+    pub const fn get_cpu_addr() -> u64 {
         GICv2::get_dist_addr() - GICv2::GIC_V2_CPU_SIZE
     }
 
     /// Get the size of the GIC_v2 CPU.
-    const fn get_cpu_size() -> u64 {
+    pub const fn get_cpu_size() -> u64 {
         GICv2::GIC_V2_CPU_SIZE
     }
 }

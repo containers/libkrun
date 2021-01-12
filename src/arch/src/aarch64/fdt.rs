@@ -450,7 +450,14 @@ fn create_virtio_node<T: DeviceInfoForFDT + Clone + Debug>(
     dev_info: &T,
 ) -> Result<()> {
     let device_reg_prop = generate_prop64(&[dev_info.addr(), dev_info.length()]);
+    #[cfg(target_os = "linux")]
     let irq = generate_prop32(&[GIC_FDT_IRQ_TYPE_SPI, dev_info.irq(), IRQ_TYPE_EDGE_RISING]);
+    #[cfg(target_os = "macos")]
+    let irq = generate_prop32(&[
+        GIC_FDT_IRQ_TYPE_SPI,
+        dev_info.irq() - 32,
+        IRQ_TYPE_EDGE_RISING,
+    ]);
 
     append_begin_node(fdt, &format!("virtio_mmio@{:x}", dev_info.addr()))?;
     append_property_string(fdt, "compatible", "virtio,mmio")?;
