@@ -757,7 +757,7 @@ impl VsockMuxer {
                                 local_port: pkt.dst_port(),
                                 peer_port: pkt.src_port(),
                             },
-                            MuxerConnection::new_peer_init(
+                            MuxerConnection::new_peer_wrap_init(
                                 Box::new(stream) as Box<dyn CommonStream>,
                                 uapi::VSOCK_HOST_CID,
                                 self.cid,

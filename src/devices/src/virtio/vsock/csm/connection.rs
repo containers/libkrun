@@ -170,6 +170,28 @@ impl VsockChannel for VsockConnection {
             return Ok(());
         }
 
+        if self.pending_rx.remove(PendingRx::ResponseEx) {
+            self.state = ConnState::Established;
+
+            let fd = self.as_raw_fd();
+            let buf = pkt.buf_mut().ok_or(VsockError::PktBufMissing)?;
+            let mut len: socklen_t = buf.len() as u32;
+
+            let res = unsafe {
+                getpeername(
+                    fd,
+                    buf.as_mut_ptr() as *mut sockaddr,
+                    &mut len as *mut socklen_t,
+                )
+            };
+            if res != 0 {
+                return Err(VsockError::NoData); //TODO
+            }
+
+            pkt.set_op(uapi::VSOCK_OP_RESPONSE_EX).set_len(len);
+            return Ok(());
+        }
+
         // Same thing goes for locally-initiated connections that need to yield a connection
         // request.
         if self.pending_rx.remove(PendingRx::Request) {
@@ -517,6 +539,33 @@ impl VsockConnection {
         }
     }
 
+    /// Create a new guest-initiated connection object.
+    pub fn new_peer_wrap_init(
+        stream: Box<dyn CommonStream>,
+        local_cid: u64,
+        peer_cid: u64,
+        local_port: u32,
+        peer_port: u32,
+        peer_buf_alloc: u32,
+    ) -> Self {
+        Self {
+            local_cid,
+            peer_cid,
+            local_port,
+            peer_port,
+            stream,
+            state: ConnState::PeerInit,
+            tx_buf: TxBuf::new(),
+            fwd_cnt: Wrapping(0),
+            peer_buf_alloc,
+            peer_fwd_cnt: Wrapping(0),
+            rx_cnt: Wrapping(0),
+            last_fwd_cnt_to_peer: Wrapping(0),
+            pending_rx: PendingRxSet::from(PendingRx::ResponseEx),
+            expiry: None,
+        }
+    }
+
     /// Create a new host-initiated connection object.
     pub fn new_local_init(
         stream: Box<dyn CommonStream>,
@@ -829,7 +878,7 @@ mod tests {
             )
             .unwrap();
             let conn = match conn_state {
-                ConnState::PeerInit => VsockConnection::new_peer_init(
+                ConnState::PeerInit => VsockConnection::new_peer_wrap_init(
                     Box::new(stream),
                     LOCAL_CID,
                     PEER_CID,
