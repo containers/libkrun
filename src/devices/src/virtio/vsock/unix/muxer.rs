@@ -357,11 +357,16 @@ impl VsockMuxer {
             .and_then(|sock| sock.set_nonblocking(true).map(|_| sock))
             .map_err(Error::UnixBind)?;
 
+        #[allow(unused_mut)]
+        let mut epoll = Epoll::new().map_err(Error::EpollFdCreate)?;
+        #[cfg(target_os = "macos")]
+        epoll.disable_clears();
+
         let mut muxer = Self {
             cid,
             host_sock,
             host_sock_path,
-            epoll: Epoll::new().map_err(Error::EpollFdCreate)?,
+            epoll,
             rxq: MuxerRxQ::new(),
             conn_map: HashMap::with_capacity(defs::MAX_CONNECTIONS),
             listener_map: HashMap::with_capacity(defs::MAX_CONNECTIONS + 1),
