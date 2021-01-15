@@ -246,7 +246,7 @@ impl Serial {
 }
 
 impl BusDevice for Serial {
-    fn read(&mut self, offset: u64, data: &mut [u8]) {
+    fn read(&mut self, _vcpuid: u64, offset: u64, data: &mut [u8]) {
         if data.len() != 1 {
             return;
         }
@@ -254,7 +254,7 @@ impl BusDevice for Serial {
         data[0] = self.handle_read(offset as u8);
     }
 
-    fn write(&mut self, offset: u64, data: &[u8]) {
+    fn write(&mut self, _vcpuid: u64, offset: u64, data: &[u8]) {
         if data.len() != 1 {
             return;
         }

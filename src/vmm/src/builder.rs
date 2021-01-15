@@ -6,6 +6,8 @@
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
+#[cfg(target_os = "macos")]
+use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 
 use super::{Error, Vmm};
@@ -13,7 +15,6 @@ use super::{Error, Vmm};
 #[cfg(target_arch = "x86_64")]
 use device_manager::legacy::PortIODeviceManager;
 use device_manager::mmio::MMIODeviceManager;
-#[cfg(target_os = "macos")]
 use devices::legacy::Gic;
 use devices::legacy::Serial;
 use devices::virtio::{MmioTransport, Vsock, VsockUnixBackend};
@@ -26,7 +27,9 @@ use utils::terminal::Terminal;
 use utils::time::TimestampUs;
 #[cfg(target_os = "linux")]
 use vm_memory::mmap::GuestRegionMmap;
-use vm_memory::{mmap::MmapRegion, Bytes, GuestAddress, GuestMemoryMmap};
+#[cfg(target_os = "macos")]
+use vm_memory::Bytes;
+use vm_memory::{mmap::MmapRegion, GuestAddress, GuestMemoryMmap};
 use vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
 use vmm_config::fs::FsBuilder;
 #[cfg(target_os = "linux")]
@@ -306,7 +309,8 @@ pub fn build_microvm(
     } else {
         None
     };
-     */
+    */
+
     let serial_device = None;
 
     let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
@@ -712,15 +716,27 @@ fn create_vcpus_aarch64(
     _vm: &Vm,
     vcpu_config: &VcpuConfig,
     guest_mem: &GuestMemoryMmap,
-    _entry_addr: GuestAddress,
+    entry_addr: GuestAddress,
     request_ts: TimestampUs,
     exit_evt: &EventFd,
     intc: Arc<Mutex<Gic>>,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
+    let mut boot_senders = Vec::with_capacity(vcpu_config.vcpu_count as usize - 1);
+
     for cpu_index in 0..vcpu_config.vcpu_count {
+        let boot_receiver = if cpu_index != 0 {
+            let (boot_sender, boot_receiver) = channel();
+            boot_senders.push(boot_sender);
+            Some(boot_receiver)
+        } else {
+            None
+        };
+
         let mut vcpu = Vcpu::new_aarch64(
             cpu_index,
+            entry_addr,
+            boot_receiver,
             exit_evt.try_clone().map_err(Error::EventFd)?,
             request_ts.clone(),
             intc.clone(),
@@ -731,6 +747,9 @@ fn create_vcpus_aarch64(
 
         vcpus.push(vcpu);
     }
+
+    vcpus[0].set_boot_senders(boot_senders);
+
     Ok(vcpus)
 }
 
@@ -820,6 +839,10 @@ fn attach_console_devices(
         .add_subscriber(console.clone())
         .map_err(RegisterEvent)?;
 
+    #[cfg(target_os = "linux")]
+    register_sigwinch_handler(console.lock().unwrap().get_sigwinch_fd())
+        .map_err(RegisterFsSigwinch)?;
+
     // The device mutex mustn't be locked here otherwise it will deadlock.
     attach_mmio_device(
         vmm,
@@ -827,10 +850,6 @@ fn attach_console_devices(
         MmioTransport::new(vmm.guest_memory().clone(), console),
     )
     .map_err(RegisterFsDevice)?;
-
-    #[cfg(target_os = "linux")]
-    register_sigwinch_handler(console.lock().unwrap().get_sigwinch_fd())
-        .map_err(RegisterFsSigwinch)?;
 
     Ok(())
 }

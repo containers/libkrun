@@ -1,6 +1,5 @@
 // Copyright 2021 Red Hat, Inc.
 // SPDX-License-Identifier: Apache-2.0
-#![feature(llvm_asm)]
 
 #[allow(non_camel_case_types)]
 #[allow(improper_ctypes)]
@@ -20,6 +19,7 @@ extern "C" {
     pub fn mach_absolute_time() -> u64;
 }
 
+const HV_EXIT_REASON_CANCELED: hv_exit_reason_t = 0;
 const HV_EXIT_REASON_EXCEPTION: hv_exit_reason_t = 1;
 const HV_EXIT_REASON_VTIMER_ACTIVATED: hv_exit_reason_t = 2;
 
@@ -87,6 +87,7 @@ pub enum Error {
     VcpuInitialRegisters,
     VcpuReadRegister,
     VcpuReadSystemRegister,
+    VcpuRequestExit,
     VcpuRun,
     VcpuSetPendingIrq,
     VcpuSetRegister,
@@ -105,6 +106,7 @@ impl Display for Error {
             VcpuInitialRegisters => write!(f, "Error setting up initial HVF vCPU registers"),
             VcpuReadRegister => write!(f, "Error reading HVF vCPU register"),
             VcpuReadSystemRegister => write!(f, "Error reading HVF vCPU system register"),
+            VcpuRequestExit => write!(f, "Error requesting HVF vCPU exit"),
             VcpuRun => write!(f, "Error running HVF vCPU"),
             VcpuSetPendingIrq => write!(f, "Error setting HVF vCPU pending irq"),
             VcpuSetRegister => write!(f, "Error setting HVF vCPU register"),
@@ -118,6 +120,17 @@ impl Display for Error {
 pub enum InterruptType {
     Irq,
     Fiq,
+}
+
+pub fn vcpu_request_exit(vcpuid: u64) -> Result<(), Error> {
+    let mut vcpu: u64 = vcpuid;
+    let ret = unsafe { hv_vcpus_exit(&mut vcpu, 1) };
+
+    if ret != HV_SUCCESS {
+        Err(Error::VcpuRequestExit)
+    } else {
+        Ok(())
+    }
 }
 
 pub fn vcpu_set_pending_irq(
@@ -186,6 +199,8 @@ impl HvfVm {
 #[derive(Debug)]
 pub enum VcpuExit<'a> {
     Breakpoint,
+    Canceled,
+    CpuOn(u64, u64, u64),
     HypervisorCall,
     MmioRead(u64, &'a mut [u8]),
     MmioWrite(u64, &'a [u8]),
@@ -214,14 +229,13 @@ pub struct HvfVcpu<'a> {
 }
 
 impl<'a> HvfVcpu<'a> {
-    pub fn new(entry_addr: u64, fdt_addr: u64) -> Result<Self, Error> {
+    pub fn new() -> Result<Self, Error> {
         let mut vcpuid: hv_vcpu_t = 0;
         let vcpu_exit_ptr: *mut hv_vcpu_exit_t = std::ptr::null_mut();
-        // As of version 1.51, Rust doesn't notice this variable being used
-        // in the inline assembly bellow.
-        let mut _cntfrq: u64 = 0;
+        let cntfrq: u64 = 24000000;
 
-        unsafe { llvm_asm!("mrs $0, cntfrq_el0" : "=r" (_cntfrq)) };
+        // TODO - Once inline assembly is stabilized in Rust, re-enable this:
+        //unsafe { asm!("mrs {}, cntfrq_el0", out(reg) cntfrq) };
 
         let ret = unsafe {
             hv_vcpu_create(
@@ -234,31 +248,36 @@ impl<'a> HvfVcpu<'a> {
             return Err(Error::VcpuCreate);
         }
 
-        let ret = unsafe { hv_vcpu_set_reg(vcpuid, hv_reg_t_HV_REG_CPSR, PSTATE_FAULT_BITS_64) };
-        if ret != HV_SUCCESS {
-            return Err(Error::VcpuInitialRegisters);
-        }
-
-        let ret = unsafe { hv_vcpu_set_reg(vcpuid, hv_reg_t_HV_REG_PC, entry_addr) };
-        if ret != HV_SUCCESS {
-            return Err(Error::VcpuInitialRegisters);
-        }
-
-        let ret = unsafe { hv_vcpu_set_reg(vcpuid, hv_reg_t_HV_REG_X0, fdt_addr) };
-        if ret != HV_SUCCESS {
-            return Err(Error::VcpuInitialRegisters);
-        }
-
         let vcpu_exit: &hv_vcpu_exit_t = unsafe { vcpu_exit_ptr.as_mut().unwrap() };
 
         Ok(Self {
             vcpuid,
             vcpu_exit,
-            cntfrq: _cntfrq,
+            cntfrq: cntfrq,
             mmio_buf: [0; 8],
             pending_mmio_read: None,
             pending_advance_pc: false,
         })
+    }
+
+    pub fn set_initial_state(&self, entry_addr: u64, fdt_addr: u64) -> Result<(), Error> {
+        let ret =
+            unsafe { hv_vcpu_set_reg(self.vcpuid, hv_reg_t_HV_REG_CPSR, PSTATE_FAULT_BITS_64) };
+        if ret != HV_SUCCESS {
+            return Err(Error::VcpuInitialRegisters);
+        }
+
+        let ret = unsafe { hv_vcpu_set_reg(self.vcpuid, hv_reg_t_HV_REG_PC, entry_addr) };
+        if ret != HV_SUCCESS {
+            return Err(Error::VcpuInitialRegisters);
+        }
+
+        let ret = unsafe { hv_vcpu_set_reg(self.vcpuid, hv_reg_t_HV_REG_X0, fdt_addr) };
+        if ret != HV_SUCCESS {
+            return Err(Error::VcpuInitialRegisters);
+        }
+
+        Ok(())
     }
 
     pub fn id(&self) -> u64 {
@@ -338,6 +357,7 @@ impl<'a> HvfVcpu<'a> {
         }
 
         match self.vcpu_exit.reason {
+            HV_EXIT_REASON_CANCELED => Ok(VcpuExit::Canceled),
             HV_EXIT_REASON_EXCEPTION => {
                 let syndrome = self.vcpu_exit.exception.syndrome;
                 let ec = (syndrome >> 26) & 0x3f;
@@ -346,10 +366,18 @@ impl<'a> HvfVcpu<'a> {
                     EC_AA64_HVC => {
                         let val = self.read_reg(hv_reg_t_HV_REG_X0)?;
 
+                        debug!("HVC: 0x{:x}", val);
                         let ret = match val {
                             0x8400_0000 => Some(2),
                             0x8400_0006 => Some(2),
                             0x8400_0009 => return Ok(VcpuExit::Shutdown),
+                            0xc400_0003 => {
+                                let mpidr = self.read_reg(hv_reg_t_HV_REG_X1)?;
+                                let entry = self.read_reg(hv_reg_t_HV_REG_X2)?;
+                                let context_id = self.read_reg(hv_reg_t_HV_REG_X3)?;
+                                self.write_reg(hv_reg_t_HV_REG_X0, 0)?;
+                                return Ok(VcpuExit::CpuOn(mpidr, entry, context_id));
+                            }
                             _ => {
                                 debug!("HVC call unhandled");
                                 None
@@ -456,8 +484,10 @@ impl<'a> HvfVcpu<'a> {
             _ => {
                 let pc = self.read_reg(hv_reg_t_HV_REG_PC)?;
                 panic!(
-                    "unexpected exit reason: 0x{:x} at pc=0x{:x}",
-                    self.vcpu_exit.reason, pc
+                    "unexpected exit reason: vcpuid={} 0x{:x} at pc=0x{:x}",
+                    self.id(),
+                    self.vcpu_exit.reason,
+                    pc
                 );
             }
         }

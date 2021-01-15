@@ -16,8 +16,8 @@ use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Barrier;
 use std::thread;
 
-use super::TimestampUs;
-use super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
+use super::super::TimestampUs;
+use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 
 use arch;
 #[cfg(target_arch = "aarch64")]
@@ -898,7 +898,7 @@ impl Vcpu {
         if addr == MAGIC_IOPORT_SIGNAL_GUEST_BOOT_COMPLETE
             && data[0] == MAGIC_VALUE_SIGNAL_GUEST_BOOT_COMPLETE
         {
-            super::Vmm::log_boot_time(&self.create_ts);
+            super::super::Vmm::log_boot_time(&self.create_ts);
         }
     }
 
@@ -1026,19 +1026,19 @@ impl Vcpu {
             Ok(run) => match run {
                 #[cfg(target_arch = "x86_64")]
                 VcpuExit::IoIn(addr, data) => {
-                    self.io_bus.read(u64::from(addr), data);
+                    self.io_bus.read(0, u64::from(addr), data);
                     Ok(VcpuEmulation::Handled)
                 }
                 #[cfg(target_arch = "x86_64")]
                 VcpuExit::IoOut(addr, data) => {
                     self.check_boot_complete_signal(u64::from(addr), data);
 
-                    self.io_bus.write(u64::from(addr), data);
+                    self.io_bus.write(0, u64::from(addr), data);
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::MmioRead(addr, data) => {
                     if let Some(ref mmio_bus) = self.mmio_bus {
-                        mmio_bus.read(addr, data);
+                        mmio_bus.read(0, addr, data);
                     }
                     Ok(VcpuEmulation::Handled)
                 }
@@ -1047,7 +1047,7 @@ impl Vcpu {
                         #[cfg(target_arch = "aarch64")]
                         self.check_boot_complete_signal(addr, data);
 
-                        mmio_bus.write(addr, data);
+                        mmio_bus.write(0, addr, data);
                     }
                     Ok(VcpuEmulation::Handled)
                 }

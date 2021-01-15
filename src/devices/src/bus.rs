@@ -23,9 +23,9 @@ use crate::virtio::AsAny;
 #[allow(unused_variables)]
 pub trait BusDevice: AsAny + Send {
     /// Reads at `offset` from this device
-    fn read(&mut self, offset: u64, data: &mut [u8]) {}
+    fn read(&mut self, vcpuid: u64, offset: u64, data: &mut [u8]) {}
     /// Writes at `offset` into this device
-    fn write(&mut self, offset: u64, data: &[u8]) {}
+    fn write(&mut self, vcpuid: u64, offset: u64, data: &[u8]) {}
     /// Triggers the `irq_mask` interrupt on this device
     fn interrupt(&self, irq_mask: u32) -> io::Result<()> {
         Ok(())
@@ -143,12 +143,12 @@ impl Bus {
     /// Reads data from the device that owns the range containing `addr` and puts it into `data`.
     ///
     /// Returns true on success, otherwise `data` is untouched.
-    pub fn read(&self, addr: u64, data: &mut [u8]) -> bool {
+    pub fn read(&self, vcpuid: u64, addr: u64, data: &mut [u8]) -> bool {
         if let Some((offset, dev)) = self.get_device(addr) {
             // OK to unwrap as lock() failing is a serious error condition and should panic.
             dev.lock()
                 .expect("Failed to acquire device lock")
-                .read(offset, data);
+                .read(vcpuid, offset, data);
             true
         } else {
             false
@@ -158,12 +158,12 @@ impl Bus {
     /// Writes `data` to the device that owns the range containing `addr`.
     ///
     /// Returns true on success, otherwise `data` is untouched.
-    pub fn write(&self, addr: u64, data: &[u8]) -> bool {
+    pub fn write(&self, vcpuid: u64, addr: u64, data: &[u8]) -> bool {
         if let Some((offset, dev)) = self.get_device(addr) {
             // OK to unwrap as lock() failing is a serious error condition and should panic.
             dev.lock()
                 .expect("Failed to acquire device lock")
-                .write(offset, data);
+                .write(vcpuid, offset, data);
             true
         } else {
             false

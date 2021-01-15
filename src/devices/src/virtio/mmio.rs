@@ -222,7 +222,7 @@ impl MmioTransport {
 }
 
 impl BusDevice for MmioTransport {
-    fn read(&mut self, offset: u64, data: &mut [u8]) {
+    fn read(&mut self, _vcpuid: u64, offset: u64, data: &mut [u8]) {
         match offset {
             0x00..=0xff if data.len() == 4 => {
                 let v = match offset {
@@ -262,7 +262,7 @@ impl BusDevice for MmioTransport {
         };
     }
 
-    fn write(&mut self, offset: u64, data: &[u8]) {
+    fn write(&mut self, _vcpuid: u64, offset: u64, data: &[u8]) {
         fn hi(v: &mut GuestAddress, x: u32) {
             *v = (*v & 0xffff_ffff) | (u64::from(x) << 32)
         }
