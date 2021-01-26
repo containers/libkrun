@@ -62,6 +62,20 @@ int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus, uint32_t ram_mib)
 int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
 
 /*
+ * Configures the mapped volumes for the microVM. Only supported on macOS, on Linux use
+ * user_namespaces and bind-mounts instead.
+ *
+ * Arguments:
+ *  "ctx_id"         - the configuration context ID.
+ *  "mapped_volumes" - an array of string pointers with format "host_path:guest_map" representing
+ *                     the volumes to be mapped inside the microVM
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_mapped_volumes(uint32_t ctx_id, const char *mapped_volumes[]);
+
+/*
  * Sets the working directory for the executable to be run inside the microVM.
  *
  * Arguments:

@@ -3,12 +3,13 @@
 // found in the LICENSE file.
 
 use std::collections::btree_map;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
 use std::mem::{self, MaybeUninit};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -328,6 +329,12 @@ pub struct Config {
     ///
     /// The default is `None`.
     pub proc_sfd_rawfd: Option<RawFd>,
+
+    /// Optional list of tuples of (host_path, guest_path) elements, representing paths from the host
+    /// to be exposed in the guest.
+    ///
+    /// The default in `None`.
+    pub mapped_volumes: Option<Vec<(PathBuf, PathBuf)>>,
 }
 
 impl Default for Config {
@@ -340,6 +347,7 @@ impl Default for Config {
             root_dir: String::from("/"),
             xattr: false,
             proc_sfd_rawfd: None,
+            mapped_volumes: None,
         }
     }
 }
@@ -359,6 +367,8 @@ pub struct PassthroughFs {
     handles: RwLock<BTreeMap<Handle, Arc<HandleData>>>,
     next_handle: AtomicU64,
     init_handle: u64,
+
+    host_volumes: RwLock<HashMap<String, Inode>>,
 
     // Whether writeback caching is enabled for this directory. This will only be true when
     // `cfg.writeback` is true and `init` was called with `FsOptions::WRITEBACK_CACHE`.
@@ -380,6 +390,7 @@ impl PassthroughFs {
             next_handle: AtomicU64::new(1),
             init_handle: 0,
 
+            host_volumes: RwLock::new(HashMap::new()),
             writeback: AtomicBool::new(false),
             cfg,
         })
@@ -505,7 +516,37 @@ impl PassthroughFs {
         Ok(unsafe { File::from_raw_fd(fd) })
     }
 
+    fn lookup_host_volume(&self, name: &CStr) -> io::Result<Entry> {
+        if let Some(inode) = self
+            .host_volumes
+            .read()
+            .unwrap()
+            .get(&name.to_str().unwrap().to_string())
+        {
+            if let Some(data) = self.inodes.read().unwrap().get(&inode) {
+                let file = self.get_file(data.inode)?;
+                let st = fstat(&file)?;
+                data.refcount.fetch_add(1, Ordering::Acquire);
+                return Ok(Entry {
+                    inode: data.inode,
+                    generation: 0,
+                    attr: st,
+                    attr_timeout: self.cfg.attr_timeout,
+                    entry_timeout: self.cfg.entry_timeout,
+                });
+            }
+        }
+
+        Err(linux_error(io::Error::from_raw_os_error(libc::ENOENT)))
+    }
+
     fn do_lookup(&self, parent: Inode, name: &CStr) -> io::Result<Entry> {
+        if parent == fuse::ROOT_ID {
+            if let Some(entry) = self.lookup_host_volume(name).ok() {
+                return Ok(entry);
+            }
+        }
+
         let file = self.get_file(parent)?;
 
         // Safe because this doesn't modify any memory and we check the return value.
@@ -887,6 +928,56 @@ impl FileSystem for PassthroughFs {
         );
 
         self.add_path(fuse::ROOT_ID, self.cfg.root_dir.clone());
+
+        if let Some(mapped_volumes) = &self.cfg.mapped_volumes {
+            for (host_vol, guest_vol) in mapped_volumes.iter() {
+                assert!(host_vol.is_absolute());
+                assert!(guest_vol.is_absolute());
+                assert_eq!(guest_vol.components().count(), 2);
+
+                let guest_vol_str = guest_vol
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .expect("Couldn't parse guest volume as String");
+                let host_vol_str = host_vol
+                    .to_str()
+                    .expect("Couldn't parse host volume as String");
+                let path = CString::new(host_vol_str).expect("Couldn't parse volume as CString");
+                // Safe because this doesn't modify any memory and we check the return value.
+                let fd = unsafe { libc::open(path.as_ptr(), libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+                if fd < 0 {
+                    error!(
+                        "Error setting up mapped volume: {:?}:{:?}: {:?}",
+                        host_vol,
+                        guest_vol,
+                        io::Error::last_os_error(),
+                    );
+                    continue;
+                }
+
+                let st = fstat(&f)?;
+                let inode = self.next_inode.fetch_add(1, Ordering::Relaxed);
+
+                inodes.insert(
+                    inode,
+                    InodeAltKey {
+                        ino: st.st_ino,
+                        dev: st.st_dev,
+                    },
+                    Arc::new(InodeData {
+                        inode,
+                        linkdata: CString::new("").unwrap(),
+                        refcount: AtomicU64::new(1),
+                    }),
+                );
+                self.add_path(inode, host_vol_str.to_string());
+                self.host_volumes
+                    .write()
+                    .unwrap()
+                    .insert(guest_vol_str.to_string(), inode);
+            }
+        }
 
         let mut opts = FsOptions::empty();
         if self.cfg.writeback && capable.contains(FsOptions::WRITEBACK_CACHE) {
