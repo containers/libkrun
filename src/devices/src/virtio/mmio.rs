@@ -5,6 +5,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -14,6 +15,7 @@ use vm_memory::{GuestAddress, GuestMemoryMmap};
 use super::device_status;
 use super::*;
 use crate::bus::BusDevice;
+use utils::eventfd::EventFd;
 
 //TODO crosvm uses 0 here, but IIRC virtio specified some other vendor id that should be used
 const VENDOR_ID: u32 = 0;
@@ -38,7 +40,6 @@ const MMIO_VERSION: u32 = 2;
 ///
 /// Typically one page (4096 bytes) of MMIO address space is sufficient to handle this transport
 /// and inner virtio device.
-#[derive(Debug)]
 pub struct MmioTransport {
     device: Arc<Mutex<dyn VirtioDevice>>,
     // The register where feature bits are stored.
@@ -50,6 +51,7 @@ pub struct MmioTransport {
     pub(crate) config_generation: u32,
     mem: GuestMemoryMmap,
     pub(crate) interrupt_status: Arc<AtomicUsize>,
+    queue_evts: HashMap<u32, EventFd>,
 }
 
 impl MmioTransport {
@@ -69,6 +71,7 @@ impl MmioTransport {
             config_generation: 0,
             mem,
             interrupt_status,
+            queue_evts: HashMap::new(),
         }
     }
 
@@ -79,6 +82,10 @@ impl MmioTransport {
     // Gets the encapsulated VirtioDevice.
     pub fn device(&self) -> Arc<Mutex<dyn VirtioDevice>> {
         self.device.clone()
+    }
+
+    pub fn register_queue_evt(&mut self, queue_evt: EventFd, id: u32) {
+        self.queue_evts.insert(id, queue_evt);
     }
 
     fn check_device_status(&self, set: u32, clr: u32) -> bool {
@@ -215,7 +222,7 @@ impl MmioTransport {
 }
 
 impl BusDevice for MmioTransport {
-    fn read(&mut self, offset: u64, data: &mut [u8]) {
+    fn read(&mut self, _vcpuid: u64, offset: u64, data: &mut [u8]) {
         match offset {
             0x00..=0xff if data.len() == 4 => {
                 let v = match offset {
@@ -255,7 +262,7 @@ impl BusDevice for MmioTransport {
         };
     }
 
-    fn write(&mut self, offset: u64, data: &[u8]) {
+    fn write(&mut self, _vcpuid: u64, offset: u64, data: &[u8]) {
         fn hi(v: &mut GuestAddress, x: u32) {
             *v = (*v & 0xffff_ffff) | (u64::from(x) << 32)
         }
@@ -287,6 +294,11 @@ impl BusDevice for MmioTransport {
                     0x30 => self.queue_select = v,
                     0x38 => self.update_queue_field(|q| q.size = v as u16),
                     0x44 => self.update_queue_field(|q| q.ready = v == 1),
+                    0x50 => {
+                        if let Some(eventfd) = self.queue_evts.get(&v) {
+                            eventfd.write(v as u64).unwrap();
+                        }
+                    }
                     0x64 => {
                         if self.check_device_status(device_status::DRIVER_OK, 0) {
                             self.interrupt_status
@@ -357,11 +369,11 @@ pub(crate) mod tests {
             DummyDevice {
                 acked_features: 0,
                 avail_features: 0,
-                interrupt_evt: EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+                interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
                 interrupt_status: Arc::new(AtomicUsize::new(0)),
                 queue_evts: vec![
-                    EventFd::new(libc::EFD_NONBLOCK).unwrap(),
-                    EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+                    EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+                    EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
                 ],
                 queues: vec![Queue::new(16), Queue::new(32)],
                 device_activated: false,
@@ -426,6 +438,8 @@ pub(crate) mod tests {
             self.interrupt_status.clone()
         }
 
+        fn set_irq_line(&mut self, _irq: u32) {}
+
         fn is_activated(&self) -> bool {
             self.device_activated
         }
@@ -434,7 +448,7 @@ pub(crate) mod tests {
     fn set_device_status(d: &mut MmioTransport, status: u32) {
         let mut buf = vec![0; 4];
         write_le_u32(&mut buf[..], status);
-        d.write(0x70, &buf[..]);
+        d.write(0, 0x70, &buf[..]);
     }
 
     #[test]
@@ -479,7 +493,7 @@ pub(crate) mod tests {
 
         // The following read shouldn't be valid, because the length of the buf is not 4.
         buf.push(0);
-        d.read(0, &mut buf[..]);
+        d.read(0, 0, &mut buf[..]);
         assert_eq!(buf[..4], buf_copy[..]);
 
         // the length is ok again
@@ -487,62 +501,62 @@ pub(crate) mod tests {
 
         // Now we test that reading at various predefined offsets works as intended.
 
-        d.read(0, &mut buf[..]);
+        d.read(0, 0, &mut buf[..]);
         assert_eq!(read_le_u32(&buf[..]), MMIO_MAGIC_VALUE);
 
-        d.read(0x04, &mut buf[..]);
+        d.read(0, 0x04, &mut buf[..]);
         assert_eq!(read_le_u32(&buf[..]), MMIO_VERSION);
 
-        d.read(0x08, &mut buf[..]);
+        d.read(0, 0x08, &mut buf[..]);
         assert_eq!(read_le_u32(&buf[..]), d.locked_device().device_type());
 
-        d.read(0x0c, &mut buf[..]);
+        d.read(0, 0x0c, &mut buf[..]);
         assert_eq!(read_le_u32(&buf[..]), VENDOR_ID);
 
         d.features_select = 0;
-        d.read(0x10, &mut buf[..]);
+        d.read(0, 0x10, &mut buf[..]);
         assert_eq!(
             read_le_u32(&buf[..]),
             d.locked_device().avail_features_by_page(0)
         );
 
         d.features_select = 1;
-        d.read(0x10, &mut buf[..]);
+        d.read(0, 0x10, &mut buf[..]);
         assert_eq!(
             read_le_u32(&buf[..]),
             d.locked_device().avail_features_by_page(0) | 0x1
         );
 
-        d.read(0x34, &mut buf[..]);
+        d.read(0, 0x34, &mut buf[..]);
         assert_eq!(read_le_u32(&buf[..]), 16);
 
-        d.read(0x44, &mut buf[..]);
+        d.read(0, 0x44, &mut buf[..]);
         assert_eq!(read_le_u32(&buf[..]), false as u32);
 
         d.interrupt_status.store(111, Ordering::SeqCst);
-        d.read(0x60, &mut buf[..]);
+        d.read(0, 0x60, &mut buf[..]);
         assert_eq!(read_le_u32(&buf[..]), 111);
 
-        d.read(0x70, &mut buf[..]);
+        d.read(0, 0x70, &mut buf[..]);
         assert_eq!(read_le_u32(&buf[..]), 0);
 
         d.config_generation = 5;
-        d.read(0xfc, &mut buf[..]);
+        d.read(0, 0xfc, &mut buf[..]);
         assert_eq!(read_le_u32(&buf[..]), 5);
 
         // This read shouldn't do anything, as it's past the readable generic registers, and
         // before the device specific configuration space. Btw, reads from the device specific
         // conf space are going to be tested a bit later, alongside writes.
         buf = buf_copy.to_vec();
-        d.read(0xfd, &mut buf[..]);
+        d.read(0, 0xfd, &mut buf[..]);
         assert_eq!(buf[..], buf_copy[..]);
 
         // Read from an invalid address in generic register range.
-        d.read(0xfb, &mut buf[..]);
+        d.read(0, 0xfb, &mut buf[..]);
         assert_eq!(buf[..], buf_copy[..]);
 
         // Read from an invalid length in generic register range.
-        d.read(0xfc, &mut buf[..3]);
+        d.read(0, 0xfc, &mut buf[..3]);
         assert_eq!(buf[..], buf_copy[..]);
     }
 
@@ -557,7 +571,7 @@ pub(crate) mod tests {
 
         // Nothing should happen, because the slice len > 4.
         d.features_select = 0;
-        d.write(0x14, &buf[..]);
+        d.write(0, 0x14, &buf[..]);
         assert_eq!(d.features_select, 0);
 
         buf.pop();
@@ -569,7 +583,7 @@ pub(crate) mod tests {
         assert_eq!(d.locked_device().acked_features(), 0x0);
         d.acked_features_select = 0x0;
         write_le_u32(&mut buf[..], 1);
-        d.write(0x20, &buf[..]);
+        d.write(0, 0x20, &buf[..]);
         assert_eq!(d.locked_device().acked_features(), 0x0);
 
         // Write to device specific configuration space should be ignored before setting device_status::DRIVER
@@ -577,8 +591,8 @@ pub(crate) mod tests {
         for i in (0..0xeff).rev() {
             let mut buf2 = vec![0; 0xeff];
 
-            d.write(0x100 + i as u64, &buf1[i..]);
-            d.read(0x100, &mut buf2[..]);
+            d.write(0, 0x100 + i as u64, &buf1[i..]);
+            d.read(0, 0x100, &mut buf2[..]);
 
             for item in buf2.iter().take(0xeff) {
                 assert_eq!(*item, 0);
@@ -594,7 +608,7 @@ pub(crate) mod tests {
         // now writes should work
         d.features_select = 0;
         write_le_u32(&mut buf[..], 1);
-        d.write(0x14, &buf[..]);
+        d.write(0, 0x14, &buf[..]);
         assert_eq!(d.features_select, 1);
 
         // Test acknowledging features on bus.
@@ -603,12 +617,12 @@ pub(crate) mod tests {
 
         // Set the device available features in order to make acknowledging possible.
         dummy_dev.lock().unwrap().set_avail_features(0x124);
-        d.write(0x20, &buf[..]);
+        d.write(0, 0x20, &buf[..]);
         assert_eq!(d.locked_device().acked_features(), 0x124);
 
         d.acked_features_select = 0;
         write_le_u32(&mut buf[..], 2);
-        d.write(0x24, &buf[..]);
+        d.write(0, 0x24, &buf[..]);
         assert_eq!(d.acked_features_select, 2);
         set_device_status(
             &mut d,
@@ -619,31 +633,31 @@ pub(crate) mod tests {
         assert_eq!(d.locked_device().acked_features(), 0x124);
         d.acked_features_select = 0x0;
         write_le_u32(&mut buf[..], 1);
-        d.write(0x20, &buf[..]);
+        d.write(0, 0x20, &buf[..]);
         assert_eq!(d.locked_device().acked_features(), 0x124);
 
         // Setup queues
         d.queue_select = 0;
         write_le_u32(&mut buf[..], 3);
-        d.write(0x30, &buf[..]);
+        d.write(0, 0x30, &buf[..]);
         assert_eq!(d.queue_select, 3);
 
         d.queue_select = 0;
         assert_eq!(d.locked_device().queues()[0].size, 0);
         write_le_u32(&mut buf[..], 16);
-        d.write(0x38, &buf[..]);
+        d.write(0, 0x38, &buf[..]);
         assert_eq!(d.locked_device().queues()[0].size, 16);
 
         assert!(!d.locked_device().queues()[0].ready);
         write_le_u32(&mut buf[..], 1);
-        d.write(0x44, &buf[..]);
+        d.write(0, 0x44, &buf[..]);
         assert!(d.locked_device().queues()[0].ready);
 
         assert_eq!(d.locked_device().queues()[0].desc_table.0, 0);
         write_le_u32(&mut buf[..], 123);
-        d.write(0x80, &buf[..]);
+        d.write(0, 0x80, &buf[..]);
         assert_eq!(d.locked_device().queues()[0].desc_table.0, 123);
-        d.write(0x84, &buf[..]);
+        d.write(0, 0x84, &buf[..]);
         assert_eq!(
             d.locked_device().queues()[0].desc_table.0,
             123 + (123 << 32)
@@ -651,9 +665,9 @@ pub(crate) mod tests {
 
         assert_eq!(d.locked_device().queues()[0].avail_ring.0, 0);
         write_le_u32(&mut buf[..], 124);
-        d.write(0x90, &buf[..]);
+        d.write(0, 0x90, &buf[..]);
         assert_eq!(d.locked_device().queues()[0].avail_ring.0, 124);
-        d.write(0x94, &buf[..]);
+        d.write(0, 0x94, &buf[..]);
         assert_eq!(
             d.locked_device().queues()[0].avail_ring.0,
             124 + (124 << 32)
@@ -661,9 +675,9 @@ pub(crate) mod tests {
 
         assert_eq!(d.locked_device().queues()[0].used_ring.0, 0);
         write_le_u32(&mut buf[..], 125);
-        d.write(0xa0, &buf[..]);
+        d.write(0, 0xa0, &buf[..]);
         assert_eq!(d.locked_device().queues()[0].used_ring.0, 125);
-        d.write(0xa4, &buf[..]);
+        d.write(0, 0xa4, &buf[..]);
         assert_eq!(d.locked_device().queues()[0].used_ring.0, 125 + (125 << 32));
 
         set_device_status(
@@ -676,17 +690,17 @@ pub(crate) mod tests {
 
         d.interrupt_status.store(0b10_1010, Ordering::Relaxed);
         write_le_u32(&mut buf[..], 0b111);
-        d.write(0x64, &buf[..]);
+        d.write(0, 0x64, &buf[..]);
         assert_eq!(d.interrupt_status.load(Ordering::Relaxed), 0b10_1000);
 
         // Write to an invalid address in generic register range.
         write_le_u32(&mut buf[..], 0xf);
         d.config_generation = 0;
-        d.write(0xfb, &buf[..]);
+        d.write(0, 0xfb, &buf[..]);
         assert_eq!(d.config_generation, 0);
 
         // Write to an invalid length in generic register range.
-        d.write(0xfc, &buf[..2]);
+        d.write(0, 0xfc, &buf[..2]);
         assert_eq!(d.config_generation, 0);
 
         // Here we test writes/read into/from the device specific configuration space.
@@ -694,8 +708,8 @@ pub(crate) mod tests {
         for i in (0..0xeff).rev() {
             let mut buf2 = vec![0; 0xeff];
 
-            d.write(0x100 + i as u64, &buf1[i..]);
-            d.read(0x100, &mut buf2[..]);
+            d.write(0, 0x100 + i as u64, &buf1[i..]);
+            d.read(0, 0x100, &mut buf2[..]);
 
             for item in buf2.iter().take(i) {
                 assert_eq!(*item, 0);
@@ -745,9 +759,9 @@ pub(crate) mod tests {
         for q in 0..queue_len {
             d.queue_select = q as u32;
             write_le_u32(&mut buf[..], 16);
-            d.write(0x38, &buf[..]);
+            d.write(0, 0x38, &buf[..]);
             write_le_u32(&mut buf[..], 1);
-            d.write(0x44, &buf[..]);
+            d.write(0, 0x44, &buf[..]);
         }
         assert!(d.are_queues_valid());
         assert!(!d.locked_device().is_activated());
@@ -755,8 +769,8 @@ pub(crate) mod tests {
         // Device should be ready for activation now.
 
         // A couple of invalid writes; will trigger warnings; shouldn't activate the device.
-        d.write(0xa8, &buf[..]);
-        d.write(0x1000, &buf[..]);
+        d.write(0, 0xa8, &buf[..]);
+        d.write(0, 0x1000, &buf[..]);
         assert!(!d.locked_device().is_activated());
 
         set_device_status(
@@ -779,8 +793,8 @@ pub(crate) mod tests {
         // a warning path and have no effect on queue state.
         write_le_u32(&mut buf[..], 0);
         d.queue_select = 0;
-        d.write(0x44, &buf[..]);
-        d.read(0x44, &mut buf[..]);
+        d.write(0, 0x44, &buf[..]);
+        d.read(0, 0x44, &mut buf[..]);
         assert_eq!(read_le_u32(&buf[..]), 1);
     }
 
@@ -798,9 +812,9 @@ pub(crate) mod tests {
         for q in 0..queues_count {
             d.queue_select = q as u32;
             write_le_u32(&mut buf[..], 16);
-            d.write(0x38, &buf[..]);
+            d.write(0, 0x38, &buf[..]);
             write_le_u32(&mut buf[..], 1);
-            d.write(0x44, &buf[..]);
+            d.write(0, 0x44, &buf[..]);
         }
         assert!(d.are_queues_valid());
         assert!(!d.locked_device().is_activated());
@@ -836,13 +850,13 @@ pub(crate) mod tests {
 
         // Marking device as FAILED should not affect device_activated state
         write_le_u32(&mut buf[..], 0x8f);
-        d.write(0x70, &buf[..]);
+        d.write(0, 0x70, &buf[..]);
         assert_eq!(d.device_status, 0x8f);
         assert!(d.locked_device().is_activated());
 
         // Nothing happens when backend driver doesn't support reset
         write_le_u32(&mut buf[..], 0x0);
-        d.write(0x70, &buf[..]);
+        d.write(0, 0x70, &buf[..]);
         assert_eq!(d.device_status, 0x8f);
         assert!(d.locked_device().is_activated());
     }

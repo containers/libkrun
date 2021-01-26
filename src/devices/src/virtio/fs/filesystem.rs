@@ -9,6 +9,7 @@ use std::io;
 use std::mem;
 use std::time::Duration;
 
+use super::bindings;
 use super::fuse;
 
 pub use super::fuse::FsOptions;
@@ -35,7 +36,7 @@ pub struct Entry {
     /// Inode attributes. Even if `attr_timeout` is zero, `attr` must be correct. For example, for
     /// `open()`, FUSE uses `attr.st_size` from `lookup()` to determine how many bytes to request.
     /// If this value is not correct, incorrect data will be returned.
-    pub attr: libc::stat64,
+    pub attr: bindings::stat64,
 
     /// How long the values in `attr` should be considered valid. If the attributes of the `Entry`
     /// are only modified by the FUSE client, then this should be set to a very large value.
@@ -66,7 +67,7 @@ pub struct DirEntry<'a> {
     /// The inode number for this entry. This does NOT have to be the same as the `Inode` for this
     /// directory entry. However, it must be the same as the `attr.st_ino` field of the `Entry` that
     /// would be returned by a `lookup` request in the parent directory for `name`.
-    pub ino: libc::ino64_t,
+    pub ino: bindings::ino64_t,
 
     /// Any non-zero value that the kernel can use to identify the current point in the directory
     /// entry stream. It does not need to be the actual physical position. A value of `0` is
@@ -369,7 +370,7 @@ pub trait FileSystem {
     /// If this call is successful then the lookup count of the `Inode` associated with the returned
     /// `Entry` must be increased by 1.
     fn lookup(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> io::Result<Entry> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Forget about an inode.
@@ -408,8 +409,8 @@ pub trait FileSystem {
         ctx: Context,
         inode: Self::Inode,
         handle: Option<Self::Handle>,
-    ) -> io::Result<(libc::stat64, Duration)> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+    ) -> io::Result<(bindings::stat64, Duration)> {
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Set attributes for a file / directory.
@@ -433,16 +434,16 @@ pub trait FileSystem {
         &self,
         ctx: Context,
         inode: Self::Inode,
-        attr: libc::stat64,
+        attr: bindings::stat64,
         handle: Option<Self::Handle>,
         valid: SetattrValid,
-    ) -> io::Result<(libc::stat64, Duration)> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+    ) -> io::Result<(bindings::stat64, Duration)> {
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Read a symbolic link.
     fn readlink(&self, ctx: Context, inode: Self::Inode) -> io::Result<Vec<u8>> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Create a symbolic link.
@@ -460,7 +461,7 @@ pub trait FileSystem {
         parent: Self::Inode,
         name: &CStr,
     ) -> io::Result<Entry> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Create a file node.
@@ -483,7 +484,7 @@ pub trait FileSystem {
         rdev: u32,
         umask: u32,
     ) -> io::Result<Entry> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Create a directory.
@@ -502,7 +503,7 @@ pub trait FileSystem {
         mode: u32,
         umask: u32,
     ) -> io::Result<Entry> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Remove a file.
@@ -511,7 +512,7 @@ pub trait FileSystem {
     /// removal of the inode until the lookup count goes to zero. See the documentation of the
     /// `forget` function for more information.
     fn unlink(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Remove a directory.
@@ -520,7 +521,7 @@ pub trait FileSystem {
     /// removal of the inode until the lookup count goes to zero. See the documentation of the
     /// `forget` function for more information.
     fn rmdir(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Rename a file / directory.
@@ -544,7 +545,7 @@ pub trait FileSystem {
         newname: &CStr,
         flags: u32,
     ) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Create a hard link.
@@ -560,7 +561,7 @@ pub trait FileSystem {
         newparent: Self::Inode,
         newname: &CStr,
     ) -> io::Result<Entry> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Open a file.
@@ -636,7 +637,7 @@ pub trait FileSystem {
         flags: u32,
         umask: u32,
     ) -> io::Result<(Entry, Option<Self::Handle>, OpenOptions)> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Read data from a file.
@@ -666,7 +667,7 @@ pub trait FileSystem {
         lock_owner: Option<u64>,
         flags: u32,
     ) -> io::Result<usize> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Write data to a file.
@@ -702,7 +703,7 @@ pub trait FileSystem {
         kill_priv: bool,
         flags: u32,
     ) -> io::Result<usize> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Flush the contents of a file.
@@ -734,7 +735,7 @@ pub trait FileSystem {
         handle: Self::Handle,
         lock_owner: u64,
     ) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Synchronize file contents.
@@ -757,7 +758,7 @@ pub trait FileSystem {
         datasync: bool,
         handle: Self::Handle,
     ) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Allocate requested space for file data.
@@ -782,7 +783,7 @@ pub trait FileSystem {
         offset: u64,
         length: u64,
     ) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Release an open file.
@@ -812,13 +813,13 @@ pub trait FileSystem {
         flock_release: bool,
         lock_owner: Option<u64>,
     ) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Get information about the file system.
-    fn statfs(&self, ctx: Context, inode: Self::Inode) -> io::Result<libc::statvfs64> {
+    fn statfs(&self, ctx: Context, inode: Self::Inode) -> io::Result<bindings::statvfs64> {
         // Safe because we are zero-initializing a struct with only POD fields.
-        let mut st: libc::statvfs64 = unsafe { mem::zeroed() };
+        let mut st: bindings::statvfs64 = unsafe { mem::zeroed() };
 
         // This matches the behavior of libfuse as it returns these values if the
         // filesystem doesn't implement this method.
@@ -844,7 +845,7 @@ pub trait FileSystem {
         value: &[u8],
         flags: u32,
     ) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Get an extended attribute.
@@ -865,7 +866,7 @@ pub trait FileSystem {
         name: &CStr,
         size: u32,
     ) -> io::Result<GetxattrReply> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// List extended attribute names.
@@ -881,7 +882,7 @@ pub trait FileSystem {
     /// failure. The kernel will return `EOPNOTSUPP` for all future calls to `listxattr` without
     /// forwarding them to the file system.
     fn listxattr(&self, ctx: Context, inode: Self::Inode, size: u32) -> io::Result<ListxattrReply> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Remove an extended attribute.
@@ -890,7 +891,7 @@ pub trait FileSystem {
     /// failure. The kernel will return `EOPNOTSUPP` for all future calls to `removexattr` without
     /// forwarding them to the file system.
     fn removexattr(&self, ctx: Context, inode: Self::Inode, name: &CStr) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Open a directory for reading.
@@ -958,7 +959,7 @@ pub trait FileSystem {
     where
         F: FnMut(DirEntry) -> io::Result<usize>,
     {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Read a directory with entry attributes.
@@ -997,7 +998,7 @@ pub trait FileSystem {
     where
         F: FnMut(DirEntry, Entry) -> io::Result<usize>,
     {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Synchronize the contents of a directory.
@@ -1020,7 +1021,7 @@ pub trait FileSystem {
         datasync: bool,
         handle: Self::Handle,
     ) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Release an open directory.
@@ -1040,7 +1041,7 @@ pub trait FileSystem {
         flags: u32,
         handle: Self::Handle,
     ) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Check file access permissions.
@@ -1054,7 +1055,7 @@ pub trait FileSystem {
     /// success: all future calls to `access` will return success without being forwarded to the
     /// file system.
     fn access(&self, ctx: Context, inode: Self::Inode, mask: u32) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// Reposition read/write file offset.
@@ -1066,7 +1067,7 @@ pub trait FileSystem {
         offset: u64,
         whence: u32,
     ) -> io::Result<u64> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1082,41 +1083,41 @@ pub trait FileSystem {
         len: u64,
         flags: u64,
     ) -> io::Result<usize> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// TODO: support this
     fn getlk(&self) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// TODO: support this
     fn setlk(&self) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// TODO: support this
     fn setlkw(&self) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// TODO: support this
     fn ioctl(&self) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// TODO: support this
     fn bmap(&self) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// TODO: support this
     fn poll(&self) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 
     /// TODO: support this
     fn notify_reply(&self) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 }

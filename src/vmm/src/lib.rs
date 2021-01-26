@@ -10,8 +10,13 @@
 //! machine (microVM).
 //#![deny(missing_docs)]
 
+#[cfg(target_os = "macos")]
+extern crate hvf;
+#[cfg(target_os = "linux")]
 extern crate kvm_bindings;
+#[cfg(target_os = "linux")]
 extern crate kvm_ioctls;
+
 extern crate libc;
 extern crate polly;
 
@@ -31,15 +36,25 @@ pub(crate) mod device_manager;
 /// Resource store for configured microVM resources.
 pub mod resources;
 /// Signal handling utilities.
+#[cfg(target_os = "linux")]
 pub mod signal_handler;
 /// Wrappers over structures used to configure the VMM.
 pub mod vmm_config;
-mod vstate;
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux::vstate;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+use macos::vstate;
 
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::os::unix::io::AsRawFd;
 use std::sync::Mutex;
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
 use arch::DeviceType;
@@ -55,7 +70,9 @@ use utils::epoll::{EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 use utils::time::TimestampUs;
 use vm_memory::GuestMemoryMmap;
-use vstate::{Vcpu, VcpuEvent, VcpuHandle, VcpuResponse, Vm};
+#[cfg(target_os = "linux")]
+use vstate::VcpuEvent;
+use vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
 
 /// Success exit code.
 pub const FC_EXIT_CODE_OK: u8 = 0;
@@ -235,6 +252,7 @@ impl Vmm {
     }
 
     /// Sends a resume command to the vcpus.
+    #[cfg(target_os = "linux")]
     pub fn resume_vcpus(&mut self) -> Result<()> {
         for handle in self.vcpus_handles.iter() {
             handle
@@ -253,6 +271,11 @@ impl Vmm {
         Ok(())
     }
 
+    #[cfg(target_os = "macos")]
+    pub fn resume_vcpus(&mut self) -> Result<()> {
+        Ok(())
+    }
+
     /// Configures the system for boot.
     pub fn configure_system(&self, vcpus: &[Vcpu], initrd: &Option<InitrdConfig>) -> Result<()> {
         #[cfg(target_arch = "x86_64")]
@@ -265,7 +288,24 @@ impl Vmm {
         )
         .map_err(Error::ConfigureSystem)?;
 
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+        {
+            let vcpu_mpidr = vcpus.into_iter().map(|cpu| cpu.get_mpidr()).collect();
+            arch::aarch64::configure_system(
+                &self.guest_memory,
+                &self
+                    .kernel_cmdline
+                    .as_cstring()
+                    .map_err(Error::LoadCommandline)?,
+                vcpu_mpidr,
+                self.mmio_device_manager.get_device_info(),
+                self.vm.get_irqchip(),
+                initrd,
+            )
+            .map_err(Error::ConfigureSystem)?;
+        }
+
+        #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
         {
             let vcpu_mpidr = vcpus.into_iter().map(|cpu| cpu.get_mpidr()).collect();
             arch::aarch64::configure_system(
@@ -319,6 +359,7 @@ impl Vmm {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn log_boot_time(t0_ts: &TimestampUs) {
         let now_tm_us = TimestampUs::default();
 

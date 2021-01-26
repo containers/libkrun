@@ -717,7 +717,7 @@ mod tests {
     impl TestStream {
         fn new() -> Self {
             Self {
-                fd: EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+                fd: EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
                 read_state: StreamState::Ready,
                 write_state: StreamState::Ready,
                 read_buf: Vec::new(),

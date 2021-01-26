@@ -6,7 +6,7 @@ use std::ops::DerefMut;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::result;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use libc::TIOCGWINSZ;
 use utils::eventfd::EventFd;
@@ -18,6 +18,7 @@ use super::super::{
     VIRTIO_MMIO_INT_CONFIG, VIRTIO_MMIO_INT_VRING,
 };
 use super::{defs, defs::uapi};
+use crate::legacy::Gic;
 use crate::Error as DeviceError;
 
 pub(crate) const RXQ_INDEX: usize = 0;
@@ -87,6 +88,8 @@ pub struct Console {
     output: Box<dyn io::Write + Send>,
     configured: bool,
     pub(crate) interactive: bool,
+    intc: Option<Arc<Mutex<Gic>>>,
+    irq_line: Option<u32>,
 }
 
 impl Console {
@@ -97,7 +100,8 @@ impl Console {
     ) -> super::Result<Console> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
-            queue_events.push(EventFd::new(libc::EFD_NONBLOCK).map_err(ConsoleError::EventFd)?);
+            queue_events
+                .push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(ConsoleError::EventFd)?);
         }
 
         let (cols, rows) = get_win_size();
@@ -109,9 +113,12 @@ impl Console {
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
             interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(ConsoleError::EventFd)?,
-            activate_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(ConsoleError::EventFd)?,
-            sigwinch_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(ConsoleError::EventFd)?,
+            interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
+                .map_err(ConsoleError::EventFd)?,
+            activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
+                .map_err(ConsoleError::EventFd)?,
+            sigwinch_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
+                .map_err(ConsoleError::EventFd)?,
             device_state: DeviceState::Inactive,
             in_buffer: VecDeque::new(),
             config,
@@ -119,6 +126,8 @@ impl Console {
             output,
             configured: false,
             interactive: true,
+            intc: None,
+            irq_line: None,
         })
     }
 
@@ -137,6 +146,10 @@ impl Console {
         defs::CONSOLE_DEV_ID
     }
 
+    pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
+        self.intc = Some(intc);
+    }
+
     pub fn get_sigwinch_fd(&self) -> RawFd {
         self.sigwinch_evt.as_raw_fd()
     }
@@ -151,10 +164,15 @@ impl Console {
         debug!("console: raising IRQ");
         self.interrupt_status
             .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-        self.interrupt_evt.write(1).map_err(|e| {
-            error!("Failed to signal used queue: {:?}", e);
-            DeviceError::FailedSignalingUsedQueue(e)
-        })
+        if let Some(intc) = &self.intc {
+            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
+            Ok(())
+        } else {
+            self.interrupt_evt.write(1).map_err(|e| {
+                error!("Failed to signal used queue: {:?}", e);
+                DeviceError::FailedSignalingUsedQueue(e)
+            })
+        }
     }
 
     pub fn signal_config_update(&self) -> result::Result<(), DeviceError> {
@@ -272,6 +290,10 @@ impl VirtioDevice for Console {
 
     fn interrupt_status(&self) -> Arc<AtomicUsize> {
         self.interrupt_status.clone()
+    }
+
+    fn set_irq_line(&mut self, irq: u32) {
+        self.irq_line = Some(irq);
     }
 
     fn read_config(&self, offset: u64, mut data: &mut [u8]) {

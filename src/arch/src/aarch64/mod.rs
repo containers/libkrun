@@ -2,14 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod fdt;
-/// Module for the global interrupt controller configuration.
-pub mod gic;
-mod gicv2;
-mod gicv3;
 /// Layout for this aarch64 system.
 pub mod layout;
-/// Logic for configuring aarch64 registers.
-pub mod regs;
+
+#[cfg(target_os = "linux")]
+pub mod linux;
+#[cfg(target_os = "linux")]
+pub use self::linux::*;
+#[cfg(target_os = "macos")]
+pub mod macos;
+#[cfg(target_os = "macos")]
+pub use self::macos::*;
 
 use std::cmp::min;
 use std::collections::HashMap;
@@ -36,6 +39,7 @@ use DeviceType;
 
 /// Returns a Vec of the valid memory addresses for aarch64.
 /// See [`layout`](layout) module for a drawing of the specific memory model for this platform.
+#[cfg(target_os = "linux")]
 pub fn arch_memory_regions(
     size: usize,
     _kernel_load_addr: u64,
@@ -46,6 +50,15 @@ pub fn arch_memory_regions(
         GuestAddress(layout::DRAM_MEM_START + kernel_size as u64),
         dram_size,
     )]
+}
+#[cfg(target_os = "macos")]
+pub fn arch_memory_regions(
+    size: usize,
+    _kernel_load_addr: u64,
+    _kernel_size: usize,
+) -> Vec<(GuestAddress, usize)> {
+    let dram_size = min(size as u64, layout::DRAM_MEM_MAX_SIZE) as usize;
+    vec![(GuestAddress(layout::DRAM_MEM_START), dram_size)]
 }
 
 /// Configures the system and should be called once per vm before starting vcpu threads.
@@ -101,7 +114,7 @@ pub fn initrd_load_addr(guest_mem: &GuestMemoryMmap, initrd_size: usize) -> supe
 }
 
 // Auxiliary function to get the address where the device tree blob is loaded.
-fn get_fdt_addr(mem: &GuestMemoryMmap) -> u64 {
+pub fn get_fdt_addr(mem: &GuestMemoryMmap) -> u64 {
     // If the memory allocated is smaller than the size allocated for the FDT,
     // we return the start of the DRAM so that
     // we allow the code to try and load the FDT.

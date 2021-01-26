@@ -191,7 +191,7 @@ pub(crate) mod tests {
     impl TestBackend {
         pub fn new() -> Self {
             Self {
-                evfd: EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+                evfd: EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
                 rx_err: None,
                 tx_err: None,
                 pending_rx: false,

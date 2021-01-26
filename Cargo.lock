@@ -25,9 +25,9 @@ checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
 
 [[package]]
 name = "cc"
-version = "1.0.53"
+version = "1.0.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "404b1fe4f65288577753b17e3b36a04596ee784493ec249bf81c7f2d2acd751c"
+checksum = "4c0496836a84f8d0495758516b8621a622beb77c0fed418570e50764093ced48"
 
 [[package]]
 name = "cfg-if"
@@ -54,13 +54,22 @@ checksum = "f18f717c5c7c2e3483feb64cccebd077245ad6d19007c2db0fd341d38595353c"
 name = "devices"
 version = "0.1.0"
 dependencies = [
+ "arch",
  "bitflags",
+ "hvf",
  "libc",
  "logger",
  "polly",
  "utils",
  "virtio_gen",
  "vm-memory",
+]
+
+[[package]]
+name = "hvf"
+version = "0.1.0"
+dependencies = [
+ "logger",
 ]
 
 [[package]]
@@ -72,19 +81,37 @@ dependencies = [
 ]
 
 [[package]]
-name = "kvm-bindings"
-version = "0.2.0"
+name = "kqueue"
+version = "1.0.2"
+dependencies = [
+ "kqueue-sys",
+ "libc",
+]
+
+[[package]]
+name = "kqueue-sys"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d381156ad52005b4655a9421401f02b80f9f049e653496e3ea6639a83fc12453"
+checksum = "9803ae382091c10a5c7297ffb9fde284dbc9662b249f86eacef605d97ae92d99"
+dependencies = [
+ "bitflags",
+ "libc",
+]
+
+[[package]]
+name = "kvm-bindings"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f1c07667561c3d12d77342baf28ca5d0f8c3ea2160778485640ec84a4571da2"
 dependencies = [
  "vmm-sys-util",
 ]
 
 [[package]]
 name = "kvm-ioctls"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d99720f5df3814a7188f095ad6774775b7635dfdd62b7c091ce7e00a51c3c109"
+checksum = "158d15da895bddca8223fa31dc9e8b9317bdc2fbc4635dea8dd575fc40dae37f"
 dependencies = [
  "kvm-bindings",
  "libc",
@@ -99,9 +126,7 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99e85c08494b21a9054e7fe1374a732aeadaff3980b6990b94bfd3a70f690005"
+version = "0.2.82"
 
 [[package]]
 name = "libkrun"
@@ -118,9 +143,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.8"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14b6052be84e6b71ab17edffc2eeabf5c2c3ae1fdb464aae35ac50c67a44e1f7"
+checksum = "fcf3805d4480bb5b86070dcfeb9e2cb2ebc148adb753c5cca5f884d1d65a42b2"
 dependencies = [
  "cfg-if",
 ]
@@ -137,9 +162,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.4.1"
+version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "260e51e7efe62b592207e9e13a68e43692a7a279171d6ba57abd208bf23645ad"
+checksum = "13bd41f508810a131401606d54ac32a467c97172d74ba7662562ebba5ad07fa0"
 
 [[package]]
 name = "polly"
@@ -154,6 +179,7 @@ name = "utils"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "kqueue",
  "libc",
  "vmm-sys-util",
 ]
@@ -164,8 +190,8 @@ version = "0.1.0"
 
 [[package]]
 name = "vm-memory"
-version = "0.2.0"
-source = "git+https://github.com/rust-vmm/vm-memory#788019f7ac36ac5bc0b06c1ac6b4c2fe5cf803e6"
+version = "0.4.0"
+source = "git+https://github.com/rust-vmm/vm-memory#6a0dcc1d22753ce76bae639febd09c072fe439e7"
 dependencies = [
  "libc",
  "winapi",
@@ -178,6 +204,7 @@ dependencies = [
  "arch",
  "cpuid",
  "devices",
+ "hvf",
  "kernel",
  "kvm-bindings",
  "kvm-ioctls",
@@ -191,9 +218,9 @@ dependencies = [
 
 [[package]]
 name = "vmm-sys-util"
-version = "0.5.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a6cc7e1659e545d250261676c9193732da57357cc610b12a0e7c776ed047fc9"
+checksum = "d1cdd1d72e262bbfb014de65ada24c1ac50e10a2e3b1e8ec052df188c2ee5dfa"
 dependencies = [
  "bitflags",
  "libc",
@@ -201,9 +228,9 @@ dependencies = [
 
 [[package]]
 name = "winapi"
-version = "0.3.8"
+version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8093091eeb260906a183e6ae1abdba2ef5ef2257a21801128899c3fc699229c6"
+checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
 dependencies = [
  "winapi-i686-pc-windows-gnu",
  "winapi-x86_64-pc-windows-gnu",

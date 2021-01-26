@@ -1,0 +1,8 @@
+[package]
+name = "hvf"
+version = "0.1.0"
+authors = ["Sergio Lopez <slp@sinrega.org>"]
+edition = "2018"
+
+[dependencies]
+logger = { path = "../logger" }

@@ -16,7 +16,7 @@ use super::super::DeviceType;
 use super::super::InitrdConfig;
 use super::get_fdt_addr;
 use super::gic::GICDevice;
-use super::layout::FDT_MAX_SIZE;
+use super::layout::{FDT_MAX_SIZE, GTIMER_HYP, GTIMER_PHYS, GTIMER_SEC, GTIMER_VIRT};
 use aarch64::fdt::Error::CstringFDTTransform;
 use vm_memory::{Address, Bytes, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap};
 
@@ -412,7 +412,7 @@ fn create_timer_node(fdt: &mut Vec<u8>) -> Result<()> {
     // See
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/interrupt-controller/arch_timer.txt
     // These are fixed interrupt numbers for the timer device.
-    let irqs = [13, 14, 11, 10];
+    let irqs = [GTIMER_SEC, GTIMER_HYP, GTIMER_VIRT, GTIMER_PHYS];
     let compatible = "arm,armv8-timer";
 
     let mut timer_reg_cells: Vec<u32> = Vec::new();
@@ -450,7 +450,14 @@ fn create_virtio_node<T: DeviceInfoForFDT + Clone + Debug>(
     dev_info: &T,
 ) -> Result<()> {
     let device_reg_prop = generate_prop64(&[dev_info.addr(), dev_info.length()]);
+    #[cfg(target_os = "linux")]
     let irq = generate_prop32(&[GIC_FDT_IRQ_TYPE_SPI, dev_info.irq(), IRQ_TYPE_EDGE_RISING]);
+    #[cfg(target_os = "macos")]
+    let irq = generate_prop32(&[
+        GIC_FDT_IRQ_TYPE_SPI,
+        dev_info.irq() - 32,
+        IRQ_TYPE_EDGE_RISING,
+    ]);
 
     append_begin_node(fdt, &format!("virtio_mmio@{:x}", dev_info.addr()))?;
     append_property_string(fdt, "compatible", "virtio,mmio")?;
@@ -486,7 +493,10 @@ fn create_rtc_node<T: DeviceInfoForFDT + Clone + Debug>(
 ) -> Result<()> {
     let compatible = b"arm,pl031\0arm,primecell\0";
     let rtc_reg_prop = generate_prop64(&[dev_info.addr(), dev_info.length()]);
+    #[cfg(target_os = "linux")]
     let irq = generate_prop32(&[GIC_FDT_IRQ_TYPE_SPI, dev_info.irq(), IRQ_TYPE_LEVEL_HI]);
+    #[cfg(target_os = "macos")]
+    let irq = generate_prop32(&[GIC_FDT_IRQ_TYPE_SPI, dev_info.irq() - 32, IRQ_TYPE_LEVEL_HI]);
     append_begin_node(fdt, &format!("rtc@{:x}", dev_info.addr()))?;
     append_property(fdt, "compatible", compatible)?;
     append_property(fdt, "reg", &rtc_reg_prop)?;

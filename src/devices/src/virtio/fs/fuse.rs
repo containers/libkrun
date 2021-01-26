@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+use std::convert::TryInto;
 use std::mem;
 
+use super::bindings;
 use bitflags::bitflags;
 use vm_memory::ByteValued;
 
@@ -465,8 +467,8 @@ pub struct Attr {
 }
 unsafe impl ByteValued for Attr {}
 
-impl From<libc::stat64> for Attr {
-    fn from(st: libc::stat64) -> Attr {
+impl From<bindings::stat64> for Attr {
+    fn from(st: bindings::stat64) -> Attr {
         Attr {
             ino: st.st_ino,
             size: st.st_size as u64,
@@ -477,7 +479,7 @@ impl From<libc::stat64> for Attr {
             atimensec: st.st_atime_nsec as u32,
             mtimensec: st.st_mtime_nsec as u32,
             ctimensec: st.st_ctime_nsec as u32,
-            mode: st.st_mode,
+            mode: st.st_mode as u32,
             nlink: st.st_nlink as u32,
             uid: st.st_uid,
             gid: st.st_gid,
@@ -504,14 +506,14 @@ pub struct Kstatfs {
 }
 unsafe impl ByteValued for Kstatfs {}
 
-impl From<libc::statvfs64> for Kstatfs {
-    fn from(st: libc::statvfs64) -> Self {
+impl From<bindings::statvfs64> for Kstatfs {
+    fn from(st: bindings::statvfs64) -> Self {
         Kstatfs {
-            blocks: st.f_blocks,
-            bfree: st.f_bfree,
-            bavail: st.f_bavail,
-            files: st.f_files,
-            ffree: st.f_ffree,
+            blocks: st.f_blocks as u64,
+            bfree: st.f_bfree as u64,
+            bavail: st.f_bavail as u64,
+            files: st.f_files as u64,
+            ffree: st.f_ffree as u64,
             bsize: st.f_bsize as u32,
             namelen: st.f_namemax as u32,
             frsize: st.f_frsize as u32,
@@ -712,11 +714,11 @@ pub struct SetattrIn {
 }
 unsafe impl ByteValued for SetattrIn {}
 
-impl Into<libc::stat64> for SetattrIn {
-    fn into(self) -> libc::stat64 {
+impl Into<bindings::stat64> for SetattrIn {
+    fn into(self) -> bindings::stat64 {
         // Safe because we are zero-initializing a struct with only POD fields.
-        let mut out: libc::stat64 = unsafe { mem::zeroed() };
-        out.st_mode = self.mode;
+        let mut out: bindings::stat64 = unsafe { mem::zeroed() };
+        out.st_mode = self.mode.try_into().unwrap();
         out.st_uid = self.uid;
         out.st_gid = self.gid;
         out.st_size = self.size as i64;

@@ -3,17 +3,13 @@
 
 use std::{boxed::Box, result};
 
-use kvm_ioctls::DeviceFd;
-
 use super::gic::{Error, GICDevice};
 
 type Result<T> = result::Result<T, Error>;
 
-/// Represent a GIC v2 device
+/// This is just a placeholder for building the FDT entry.
+/// The actual emulated GICv2 is in devices/legacy.
 pub struct GICv2 {
-    /// The file descriptor for the KVM device
-    fd: DeviceFd,
-
     /// GIC device properties, to be used for setting up the fdt entry
     properties: [u64; 4],
 
@@ -24,40 +20,36 @@ pub struct GICv2 {
 impl GICv2 {
     // Unfortunately bindgen omits defines that are based on other defines.
     // See arch/arm64/include/uapi/asm/kvm.h file from the linux kernel.
-    const KVM_VGIC_V2_DIST_SIZE: u64 = 0x1000;
-    const KVM_VGIC_V2_CPU_SIZE: u64 = 0x2000;
+    const GIC_V2_DIST_SIZE: u64 = 0x1000;
+    const GIC_V2_CPU_SIZE: u64 = 0x2000;
 
     // Device trees specific constants
-    const ARCH_GIC_V2_MAINT_IRQ: u32 = 8;
+    const GIC_V2_MAINT_IRQ: u32 = 8;
 
     /// Get the address of the GICv2 distributor.
-    const fn get_dist_addr() -> u64 {
-        super::layout::MAPPED_IO_START - GICv2::KVM_VGIC_V2_DIST_SIZE
+    pub const fn get_dist_addr() -> u64 {
+        super::super::layout::MAPPED_IO_START - GICv2::GIC_V2_DIST_SIZE
     }
 
     /// Get the size of the GIC_v2 distributor.
-    const fn get_dist_size() -> u64 {
-        GICv2::KVM_VGIC_V2_DIST_SIZE
+    pub const fn get_dist_size() -> u64 {
+        GICv2::GIC_V2_DIST_SIZE
     }
 
     /// Get the address of the GIC_v2 CPU.
-    const fn get_cpu_addr() -> u64 {
-        GICv2::get_dist_addr() - GICv2::KVM_VGIC_V2_CPU_SIZE
+    pub const fn get_cpu_addr() -> u64 {
+        GICv2::get_dist_addr() - GICv2::GIC_V2_CPU_SIZE
     }
 
     /// Get the size of the GIC_v2 CPU.
-    const fn get_cpu_size() -> u64 {
-        GICv2::KVM_VGIC_V2_CPU_SIZE
+    pub const fn get_cpu_size() -> u64 {
+        GICv2::GIC_V2_CPU_SIZE
     }
 }
 
 impl GICDevice for GICv2 {
     fn version() -> u32 {
-        kvm_bindings::kvm_device_type_KVM_DEV_TYPE_ARM_VGIC_V2
-    }
-
-    fn device_fd(&self) -> &DeviceFd {
-        &self.fd
+        0
     }
 
     fn device_properties(&self) -> &[u64] {
@@ -73,12 +65,11 @@ impl GICDevice for GICv2 {
     }
 
     fn fdt_maint_irq(&self) -> u32 {
-        GICv2::ARCH_GIC_V2_MAINT_IRQ
+        GICv2::GIC_V2_MAINT_IRQ
     }
 
-    fn create_device(fd: DeviceFd, vcpu_count: u64) -> Box<dyn GICDevice> {
+    fn create_device(vcpu_count: u64) -> Box<dyn GICDevice> {
         Box::new(GICv2 {
-            fd: fd,
             properties: [
                 GICv2::get_dist_addr(),
                 GICv2::get_dist_size(),
@@ -89,26 +80,9 @@ impl GICDevice for GICv2 {
         })
     }
 
-    fn init_device_attributes(gic_device: &Box<dyn GICDevice>) -> Result<()> {
+    fn init_device_attributes(_gic_device: &Box<dyn GICDevice>) -> Result<()> {
         /* Setting up the distributor attribute.
         We are placing the GIC below 1GB so we need to substract the size of the distributor. */
-        Self::set_device_attribute(
-            &gic_device.device_fd(),
-            kvm_bindings::KVM_DEV_ARM_VGIC_GRP_ADDR,
-            u64::from(kvm_bindings::KVM_VGIC_V2_ADDR_TYPE_DIST),
-            &GICv2::get_dist_addr() as *const u64 as u64,
-            0,
-        )?;
-
-        /* Setting up the CPU attribute. */
-        Self::set_device_attribute(
-            &gic_device.device_fd(),
-            kvm_bindings::KVM_DEV_ARM_VGIC_GRP_ADDR,
-            u64::from(kvm_bindings::KVM_VGIC_V2_ADDR_TYPE_CPU),
-            &GICv2::get_cpu_addr() as *const u64 as u64,
-            0,
-        )?;
-
         Ok(())
     }
 }

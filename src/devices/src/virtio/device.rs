@@ -54,6 +54,9 @@ pub trait VirtioDevice: AsAny + Send {
     /// Returns the current device interrupt status.
     fn interrupt_status(&self) -> Arc<AtomicUsize>;
 
+    /// Sets the irq line assigned to this device
+    fn set_irq_line(&mut self, irq: u32);
+
     /// The set of feature bits shifted by `page * 32`.
     fn avail_features_by_page(&self, page: u32) -> u32 {
         let avail_features = self.avail_features();

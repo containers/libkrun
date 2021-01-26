@@ -197,7 +197,7 @@ impl I8042Device {
 }
 
 impl BusDevice for I8042Device {
-    fn read(&mut self, offset: u64, data: &mut [u8]) {
+    fn read(&mut self, _vcpuid: u64, offset: u64, data: &mut [u8]) {
         // All our ports are byte-wide. We don't know how to handle any wider data.
         if data.len() != 1 {
             return;
@@ -223,7 +223,7 @@ impl BusDevice for I8042Device {
         }
     }
 
-    fn write(&mut self, offset: u64, data: &[u8]) {
+    fn write(&mut self, _vcpuid: u64, offset: u64, data: &[u8]) {
         // All our ports are byte-wide. We don't know how to handle any wider data.
         if data.len() != 1 {
             return;
@@ -316,16 +316,16 @@ mod tests {
     #[test]
     fn test_i8042_read_write_and_event() {
         let mut i8042 = I8042Device::new(
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         );
         let reset_evt = i8042.get_reset_evt_clone().unwrap();
 
         // Check if reading in a 2-length array doesn't have side effects.
         let mut data = [1, 2];
-        i8042.read(0, &mut data);
+        i8042.read(0, 0, &mut data);
         assert_eq!(data, [1, 2]);
-        i8042.read(1, &mut data);
+        i8042.read(0, 1, &mut data);
         assert_eq!(data, [1, 2]);
 
         // Check if reset works.
@@ -333,59 +333,59 @@ mod tests {
         // counter doesn't change (for 0 it blocks).
         assert!(reset_evt.write(1).is_ok());
         let mut data = [CMD_RESET_CPU];
-        i8042.write(OFS_STATUS, &data);
+        i8042.write(0, OFS_STATUS, &data);
         assert_eq!(reset_evt.read().unwrap(), 2);
 
         // Check if reading with offset 1 doesn't have side effects.
-        i8042.read(1, &mut data);
+        i8042.read(0, 1, &mut data);
         assert_eq!(data[0], CMD_RESET_CPU);
     }
 
     #[test]
     fn test_i8042_commands() {
         let mut i8042 = I8042Device::new(
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         );
         let mut data = [1];
 
         // Test reading/writing the control register.
         data[0] = CMD_WRITE_CTR;
-        i8042.write(OFS_STATUS, &data);
+        i8042.write(0, OFS_STATUS, &data);
         assert_ne!(i8042.status & SB_I8042_CMD_DATA, 0);
         data[0] = 0x52;
-        i8042.write(OFS_DATA, &data);
+        i8042.write(0, OFS_DATA, &data);
         data[0] = CMD_READ_CTR;
-        i8042.write(OFS_STATUS, &data);
+        i8042.write(0, OFS_STATUS, &data);
         assert_ne!(i8042.status & SB_OUT_DATA_AVAIL, 0);
-        i8042.read(OFS_DATA, &mut data);
+        i8042.read(0, OFS_DATA, &mut data);
         assert_eq!(data[0], 0x52);
 
         // Test reading/writing the output port.
         data[0] = CMD_WRITE_OUTP;
-        i8042.write(OFS_STATUS, &data);
+        i8042.write(0, OFS_STATUS, &data);
         assert_ne!(i8042.status & SB_I8042_CMD_DATA, 0);
         data[0] = 0x52;
-        i8042.write(OFS_DATA, &data);
+        i8042.write(0, OFS_DATA, &data);
         data[0] = CMD_READ_OUTP;
-        i8042.write(OFS_STATUS, &data);
+        i8042.write(0, OFS_STATUS, &data);
         assert_ne!(i8042.status & SB_OUT_DATA_AVAIL, 0);
-        i8042.read(OFS_DATA, &mut data);
+        i8042.read(0, OFS_DATA, &mut data);
         assert_eq!(data[0], 0x52);
 
         // Test kbd commands.
         data[0] = 0x52;
-        i8042.write(OFS_DATA, &data);
+        i8042.write(0, OFS_DATA, &data);
         assert_ne!(i8042.status & SB_OUT_DATA_AVAIL, 0);
-        i8042.read(OFS_DATA, &mut data);
+        i8042.read(0, OFS_DATA, &mut data);
         assert_eq!(data[0], 0xFA);
     }
 
     #[test]
     fn test_i8042_buffer() {
         let mut i8042 = I8042Device::new(
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         );
 
         // Test push/pop.
@@ -408,8 +408,8 @@ mod tests {
     #[test]
     fn test_i8042_kbd() {
         let mut i8042 = I8042Device::new(
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         );
 
         fn expect_key(i8042: &mut I8042Device, key: u16) {
@@ -420,13 +420,13 @@ mod tests {
             assert!(i8042.kbd_interrupt_evt.read().unwrap() > 1);
 
             // The "data available" flag should be on.
-            i8042.read(OFS_STATUS, &mut data);
+            i8042.read(0, OFS_STATUS, &mut data);
 
             let mut key_byte: u8;
             if key & 0xFF00 != 0 {
                 // For extended keys, we should be able to read the MSB first.
                 key_byte = ((key & 0xFF00) >> 8) as u8;
-                i8042.read(OFS_DATA, &mut data);
+                i8042.read(0, OFS_DATA, &mut data);
                 assert_eq!(data[0], key_byte);
 
                 // And then do the same for the LSB.
@@ -435,10 +435,10 @@ mod tests {
                 i8042.trigger_kbd_interrupt().unwrap();
                 assert!(i8042.kbd_interrupt_evt.read().unwrap() > 1);
                 // The "data available" flag should be on.
-                i8042.read(OFS_STATUS, &mut data);
+                i8042.read(0, OFS_STATUS, &mut data);
             }
             key_byte = (key & 0xFF) as u8;
-            i8042.read(OFS_DATA, &mut data);
+            i8042.read(0, OFS_DATA, &mut data);
             assert_eq!(data[0], key_byte);
         }
 
@@ -480,9 +480,9 @@ mod tests {
         // Test kbd interrupt disable.
         let mut data = [1];
         data[0] = CMD_WRITE_CTR;
-        i8042.write(OFS_STATUS, &data);
+        i8042.write(0, OFS_STATUS, &data);
         data[0] = i8042.control & !CB_KBD_INT;
-        i8042.write(OFS_DATA, &data);
+        i8042.write(0, OFS_DATA, &data);
         i8042.trigger_key(KEY_CTRL).unwrap();
         assert_eq!(
             i8042.trigger_kbd_interrupt().unwrap_err(),

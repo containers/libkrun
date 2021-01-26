@@ -16,8 +16,8 @@ use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Barrier;
 use std::thread;
 
-use super::TimestampUs;
-use super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
+use super::super::TimestampUs;
+use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 
 use arch;
 #[cfg(target_arch = "aarch64")]
@@ -898,7 +898,7 @@ impl Vcpu {
         if addr == MAGIC_IOPORT_SIGNAL_GUEST_BOOT_COMPLETE
             && data[0] == MAGIC_VALUE_SIGNAL_GUEST_BOOT_COMPLETE
         {
-            super::Vmm::log_boot_time(&self.create_ts);
+            super::super::Vmm::log_boot_time(&self.create_ts);
         }
     }
 
@@ -1026,19 +1026,19 @@ impl Vcpu {
             Ok(run) => match run {
                 #[cfg(target_arch = "x86_64")]
                 VcpuExit::IoIn(addr, data) => {
-                    self.io_bus.read(u64::from(addr), data);
+                    self.io_bus.read(0, u64::from(addr), data);
                     Ok(VcpuEmulation::Handled)
                 }
                 #[cfg(target_arch = "x86_64")]
                 VcpuExit::IoOut(addr, data) => {
                     self.check_boot_complete_signal(u64::from(addr), data);
 
-                    self.io_bus.write(u64::from(addr), data);
+                    self.io_bus.write(0, u64::from(addr), data);
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::MmioRead(addr, data) => {
                     if let Some(ref mmio_bus) = self.mmio_bus {
-                        mmio_bus.read(addr, data);
+                        mmio_bus.read(0, addr, data);
                     }
                     Ok(VcpuEmulation::Handled)
                 }
@@ -1047,7 +1047,7 @@ impl Vcpu {
                         #[cfg(target_arch = "aarch64")]
                         self.check_boot_complete_signal(addr, data);
 
-                        mmio_bus.write(addr, data);
+                        mmio_bus.write(0, addr, data);
                     }
                     Ok(VcpuEmulation::Handled)
                 }
@@ -1324,7 +1324,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     use std::time::Duration;
 
-    use super::super::devices;
+    use super::super::super::devices;
     use super::*;
 
     use utils::signal::validate_signal_num;
@@ -1349,7 +1349,7 @@ mod tests {
         let mut vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
         assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
 
-        let exit_evt = EventFd::new(libc::EFD_NONBLOCK).unwrap();
+        let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
 
         let vcpu;
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -1362,14 +1362,19 @@ mod tests {
                 vm.supported_msrs().clone(),
                 devices::Bus::new(),
                 exit_evt,
-                super::super::TimestampUs::default(),
+                super::super::super::TimestampUs::default(),
             )
             .unwrap();
         }
         #[cfg(target_arch = "aarch64")]
         {
-            vcpu = Vcpu::new_aarch64(1, vm.fd(), exit_evt, super::super::TimestampUs::default())
-                .unwrap();
+            vcpu = Vcpu::new_aarch64(
+                1,
+                vm.fd(),
+                exit_evt,
+                super::super::super::TimestampUs::default(),
+            )
+            .unwrap();
             vm.setup_irqchip(1).expect("Cannot setup irqchip");
         }
 
@@ -1434,8 +1439,8 @@ mod tests {
             vm.supported_cpuid().clone(),
             vm.supported_msrs().clone(),
             devices::Bus::new(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
-            super::super::TimestampUs::default(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+            super::super::super::TimestampUs::default(),
         )
         .unwrap();
         // Trying to setup irqchip after KVM_VCPU_CREATE was called will result in error.
@@ -1452,7 +1457,7 @@ mod tests {
         let _vcpu = Vcpu::new_aarch64(
             1,
             vm.fd(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
             super::super::TimestampUs::default(),
         )
         .unwrap();
@@ -1502,7 +1507,7 @@ mod tests {
         let mut vcpu = Vcpu::new_aarch64(
             0,
             vm.fd(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
             super::super::TimestampUs::default(),
         )
         .unwrap();
@@ -1515,7 +1520,7 @@ mod tests {
         let mut vcpu = Vcpu::new_aarch64(
             1,
             vm.fd(),
-            EventFd::new(libc::EFD_NONBLOCK).unwrap(),
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
             super::super::TimestampUs::default(),
         )
         .unwrap();
