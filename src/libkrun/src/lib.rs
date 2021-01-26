@@ -8,6 +8,7 @@ use std::env;
 use std::ffi::CStr;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
+use std::path::Path;
 use std::process;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -45,6 +46,7 @@ struct ContextConfig {
     exec_path: Option<String>,
     env: Option<String>,
     args: Option<String>,
+    fs_cfg: Option<FsDeviceConfig>,
 }
 
 impl ContextConfig {
@@ -90,6 +92,14 @@ impl ContextConfig {
             Some(args) => args.clone(),
             None => "".to_string(),
         }
+    }
+
+    fn set_fs_cfg(&mut self, fs_cfg: FsDeviceConfig) {
+        self.fs_cfg = Some(fs_cfg);
+    }
+
+    fn get_fs_cfg(&self) -> Option<FsDeviceConfig> {
+        self.fs_cfg.clone()
     }
 }
 
@@ -212,21 +222,85 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
         Err(_) => return -libc::EINVAL,
     };
 
-    let fs_device_config = FsDeviceConfig {
-        fs_id: "/dev/root".to_string(),
-        shared_dir: root_path.to_string(),
-    };
+    let fs_id = "/dev/root".to_string();
+    let shared_dir = root_path.to_string();
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
-            if ctx_cfg
-                .get_mut()
-                .vmr
-                .set_fs_device(fs_device_config)
-                .is_err()
-            {
+            let cfg = ctx_cfg.get_mut();
+            let fs_device_config = match cfg.get_fs_cfg() {
+                Some(fs_cfg) => FsDeviceConfig {
+                    fs_id,
+                    shared_dir,
+                    mapped_volumes: fs_cfg.mapped_volumes,
+                },
+                None => FsDeviceConfig {
+                    fs_id,
+                    shared_dir,
+                    mapped_volumes: None,
+                },
+            };
+            cfg.set_fs_cfg(fs_device_config);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_mapped_volumes(
+    ctx_id: u32,
+    c_mapped_volumes: *const *const c_char,
+) -> i32 {
+    let mut mapped_volumes = Vec::new();
+    let mapped_volumes_array: &[*const c_char] = slice::from_raw_parts(c_mapped_volumes, MAX_ARGS);
+    for item in mapped_volumes_array.iter().take(MAX_ARGS) {
+        if item.is_null() {
+            break;
+        } else {
+            let s = match CStr::from_ptr(*item).to_str() {
+                Ok(s) => s,
+                Err(_) => return -libc::EINVAL,
+            };
+            let vol_tuple: Vec<&str> = s.split(":").collect();
+            if vol_tuple.len() != 2 {
+                println!("foo");
                 return -libc::EINVAL;
             }
+            let host_vol = Path::new(vol_tuple[0]);
+            let guest_vol = Path::new(vol_tuple[1]);
+
+            if !host_vol.is_absolute()
+                || !host_vol.exists()
+                || !guest_vol.is_absolute()
+                || guest_vol.components().count() != 2
+            {
+                println!("bar: {:?} {:?}", host_vol, guest_vol.components().count());
+                return -libc::EINVAL;
+            }
+
+            mapped_volumes.push((host_vol.to_path_buf(), guest_vol.to_path_buf()));
+        }
+    }
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            let fs_device_config = match cfg.get_fs_cfg() {
+                Some(fs_cfg) => FsDeviceConfig {
+                    fs_id: fs_cfg.fs_id.clone(),
+                    shared_dir: fs_cfg.shared_dir.clone(),
+                    mapped_volumes: Some(mapped_volumes),
+                },
+                None => FsDeviceConfig {
+                    fs_id: String::new(),
+                    shared_dir: String::new(),
+                    mapped_volumes: Some(mapped_volumes),
+                },
+            };
+            cfg.set_fs_cfg(fs_device_config);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -347,6 +421,12 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         Some(ctx_cfg) => ctx_cfg,
         None => return -libc::ENOENT,
     };
+
+    if let Some(fs_cfg) = ctx_cfg.get_fs_cfg() {
+        if ctx_cfg.vmr.set_fs_device(fs_cfg).is_err() {
+            return -libc::EINVAL;
+        }
+    }
 
     let mut boot_source = BootSourceConfig::default();
     boot_source.kernel_cmdline_prolog = Some(format!(

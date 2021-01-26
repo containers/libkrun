@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use devices::virtio::{Fs, FsError};
@@ -25,6 +26,7 @@ type Result<T> = std::result::Result<T, FsConfigError>;
 pub struct FsDeviceConfig {
     pub fs_id: String,
     pub shared_dir: String,
+    pub mapped_volumes: Option<Vec<(PathBuf, PathBuf)>>,
 }
 
 #[derive(Default)]
@@ -46,7 +48,9 @@ impl FsBuilder {
     }
 
     pub fn create_fs(config: FsDeviceConfig) -> Result<Fs> {
-        Ok(devices::virtio::Fs::new(config.fs_id, config.shared_dir)
-            .map_err(FsConfigError::CreateFsDevice)?)
+        Ok(
+            devices::virtio::Fs::new(config.fs_id, config.shared_dir, config.mapped_volumes)
+                .map_err(FsConfigError::CreateFsDevice)?,
+        )
     }
 }
