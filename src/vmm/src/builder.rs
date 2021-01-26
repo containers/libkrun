@@ -1070,7 +1070,7 @@ pub mod tests {
         let vsock_dev_id = vsock_config.vsock_id.clone();
         let vsock = VsockBuilder::create_unixsock_vsock(vsock_config).unwrap();
         let vsock = Arc::new(Mutex::new(vsock));
-        assert!(attach_unixsock_vsock_device(&mut vmm, &vsock, &mut event_manager).is_ok());
+        assert!(attach_unixsock_vsock_device(&mut vmm, &vsock, &mut event_manager, None).is_ok());
 
         assert!(vmm
             .mmio_device_manager

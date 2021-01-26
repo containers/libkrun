@@ -1324,7 +1324,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     use std::time::Duration;
 
-    use super::super::devices;
+    use super::super::super::devices;
     use super::*;
 
     use utils::signal::validate_signal_num;
@@ -1362,14 +1362,19 @@ mod tests {
                 vm.supported_msrs().clone(),
                 devices::Bus::new(),
                 exit_evt,
-                super::super::TimestampUs::default(),
+                super::super::super::TimestampUs::default(),
             )
             .unwrap();
         }
         #[cfg(target_arch = "aarch64")]
         {
-            vcpu = Vcpu::new_aarch64(1, vm.fd(), exit_evt, super::super::TimestampUs::default())
-                .unwrap();
+            vcpu = Vcpu::new_aarch64(
+                1,
+                vm.fd(),
+                exit_evt,
+                super::super::super::TimestampUs::default(),
+            )
+            .unwrap();
             vm.setup_irqchip(1).expect("Cannot setup irqchip");
         }
 
@@ -1435,7 +1440,7 @@ mod tests {
             vm.supported_msrs().clone(),
             devices::Bus::new(),
             EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-            super::super::TimestampUs::default(),
+            super::super::super::TimestampUs::default(),
         )
         .unwrap();
         // Trying to setup irqchip after KVM_VCPU_CREATE was called will result in error.

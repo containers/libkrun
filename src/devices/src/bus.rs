@@ -180,13 +180,13 @@ mod tests {
 
     struct ConstantDevice;
     impl BusDevice for ConstantDevice {
-        fn read(&mut self, offset: u64, data: &mut [u8]) {
+        fn read(&mut self, _vcpuid: u64, offset: u64, data: &mut [u8]) {
             for (i, v) in data.iter_mut().enumerate() {
                 *v = (offset as u8) + (i as u8);
             }
         }
 
-        fn write(&mut self, offset: u64, data: &[u8]) {
+        fn write(&mut self, _vcpuid: u64, offset: u64, data: &[u8]) {
             for (i, v) in data.iter().enumerate() {
                 assert_eq!(*v, (offset as u8) + (i as u8))
             }
@@ -226,16 +226,16 @@ mod tests {
         let mut bus = Bus::new();
         let dummy = Arc::new(Mutex::new(DummyDevice));
         assert!(bus.insert(dummy.clone(), 0x10, 0x10).is_ok());
-        assert!(bus.read(0x10, &mut [0, 0, 0, 0]));
-        assert!(bus.write(0x10, &[0, 0, 0, 0]));
-        assert!(bus.read(0x11, &mut [0, 0, 0, 0]));
-        assert!(bus.write(0x11, &[0, 0, 0, 0]));
-        assert!(bus.read(0x16, &mut [0, 0, 0, 0]));
-        assert!(bus.write(0x16, &[0, 0, 0, 0]));
-        assert!(!bus.read(0x20, &mut [0, 0, 0, 0]));
-        assert!(!bus.write(0x20, &[0, 0, 0, 0]));
-        assert!(!bus.read(0x06, &mut [0, 0, 0, 0]));
-        assert!(!bus.write(0x06, &[0, 0, 0, 0]));
+        assert!(bus.read(0, 0x10, &mut [0, 0, 0, 0]));
+        assert!(bus.write(0, 0x10, &[0, 0, 0, 0]));
+        assert!(bus.read(0, 0x11, &mut [0, 0, 0, 0]));
+        assert!(bus.write(0, 0x11, &[0, 0, 0, 0]));
+        assert!(bus.read(0, 0x16, &mut [0, 0, 0, 0]));
+        assert!(bus.write(0, 0x16, &[0, 0, 0, 0]));
+        assert!(!bus.read(0, 0x20, &mut [0, 0, 0, 0]));
+        assert!(!bus.write(0, 0x20, &[0, 0, 0, 0]));
+        assert!(!bus.read(0, 0x06, &mut [0, 0, 0, 0]));
+        assert!(!bus.write(0, 0x06, &[0, 0, 0, 0]));
     }
 
     #[test]
@@ -245,12 +245,12 @@ mod tests {
         assert!(bus.insert(dummy.clone(), 0x10, 0x10).is_ok());
 
         let mut values = [0, 1, 2, 3];
-        assert!(bus.read(0x10, &mut values));
+        assert!(bus.read(0, 0x10, &mut values));
         assert_eq!(values, [0, 1, 2, 3]);
-        assert!(bus.write(0x10, &values));
-        assert!(bus.read(0x15, &mut values));
+        assert!(bus.write(0, 0x10, &values));
+        assert!(bus.read(0, 0x15, &mut values));
         assert_eq!(values, [5, 6, 7, 8]);
-        assert!(bus.write(0x15, &values));
+        assert!(bus.write(0, 0x15, &values));
     }
 
     #[test]
@@ -269,11 +269,11 @@ mod tests {
         assert!(bus
             .insert(Arc::new(Mutex::new(DummyDevice)), 0x10, 0x10)
             .is_ok());
-        assert!(bus.write(0x10, &data));
+        assert!(bus.write(0, 0x10, &data));
         let bus_clone = bus.clone();
-        assert!(bus.read(0x10, &mut data));
+        assert!(bus.read(0, 0x10, &mut data));
         assert_eq!(data, [1, 2, 3, 4]);
-        assert!(bus_clone.read(0x10, &mut data));
+        assert!(bus_clone.read(0, 0x10, &mut data));
         assert_eq!(data, [1, 2, 3, 4]);
     }
 

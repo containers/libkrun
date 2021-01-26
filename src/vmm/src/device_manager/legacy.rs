@@ -129,7 +129,8 @@ mod tests {
 
     #[test]
     fn test_register_legacy_devices() {
-        let serial = devices::legacy::Serial::new_sink(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap());
+        let serial =
+            devices::legacy::Serial::new_sink(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap());
         let ldm = PortIODeviceManager::new(
             Some(Arc::new(Mutex::new(serial))),
             EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
