@@ -194,8 +194,8 @@ mod tests {
 
         // Read and write to the MR register.
         byte_order::write_le_u32(&mut data, 123);
-        rtc.write(RTCMR, &mut data);
-        rtc.read(RTCMR, &mut data);
+        rtc.write(0, RTCMR, &mut data);
+        rtc.read(0, RTCMR, &mut data);
         let v = byte_order::read_le_u32(&data[..]);
         assert_eq!(v, 123);
 
@@ -203,11 +203,11 @@ mod tests {
         let v = utils::time::get_time(utils::time::ClockType::Real);
         byte_order::write_le_u32(&mut data, (v / utils::time::NANOS_PER_SECOND) as u32);
         let previous_now_before = rtc.previous_now;
-        rtc.write(RTCLR, &mut data);
+        rtc.write(0, RTCLR, &mut data);
 
         assert!(rtc.previous_now > previous_now_before);
 
-        rtc.read(RTCLR, &mut data);
+        rtc.read(0, RTCLR, &mut data);
         let v_read = byte_order::read_le_u32(&data[..]);
         assert_eq!((v / utils::time::NANOS_PER_SECOND) as u32, v_read);
 
@@ -215,29 +215,29 @@ mod tests {
         // Test with non zero value.
         let non_zero = 1;
         byte_order::write_le_u32(&mut data, non_zero);
-        rtc.write(RTCIMSC, &mut data);
+        rtc.write(0, RTCIMSC, &mut data);
         // The interrupt line should be on.
         assert!(rtc.interrupt_evt.read().unwrap() == 1);
-        rtc.read(RTCIMSC, &mut data);
+        rtc.read(0, RTCIMSC, &mut data);
         let v = byte_order::read_le_u32(&data[..]);
         assert_eq!(non_zero & 1, v);
 
         // Now test with 0.
         byte_order::write_le_u32(&mut data, 0);
-        rtc.write(RTCIMSC, &mut data);
-        rtc.read(RTCIMSC, &mut data);
+        rtc.write(0, RTCIMSC, &mut data);
+        rtc.read(0, RTCIMSC, &mut data);
         let v = byte_order::read_le_u32(&data[..]);
         assert_eq!(0, v);
 
         // Attempts to turn off the RTC should not go through.
         byte_order::write_le_u32(&mut data, 0);
-        rtc.write(RTCCR, &mut data);
-        rtc.read(RTCCR, &mut data);
+        rtc.write(0, RTCCR, &mut data);
+        rtc.read(0, RTCCR, &mut data);
         let v = byte_order::read_le_u32(&data[..]);
         assert_eq!(v, 1);
 
         let mut data = [0; 4];
-        rtc.read(AMBA_ID_LOW, &mut data);
+        rtc.read(0, AMBA_ID_LOW, &mut data);
         let index = AMBA_ID_LOW + 3;
         assert_eq!(data[0], PL031_ID[((index - AMBA_ID_LOW) >> 2) as usize]);
     }
