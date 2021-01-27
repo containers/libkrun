@@ -1,7 +1,13 @@
-LIBRARY_RELEASE = target/release/libkrun.so
-LIBRARY_DEBUG = target/debug/libkrun.so
 LIBRARY_HEADER = include/libkrun.h
 INIT_BINARY = init/init
+
+OS = $(shell uname -s)
+LIBRARY_RELEASE_Linux = target/release/libkrun.so
+LIBRARY_DEBUG_Linux = target/debug/libkrun.so
+LIBRARY_RELEASE_Darwin = target/release/libkrun.dylib
+LIBRARY_DEBUG_Darwin = target/debug/libkrun.dylib
+LIBDIR_Linux = lib64
+LIBDIR_Darwin = lib
 
 ifeq ($(PREFIX),)
     PREFIX := /usr/local
@@ -9,22 +15,22 @@ endif
 
 .PHONY: install clean
 
-all: $(LIBRARY_RELEASE)
+all: $(LIBRARY_RELEASE_$(OS))
 
-debug: $(LIBRARY_DEBUG)
+debug: $(LIBRARY_DEBUG_$(OS))
 
 $(INIT_BINARY):
 	gcc -O2 -static -o $@ init/init.c
 
-$(LIBRARY_RELEASE): $(INIT_BINARY)
+$(LIBRARY_RELEASE_$(OS)): $(INIT_BINARY)
 	cargo build --release
 
-$(LIBRARY_DEBUG): $(INIT_BINARY)
+$(LIBRARY_DEBUG_$(OS)): $(INIT_BINARY)
 	cargo build --debug
 
-install: $(LIBRARY_RELEASE)
-	install -d $(DESTDIR)$(PREFIX)/lib64/
-	install -m 755 $(LIBRARY_RELEASE) $(DESTDIR)$(PREFIX)/lib64/
+install: $(LIBRARY_RELEASE_$(OS))
+	install -d $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/
+	install -m 755 $(LIBRARY_RELEASE_$(OS)) $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/
 	install -d $(DESTDIR)$(PREFIX)/include
 	install -m 644 $(LIBRARY_HEADER) $(DESTDIR)$(PREFIX)/include
 
