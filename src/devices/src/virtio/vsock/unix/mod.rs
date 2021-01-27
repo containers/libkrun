@@ -62,6 +62,8 @@ pub enum Error {
     WrapTcpAccept(std::io::Error),
     /// Error binding to the wrapped TCP socket.
     WrapTcpBind(std::io::Error),
+    /// The guest port is not present in the port map.
+    WrapTcpPortMap,
 }
 
 type Result<T> = std::result::Result<T, Error>;

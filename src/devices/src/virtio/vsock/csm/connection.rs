@@ -170,6 +170,28 @@ impl VsockChannel for VsockConnection {
             return Ok(());
         }
 
+        if self.pending_rx.remove(PendingRx::ResponseEx) {
+            self.state = ConnState::Established;
+
+            let fd = self.as_raw_fd();
+            let buf = pkt.buf_mut().ok_or(VsockError::PktBufMissing)?;
+            let mut len: socklen_t = buf.len() as u32;
+
+            let res = unsafe {
+                getpeername(
+                    fd,
+                    buf.as_mut_ptr() as *mut sockaddr,
+                    &mut len as *mut socklen_t,
+                )
+            };
+            if res != 0 {
+                return Err(VsockError::NoData); //TODO
+            }
+
+            pkt.set_op(uapi::VSOCK_OP_RESPONSE_EX).set_len(len);
+            return Ok(());
+        }
+
         // Same thing goes for locally-initiated connections that need to yield a connection
         // request.
         if self.pending_rx.remove(PendingRx::Request) {
@@ -517,13 +539,14 @@ impl VsockConnection {
         }
     }
 
-    /// Create a new host-initiated connection object.
-    pub fn new_local_init(
+    /// Create a new guest-initiated connection object.
+    pub fn new_peer_wrap_init(
         stream: Box<dyn CommonStream>,
         local_cid: u64,
         peer_cid: u64,
         local_port: u32,
         peer_port: u32,
+        peer_buf_alloc: u32,
     ) -> Self {
         Self {
             local_cid,
@@ -531,14 +554,14 @@ impl VsockConnection {
             local_port,
             peer_port,
             stream,
-            state: ConnState::LocalInit,
+            state: ConnState::PeerInit,
             tx_buf: TxBuf::new(),
             fwd_cnt: Wrapping(0),
-            peer_buf_alloc: 0,
+            peer_buf_alloc,
             peer_fwd_cnt: Wrapping(0),
             rx_cnt: Wrapping(0),
             last_fwd_cnt_to_peer: Wrapping(0),
-            pending_rx: PendingRxSet::from(PendingRx::Request),
+            pending_rx: PendingRxSet::from(PendingRx::ResponseEx),
             expiry: None,
         }
     }
@@ -829,20 +852,13 @@ mod tests {
             )
             .unwrap();
             let conn = match conn_state {
-                ConnState::PeerInit => VsockConnection::new_peer_init(
+                ConnState::PeerInit => VsockConnection::new_peer_wrap_init(
                     Box::new(stream),
                     LOCAL_CID,
                     PEER_CID,
                     LOCAL_PORT,
                     PEER_PORT,
                     PEER_BUF_ALLOC,
-                ),
-                ConnState::LocalInit => VsockConnection::new_local_init(
-                    Box::new(stream),
-                    LOCAL_CID,
-                    PEER_CID,
-                    LOCAL_PORT,
-                    PEER_PORT,
                 ),
                 ConnState::Established => {
                     let mut conn = VsockConnection::new_peer_init(
@@ -906,59 +922,6 @@ mod tests {
             self.pkt.buf_mut().unwrap()[..data.len()].copy_from_slice(data);
             &self.pkt
         }
-    }
-
-    #[test]
-    fn test_peer_request() {
-        let mut ctx = CsmTestContext::new(ConnState::PeerInit);
-        assert!(ctx.conn.has_pending_rx());
-        ctx.recv();
-        // For peer-initiated requests, our connection should always yield a vsock reponse packet,
-        // in order to establish the connection.
-        assert_eq!(ctx.pkt.op(), uapi::VSOCK_OP_RESPONSE);
-        assert_eq!(ctx.pkt.src_cid(), LOCAL_CID);
-        assert_eq!(ctx.pkt.dst_cid(), PEER_CID);
-        assert_eq!(ctx.pkt.src_port(), LOCAL_PORT);
-        assert_eq!(ctx.pkt.dst_port(), PEER_PORT);
-        assert_eq!(ctx.pkt.type_(), uapi::VSOCK_TYPE_STREAM);
-        assert_eq!(ctx.pkt.len(), 0);
-        // After yielding the response packet, the connection should have transitioned to the
-        // established state.
-        assert_eq!(ctx.conn.state, ConnState::Established);
-    }
-
-    #[test]
-    fn test_local_request() {
-        let mut ctx = CsmTestContext::new(ConnState::LocalInit);
-        // Host-initiated connections should first yield a connection request packet.
-        assert!(ctx.conn.has_pending_rx());
-        // Before yielding the connection request packet, the timeout kill timer shouldn't be
-        // armed.
-        assert!(!ctx.conn.will_expire());
-        ctx.recv();
-        assert_eq!(ctx.pkt.op(), uapi::VSOCK_OP_REQUEST);
-        // Since the request might time-out, the kill timer should now be armed.
-        assert!(ctx.conn.will_expire());
-        assert!(!ctx.conn.has_expired());
-        ctx.init_pkt(uapi::VSOCK_OP_RESPONSE, 0);
-        ctx.send();
-        // Upon receiving a connection response, the connection should have transitioned to the
-        // established state, and the kill timer should've been disarmed.
-        assert_eq!(ctx.conn.state, ConnState::Established);
-        assert!(!ctx.conn.will_expire());
-    }
-
-    #[test]
-    fn test_local_request_timeout() {
-        let mut ctx = CsmTestContext::new(ConnState::LocalInit);
-        ctx.recv();
-        assert_eq!(ctx.pkt.op(), uapi::VSOCK_OP_REQUEST);
-        assert!(ctx.conn.will_expire());
-        assert!(!ctx.conn.has_expired());
-        std::thread::sleep(std::time::Duration::from_millis(
-            defs::CONN_REQUEST_TIMEOUT_MS,
-        ));
-        assert!(ctx.conn.has_expired());
     }
 
     #[test]

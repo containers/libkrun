@@ -24,6 +24,11 @@ int main(int argc, char *const argv[])
         "TEST=works",
         0
     };
+    char *const port_map[] =
+    {
+        "18000:8000",
+        0
+    };
     char *mapped_volumes[2];
     char current_path[MAX_PATH];
     char volume_tail[] = ":/work\0";
@@ -90,6 +95,13 @@ int main(int argc, char *const argv[])
     if (err = krun_set_mapped_volumes(ctx_id, &mapped_volumes[0])) {
         errno = -err;
         perror("Error configuring mapped volumes");
+        return -1;
+    }
+
+    // Map port 18000 in the host to 8000 in the guest.
+    if (err = krun_set_port_map(ctx_id, &port_map[0])) {
+        errno = -err;
+        perror("Error configuring port map");
         return -1;
     }
 

@@ -67,13 +67,25 @@ int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
  *
  * Arguments:
  *  "ctx_id"         - the configuration context ID.
- *  "mapped_volumes" - an array of string pointers with format "host_path:guest_map" representing
+ *  "mapped_volumes" - an array of string pointers with format "host_path:guest_path" representing
  *                     the volumes to be mapped inside the microVM
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_set_mapped_volumes(uint32_t ctx_id, const char *mapped_volumes[]);
+
+/*
+ * Configures a map of host to guest TCP ports for the microVM.
+ *
+ * Arguments:
+ *  "ctx_id"         - the configuration context ID.
+ *  "mapped_volumes" - an array of string pointers with format "host_port:guest_port"
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_port_map(uint32_t ctx_id, const char *port_map[]);
 
 /*
  * Sets the working directory for the executable to be run inside the microVM.
