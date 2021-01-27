@@ -40,21 +40,18 @@ pub struct VsockDeviceConfig {
     pub vsock_id: String,
     /// A 32-bit Context Identifier (CID) used to identify the guest.
     pub guest_cid: u32,
-    /// Path to local unix socket.
-    pub uds_path: String,
     /// An optional map of host to guest port mappings.
     pub host_port_map: Option<HashMap<u16, u16>>,
 }
 
-struct VsockAndUnixPath {
+struct VsockWrapper {
     vsock: MutexVsockUnix,
-    uds_path: String,
 }
 
-/// A builder of Vsock with Unix backend from 'VsockDeviceConfig'.
+/// A builder of Vsock from 'VsockDeviceConfig'.
 #[derive(Default)]
 pub struct VsockBuilder {
-    inner: Option<VsockAndUnixPath>,
+    inner: Option<VsockWrapper>,
 }
 
 impl VsockBuilder {
@@ -66,14 +63,7 @@ impl VsockBuilder {
     /// Inserts a Unix backend Vsock in the store.
     /// If an entry already exists, it will overwrite it.
     pub fn insert(&mut self, cfg: VsockDeviceConfig) -> Result<()> {
-        // Make sure to drop the old one and remove the socket before creating a new one.
-        if let Some(existing) = self.inner.take() {
-            std::fs::remove_file(existing.uds_path)
-                .map_err(VsockUnixBackendError::UnixBind)
-                .map_err(VsockConfigError::CreateVsockBackend)?;
-        }
-        self.inner = Some(VsockAndUnixPath {
-            uds_path: cfg.uds_path.clone(),
+        self.inner = Some(VsockWrapper {
             vsock: Arc::new(Mutex::new(Self::create_unixsock_vsock(cfg)?)),
         });
         Ok(())
@@ -86,10 +76,8 @@ impl VsockBuilder {
 
     /// Creates a Vsock device from a VsockDeviceConfig.
     pub fn create_unixsock_vsock(cfg: VsockDeviceConfig) -> Result<Vsock<VsockUnixBackend>> {
-        let _ = std::fs::remove_file(&cfg.uds_path);
-        let backend =
-            VsockUnixBackend::new(u64::from(cfg.guest_cid), cfg.uds_path, cfg.host_port_map)
-                .map_err(VsockConfigError::CreateVsockBackend)?;
+        let backend = VsockUnixBackend::new(u64::from(cfg.guest_cid), cfg.host_port_map)
+            .map_err(VsockConfigError::CreateVsockBackend)?;
 
         Ok(Vsock::new(u64::from(cfg.guest_cid), backend)
             .map_err(VsockConfigError::CreateVsockDevice)?)
@@ -129,7 +117,6 @@ pub(crate) mod tests {
         VsockDeviceConfig {
             vsock_id: vsock_dev_id.to_string(),
             guest_cid: 3,
-            uds_path: tmp_sock_file.path().clone(),
             host_port_map: None,
         }
     }

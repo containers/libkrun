@@ -495,7 +495,6 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     let vsock_device_config = VsockDeviceConfig {
         vsock_id: "vsock0".to_string(),
         guest_cid: 3,
-        uds_path: "/tmp/vsock0".to_string(),
         host_port_map: ctx_cfg.get_port_map(),
     };
     ctx_cfg.vmr.set_vsock_device(vsock_device_config).unwrap();
