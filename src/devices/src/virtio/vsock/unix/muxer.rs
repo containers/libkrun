@@ -127,6 +127,8 @@ pub struct VsockMuxer {
     listener_map: HashMap<RawFd, EpollListener>,
     /// A hash map used to store wrapped listeners.
     wrap_map: HashMap<u32, RawFd>,
+    /// An optional hash map with host to guest port mappings.
+    host_port_map: Option<HashMap<u16, u16>>,
     /// The RX queue. Items in this queue are consumed by `VsockMuxer::recv_pkt()`, and
     /// produced
     /// - by `VsockMuxer::send_pkt()` (e.g. RST in response to a connection request packet);
@@ -262,7 +264,8 @@ impl VsockChannel for VsockMuxer {
                 }
                 uapi::VSOCK_OP_WRAP_LISTEN => {
                     // A listen request for wrapped socket with extended parameters
-                    self.handle_peer_wrap_listen(&pkt).unwrap();
+                    self.handle_peer_wrap_listen(&pkt)
+                        .unwrap_or_else(|_| self.enq_rst(pkt.dst_port(), pkt.src_port()))
                 }
                 uapi::VSOCK_OP_WRAP_CLOSE => {
                     // A close request for wrapped socket
@@ -350,7 +353,11 @@ impl VsockBackend for VsockMuxer {}
 
 impl VsockMuxer {
     /// Muxer constructor.
-    pub fn new(cid: u64, host_sock_path: String) -> Result<Self> {
+    pub fn new(
+        cid: u64,
+        host_sock_path: String,
+        host_port_map: Option<HashMap<u16, u16>>,
+    ) -> Result<Self> {
         // Open/bind on the host Unix socket, so we can accept host-initiated
         // connections.
         let host_sock = UnixListener::bind(&host_sock_path)
@@ -371,6 +378,7 @@ impl VsockMuxer {
             conn_map: HashMap::with_capacity(defs::MAX_CONNECTIONS),
             listener_map: HashMap::with_capacity(defs::MAX_CONNECTIONS + 1),
             wrap_map: HashMap::with_capacity(defs::MAX_CONNECTIONS),
+            host_port_map,
             killq: MuxerKillQ::new(),
             local_port_last: (1u32 << 30) - 1,
             local_port_set: HashSet::with_capacity(defs::MAX_CONNECTIONS),
@@ -806,8 +814,17 @@ impl VsockMuxer {
     fn handle_peer_wrap_listen(&mut self, pkt: &VsockPacket) -> Result<()> {
         match pkt.sa_family() {
             Some(uapi::AF_INET) => {
-                let port = pkt.inet_port().ok_or(Error::AddressInvalidPort)?;
+                let guest_port = pkt.inet_port().ok_or(Error::AddressInvalidPort)?;
                 let ipv4_addr = Ipv4Addr::from(pkt.inet_addr().ok_or(Error::AddressInvalidIpv4)?);
+
+                let port = if let Some(port_map) = &self.host_port_map {
+                    match port_map.get(&guest_port) {
+                        Some(host_port) => *host_port,
+                        None => return Err(Error::WrapTcpPortMap),
+                    }
+                } else {
+                    guest_port
+                };
 
                 debug!("vsock ports src={} dst={}", pkt.src_port(), pkt.dst_port());
                 debug!("should listen at {}:{}", ipv4_addr, port);

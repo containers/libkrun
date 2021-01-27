@@ -1,6 +1,7 @@
 // Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
@@ -41,6 +42,8 @@ pub struct VsockDeviceConfig {
     pub guest_cid: u32,
     /// Path to local unix socket.
     pub uds_path: String,
+    /// An optional map of host to guest port mappings.
+    pub host_port_map: Option<HashMap<u16, u16>>,
 }
 
 struct VsockAndUnixPath {
@@ -84,8 +87,9 @@ impl VsockBuilder {
     /// Creates a Vsock device from a VsockDeviceConfig.
     pub fn create_unixsock_vsock(cfg: VsockDeviceConfig) -> Result<Vsock<VsockUnixBackend>> {
         let _ = std::fs::remove_file(&cfg.uds_path);
-        let backend = VsockUnixBackend::new(u64::from(cfg.guest_cid), cfg.uds_path)
-            .map_err(VsockConfigError::CreateVsockBackend)?;
+        let backend =
+            VsockUnixBackend::new(u64::from(cfg.guest_cid), cfg.uds_path, cfg.host_port_map)
+                .map_err(VsockConfigError::CreateVsockBackend)?;
 
         Ok(Vsock::new(u64::from(cfg.guest_cid), backend)
             .map_err(VsockConfigError::CreateVsockDevice)?)
@@ -126,6 +130,7 @@ pub(crate) mod tests {
             vsock_id: vsock_dev_id.to_string(),
             guest_cid: 3,
             uds_path: tmp_sock_file.path().clone(),
+            host_port_map: None,
         }
     }
 

@@ -47,6 +47,7 @@ struct ContextConfig {
     env: Option<String>,
     args: Option<String>,
     fs_cfg: Option<FsDeviceConfig>,
+    port_map: Option<HashMap<u16, u16>>,
 }
 
 impl ContextConfig {
@@ -100,6 +101,14 @@ impl ContextConfig {
 
     fn get_fs_cfg(&self) -> Option<FsDeviceConfig> {
         self.fs_cfg.clone()
+    }
+
+    fn set_port_map(&mut self, port_map: HashMap<u16, u16>) {
+        self.port_map = Some(port_map);
+    }
+
+    fn get_port_map(&self) -> Option<HashMap<u16, u16>> {
+        self.port_map.clone()
     }
 }
 
@@ -159,13 +168,6 @@ pub extern "C" fn krun_create_ctx() -> i32 {
         size: kernel_size,
     };
     ctx_cfg.vmr.set_kernel_bundle(kernel_bundle).unwrap();
-
-    let vsock_device_config = VsockDeviceConfig {
-        vsock_id: "vsock0".to_string(),
-        guest_cid: 3,
-        uds_path: "/tmp/vsock0".to_string(),
-    };
-    ctx_cfg.vmr.set_vsock_device(vsock_device_config).unwrap();
 
     let ctx_id = CTX_IDS.fetch_add(1, Ordering::SeqCst);
     if ctx_id == i32::MAX || CTX_MAP.lock().unwrap().contains_key(&(ctx_id as u32)) {
@@ -266,7 +268,6 @@ pub unsafe extern "C" fn krun_set_mapped_volumes(
             };
             let vol_tuple: Vec<&str> = s.split(":").collect();
             if vol_tuple.len() != 2 {
-                println!("foo");
                 return -libc::EINVAL;
             }
             let host_vol = Path::new(vol_tuple[0]);
@@ -277,7 +278,6 @@ pub unsafe extern "C" fn krun_set_mapped_volumes(
                 || !guest_vol.is_absolute()
                 || guest_vol.components().count() != 2
             {
-                println!("bar: {:?} {:?}", host_vol, guest_vol.components().count());
                 return -libc::EINVAL;
             }
 
@@ -301,6 +301,55 @@ pub unsafe extern "C" fn krun_set_mapped_volumes(
                 },
             };
             cfg.set_fs_cfg(fs_device_config);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_port_map(ctx_id: u32, c_port_map: *const *const c_char) -> i32 {
+    let mut port_map = HashMap::new();
+    let port_map_array: &[*const c_char] = slice::from_raw_parts(c_port_map, MAX_ARGS);
+    for item in port_map_array.iter().take(MAX_ARGS) {
+        if item.is_null() {
+            break;
+        } else {
+            let s = match CStr::from_ptr(*item).to_str() {
+                Ok(s) => s,
+                Err(_) => return -libc::EINVAL,
+            };
+            let port_tuple: Vec<&str> = s.split(":").collect();
+            if port_tuple.len() != 2 {
+                return -libc::EINVAL;
+            }
+            let host_port: u16 = match port_tuple[0].parse() {
+                Ok(p) => p,
+                Err(_) => return -libc::EINVAL,
+            };
+            let guest_port: u16 = match port_tuple[1].parse() {
+                Ok(p) => p,
+                Err(_) => return -libc::EINVAL,
+            };
+
+            if port_map.contains_key(&guest_port) {
+                return -libc::EINVAL;
+            }
+            for hp in port_map.values() {
+                if *hp == host_port {
+                    return -libc::EINVAL;
+                }
+            }
+            port_map.insert(guest_port, host_port);
+        }
+    }
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.set_port_map(port_map);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -442,6 +491,14 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     if ctx_cfg.vmr.set_boot_source(boot_source).is_err() {
         return -libc::EINVAL;
     }
+
+    let vsock_device_config = VsockDeviceConfig {
+        vsock_id: "vsock0".to_string(),
+        guest_cid: 3,
+        uds_path: "/tmp/vsock0".to_string(),
+        host_port_map: ctx_cfg.get_port_map(),
+    };
+    ctx_cfg.vmr.set_vsock_device(vsock_device_config).unwrap();
 
     let _vmm = match vmm::builder::build_microvm(&ctx_cfg.vmr, &mut event_manager) {
         Ok(vmm) => vmm,
