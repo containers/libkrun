@@ -130,7 +130,7 @@ impl Epoll {
             None
         };
 
-        match self.watcher.poll(tout) {
+        match self.watcher.poll_forever(tout) {
             Some(event) => {
                 let fd = match event.ident {
                     Ident::Fd(fd) => fd,
