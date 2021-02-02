@@ -7,7 +7,3 @@ members = ["src/libkrun"]
 [profile.release]
 #panic = "abort"
 lto = true
-
-[patch.crates-io]
-libc = { git = "https://github.com/slp/libc", branch = "add_preadv_pwritev" }
-kqueue = { git = "https://gitlab.com/slp/rust-kqueue", branch = "poll_forever_asrawfd" }
