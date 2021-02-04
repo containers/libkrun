@@ -51,21 +51,38 @@ options use-vc
 
 ## Building and installing
 
-### Requirements
+### Linux
+
+#### Requirements
 
 * [libkrunfw](https://github.com/containers/libkrunfw)
 * A working [Rust](https://www.rust-lang.org/) toolchain
 
-### Compiling
+#### Compiling
 
 ```
 make
 ```
 
-### Installing
+#### Installing
 
 ```
 sudo make install
+```
+
+### macOS
+
+#### Requirements
+
+As part of ```libkrun``` building process, it's necessary to produce a Linux ELF binary from [init/init.c](init/init.c). The easiest way to do this is by using a binary version of [krunvm](https://github.com/slp/krunvm) and its dependencies ([libkrunfw](https://github.com/containers/libkrunfw), and ```libkrun``` itself), such as the one available in the [krunvm Homebrew repo](https://github.com/slp/homebrew-krun), and then executing the [build_on_krunvm.sh](build_on_krunvm.sh) script found in this repository.
+
+This will create a lightweight Linux VM using ```krunvm``` with the current working directory mapped inside it, and produce the Linux ELF binary from [init/init.c](init/init.c).
+
+#### Building the library using krunvm
+
+```
+./build_on_krunvm.sh
+make
 ```
 
 ## Using the library
