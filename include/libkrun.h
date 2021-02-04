@@ -73,7 +73,7 @@ int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_set_mapped_volumes(uint32_t ctx_id, const char *mapped_volumes[]);
+int32_t krun_set_mapped_volumes(uint32_t ctx_id, char *const mapped_volumes[]);
 
 /*
  * Configures a map of host to guest TCP ports for the microVM.
@@ -85,7 +85,7 @@ int32_t krun_set_mapped_volumes(uint32_t ctx_id, const char *mapped_volumes[]);
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_set_port_map(uint32_t ctx_id, const char *port_map[]);
+int32_t krun_set_port_map(uint32_t ctx_id, char *const port_map[]);
 
 /*
  * Configures a map of rlimits to be set in the guest before starting the isolated binary.
