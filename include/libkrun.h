@@ -88,6 +88,18 @@ int32_t krun_set_mapped_volumes(uint32_t ctx_id, const char *mapped_volumes[]);
 int32_t krun_set_port_map(uint32_t ctx_id, const char *port_map[]);
 
 /*
+ * Configures a map of rlimits to be set in the guest before starting the isolated binary.
+ *
+ * Arguments:
+ *  "ctx_id"  - the configuration context ID.
+ *  "rlimits" - an array of string pointers with format "RESOURCE=RLIM_CUR:RLIM_MAX".
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_rlimits(uint32_t ctx_id, char *const rlimits[]);
+
+/*
  * Sets the working directory for the executable to be run inside the microVM.
  *
  * Arguments:

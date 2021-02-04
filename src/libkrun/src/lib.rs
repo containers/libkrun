@@ -46,6 +46,7 @@ struct ContextConfig {
     exec_path: Option<String>,
     env: Option<String>,
     args: Option<String>,
+    rlimits: Option<String>,
     fs_cfg: Option<FsDeviceConfig>,
     port_map: Option<HashMap<u16, u16>>,
 }
@@ -91,6 +92,17 @@ impl ContextConfig {
     fn get_args(&self) -> String {
         match &self.args {
             Some(args) => args.clone(),
+            None => "".to_string(),
+        }
+    }
+
+    fn set_rlimits(&mut self, rlimits: String) {
+        self.rlimits = Some(rlimits);
+    }
+
+    fn get_rlimits(&self) -> String {
+        match &self.rlimits {
+            Some(rlimits) => format!("KRUN_RLIMITS={}", rlimits),
             None => "".to_string(),
         }
     }
@@ -359,6 +371,40 @@ pub unsafe extern "C" fn krun_set_port_map(ctx_id: u32, c_port_map: *const *cons
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+pub unsafe extern "C" fn krun_set_rlimits(ctx_id: u32, c_rlimits: *const *const c_char) -> i32 {
+    let rlimits = if c_rlimits.is_null() {
+        return -libc::EINVAL;
+    } else {
+        let mut strvec = Vec::new();
+
+        let array: &[*const c_char] = slice::from_raw_parts(c_rlimits, MAX_ARGS);
+        for item in array.iter().take(MAX_ARGS) {
+            if item.is_null() {
+                break;
+            } else {
+                let s = match CStr::from_ptr(*item).to_str() {
+                    Ok(s) => s,
+                    Err(_) => return -libc::EINVAL,
+                };
+                strvec.push(s);
+            }
+        }
+
+        format!("\"{}\"", strvec.join(","))
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            ctx_cfg.get_mut().set_rlimits(rlimits.to_string());
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
 pub unsafe extern "C" fn krun_set_workdir(ctx_id: u32, c_workdir_path: *const c_char) -> i32 {
     let workdir_path = match CStr::from_ptr(c_workdir_path).to_str() {
         Ok(workdir) => workdir,
@@ -479,11 +525,12 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     let mut boot_source = BootSourceConfig::default();
     boot_source.kernel_cmdline_prolog = Some(format!(
-        "{} init={} KRUN_INIT={} KRUN_WORKDIR={} {}",
+        "{} init={} KRUN_INIT={} KRUN_WORKDIR={} {} {}",
         DEFAULT_KERNEL_CMDLINE,
         INIT_PATH,
         ctx_cfg.get_exec_path(),
         ctx_cfg.get_workdir(),
+        ctx_cfg.get_rlimits(),
         ctx_cfg.get_env(),
     ));
     boot_source.kernel_cmdline_epilog = Some(format!(" -- {}", ctx_cfg.get_args()));
