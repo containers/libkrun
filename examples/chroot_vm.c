@@ -29,6 +29,12 @@ int main(int argc, char *const argv[])
         "18000:8000",
         0
     };
+    char *const rlimits[] =
+    {
+        // RLIMIT_NPROC = 6
+        "6=4096:8192",
+        0
+    };
     char *mapped_volumes[2];
     char current_path[MAX_PATH];
     char volume_tail[] = ":/work\0";
@@ -102,6 +108,13 @@ int main(int argc, char *const argv[])
     if (err = krun_set_port_map(ctx_id, &port_map[0])) {
         errno = -err;
         perror("Error configuring port map");
+        return -1;
+    }
+
+    // Configure the rlimits that will be set in the guest
+    if (err = krun_set_rlimits(ctx_id, &rlimits[0])) {
+        errno = -err;
+        perror("Error configuring rlimits");
         return -1;
     }
 
