@@ -5,8 +5,10 @@ LDFLAGS_aarch64_Linux = -lkrun -lfdt
 LDFLAGS_arm64_Darwin = -L/opt/homebrew/lib -lkrun -lfdt
 CFLAGS_Linux = -O2 -g
 CFLAGS_Darwin = -O2 -g -I/opt/homebrew/include
+ROOTFS_DISTRO := fedora
+ROOTFS_DIR = rootfs_$(ROOTFS_DISTRO)
 
-.PHONY: clean
+.PHONY: clean rootfs
 
 all: chroot_vm
 
@@ -16,5 +18,12 @@ ifeq ($(OS),Darwin)
 	codesign --entitlements chroot_vm.entitlements --force -s - $@
 endif
 
+# Build the rootfs to be used with chroot_vm.
+rootfs:
+	mkdir -p $(ROOTFS_DIR)
+	podman create --name libkrun_chroot_vm $(ROOTFS_DISTRO)
+	podman export libkrun_chroot_vm | tar xpf - -C $(ROOTFS_DIR)
+	podman rm libkrun_chroot_vm
+
 clean:
-	rm -f chroot_vm
+	rm -rf chroot_vm $(ROOTFS_DIR)
