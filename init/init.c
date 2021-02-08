@@ -59,30 +59,30 @@ int main(int argc, char **argv)
 
     if (mount("proc", "/proc", "proc",
               MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
-        perror("mount(/proc): ");
+        perror("mount(/proc)");
         exit(-1);
     }
 
     if (mount("sysfs", "/sys", "sysfs",
               MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
-        perror("mount(/sys): ");
+        perror("mount(/sys)");
         exit(-1);
     }
 
     if (mount("cgroup2", "/sys/fs/cgroup", "cgroup2",
               MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
-        perror("mount(/sys/fs/cgroup): ");
+        perror("mount(/sys/fs/cgroup)");
         exit(-1);
     }
 
     if (mkdir("/dev/pts", 0755) != 0) {
-        perror("mkdir(/dev/pts): ");
+        perror("mkdir(/dev/pts)");
         exit(-1);
     }
 
     if (mount("devpts", "/dev/pts", "devpts",
               MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
-        perror("mount(/dev/pts): ");
+        perror("mount(/dev/pts)");
         exit(-1);
     }
 
@@ -90,7 +90,7 @@ int main(int argc, char **argv)
     mkdir("/dev/shm", 0755);
     if (mount("tmpfs", "/dev/shm", "tmpfs",
               MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
-        perror("mount(/dev/shm): ");
+        perror("mount(/dev/shm)");
         exit(-1);
     }
 
