@@ -57,6 +57,7 @@ options use-vc
 
 * [libkrunfw](https://github.com/containers/libkrunfw)
 * A working [Rust](https://www.rust-lang.org/) toolchain
+* C Library static libraries, as the [init](init/init.c) binary is statically linked (package ```glibc-static``` in Fedora)
 
 #### Compiling
 
@@ -104,19 +105,18 @@ make
 
 #### Running chroot_vm
 
-To be able to ```chroot_vm```, you need first a directory to act as the root filesystem for your isolated program. An easy way to prepare one, is by using [podman](https://podman.io/):
+To be able to ```chroot_vm```, you need first a directory to act as the root filesystem for your isolated program.
+
+Use the ```rootfs``` target to get a rootfs prepared from the Fedora container image (note: you must have [podman](https://podman.io/) installed):
 
 ```
-podman create --name chroot_vm fedora
-mkdir rootfs
-podman export chroot_vm | tar xpf - -C rootfs
-podman rm chroot_vm
+make rootfs
 ```
 
 Now you can use ```chroot_vm``` to run a process within this new root filesystem:
 
 ```
-./chroot_vm ./rootfs /bin/sh
+./chroot_vm ./rootfs_fedora /bin/sh
 ```
 
 If the ```libkrun``` and/or ```libkrunfw``` libraries were installed on a path that's not included in your ```/etc/ld.so.conf``` configuration, you may get an error like this one:
