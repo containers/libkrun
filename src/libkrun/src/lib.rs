@@ -476,7 +476,7 @@ pub unsafe extern "C" fn krun_set_exec(
         }
     } else {
         env::vars()
-            .map(|(key, value)| format!(" {}={}", key, value))
+            .map(|(key, value)| format!(" {}=\"{}\"", key, value))
             .collect()
     };
 
