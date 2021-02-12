@@ -37,7 +37,7 @@ void set_rlimits(const char *rlimits)
         rlim.rlim_cur = lim_cur;
         rlim.rlim_max = lim_max;
         if (setrlimit(lim_id, &rlim) != 0) {
-            printf("Error setting rlimit for ID=%d\n", lim_id);
+            printf("Error setting rlimit for ID=%lld\n", lim_id);
         }
 
         if (*item != '\0') {

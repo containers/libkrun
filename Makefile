@@ -20,7 +20,7 @@ all: $(LIBRARY_RELEASE_$(OS))
 debug: $(LIBRARY_DEBUG_$(OS))
 
 $(INIT_BINARY): init/init.c
-	gcc -O2 -static -o $@ init/init.c
+	gcc -O2 -static -Wall -o $@ init/init.c
 
 $(LIBRARY_RELEASE_$(OS)): $(INIT_BINARY)
 	cargo build --release
