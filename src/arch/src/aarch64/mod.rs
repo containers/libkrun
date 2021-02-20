@@ -21,6 +21,7 @@ use std::fmt::Debug;
 
 use self::gic::GICDevice;
 use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMmap};
+use ArchMemoryInfo;
 
 /// Errors thrown while configuring aarch64 system.
 #[derive(Debug)]
@@ -33,6 +34,8 @@ pub enum Error {
 
 /// The start of the memory area reserved for MMIO devices.
 pub const MMIO_MEM_START: u64 = layout::MAPPED_IO_START;
+/// The size of the MMIO shared memory area used by virtio-fs DAX.
+pub const MMIO_SHM_SIZE: u64 = 1 << 29;
 
 pub use self::fdt::DeviceInfoForFDT;
 use DeviceType;
@@ -44,21 +47,42 @@ pub fn arch_memory_regions(
     size: usize,
     _kernel_load_addr: u64,
     kernel_size: usize,
-) -> Vec<(GuestAddress, usize)> {
+) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let dram_size = min(size as u64, layout::DRAM_MEM_MAX_SIZE) as usize;
-    vec![(
-        GuestAddress(layout::DRAM_MEM_START + kernel_size as u64),
-        dram_size,
-    )]
+    let ram_last_addr = layout::DRAM_MEM_START + (kernel_size as u64) + (dram_size as u64);
+    let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
+    let info = ArchMemoryInfo {
+        ram_last_addr,
+        shm_start_addr,
+        shm_size: MMIO_SHM_SIZE,
+    };
+    (
+        info,
+        vec![
+            (
+                GuestAddress(layout::DRAM_MEM_START + kernel_size as u64),
+                dram_size,
+            ),
+            (GuestAddress(shm_start_addr), MMIO_SHM_SIZE as usize),
+        ],
+    )
 }
 #[cfg(target_os = "macos")]
 pub fn arch_memory_regions(
     size: usize,
     _kernel_load_addr: u64,
     _kernel_size: usize,
-) -> Vec<(GuestAddress, usize)> {
+) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let dram_size = min(size as u64, layout::DRAM_MEM_MAX_SIZE) as usize;
-    vec![(GuestAddress(layout::DRAM_MEM_START), dram_size)]
+    let info = ArchMemoryInfo {
+        ram_last_addr: layout::DRAM_MEM_START + dram_size as u64,
+        shm_start_addr: 0,
+        shm_size: 0,
+    };
+    (
+        info,
+        vec![(GuestAddress(layout::DRAM_MEM_START), dram_size)],
+    )
 }
 
 /// Configures the system and should be called once per vm before starting vcpu threads.
@@ -74,6 +98,7 @@ pub fn arch_memory_regions(
 /// * `initrd` - Information about an optional initrd.
 pub fn configure_system<T: DeviceInfoForFDT + Clone + Debug>(
     guest_mem: &GuestMemoryMmap,
+    arch_memory_info: &ArchMemoryInfo,
     cmdline_cstring: &CStr,
     vcpu_mpidr: Vec<u64>,
     device_info: &HashMap<(DeviceType, String), T>,
@@ -82,6 +107,7 @@ pub fn configure_system<T: DeviceInfoForFDT + Clone + Debug>(
 ) -> super::Result<()> {
     fdt::create_fdt(
         guest_mem,
+        arch_memory_info,
         vcpu_mpidr,
         cmdline_cstring,
         device_info,

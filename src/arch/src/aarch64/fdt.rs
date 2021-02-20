@@ -18,7 +18,8 @@ use super::get_fdt_addr;
 use super::gic::GICDevice;
 use super::layout::{FDT_MAX_SIZE, GTIMER_HYP, GTIMER_PHYS, GTIMER_SEC, GTIMER_VIRT};
 use aarch64::fdt::Error::CstringFDTTransform;
-use vm_memory::{Address, Bytes, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap};
+use vm_memory::{Address, Bytes, GuestAddress, GuestMemoryError, GuestMemoryMmap};
+use ArchMemoryInfo;
 
 // This is a value for uniquely identifying the FDT node declaring the interrupt controller.
 const GIC_PHANDLE: u32 = 1;
@@ -84,6 +85,7 @@ type Result<T> = result::Result<T, Error>;
 /// Creates the flattened device tree for this aarch64 microVM.
 pub fn create_fdt<T: DeviceInfoForFDT + Clone + Debug>(
     guest_mem: &GuestMemoryMmap,
+    arch_memory_info: &ArchMemoryInfo,
     vcpu_mpidr: Vec<u64>,
     cmdline: &CStr,
     device_info: &HashMap<(DeviceType, String), T>,
@@ -110,7 +112,7 @@ pub fn create_fdt<T: DeviceInfoForFDT + Clone + Debug>(
     // containing description of the interrupt controller for this VM.
     append_property_u32(&mut fdt, "interrupt-parent", GIC_PHANDLE)?;
     create_cpu_nodes(&mut fdt, &vcpu_mpidr)?;
-    create_memory_node(&mut fdt, guest_mem)?;
+    create_memory_node(&mut fdt, guest_mem, arch_memory_info)?;
     create_chosen_node(&mut fdt, cmdline, initrd)?;
     create_gic_node(&mut fdt, gic_device)?;
     create_timer_node(&mut fdt)?;
@@ -325,8 +327,12 @@ fn create_cpu_nodes(fdt: &mut Vec<u8>, vcpu_mpidr: &Vec<u64>) -> Result<()> {
     Ok(())
 }
 
-fn create_memory_node(fdt: &mut Vec<u8>, guest_mem: &GuestMemoryMmap) -> Result<()> {
-    let mem_size = guest_mem.last_addr().raw_value() - super::layout::DRAM_MEM_START + 1;
+fn create_memory_node(
+    fdt: &mut Vec<u8>,
+    _guest_mem: &GuestMemoryMmap,
+    arch_memory_info: &ArchMemoryInfo,
+) -> Result<()> {
+    let mem_size = arch_memory_info.ram_last_addr - super::layout::DRAM_MEM_START + 1;
     // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/booting-without-of.txt#L960
     // for an explanation of this.
     let mem_reg_prop = generate_prop64(&[super::layout::DRAM_MEM_START as u64, mem_size as u64]);

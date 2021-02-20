@@ -16,6 +16,13 @@ extern crate vm_memory;
 use std::fmt;
 use std::result;
 
+#[derive(Default)]
+pub struct ArchMemoryInfo {
+    pub ram_last_addr: u64,
+    pub shm_start_addr: u64,
+    pub shm_size: u64,
+}
+
 /// Module for aarch64 related functionality.
 #[cfg(target_arch = "aarch64")]
 pub mod aarch64;
@@ -24,6 +31,7 @@ pub mod aarch64;
 pub use aarch64::{
     arch_memory_regions, configure_system, get_kernel_start, initrd_load_addr,
     layout::CMDLINE_MAX_SIZE, layout::IRQ_BASE, layout::IRQ_MAX, Error, MMIO_MEM_START,
+    MMIO_SHM_SIZE,
 };
 
 /// Module for x86_64 related functionality.
@@ -34,6 +42,7 @@ pub mod x86_64;
 pub use x86_64::{
     arch_memory_regions, configure_system, get_kernel_start, initrd_load_addr,
     layout::CMDLINE_MAX_SIZE, layout::IRQ_BASE, layout::IRQ_MAX, Error, MMIO_MEM_START,
+    MMIO_SHM_SIZE,
 };
 
 /// Type for returning public functions outcome.

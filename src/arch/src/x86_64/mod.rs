@@ -20,6 +20,7 @@ use arch_gen::x86::bootparam::{boot_params, E820_RAM};
 use vm_memory::{
     Address, ByteValued, Bytes, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion,
 };
+use ArchMemoryInfo;
 use InitrdConfig;
 
 // This is a workaround to the Rust enforcement specifying that any implementation of a foreign
@@ -52,6 +53,8 @@ const FIRST_ADDR_PAST_32BITS: u64 = 1 << 32;
 const MEM_32BIT_GAP_SIZE: u64 = 768 << 20;
 /// The start of the memory area reserved for MMIO devices.
 pub const MMIO_MEM_START: u64 = FIRST_ADDR_PAST_32BITS - MEM_32BIT_GAP_SIZE;
+/// The size of the MMIO shared memory area used by virtio-fs DAX.
+pub const MMIO_SHM_SIZE: u64 = 1 << 29;
 
 /// Returns a Vec of the valid memory addresses.
 /// These should be used to configure the GuestMemoryMmap structure for the platform.
@@ -61,28 +64,53 @@ pub fn arch_memory_regions(
     size: usize,
     kernel_load_addr: u64,
     kernel_size: usize,
-) -> Vec<(GuestAddress, usize)> {
+) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     if size < (kernel_load_addr + kernel_size as u64) as usize {
         panic!("Kernel doesn't fit in RAM");
     }
+
     // It's safe to cast MMIO_MEM_START to usize because it fits in a u32 variable
     // (It points to an address in the 32 bit space).
-    match size.checked_sub(MMIO_MEM_START as usize) {
+    let (ram_last_addr, shm_start_addr, regions) = match size.checked_sub(MMIO_MEM_START as usize) {
         // case1: guest memory fits before the gap
-        None | Some(0) => vec![
-            (GuestAddress(0), kernel_load_addr as usize),
-            (GuestAddress(kernel_load_addr + kernel_size as u64), size),
-        ],
-        // case2: guest memory extends beyond the gap
-        Some(remaining) => vec![
-            (GuestAddress(0), kernel_load_addr as usize),
+        None | Some(0) => {
+            let ram_last_addr = kernel_load_addr + kernel_size as u64 + size as u64;
+            let shm_start_addr = FIRST_ADDR_PAST_32BITS;
             (
-                GuestAddress(kernel_load_addr + kernel_size as u64),
-                (MMIO_MEM_START - (kernel_load_addr + kernel_size as u64)) as usize,
-            ),
-            (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
-        ],
-    }
+                ram_last_addr,
+                shm_start_addr,
+                vec![
+                    (GuestAddress(0), kernel_load_addr as usize),
+                    (GuestAddress(kernel_load_addr + kernel_size as u64), size),
+                    (GuestAddress(FIRST_ADDR_PAST_32BITS), MMIO_SHM_SIZE as usize),
+                ],
+            )
+        }
+        // case2: guest memory extends beyond the gap
+        Some(remaining) => {
+            let ram_last_addr = FIRST_ADDR_PAST_32BITS + remaining as u64;
+            let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
+            (
+                ram_last_addr,
+                shm_start_addr,
+                vec![
+                    (GuestAddress(0), kernel_load_addr as usize),
+                    (
+                        GuestAddress(kernel_load_addr + kernel_size as u64),
+                        (MMIO_MEM_START - (kernel_load_addr + kernel_size as u64)) as usize,
+                    ),
+                    (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
+                    (GuestAddress(shm_start_addr), MMIO_SHM_SIZE as usize),
+                ],
+            )
+        }
+    };
+    let info = ArchMemoryInfo {
+        ram_last_addr,
+        shm_start_addr,
+        shm_size: MMIO_SHM_SIZE,
+    };
+    (info, regions)
 }
 
 /// Returns the memory address where the kernel could be loaded.
@@ -117,6 +145,7 @@ pub fn initrd_load_addr(guest_mem: &GuestMemoryMmap, initrd_size: usize) -> supe
 /// * `num_cpus` - Number of virtual CPUs the guest will have.
 pub fn configure_system(
     guest_mem: &GuestMemoryMmap,
+    arch_memory_info: &ArchMemoryInfo,
     cmdline_addr: GuestAddress,
     cmdline_size: usize,
     initrd: &Option<InitrdConfig>,
@@ -149,7 +178,7 @@ pub fn configure_system(
 
     add_e820_entry(&mut params.0, 0, EBDA_START, E820_RAM)?;
 
-    let last_addr = guest_mem.last_addr();
+    let last_addr = GuestAddress(arch_memory_info.ram_last_addr);
     if last_addr < end_32bit_gap_start {
         add_e820_entry(
             &mut params.0,
@@ -219,8 +248,8 @@ mod tests {
 
     #[test]
     fn regions_lt_4gb() {
-        let regions = arch_memory_regions(1usize << 29, KERNEL_LOAD_ADDR, KERNEL_SIZE);
-        assert_eq!(2, regions.len());
+        let (_info, regions) = arch_memory_regions(1usize << 29, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+        assert_eq!(3, regions.len());
         assert_eq!(GuestAddress(0), regions[0].0);
         assert_eq!(KERNEL_LOAD_ADDR as usize, regions[0].1);
         assert_eq!(
@@ -232,8 +261,9 @@ mod tests {
 
     #[test]
     fn regions_gt_4gb() {
-        let regions = arch_memory_regions((1usize << 32) + 0x8000, KERNEL_LOAD_ADDR, KERNEL_SIZE);
-        assert_eq!(3, regions.len());
+        let (_info, regions) =
+            arch_memory_regions((1usize << 32) + 0x8000, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+        assert_eq!(4, regions.len());
         assert_eq!(GuestAddress(0), regions[0].0);
         assert_eq!(KERNEL_LOAD_ADDR as usize, regions[0].1);
         assert_eq!(
@@ -247,7 +277,8 @@ mod tests {
     fn test_system_configuration() {
         let no_vcpus = 4;
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
-        let config_err = configure_system(&gm, GuestAddress(0), 0, &None, 1);
+        let info = ArchMemoryInfo::default();
+        let config_err = configure_system(&gm, &info, GuestAddress(0), 0, &None, 1);
         assert!(config_err.is_err());
         assert_eq!(
             config_err.unwrap_err(),
@@ -256,21 +287,24 @@ mod tests {
 
         // Now assigning some memory that falls before the 32bit memory hole.
         let mem_size = 128 << 20;
-        let arch_mem_regions = arch_memory_regions(mem_size, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+        let (arch_mem_info, arch_mem_regions) =
+            arch_memory_regions(mem_size, KERNEL_LOAD_ADDR, KERNEL_SIZE);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
-        configure_system(&gm, GuestAddress(0), 0, &None, no_vcpus).unwrap();
+        configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus).unwrap();
 
         // Now assigning some memory that is equal to the start of the 32bit memory hole.
         let mem_size = 3328 << 20;
-        let arch_mem_regions = arch_memory_regions(mem_size, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+        let (arch_mem_info, arch_mem_regions) =
+            arch_memory_regions(mem_size, KERNEL_LOAD_ADDR, KERNEL_SIZE);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
-        configure_system(&gm, GuestAddress(0), 0, &None, no_vcpus).unwrap();
+        configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus).unwrap();
 
         // Now assigning some memory that falls after the 32bit memory hole.
         let mem_size = 3330 << 20;
-        let arch_mem_regions = arch_memory_regions(mem_size, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+        let (arch_mem_info, arch_mem_regions) =
+            arch_memory_regions(mem_size, KERNEL_LOAD_ADDR, KERNEL_SIZE);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
-        configure_system(&gm, GuestAddress(0), 0, &None, no_vcpus).unwrap();
+        configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus).unwrap();
     }
 
     #[test]

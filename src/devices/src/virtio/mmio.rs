@@ -52,6 +52,7 @@ pub struct MmioTransport {
     mem: GuestMemoryMmap,
     pub(crate) interrupt_status: Arc<AtomicUsize>,
     queue_evts: HashMap<u32, EventFd>,
+    shm_region_select: u32,
 }
 
 impl MmioTransport {
@@ -72,6 +73,7 @@ impl MmioTransport {
             mem,
             interrupt_status,
             queue_evts: HashMap::new(),
+            shm_region_select: 0,
         }
     }
 
@@ -244,6 +246,27 @@ impl BusDevice for MmioTransport {
                     0x60 => self.interrupt_status.load(Ordering::SeqCst) as u32,
                     0x70 => self.device_status,
                     0xfc => self.config_generation,
+                    0xb0..=0xbc => {
+                        // For no SHM region or invalid region the kernel looks for length of -1
+                        let (shm_base, shm_len) = if self.shm_region_select != 0 {
+                            (0, !0 as u64)
+                        } else {
+                            match self.locked_device().shm_region() {
+                                Some(region) => (region.guest_addr, region.size as u64),
+                                None => (0, !0 as u64),
+                            }
+                        };
+                        match offset {
+                            0xb0 => shm_len as u32,
+                            0xb4 => (shm_len >> 32) as u32,
+                            0xb8 => shm_base as u32,
+                            0xbc => (shm_base >> 32) as u32,
+                            _ => {
+                                error!("invalid shm region offset");
+                                0
+                            }
+                        }
+                    }
                     _ => {
                         warn!("unknown virtio mmio register read: 0x{:x}", offset);
                         return;
@@ -312,6 +335,7 @@ impl BusDevice for MmioTransport {
                     0x94 => self.update_queue_field(|q| hi(&mut q.avail_ring, v)),
                     0xa0 => self.update_queue_field(|q| lo(&mut q.used_ring, v)),
                     0xa4 => self.update_queue_field(|q| hi(&mut q.used_ring, v)),
+                    0xac => self.shm_region_select = v,
                     _ => {
                         warn!("unknown virtio mmio register write: 0x{:x}", offset);
                     }

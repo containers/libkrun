@@ -10,7 +10,7 @@ use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::super::{
     ActivateError, ActivateResult, DeviceState, FsError, Queue as VirtQueue, VirtioDevice,
-    VIRTIO_MMIO_INT_VRING,
+    VirtioShmRegion, VIRTIO_MMIO_INT_VRING,
 };
 use super::descriptor_utils::{Reader, Writer};
 use super::passthrough::{self, PassthroughFs};
@@ -54,6 +54,7 @@ pub struct Fs {
     pub(crate) activate_evt: EventFd,
     pub(crate) device_state: DeviceState,
     config: VirtioFsConfig,
+    shm_region: Option<VirtioShmRegion>,
     server: Server<PassthroughFs>,
     intc: Option<Arc<Mutex<Gic>>>,
     irq_line: Option<u32>,
@@ -93,6 +94,7 @@ impl Fs {
             activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(FsError::EventFd)?,
             device_state: DeviceState::Inactive,
             config,
+            shm_region: None,
             server: Server::new(PassthroughFs::new(fs_cfg).unwrap()),
             intc: None,
             irq_line: None,
@@ -117,6 +119,10 @@ impl Fs {
 
     pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
         self.intc = Some(intc);
+    }
+
+    pub fn set_shm_region(&mut self, shm_region: VirtioShmRegion) {
+        self.shm_region = Some(shm_region);
     }
 
     /// Signal the guest driver that we've used some virtio buffers that it had previously made
@@ -160,6 +166,7 @@ impl Fs {
             // This should never happen, it's been already validated in the event handler.
             DeviceState::Inactive => unreachable!(),
         };
+
         let queue = &mut self.queues[queue_index];
         let mut used_any = false;
         while let Some(head) = queue.pop(mem) {
@@ -171,7 +178,7 @@ impl Fs {
                 .unwrap();
 
             self.server
-                .handle_message(reader, writer)
+                .handle_message(reader, writer, self.shm_region.as_ref())
                 //.map_err(FsError::ProcessQueue)
                 .unwrap();
 
@@ -271,5 +278,9 @@ impl VirtioDevice for Fs {
             DeviceState::Inactive => false,
             DeviceState::Activated(_) => true,
         }
+    }
+
+    fn shm_region(&self) -> Option<&VirtioShmRegion> {
+        self.shm_region.as_ref()
     }
 }

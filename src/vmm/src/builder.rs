@@ -17,18 +17,19 @@ use device_manager::legacy::PortIODeviceManager;
 use device_manager::mmio::MMIODeviceManager;
 use devices::legacy::Gic;
 use devices::legacy::Serial;
-use devices::virtio::{MmioTransport, Vsock, VsockUnixBackend};
+use devices::virtio::{MmioTransport, VirtioShmRegion, Vsock, VsockUnixBackend};
 
+use arch::ArchMemoryInfo;
 use polly::event_manager::{Error as EventManagerError, EventManager};
 #[cfg(target_os = "linux")]
 use signal_handler::register_sigwinch_handler;
 use utils::eventfd::EventFd;
 use utils::terminal::Terminal;
 use utils::time::TimestampUs;
-#[cfg(target_os = "linux")]
-use vm_memory::mmap::GuestRegionMmap;
 #[cfg(target_os = "macos")]
 use vm_memory::Bytes;
+#[cfg(target_os = "linux")]
+use vm_memory::{mmap::GuestRegionMmap, GuestMemory};
 use vm_memory::{mmap::MmapRegion, GuestAddress, GuestMemoryMmap};
 use vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
 use vmm_config::fs::FsBuilder;
@@ -275,7 +276,7 @@ pub fn build_microvm(
             .map_err(StartMicrovmError::KernelBundle)?
     };
 
-    let guest_memory = create_guest_memory(
+    let (guest_memory, arch_memory_info) = create_guest_memory(
         vm_resources
             .vm_config()
             .mem_size_mib
@@ -412,9 +413,21 @@ pub fn build_microvm(
         )?;
     }
 
+    #[cfg(target_os = "linux")]
+    let shm_region = Some(VirtioShmRegion {
+        host_addr: guest_memory
+            .get_host_address(GuestAddress(arch_memory_info.shm_start_addr))
+            .unwrap() as u64,
+        guest_addr: arch_memory_info.shm_start_addr,
+        size: arch_memory_info.shm_size as usize,
+    });
+    #[cfg(target_os = "macos")]
+    let shm_region = None;
+
     let mut vmm = Vmm {
         //events_observer: Some(Box::new(SerialStdin::get())),
         guest_memory,
+        arch_memory_info,
         kernel_cmdline,
         vcpus_handles: Vec::new(),
         exit_evt,
@@ -426,7 +439,13 @@ pub fn build_microvm(
 
     attach_balloon_device(&mut vmm, event_manager, intc.clone())?;
     attach_console_devices(&mut vmm, event_manager, intc.clone())?;
-    attach_fs_devices(&mut vmm, &vm_resources.fs, event_manager, intc.clone())?;
+    attach_fs_devices(
+        &mut vmm,
+        &vm_resources.fs,
+        event_manager,
+        shm_region,
+        intc.clone(),
+    )?;
     if let Some(vsock) = vm_resources.vsock.get() {
         attach_unixsock_vsock_device(&mut vmm, vsock, event_manager, intc)?;
     }
@@ -460,18 +479,22 @@ pub fn create_guest_memory(
     kernel_region: MmapRegion,
     kernel_load_addr: u64,
     kernel_size: usize,
-) -> std::result::Result<GuestMemoryMmap, StartMicrovmError> {
+) -> std::result::Result<(GuestMemoryMmap, ArchMemoryInfo), StartMicrovmError> {
     let mem_size = mem_size_mib << 20;
-    let arch_mem_regions = arch::arch_memory_regions(mem_size, kernel_load_addr, kernel_size);
+    let (arch_mem_info, arch_mem_regions) =
+        arch::arch_memory_regions(mem_size, kernel_load_addr, kernel_size);
 
-    Ok(GuestMemoryMmap::from_ranges(&arch_mem_regions)
-        .and_then(|memory| {
-            memory.insert_region(Arc::new(GuestRegionMmap::new(
-                kernel_region,
-                GuestAddress(kernel_load_addr as u64),
-            )?))
-        })
-        .map_err(StartMicrovmError::GuestMemoryMmap)?)
+    Ok((
+        GuestMemoryMmap::from_ranges(&arch_mem_regions)
+            .and_then(|memory| {
+                memory.insert_region(Arc::new(GuestRegionMmap::new(
+                    kernel_region,
+                    GuestAddress(kernel_load_addr as u64),
+                )?))
+            })
+            .map_err(StartMicrovmError::GuestMemoryMmap)?,
+        arch_mem_info,
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -480,9 +503,10 @@ pub fn create_guest_memory(
     kernel_region: MmapRegion,
     kernel_load_addr: u64,
     kernel_size: usize,
-) -> std::result::Result<GuestMemoryMmap, StartMicrovmError> {
+) -> std::result::Result<(GuestMemoryMmap, ArchMemoryInfo), StartMicrovmError> {
     let mem_size = mem_size_mib << 20;
-    let arch_mem_regions = arch::arch_memory_regions(mem_size, kernel_load_addr, kernel_size);
+    let (arch_mem_info, arch_mem_regions) =
+        arch::arch_memory_regions(mem_size, kernel_load_addr, kernel_size);
 
     let guest_mem = GuestMemoryMmap::from_ranges(&arch_mem_regions)
         .map_err(StartMicrovmError::GuestMemoryMmap)?;
@@ -491,7 +515,7 @@ pub fn create_guest_memory(
     guest_mem
         .write(kernel_data, GuestAddress(kernel_load_addr as u64))
         .unwrap();
-    Ok(guest_mem)
+    Ok((guest_mem, arch_mem_info))
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -786,6 +810,7 @@ fn attach_fs_devices(
     vmm: &mut Vmm,
     fs_devs: &FsBuilder,
     event_manager: &mut EventManager,
+    shm_region: Option<VirtioShmRegion>,
     intc: Option<Arc<Mutex<Gic>>>,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
@@ -795,6 +820,10 @@ fn attach_fs_devices(
 
         if let Some(ref intc) = intc {
             fs.lock().unwrap().set_intc(intc.clone());
+        }
+
+        if let Some(ref shm) = shm_region {
+            fs.lock().unwrap().set_shm_region(shm.clone());
         }
 
         event_manager
@@ -951,7 +980,7 @@ pub mod tests {
 
     fn default_guest_memory(
         mem_size_mib: usize,
-    ) -> std::result::Result<GuestMemoryMmap, StartMicrovmError> {
+    ) -> std::result::Result<(GuestMemoryMmap, ArchMemoryInfo), StartMicrovmError> {
         let kernel_guest_addr: u64 = 0x1000;
         let kernel_size: usize = 0x1000;
         let kernel_host_addr: u64 = 0x1000;
@@ -964,7 +993,7 @@ pub mod tests {
     }
 
     fn default_vmm() -> Vmm {
-        let guest_memory = default_guest_memory(128).unwrap();
+        let (guest_memory, arch_memory_info) = default_guest_memory(128).unwrap();
         let kernel_cmdline = default_kernel_cmdline();
 
         let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
@@ -980,6 +1009,7 @@ pub mod tests {
         Vmm {
             //events_observer: Some(Box::new(SerialStdin::get())),
             guest_memory,
+            arch_memory_info,
             kernel_cmdline,
             vcpus_handles: Vec::new(),
             exit_evt,
@@ -1001,7 +1031,7 @@ pub mod tests {
     fn test_create_vcpus_x86_64() {
         let vcpu_count = 2;
 
-        let guest_memory = default_guest_memory(128).unwrap();
+        let (guest_memory, _arch_memory_info) = default_guest_memory(128).unwrap();
         let mut vm = setup_vm(&guest_memory).unwrap();
         setup_interrupt_controller(&mut vm).unwrap();
         let vcpu_config = VcpuConfig {
