@@ -1812,7 +1812,7 @@ impl FileSystem for PassthroughFs {
             return Err(linux_error(io::Error::last_os_error()));
         }
 
-        let mut clean_buf = Vec::new();
+        buf.truncate(res as usize);
 
         if size == 0 {
             let mut clean_size = res as usize;
@@ -1829,8 +1829,11 @@ impl FileSystem for PassthroughFs {
 
             Ok(ListxattrReply::Count(clean_size as u32))
         } else {
+            let mut clean_buf = Vec::new();
+
             for attr in buf.split(|c| *c == 0) {
-                if attr.starts_with(&XATTR_UID[..XATTR_UID.len() - 1])
+                if attr.len() == 0
+                    || attr.starts_with(&XATTR_UID[..XATTR_UID.len() - 1])
                     || attr.starts_with(&XATTR_GID[..XATTR_GID.len() - 1])
                     || attr.starts_with(&XATTR_MODE[..XATTR_MODE.len() - 1])
                 {
@@ -1838,7 +1841,10 @@ impl FileSystem for PassthroughFs {
                 }
 
                 clean_buf.extend_from_slice(attr);
+                clean_buf.push(0);
             }
+
+            clean_buf.shrink_to_fit();
 
             if clean_buf.len() > size as usize {
                 Err(io::Error::from_raw_os_error(LINUX_ERANGE))
