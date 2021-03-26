@@ -57,6 +57,7 @@ use std::sync::Mutex;
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 
+use arch::ArchMemoryInfo;
 use arch::DeviceType;
 use arch::InitrdConfig;
 #[cfg(target_arch = "x86_64")]
@@ -203,6 +204,7 @@ pub struct Vmm {
 
     // Guest VM core resources.
     guest_memory: GuestMemoryMmap,
+    arch_memory_info: ArchMemoryInfo,
 
     kernel_cmdline: KernelCmdline,
 
@@ -281,6 +283,7 @@ impl Vmm {
         #[cfg(target_arch = "x86_64")]
         arch::x86_64::configure_system(
             &self.guest_memory,
+            &self.arch_memory_info,
             vm_memory::GuestAddress(arch::x86_64::layout::CMDLINE_START),
             self.kernel_cmdline.len() + 1,
             initrd,
@@ -293,6 +296,7 @@ impl Vmm {
             let vcpu_mpidr = vcpus.into_iter().map(|cpu| cpu.get_mpidr()).collect();
             arch::aarch64::configure_system(
                 &self.guest_memory,
+                &self.arch_memory_info,
                 &self
                     .kernel_cmdline
                     .as_cstring()
@@ -310,6 +314,7 @@ impl Vmm {
             let vcpu_mpidr = vcpus.into_iter().map(|cpu| cpu.get_mpidr()).collect();
             arch::aarch64::configure_system(
                 &self.guest_memory,
+                &self.arch_memory_info,
                 &self
                     .kernel_cmdline
                     .as_cstring()

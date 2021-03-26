@@ -442,7 +442,6 @@ impl Vm {
                 // It's safe to unwrap because the guest address is valid.
                 let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
                 info!("Guest memory starts at {:x?}", host_addr);
-
                 let memory_region = kvm_userspace_memory_region {
                     slot: index as u32,
                     guest_phys_addr: region.start_addr().raw_value() as u64,

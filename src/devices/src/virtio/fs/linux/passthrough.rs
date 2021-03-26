@@ -1732,4 +1732,122 @@ impl FileSystem for PassthroughFs {
             Ok(res as usize)
         }
     }
+
+    fn setupmapping(
+        &self,
+        _ctx: Context,
+        inode: Inode,
+        _handle: Handle,
+        foffset: u64,
+        len: u64,
+        flags: u64,
+        moffset: u64,
+        host_shm_base: u64,
+        shm_size: u64,
+    ) -> io::Result<()> {
+        let open_flags = if (flags & fuse::SetupmappingFlags::WRITE.bits()) != 0 {
+            libc::O_RDWR
+        } else {
+            libc::O_RDONLY
+        };
+
+        let prot_flags = if (flags & fuse::SetupmappingFlags::WRITE.bits()) != 0 {
+            libc::PROT_READ | libc::PROT_WRITE
+        } else {
+            libc::PROT_READ
+        };
+
+        if (moffset + len) > shm_size {
+            return Err(io::Error::from_raw_os_error(libc::EINVAL));
+        }
+
+        let addr = host_shm_base + moffset;
+
+        debug!("setupmapping: ino {:?} addr={:x} len={}", inode, addr, len);
+
+        if inode == self.init_inode {
+            let ret = unsafe {
+                libc::mmap(
+                    addr as *mut libc::c_void,
+                    len as usize,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
+                    -1,
+                    0,
+                )
+            };
+            if ret == libc::MAP_FAILED {
+                return Err(io::Error::last_os_error());
+            }
+
+            let to_copy = if len as usize > INIT_BINARY.len() {
+                INIT_BINARY.len()
+            } else {
+                len as usize
+            };
+            unsafe {
+                libc::memcpy(
+                    addr as *mut libc::c_void,
+                    INIT_BINARY.as_ptr() as *const _,
+                    to_copy,
+                )
+            };
+            return Ok(());
+        }
+
+        let file = self.open_inode(inode, open_flags as i32)?;
+        let fd = file.as_raw_fd();
+
+        let ret = unsafe {
+            libc::mmap(
+                addr as *mut libc::c_void,
+                len as usize,
+                prot_flags,
+                libc::MAP_SHARED | libc::MAP_FIXED,
+                fd,
+                foffset as libc::off_t,
+            )
+        };
+        if ret == libc::MAP_FAILED {
+            return Err(io::Error::last_os_error());
+        }
+
+        let ret = unsafe { libc::close(fd) };
+        if ret == -1 {
+            return Err(io::Error::last_os_error());
+        }
+
+        Ok(())
+    }
+
+    fn removemapping(
+        &self,
+        _ctx: Context,
+        requests: Vec<fuse::RemovemappingOne>,
+        host_shm_base: u64,
+        shm_size: u64,
+    ) -> io::Result<()> {
+        for req in requests {
+            let addr = host_shm_base + req.moffset;
+            if (req.moffset + req.len) > shm_size {
+                return Err(io::Error::from_raw_os_error(libc::EINVAL));
+            }
+            debug!("removemapping: addr={:x} len={:?}", addr, req.len);
+            let ret = unsafe {
+                libc::mmap(
+                    addr as *mut libc::c_void,
+                    req.len as usize,
+                    libc::PROT_NONE,
+                    libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_FIXED,
+                    -1,
+                    0 as libc::off_t,
+                )
+            };
+            if ret == libc::MAP_FAILED {
+                return Err(io::Error::last_os_error());
+            }
+        }
+
+        Ok(())
+    }
 }

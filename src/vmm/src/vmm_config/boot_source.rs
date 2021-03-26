@@ -17,7 +17,8 @@ use std::fmt::{Display, Formatter, Result};
 //                                          i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd";
 
 pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 pci=off nomodules \
-                                          console=hvc0 rootfstype=virtiofs rw quiet no-kvmapf";
+                                          console=hvc0 rootflags=dax rootfstype=virtiofs rw \
+                                          quiet no-kvmapf";
 
 //pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=1 pci=off nomodules earlyprintk=ttyS0 \
 //                                          console=ttyS0";

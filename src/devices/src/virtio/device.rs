@@ -19,6 +19,13 @@ pub enum DeviceState {
     Activated(GuestMemoryMmap),
 }
 
+#[derive(Clone)]
+pub struct VirtioShmRegion {
+    pub host_addr: u64,
+    pub guest_addr: u64,
+    pub size: usize,
+}
+
 /// Trait for virtio devices to be driven by a virtio transport.
 ///
 /// The lifecycle of a virtio device is to be moved to a virtio transport, which will then query the
@@ -109,6 +116,11 @@ pub trait VirtioDevice: AsAny + Send {
     /// Optionally deactivates this device and returns ownership of the guest memory map, interrupt
     /// event, and queue events.
     fn reset(&mut self) -> Option<(EventFd, Vec<EventFd>)> {
+        None
+    }
+
+    /// Get base and size of the SHM region
+    fn shm_region(&self) -> Option<&VirtioShmRegion> {
         None
     }
 }
