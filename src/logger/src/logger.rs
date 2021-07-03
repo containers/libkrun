@@ -315,12 +315,17 @@ impl Logger {
     /// Try to change the state of the logger.
     /// This method will succeed only if the logger is UNINITIALIZED.
     fn try_lock(&self, locked_state: usize) -> Result<()> {
-        match STATE.compare_and_swap(UNINITIALIZED, locked_state, Ordering::SeqCst) {
-            INITIALIZING => {
+        match STATE.compare_exchange(
+            UNINITIALIZED,
+            locked_state,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            Err(INITIALIZING) => {
                 // If the logger is initializing, an error will be returned.
                 return Err(LoggerError::IsInitializing);
             }
-            INITIALIZED => {
+            Err(INITIALIZED) => {
                 // If the logger was already initialized, an error will be returned.
                 return Err(LoggerError::AlreadyInitialized);
             }
