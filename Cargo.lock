@@ -150,7 +150,7 @@ checksum = "7ccac4b00700875e6a07c6cde370d44d32fa01c5a65cdd2fca6858c479d28bb3"
 
 [[package]]
 name = "libkrun"
-version = "0.1.1"
+version = "0.1.7"
 dependencies = [
  "cc",
  "libc",

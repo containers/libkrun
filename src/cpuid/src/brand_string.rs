@@ -222,7 +222,7 @@ impl BrandString {
             FoundFreqUnitSize,
             /// Found the H in 'Hz'.
             FoundH,
-        };
+        }
 
         let mut freq_start = 0;
         let mut decimal_start = 0;

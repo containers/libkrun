@@ -34,7 +34,7 @@ pub(crate) fn get_win_size() -> (u16, u16) {
         cols: u16,
         xpixel: u16,
         ypixel: u16,
-    };
+    }
     let ws: WS = WS::default();
 
     unsafe {
