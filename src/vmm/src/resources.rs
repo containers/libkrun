@@ -5,7 +5,7 @@
 
 use vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
 use vmm_config::fs::*;
-use vmm_config::kernel_bundle::{KernelBundle, KernelBundleError};
+use vmm_config::kernel_bundle::{KernelBundle, KernelBundleError, QbootBundle, QbootBundleError};
 use vmm_config::logger::LoggerConfigError;
 use vmm_config::machine_config::{VmConfig, VmConfigError};
 use vmm_config::vsock::*;
@@ -40,6 +40,8 @@ pub struct VmResources {
     pub boot_config: BootSourceConfig,
     /// The parameters for the kernel bundle to be loaded in this microVM.
     pub kernel_bundle: Option<KernelBundle>,
+    /// The parameters for the qboot bundle to be loaded in this microVM.
+    pub qboot_bundle: Option<QbootBundle>,
     /// The fs device.
     pub fs: FsBuilder,
     /// The vsock device.
@@ -133,6 +135,19 @@ impl VmResources {
         }
 
         self.kernel_bundle = Some(kernel_bundle);
+        Ok(())
+    }
+
+    pub fn qboot_bundle(&self) -> Option<&QbootBundle> {
+        self.qboot_bundle.as_ref()
+    }
+
+    pub fn set_qboot_bundle(&mut self, qboot_bundle: QbootBundle) -> Result<QbootBundleError> {
+        if qboot_bundle.size != 0x10000 {
+            return Err(QbootBundleError::InvalidSize);
+        }
+
+        self.qboot_bundle = Some(qboot_bundle);
         Ok(())
     }
 

@@ -22,6 +22,8 @@ use vmm::resources::VmResources;
 use vmm::vmm_config::boot_source::{BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
 use vmm::vmm_config::fs::FsDeviceConfig;
 use vmm::vmm_config::kernel_bundle::KernelBundle;
+#[cfg(feature = "amd-sev")]
+use vmm::vmm_config::kernel_bundle::QbootBundle;
 use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
@@ -129,6 +131,8 @@ static CTX_IDS: AtomicI32 = AtomicI32::new(0);
 
 #[link(name = "krunfw")]
 extern "C" {
+    #[cfg(feature = "amd-sev")]
+    fn krunfw_get_qboot(size: *mut size_t) -> *mut c_char;
     fn krunfw_get_kernel(load_addr: *mut u64, size: *mut size_t) -> *mut c_char;
     fn krunfw_get_version() -> u32;
 }
@@ -180,6 +184,17 @@ pub extern "C" fn krun_create_ctx() -> i32 {
         size: kernel_size,
     };
     ctx_cfg.vmr.set_kernel_bundle(kernel_bundle).unwrap();
+
+    #[cfg(feature = "amd-sev")]
+    {
+        let mut qboot_size: usize = 0;
+        let qboot_host_addr = unsafe { krunfw_get_qboot(&mut qboot_size as *mut usize) };
+        let qboot_bundle = QbootBundle {
+            host_addr: qboot_host_addr as u64,
+            size: qboot_size,
+        };
+        ctx_cfg.vmr.set_qboot_bundle(qboot_bundle).unwrap();
+    }
 
     let ctx_id = CTX_IDS.fetch_add(1, Ordering::SeqCst);
     if ctx_id == i32::MAX || CTX_MAP.lock().unwrap().contains_key(&(ctx_id as u32)) {
