@@ -32,3 +32,26 @@ impl Display for KernelBundleError {
         }
     }
 }
+
+/// Data structure holding the attributes read from the `libkrunfw` qboot config.
+#[derive(Debug, Default)]
+pub struct QbootBundle {
+    pub host_addr: u64,
+    pub size: usize,
+}
+
+/// Structure used to specify the parameters for the `libkrunfw` qboot bundle.
+#[derive(Debug)]
+pub enum QbootBundleError {
+    /// Qboot binary is not 64K long.
+    InvalidSize,
+}
+
+impl Display for QbootBundleError {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        use self::QbootBundleError::*;
+        match *self {
+            InvalidSize => write!(f, "qboot binary is not 64K long."),
+        }
+    }
+}

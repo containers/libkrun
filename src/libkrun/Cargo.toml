@@ -5,6 +5,9 @@ authors = ["Sergio Lopez <slp@redhat.com>"]
 edition = "2018"
 build = "build.rs"
 
+[features]
+amd-sev = []
+
 [dependencies]
 libc = ">=0.2.39"
 once_cell = "1.4.1"

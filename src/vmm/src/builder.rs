@@ -26,13 +26,15 @@ use signal_handler::register_sigwinch_handler;
 use utils::eventfd::EventFd;
 use utils::terminal::Terminal;
 use utils::time::TimestampUs;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", feature = "amd-sev"))]
 use vm_memory::Bytes;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(feature = "amd-sev")))]
 use vm_memory::{mmap::GuestRegionMmap, GuestMemory};
 use vm_memory::{mmap::MmapRegion, GuestAddress, GuestMemoryMmap};
 use vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
 use vmm_config::fs::FsBuilder;
+#[cfg(feature = "amd-sev")]
+use vmm_config::kernel_bundle::QbootBundle;
 #[cfg(target_os = "linux")]
 use vstate::KvmContext;
 use vstate::{Vcpu, VcpuConfig, Vm};
@@ -284,6 +286,10 @@ pub fn build_microvm(
         kernel_region,
         kernel_bundle.guest_addr,
         kernel_bundle.size,
+        #[cfg(feature = "amd-sev")]
+        vm_resources
+            .qboot_bundle()
+            .ok_or(StartMicrovmError::MissingKernelConfig)?,
     )?;
     let vcpu_config = vm_resources.vcpu_config();
 
@@ -345,6 +351,11 @@ pub fn build_microvm(
     #[cfg(target_os = "macos")]
     let intc = Some(Arc::new(Mutex::new(devices::legacy::Gic::new())));
 
+    #[cfg(not(feature = "amd-sev"))]
+    let boot_ip: GuestAddress = GuestAddress(kernel_bundle.guest_addr);
+    #[cfg(feature = "amd-sev")]
+    let boot_ip: GuestAddress = GuestAddress(arch::RESET_VECTOR);
+
     let vcpus;
     // For x86_64 we need to create the interrupt controller before calling `KVM_CREATE_VCPUS`
     // while on aarch64 we need to do it the other way around.
@@ -357,7 +368,7 @@ pub fn build_microvm(
             &vm,
             &vcpu_config,
             &guest_memory,
-            GuestAddress(kernel_bundle.guest_addr),
+            boot_ip,
             request_ts,
             &pio_device_manager.io_bus,
             &exit_evt,
@@ -413,7 +424,7 @@ pub fn build_microvm(
         )?;
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", not(feature = "amd-sev")))]
     let shm_region = Some(VirtioShmRegion {
         host_addr: guest_memory
             .get_host_address(GuestAddress(arch_memory_info.shm_start_addr))
@@ -421,7 +432,9 @@ pub fn build_microvm(
         guest_addr: arch_memory_info.shm_start_addr,
         size: arch_memory_info.shm_size as usize,
     });
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "linux", feature = "amd-sev"))]
+    let shm_region = None;
+    #[cfg(all(target_os = "macos"))]
     let shm_region = None;
 
     let mut vmm = Vmm {
@@ -473,7 +486,7 @@ pub fn build_microvm(
 }
 
 /// Creates GuestMemory of `mem_size_mib` MiB in size.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(feature = "amd-sev")))]
 pub fn create_guest_memory(
     mem_size_mib: usize,
     kernel_region: MmapRegion,
@@ -495,6 +508,36 @@ pub fn create_guest_memory(
             .map_err(StartMicrovmError::GuestMemoryMmap)?,
         arch_mem_info,
     ))
+}
+
+/// Creates GuestMemory of `mem_size_mib` MiB in size.
+#[cfg(all(target_os = "linux", feature = "amd-sev"))]
+pub fn create_guest_memory(
+    mem_size_mib: usize,
+    kernel_region: MmapRegion,
+    kernel_load_addr: u64,
+    kernel_size: usize,
+    qboot_bundle: &QbootBundle,
+) -> std::result::Result<(GuestMemoryMmap, ArchMemoryInfo), StartMicrovmError> {
+    let mem_size = mem_size_mib << 20;
+    let (arch_mem_info, arch_mem_regions) =
+        arch::arch_memory_regions(mem_size, kernel_load_addr, kernel_size);
+
+    let guest_mem = GuestMemoryMmap::from_ranges(&arch_mem_regions)
+        .map_err(StartMicrovmError::GuestMemoryMmap)?;
+
+    let kernel_data = unsafe { std::slice::from_raw_parts(kernel_region.as_ptr(), kernel_size) };
+    guest_mem
+        .write(kernel_data, GuestAddress(kernel_load_addr as u64))
+        .unwrap();
+
+    let qboot_data =
+        unsafe { std::slice::from_raw_parts(qboot_bundle.host_addr as *mut u8, qboot_bundle.size) };
+    guest_mem
+        .write(qboot_data, GuestAddress(arch::BIOS_START as u64))
+        .unwrap();
+
+    Ok((guest_mem, arch_mem_info))
 }
 
 #[cfg(target_os = "macos")]

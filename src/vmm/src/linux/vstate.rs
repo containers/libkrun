@@ -781,6 +781,7 @@ impl Vcpu {
     }
 
     #[cfg(target_arch = "x86_64")]
+    #[allow(unused_variables)]
     /// Configures a x86_64 specific vcpu and should be called once per vcpu.
     ///
     /// # Arguments
@@ -821,6 +822,7 @@ impl Vcpu {
         arch::x86_64::regs::setup_regs(&self.fd, kernel_start_addr.raw_value() as u64)
             .map_err(Error::REGSConfiguration)?;
         arch::x86_64::regs::setup_fpu(&self.fd).map_err(Error::FPUConfiguration)?;
+        #[cfg(not(feature = "amd-sev"))]
         arch::x86_64::regs::setup_sregs(guest_mem, &self.fd).map_err(Error::SREGSConfiguration)?;
         arch::x86_64::interrupts::set_lint(&self.fd).map_err(Error::LocalIntConfiguration)?;
         Ok(())

@@ -10,6 +10,7 @@ mod gdt;
 pub mod interrupts;
 /// Layout for the x86_64 system.
 pub mod layout;
+#[cfg(not(feature = "amd-sev"))]
 mod mptable;
 /// Logic for configuring x86_64 model specific registers (MSRs).
 pub mod msr;
@@ -17,8 +18,10 @@ pub mod msr;
 pub mod regs;
 
 use arch_gen::x86::bootparam::{boot_params, E820_RAM};
+#[cfg(not(feature = "amd-sev"))]
+use vm_memory::Bytes;
 use vm_memory::{
-    Address, ByteValued, Bytes, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion,
+    Address, ByteValued, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion,
 };
 use ArchMemoryInfo;
 use InitrdConfig;
@@ -40,6 +43,7 @@ pub enum Error {
     /// Invalid e820 setup params.
     E820Configuration,
     /// Error writing MP table to memory.
+    #[cfg(not(feature = "amd-sev"))]
     MpTableSetup(mptable::Error),
     /// Error writing the zero page of guest memory.
     ZeroPageSetup,
@@ -49,6 +53,9 @@ pub enum Error {
 
 // Where BIOS/VGA magic would live on a real PC.
 const EBDA_START: u64 = 0x9fc00;
+pub const RESET_VECTOR: u64 = 0xfff0;
+pub const BIOS_START: u64 = 0xffff_0000;
+pub const BIOS_SIZE: usize = 65536;
 const FIRST_ADDR_PAST_32BITS: u64 = 1 << 32;
 const MEM_32BIT_GAP_SIZE: u64 = 768 << 20;
 /// The start of the memory area reserved for MMIO devices.
@@ -58,8 +65,9 @@ pub const MMIO_SHM_SIZE: u64 = 1 << 29;
 
 /// Returns a Vec of the valid memory addresses.
 /// These should be used to configure the GuestMemoryMmap structure for the platform.
-/// For x86_64 all addresses are valid from the start of the kernel except a
-/// carve out at the end of 32bit address space.
+/// Make a hole for the kernel region that will be injected directly from libkrunfw's
+/// mapping, and reserve an SHM region for virtio-fs.
+#[cfg(not(feature = "amd-sev"))]
 pub fn arch_memory_regions(
     size: usize,
     kernel_load_addr: u64,
@@ -113,6 +121,59 @@ pub fn arch_memory_regions(
     (info, regions)
 }
 
+/// Returns a Vec of the valid memory addresses.
+/// These should be used to configure the GuestMemoryMmap structure for the platform.
+/// For SEV, don't make a hole for the kernel, as it needs to be copied instead of injected,
+/// don't reserve an SHM region, as virtio-fs is not supported, and reserve a small 64K
+/// region for the BIOS.
+#[cfg(feature = "amd-sev")]
+pub fn arch_memory_regions(
+    size: usize,
+    kernel_load_addr: u64,
+    kernel_size: usize,
+) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
+    if size < (kernel_load_addr + kernel_size as u64) as usize {
+        panic!("Kernel doesn't fit in RAM");
+    }
+
+    // It's safe to cast MMIO_MEM_START to usize because it fits in a u32 variable
+    // (It points to an address in the 32 bit space).
+    let (ram_last_addr, shm_start_addr, regions) = match size.checked_sub(MMIO_MEM_START as usize) {
+        // case1: guest memory fits before the gap
+        None | Some(0) => {
+            let ram_last_addr = size as u64;
+            let shm_start_addr = 0u64;
+            (
+                ram_last_addr,
+                shm_start_addr,
+                vec![
+                    (GuestAddress(0), size),
+                    (GuestAddress(BIOS_START), BIOS_SIZE),
+                ],
+            )
+        }
+        // case2: guest memory extends beyond the gap
+        Some(remaining) => {
+            let ram_last_addr = FIRST_ADDR_PAST_32BITS + remaining as u64;
+            let shm_start_addr = 0u64;
+            (
+                ram_last_addr,
+                shm_start_addr,
+                vec![
+                    (GuestAddress(0), MMIO_MEM_START as usize),
+                    (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
+                ],
+            )
+        }
+    };
+    let info = ArchMemoryInfo {
+        ram_last_addr,
+        shm_start_addr,
+        shm_size: 0,
+    };
+    (info, regions)
+}
+
 /// Returns the memory address where the kernel could be loaded.
 pub fn get_kernel_start() -> u64 {
     layout::HIMEM_START
@@ -143,6 +204,7 @@ pub fn initrd_load_addr(guest_mem: &GuestMemoryMmap, initrd_size: usize) -> supe
 /// * `cmdline_size` - Size of the kernel command line in bytes including the null terminator.
 /// * `initrd` - Information about where the ramdisk image was loaded in the `guest_mem`.
 /// * `num_cpus` - Number of virtual CPUs the guest will have.
+#[allow(unused_variables)]
 pub fn configure_system(
     guest_mem: &GuestMemoryMmap,
     arch_memory_info: &ArchMemoryInfo,
@@ -161,6 +223,7 @@ pub fn configure_system(
     let himem_start = GuestAddress(layout::HIMEM_START);
 
     // Note that this puts the mptable at the last 1k of Linux's 640k base RAM
+    #[cfg(not(feature = "amd-sev"))]
     mptable::setup_mptable(guest_mem, num_cpus).map_err(Error::MpTableSetup)?;
 
     let mut params: BootParamsWrapper = BootParamsWrapper(boot_params::default());
@@ -210,10 +273,13 @@ pub fn configure_system(
         }
     }
 
-    let zero_page_addr = GuestAddress(layout::ZERO_PAGE_START);
-    guest_mem
-        .write_obj(params, zero_page_addr)
-        .map_err(|_| Error::ZeroPageSetup)?;
+    #[cfg(not(feature = "amd-sev"))]
+    {
+        let zero_page_addr = GuestAddress(layout::ZERO_PAGE_START);
+        guest_mem
+            .write_obj(params, zero_page_addr)
+            .map_err(|_| Error::ZeroPageSetup)?;
+    }
 
     Ok(())
 }
