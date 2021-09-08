@@ -19,6 +19,11 @@ use std::thread;
 use super::super::TimestampUs;
 use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 
+#[cfg(feature = "amd-sev")]
+use super::amdsev::{AmdSev, Error as SevError};
+#[cfg(feature = "amd-sev")]
+use sev::launch::Measurement;
+
 use arch;
 #[cfg(target_arch = "aarch64")]
 use arch::aarch64::gic::GICDevice;
@@ -91,6 +96,15 @@ pub enum Error {
     SetupGIC(arch::aarch64::gic::Error),
     /// Cannot set the memory regions.
     SetUserMemoryRegion(kvm_ioctls::Error),
+    #[cfg(feature = "amd-sev")]
+    /// Error initializing the Secure Virtualization Backend.
+    SecVirtInit(SevError),
+    #[cfg(feature = "amd-sev")]
+    /// Error preparing the VM for Secure Virtualization.
+    SecVirtPrepare(SevError),
+    #[cfg(feature = "amd-sev")]
+    /// Error attesting the Secure VM.
+    SecVirtAttest(SevError),
     /// Failed to signal Vcpu.
     SignalVcpu(utils::errno::Error),
     #[cfg(target_arch = "x86_64")]
@@ -230,6 +244,22 @@ impl Display for Error {
                 e
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {}", e),
+            #[cfg(feature = "amd-sev")]
+            SecVirtInit(e) => {
+                write!(
+                    f,
+                    "Error initializing the Secure Virtualization Backend: {:?}",
+                    e
+                )
+            }
+            #[cfg(feature = "amd-sev")]
+            SecVirtPrepare(e) => write!(
+                f,
+                "Error preparing the VM for Secure Virtualization: {:?}",
+                e
+            ),
+            #[cfg(feature = "amd-sev")]
+            SecVirtAttest(e) => write!(f, "Error attesting the Secure VM: {:?}", e),
             SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {}", e),
             #[cfg(target_arch = "x86_64")]
             MSRSConfiguration(e) => write!(f, "Error configuring the MSR registers: {:?}", e),
@@ -389,6 +419,9 @@ pub struct Vm {
     // On aarch64 we need to keep around the fd obtained by creating the VGIC device.
     #[cfg(target_arch = "aarch64")]
     irqchip_handle: Option<Box<dyn GICDevice>>,
+
+    #[cfg(feature = "amd-sev")]
+    sev: AmdSev,
 }
 
 impl Vm {
@@ -405,6 +438,9 @@ impl Vm {
         let supported_msrs =
             arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
 
+        #[cfg(feature = "amd-sev")]
+        let sev = AmdSev::new().map_err(Error::SecVirtInit)?;
+
         Ok(Vm {
             fd: vm_fd,
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -413,6 +449,8 @@ impl Vm {
             supported_msrs,
             #[cfg(target_arch = "aarch64")]
             irqchip_handle: None,
+            #[cfg(feature = "amd-sev")]
+            sev,
         })
     }
 
@@ -461,6 +499,36 @@ impl Vm {
             .map_err(Error::VmSetup)?;
 
         Ok(())
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn secure_virt_prepare(&mut self, guest_mem: &GuestMemoryMmap) -> Result<()> {
+        self.sev
+            .vm_prepare(&self.fd, guest_mem)
+            .map_err(Error::SecVirtPrepare)
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn secure_virt_attest(
+        &self,
+        kernel_uaddr: u64,
+        kernel_size: usize,
+        qboot_uaddr: u64,
+        qboot_size: usize,
+        cmdline_uaddr: u64,
+        cmdline_size: usize,
+    ) -> Result<Measurement> {
+        self.sev
+            .vm_attest(
+                &self.fd,
+                kernel_uaddr,
+                kernel_size,
+                qboot_uaddr,
+                qboot_size,
+                cmdline_uaddr,
+                cmdline_size,
+            )
+            .map_err(Error::SecVirtAttest)
     }
 
     /// Creates the irq chip and an in-kernel device model for the PIT.
@@ -710,7 +778,7 @@ impl Vcpu {
         exit_evt: EventFd,
         create_ts: TimestampUs,
     ) -> Result<Self> {
-        let kvm_vcpu = vm_fd.create_vcpu(id).map_err(Error::VcpuFd)?;
+        let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = channel();
         let (response_sender, response_receiver) = channel();
 
@@ -931,7 +999,7 @@ impl Vcpu {
 
         // Build the list of MSRs we want to save.
         let num_msrs = self.msr_list.as_fam_struct_ref().nmsrs as usize;
-        let mut msrs = Msrs::new(num_msrs);
+        let mut msrs = Msrs::new(num_msrs).unwrap();
         {
             let indices = self.msr_list.as_slice();
             let msr_entries = msrs.as_mut_slice();
