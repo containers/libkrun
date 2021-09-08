@@ -12,6 +12,7 @@ amd-sev = []
 libc = ">=0.2.39"
 once_cell = "1.4.1"
 
+devices = { path = "../devices" }
 logger = { path = "../logger" }
 polly = { path = "../polly" }
 utils = { path = "../utils" }

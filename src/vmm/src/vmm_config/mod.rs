@@ -8,9 +8,13 @@ use std::path::PathBuf;
 
 use libc::O_NONBLOCK;
 
+/// Wrapper for configuring the Block devices attached to the microVM.
+#[cfg(feature = "amd-sev")]
+pub mod block;
 /// Wrapper for configuring the microVM boot source.
 pub mod boot_source;
 /// Wrapper for configuring the Fs devices attached to the microVM.
+#[cfg(not(feature = "amd-sev"))]
 pub mod fs;
 /// Wrapper over the microVM general information attached to the microVM.
 pub mod instance_info;

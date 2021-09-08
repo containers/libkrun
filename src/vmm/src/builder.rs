@@ -17,7 +17,9 @@ use device_manager::legacy::PortIODeviceManager;
 use device_manager::mmio::MMIODeviceManager;
 use devices::legacy::Gic;
 use devices::legacy::Serial;
-use devices::virtio::{MmioTransport, VirtioShmRegion, Vsock, VsockUnixBackend};
+#[cfg(not(feature = "amd-sev"))]
+use devices::virtio::VirtioShmRegion;
+use devices::virtio::{MmioTransport, Vsock, VsockUnixBackend};
 
 use arch::ArchMemoryInfo;
 use polly::event_manager::{Error as EventManagerError, EventManager};
@@ -33,7 +35,10 @@ use vm_memory::Bytes;
 #[cfg(target_os = "linux")]
 use vm_memory::GuestMemory;
 use vm_memory::{mmap::MmapRegion, GuestAddress, GuestMemoryMmap};
+#[cfg(feature = "amd-sev")]
+use vmm_config::block::BlockBuilder;
 use vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
+#[cfg(not(feature = "amd-sev"))]
 use vmm_config::fs::FsBuilder;
 #[cfg(feature = "amd-sev")]
 use vmm_config::kernel_bundle::QbootBundle;
@@ -478,8 +483,6 @@ pub fn build_microvm(
         guest_addr: arch_memory_info.shm_start_addr,
         size: arch_memory_info.shm_size as usize,
     });
-    #[cfg(all(target_os = "linux", feature = "amd-sev"))]
-    let shm_region = None;
     #[cfg(all(target_os = "macos"))]
     let shm_region = None;
 
@@ -496,8 +499,10 @@ pub fn build_microvm(
         pio_device_manager,
     };
 
+    #[cfg(not(feature = "amd-sev"))]
     attach_balloon_device(&mut vmm, event_manager, intc.clone())?;
     attach_console_devices(&mut vmm, event_manager, intc.clone())?;
+    #[cfg(not(feature = "amd-sev"))]
     attach_fs_devices(
         &mut vmm,
         &vm_resources.fs,
@@ -505,6 +510,8 @@ pub fn build_microvm(
         shm_region,
         intc.clone(),
     )?;
+    #[cfg(feature = "amd-sev")]
+    attach_block_devices(&mut vmm, &vm_resources.block, event_manager, intc.clone())?;
     if let Some(vsock) = vm_resources.vsock.get() {
         attach_unixsock_vsock_device(&mut vmm, vsock, event_manager, intc)?;
     }
@@ -908,6 +915,7 @@ fn attach_mmio_device(
     Ok(())
 }
 
+#[cfg(not(feature = "amd-sev"))]
 fn attach_fs_devices(
     vmm: &mut Vmm,
     fs_devs: &FsBuilder,
@@ -1014,6 +1022,7 @@ fn attach_unixsock_vsock_device(
     Ok(())
 }
 
+#[cfg(not(feature = "amd-sev"))]
 fn attach_balloon_device(
     vmm: &mut Vmm,
     event_manager: &mut EventManager,
@@ -1040,6 +1049,38 @@ fn attach_balloon_device(
         MmioTransport::new(vmm.guest_memory().clone(), balloon),
     )
     .map_err(RegisterBalloonDevice)?;
+
+    Ok(())
+}
+
+#[cfg(feature = "amd-sev")]
+fn attach_block_devices(
+    vmm: &mut Vmm,
+    block_devs: &BlockBuilder,
+    event_manager: &mut EventManager,
+    intc: Option<Arc<Mutex<Gic>>>,
+) -> std::result::Result<(), StartMicrovmError> {
+    use self::StartMicrovmError::*;
+
+    for block in block_devs.list.iter() {
+        let id = String::from(block.lock().unwrap().id());
+
+        if let Some(ref intc) = intc {
+            block.lock().unwrap().set_intc(intc.clone());
+        }
+
+        event_manager
+            .add_subscriber(block.clone())
+            .map_err(RegisterEvent)?;
+
+        // The device mutex mustn't be locked here otherwise it will deadlock.
+        attach_mmio_device(
+            vmm,
+            id,
+            MmioTransport::new(vmm.guest_memory().clone(), block.clone()),
+        )
+        .map_err(RegisterBlockDevice)?;
+    }
 
     Ok(())
 }
