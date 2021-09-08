@@ -3,7 +3,10 @@
 
 //#![deny(warnings)]
 
+#[cfg(feature = "amd-sev")]
+use vmm_config::block::{BlockBuilder, BlockConfigError, BlockDeviceConfig};
 use vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
+#[cfg(not(feature = "amd-sev"))]
 use vmm_config::fs::*;
 use vmm_config::kernel_bundle::{KernelBundle, KernelBundleError, QbootBundle, QbootBundleError};
 use vmm_config::logger::LoggerConfigError;
@@ -21,6 +24,7 @@ pub enum Error {
     /// Boot source configuration error.
     BootSource(BootSourceConfigError),
     /// Fs device configuration error.
+    #[cfg(not(feature = "amd-sev"))]
     FsDevice(FsConfigError),
     /// Logger configuration error.
     Logger(LoggerConfigError),
@@ -43,9 +47,13 @@ pub struct VmResources {
     /// The parameters for the qboot bundle to be loaded in this microVM.
     pub qboot_bundle: Option<QbootBundle>,
     /// The fs device.
+    #[cfg(not(feature = "amd-sev"))]
     pub fs: FsBuilder,
     /// The vsock device.
     pub vsock: VsockBuilder,
+    /// The virtio-blk device.
+    #[cfg(feature = "amd-sev")]
+    pub block: BlockBuilder,
 }
 
 impl VmResources {
@@ -151,8 +159,14 @@ impl VmResources {
         Ok(())
     }
 
+    #[cfg(not(feature = "amd-sev"))]
     pub fn set_fs_device(&mut self, config: FsDeviceConfig) -> Result<FsConfigError> {
         self.fs.insert(config)
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn set_block_device(&mut self, config: BlockDeviceConfig) -> Result<BlockConfigError> {
+        self.block.insert(config)
     }
 
     /// Sets a vsock device to be attached when the VM starts.
