@@ -7,3 +7,6 @@ members = ["src/libkrun"]
 [profile.release]
 #panic = "abort"
 lto = true
+
+[patch.crates-io]
+kvm-ioctls = { git = 'https://github.com/slp/kvm-ioctls', branch = 'amdsev' }

@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Amazon Firecracker team <firecracker-devel@amazon.com>"]
 
 [features]
-amd-sev = []
+amd-sev = [ "codicon", "reqwest", "sev" ]
 
 [dependencies]
 libc = ">=0.2.39"
@@ -16,6 +16,11 @@ logger = { path = "../logger" }
 vm-memory = { git = "https://github.com/rust-vmm/vm-memory", features = ["backend-mmap"] }
 utils = { path = "../utils"}
 polly = { path = "../polly" }
+
+# Dependencies for amd-sev
+codicon = { version = "3.0.0", optional = true }
+reqwest = { version = "0.9.15", optional = true }
+sev = { version = "0.1.0", features = ["openssl"], optional = true }
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 cpuid = { path = "../cpuid" }

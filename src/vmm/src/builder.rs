@@ -26,10 +26,12 @@ use signal_handler::register_sigwinch_handler;
 use utils::eventfd::EventFd;
 use utils::terminal::Terminal;
 use utils::time::TimestampUs;
+#[cfg(all(target_os = "linux", not(feature = "amd-sev")))]
+use vm_memory::mmap::GuestRegionMmap;
 #[cfg(any(target_os = "macos", feature = "amd-sev"))]
 use vm_memory::Bytes;
-#[cfg(all(target_os = "linux", not(feature = "amd-sev")))]
-use vm_memory::{mmap::GuestRegionMmap, GuestMemory};
+#[cfg(target_os = "linux")]
+use vm_memory::GuestMemory;
 use vm_memory::{mmap::MmapRegion, GuestAddress, GuestMemoryMmap};
 use vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
 use vmm_config::fs::FsBuilder;
@@ -37,7 +39,7 @@ use vmm_config::fs::FsBuilder;
 use vmm_config::kernel_bundle::QbootBundle;
 #[cfg(target_os = "linux")]
 use vstate::KvmContext;
-use vstate::{Vcpu, VcpuConfig, Vm};
+use vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
 use {device_manager, VmmEventsObserver};
 
 /// Errors associated with starting the instance.
@@ -86,6 +88,10 @@ pub enum StartMicrovmError {
     RegisterNetDevice(device_manager::mmio::Error),
     /// Cannot initialize a MMIO Vsock Device or add a device to the MMIO Bus.
     RegisterVsockDevice(device_manager::mmio::Error),
+    /// Cannot attest the VM in the Secure Virtualization context.
+    SecureVirtAttest(VstateError),
+    /// Cannot initialize the Secure Virtualization backend.
+    SecureVirtPrepare(VstateError),
 }
 
 /// It's convenient to automatically convert `kernel::cmdline::Error`s
@@ -206,6 +212,26 @@ impl Display for StartMicrovmError {
                     err_msg
                 )
             }
+            SecureVirtAttest(ref err) => {
+                let mut err_msg = format!("{}", err);
+                err_msg = err_msg.replace("\"", "");
+
+                write!(
+                    f,
+                    "Cannot attest the VM in the Secure Virtualization context. {}",
+                    err_msg
+                )
+            }
+            SecureVirtPrepare(ref err) => {
+                let mut err_msg = format!("{}", err);
+                err_msg = err_msg.replace("\"", "");
+
+                write!(
+                    f,
+                    "Cannot initialize the Secure Virtualization backend. {}",
+                    err_msg
+                )
+            }
         }
     }
 }
@@ -278,6 +304,11 @@ pub fn build_microvm(
             .map_err(StartMicrovmError::KernelBundle)?
     };
 
+    #[cfg(feature = "amd-sev")]
+    let qboot_bundle = vm_resources
+        .qboot_bundle()
+        .ok_or(StartMicrovmError::MissingKernelConfig)?;
+
     let (guest_memory, arch_memory_info) = create_guest_memory(
         vm_resources
             .vm_config()
@@ -287,9 +318,7 @@ pub fn build_microvm(
         kernel_bundle.guest_addr,
         kernel_bundle.size,
         #[cfg(feature = "amd-sev")]
-        vm_resources
-            .qboot_bundle()
-            .ok_or(StartMicrovmError::MissingKernelConfig)?,
+        qboot_bundle,
     )?;
     let vcpu_config = vm_resources.vcpu_config();
 
@@ -301,6 +330,23 @@ pub fn build_microvm(
         Some(s) => kernel_cmdline.insert_str(s).unwrap(),
     };
     let mut vm = setup_vm(&guest_memory)?;
+
+    #[cfg(feature = "amd-sev")]
+    let (kernel_host_addr, qboot_host_addr, cmdline_host_addr) = {
+        vm.secure_virt_prepare(&guest_memory)
+            .map_err(StartMicrovmError::SecureVirtPrepare)?;
+        (
+            guest_memory
+                .get_host_address(GuestAddress(kernel_bundle.guest_addr))
+                .unwrap(),
+            guest_memory
+                .get_host_address(GuestAddress(arch::BIOS_START))
+                .unwrap(),
+            guest_memory
+                .get_host_address(GuestAddress(arch::x86_64::layout::CMDLINE_START))
+                .unwrap(),
+        )
+    };
 
     // On x86_64 always create a serial device,
     // while on aarch64 only create it if 'console=' is specified in the boot args.
@@ -471,6 +517,19 @@ pub fn build_microvm(
     // aarch64 the command line will be specified through the FDT.
     #[cfg(target_arch = "x86_64")]
     load_cmdline(&vmm)?;
+
+    #[cfg(feature = "amd-sev")]
+    let _measurement = vmm
+        .kvm_vm()
+        .secure_virt_attest(
+            kernel_host_addr as u64,
+            kernel_bundle.size,
+            qboot_host_addr as u64,
+            qboot_bundle.size,
+            cmdline_host_addr as u64,
+            4096,
+        )
+        .map_err(StartMicrovmError::SecureVirtAttest)?;
 
     vmm.configure_system(vcpus.as_slice(), &None)
         .map_err(StartMicrovmError::Internal)?;
