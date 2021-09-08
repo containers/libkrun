@@ -182,6 +182,11 @@ pub fn msr_should_serialize(index: u32) -> bool {
         .any(|range| range.contains(index))
 }
 
+/// IA32_MTRR_DEF_TYPE MSR: E (MTRRs enabled) flag, bit 11
+pub const MTRR_ENABLE: u64 = 0x800;
+/// Mem type WB
+pub const MTRR_MEM_TYPE_WB: u64 = 0x6;
+
 // Creates and populates required MSR entries for booting Linux on X86_64.
 fn create_boot_msr_entries() -> Vec<kvm_msr_entry> {
     let msr_entry_default = |msr| kvm_msr_entry {
@@ -207,6 +212,11 @@ fn create_boot_msr_entries() -> Vec<kvm_msr_entry> {
             data: u64::from(MSR_IA32_MISC_ENABLE_FAST_STRING),
             ..Default::default()
         },
+        kvm_msr_entry {
+            index: MSR_MTRRdefType,
+            data: (MTRR_ENABLE | MTRR_MEM_TYPE_WB),
+            ..Default::default()
+        },
     ]
 }
 
@@ -217,7 +227,7 @@ fn create_boot_msr_entries() -> Vec<kvm_msr_entry> {
 /// * `vcpu` - Structure for the VCPU that holds the VCPU's fd.
 pub fn setup_msrs(vcpu: &VcpuFd) -> Result<()> {
     let entry_vec = create_boot_msr_entries();
-    let msrs = Msrs::from_entries(&entry_vec);
+    let msrs = Msrs::from_entries(&entry_vec).unwrap();
     vcpu.set_msrs(&msrs)
         .map_err(Error::SetModelSpecificRegisters)
         .and_then(|msrs_written| {
