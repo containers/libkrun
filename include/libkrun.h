@@ -148,6 +148,20 @@ int32_t krun_set_exec(uint32_t ctx_id,
                       char *const envp[]);
 
 /*
+ * Sets the base URL to the attestation server. If no attestation server is configured, the guest
+ * memory will be encrypted but its contents won't be attested. Only available in libkrun-SEV.
+ *
+ * Arguments:
+ *  "ctx_id"    - the configuration context ID.
+ *  "url"       - a null-terminated string representing base URL for the attestation server
+ *                (i.e. "http://127.0.0.1:8080").
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_attestation_url(uint32_t ctx_id, const char *url);
+
+/*
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
  * stdin/stdout to manage them on behalf of the process running inside the isolated environment,
  * simulating that the latter has direct control of the terminal.

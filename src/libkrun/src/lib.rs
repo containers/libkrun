@@ -60,6 +60,8 @@ struct ContextConfig {
     #[cfg(feature = "amd-sev")]
     block_cfg: Option<BlockDeviceConfig>,
     port_map: Option<HashMap<u16, u16>>,
+    #[cfg(feature = "amd-sev")]
+    attestation_url: Option<String>,
 }
 
 impl ContextConfig {
@@ -144,6 +146,16 @@ impl ContextConfig {
 
     fn get_port_map(&self) -> Option<HashMap<u16, u16>> {
         self.port_map.clone()
+    }
+
+    #[cfg(feature = "amd-sev")]
+    fn set_attestation_url(&mut self, url: String) {
+        self.attestation_url = Some(url);
+    }
+
+    #[cfg(feature = "amd-sev")]
+    fn get_attestation_url(&self) -> Option<String> {
+        self.attestation_url.clone()
     }
 }
 
@@ -571,6 +583,26 @@ pub unsafe extern "C" fn krun_set_exec(
     KRUN_SUCCESS
 }
 
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(feature = "amd-sev")]
+pub unsafe extern "C" fn krun_set_attestation_url(ctx_id: u32, c_url: *const c_char) -> i32 {
+    let url = match CStr::from_ptr(c_url).to_str() {
+        Ok(u) => u,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.set_attestation_url(url.to_string());
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
 #[no_mangle]
 pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "linux")]
@@ -607,6 +639,11 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         if ctx_cfg.vmr.set_block_device(block_cfg).is_err() {
             return -libc::EINVAL;
         }
+    }
+
+    #[cfg(feature = "amd-sev")]
+    if let Some(url) = ctx_cfg.get_attestation_url() {
+        ctx_cfg.vmr.set_attestation_url(url);
     }
 
     let mut boot_source = BootSourceConfig::default();
