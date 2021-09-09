@@ -20,6 +20,8 @@ extern crate kvm_ioctls;
 #[cfg(feature = "amd-sev")]
 extern crate codicon;
 #[cfg(feature = "amd-sev")]
+extern crate procfs;
+#[cfg(feature = "amd-sev")]
 extern crate reqwest;
 #[cfg(feature = "amd-sev")]
 extern crate serde;
