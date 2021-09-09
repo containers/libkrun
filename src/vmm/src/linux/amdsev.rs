@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::fmt;
 use std::fs::File;
 use std::mem::{size_of_val, MaybeUninit};
 use std::os::unix::io::AsRawFd;
@@ -8,6 +9,7 @@ use super::vstate::MeasuredRegion;
 use codicon::{Decoder, Encoder};
 use kvm_bindings::kvm_enc_region;
 use kvm_ioctls::{SevCommand, VmFd};
+use procfs::CpuInfo;
 use serde::{Deserialize, Serialize};
 use sev::certs;
 use sev::firmware::Firmware;
@@ -25,12 +27,15 @@ pub enum Error {
     DownloadAskArk,
     EncodeChain,
     FetchIdentifier,
+    InvalidCpuData,
     OpenFirmware(std::io::Error),
     OpenTmpFile,
     ParseAttestationSecret(serde_json::Error),
     ParseSessionResponse(serde_json::Error),
     PlatformStatus,
     MemoryEncryptRegion,
+    ReadingCpuData(procfs::ProcError),
+    ReadingCoreData,
     SessionFromPolicy(std::io::Error),
     SessionRequest(ureq::Error),
     SevInit(kvm_ioctls::Error),
@@ -40,12 +45,59 @@ pub enum Error {
     SevLaunchStart(kvm_ioctls::Error),
     SevLaunchUpdateData(kvm_ioctls::Error),
     StartFromSession(std::io::Error),
+    UnknownCpuModel,
+}
+
+enum CpuModel {
+    Naples,
+    Rome,
+    Milan,
+}
+
+impl fmt::Display for CpuModel {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            CpuModel::Naples => write!(f, "naples"),
+            CpuModel::Rome => write!(f, "rome"),
+            CpuModel::Milan => write!(f, "milan"),
+        }
+    }
+}
+
+fn find_cpu_model() -> Result<CpuModel, Error> {
+    let cpuinfo = CpuInfo::new().map_err(Error::ReadingCpuData)?;
+    let coreinfo = cpuinfo.get_info(0);
+
+    if let Some(coreinfo) = coreinfo {
+        match coreinfo.get("cpu family") {
+            Some(family) => match *family {
+                "23" => match coreinfo.get("model") {
+                    Some(model) => match *model {
+                        "1" => Ok(CpuModel::Naples),
+                        "49" => Ok(CpuModel::Rome),
+                        _ => Err(Error::UnknownCpuModel),
+                    },
+                    None => Err(Error::InvalidCpuData),
+                },
+                "25" => match coreinfo.get("model") {
+                    Some(model) => match *model {
+                        "1" => Ok(CpuModel::Milan),
+                        _ => Err(Error::UnknownCpuModel),
+                    },
+                    None => Err(Error::InvalidCpuData),
+                },
+                _ => Err(Error::UnknownCpuModel),
+            },
+            None => Err(Error::InvalidCpuData),
+        }
+    } else {
+        Err(Error::ReadingCoreData)
+    }
 }
 
 fn fetch_chain(fw: &mut Firmware) -> Result<certs::Chain, Error> {
     const CEK_SVC: &str = "https://kdsintf.amd.com/cek/id";
-    const NAPLES: &str = "https://developer.amd.com/wp-content/resources/ask_ark_naples.cert";
-    const ROME: &str = "https://developer.amd.com/wp-content/resources/ask_ark_rome.cert";
+    const ASK_ARK_SVC: &str = "https://developer.amd.com/wp-content/resources/";
 
     let mut chain = fw
         .pdh_cert_export()
@@ -59,7 +111,9 @@ fn fetch_chain(fw: &mut Firmware) -> Result<certs::Chain, Error> {
 
     chain.cek = (certs::sev::Certificate::decode(&mut rsp, ())).map_err(|_| Error::DecodeCek)?;
 
-    let mut rsp = reqwest::get(NAPLES).map_err(|_| Error::DownloadAskArk)?;
+    let cpu_model = find_cpu_model()?;
+    let url = format!("{}/ask_ark_{}.cert", ASK_ARK_SVC, cpu_model);
+    let mut rsp = reqwest::get(&url).map_err(|_| Error::DownloadAskArk)?;
 
     Ok(certs::Chain {
         ca: certs::ca::Chain::decode(&mut rsp, ()).map_err(|_| Error::DecodeAskArk)?,
