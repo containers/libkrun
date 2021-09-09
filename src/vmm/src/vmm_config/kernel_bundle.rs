@@ -55,3 +55,10 @@ impl Display for QbootBundleError {
         }
     }
 }
+
+/// Data structure holding the attributes read from the `libkrunfw` initrd config.
+#[derive(Debug, Default)]
+pub struct InitrdBundle {
+    pub host_addr: u64,
+    pub size: usize,
+}
