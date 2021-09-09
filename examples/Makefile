@@ -18,6 +18,12 @@ ifeq ($(OS),Darwin)
 	codesign --entitlements chroot_vm.entitlements --force -s - $@
 endif
 
+sev-attest: sev-attest.c
+	gcc -o $@ $< $(CFLAGS_$(OS)) $(LDFLAGS_$(ARCH)_$(OS))
+
+sev-noattest: sev-noattest.c
+	gcc -o $@ $< $(CFLAGS_$(OS)) $(LDFLAGS_$(ARCH)_$(OS))
+
 # Build the rootfs to be used with chroot_vm.
 rootfs:
 	mkdir -p $(ROOTFS_DIR)
