@@ -8,14 +8,16 @@ use super::vstate::MeasuredRegion;
 use codicon::{Decoder, Encoder};
 use kvm_bindings::kvm_enc_region;
 use kvm_ioctls::{SevCommand, VmFd};
+use serde::{Deserialize, Serialize};
 use sev::certs;
 use sev::firmware::Firmware;
-use sev::launch::{Measurement, Policy, Start};
+use sev::launch::{Measurement, Policy, Secret, Start};
 use sev::session::Session;
-use vm_memory::{GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
+use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
 
 #[derive(Debug)]
 pub enum Error {
+    AttestationRequest(ureq::Error),
     DecodeAskArk,
     DecodeCek,
     DecodeChain,
@@ -25,10 +27,14 @@ pub enum Error {
     FetchIdentifier,
     OpenFirmware(std::io::Error),
     OpenTmpFile,
+    ParseAttestationSecret(serde_json::Error),
+    ParseSessionResponse(serde_json::Error),
     PlatformStatus,
     MemoryEncryptRegion,
     SessionFromPolicy(std::io::Error),
+    SessionRequest(ureq::Error),
     SevInit(kvm_ioctls::Error),
+    SevInjectSecret(kvm_ioctls::Error),
     SevLaunchFinish(kvm_ioctls::Error),
     SevLaunchMeasure(kvm_ioctls::Error),
     SevLaunchStart(kvm_ioctls::Error),
@@ -74,21 +80,59 @@ fn get_and_store_chain(fw: &mut Firmware) -> Result<certs::Chain, Error> {
     }
 }
 
+/// Payload sent to the attestation server on session request.
+#[derive(Serialize, Deserialize)]
+struct SessionRequest {
+    build: sev::Build,
+    chain: sev::certs::Chain,
+}
+
+/// Payload received from the attestation server on session request.
+#[derive(Serialize, Deserialize)]
+struct SessionResponse {
+    id: String,
+    start: sev::launch::Start,
+}
+
 pub struct AmdSev {
     fw: Firmware,
     start: Start,
+    attestation_url: Option<String>,
+    session_id: Option<String>,
 }
 
 impl AmdSev {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(attestation_url: Option<String>) -> Result<Self, Error> {
         let mut fw = Firmware::open().map_err(Error::OpenFirmware)?;
-
         let chain = get_and_store_chain(&mut fw)?;
-        let policy = Policy::default();
-        let session = Session::try_from(policy).map_err(Error::SessionFromPolicy)?;
-        let start = session.start(chain).map_err(Error::StartFromSession)?;
 
-        Ok(AmdSev { fw, start })
+        let (start, session_id) = if let Some(ref server_url) = attestation_url {
+            let build = fw
+                .platform_status()
+                .map_err(|_| Error::PlatformStatus)?
+                .build;
+
+            let response = ureq::post(format!("{}/session", server_url).as_str())
+                .send_json(ureq::json!(SessionRequest { build, chain }))
+                .map_err(Error::SessionRequest)?
+                .into_string()
+                .unwrap();
+            let session_resp: SessionResponse =
+                serde_json::from_str(&response).map_err(Error::ParseSessionResponse)?;
+
+            (session_resp.start, Some(session_resp.id))
+        } else {
+            let policy = Policy::default();
+            let session = Session::try_from(policy).map_err(Error::SessionFromPolicy)?;
+            (session.start(chain).map_err(Error::StartFromSession)?, None)
+        };
+
+        Ok(AmdSev {
+            fw,
+            start,
+            attestation_url,
+            session_id,
+        })
     }
 
     fn sev_init(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
@@ -195,8 +239,42 @@ impl AmdSev {
             code: 7, // SEV_LAUNCH_FINISH
         };
 
-        vm_fd.memory_encrypt(&mut cmd).unwrap();
-        Ok(())
+        vm_fd.memory_encrypt(&mut cmd)
+    }
+
+    fn sev_inject_secret(
+        &self,
+        vm_fd: &VmFd,
+        mut secret: Secret,
+        secret_host_addr: u64,
+    ) -> Result<(), kvm_ioctls::Error> {
+        #[repr(C)]
+        struct Data {
+            headr_addr: u64,
+            headr_size: u32,
+            guest_addr: u64,
+            guest_size: u32,
+            trans_addr: u64,
+            trans_size: u32,
+        }
+
+        let mut data = Data {
+            headr_addr: &mut secret.header as *mut _ as u64,
+            headr_size: size_of_val(&secret.header) as u32,
+            guest_addr: secret_host_addr,
+            guest_size: secret.ciphertext.len() as u32,
+            trans_addr: secret.ciphertext.as_mut_ptr() as u64,
+            trans_size: secret.ciphertext.len() as u32,
+        };
+
+        let mut cmd = SevCommand {
+            error: 0,
+            data: &mut data as *mut _ as u64,
+            fd: vm_fd.as_raw_fd() as u32,
+            code: 5, // SEV_LAUNCH_SECRET
+        };
+
+        vm_fd.memory_encrypt(&mut cmd)
     }
 
     pub fn vm_prepare(&self, vm_fd: &VmFd, guest_mem: &GuestMemoryMmap) -> Result<(), Error> {
@@ -225,6 +303,7 @@ impl AmdSev {
     pub fn vm_attest(
         &self,
         vm_fd: &VmFd,
+        guest_mem: &GuestMemoryMmap,
         measured_regions: Vec<MeasuredRegion>,
     ) -> Result<Measurement, Error> {
         for region in measured_regions {
@@ -235,6 +314,27 @@ impl AmdSev {
         let measurement = self
             .sev_launch_measure(vm_fd)
             .map_err(Error::SevLaunchMeasure)?;
+
+        if self.attestation_url.is_some() && self.session_id.is_some() {
+            let secret_resp = ureq::post(&format!(
+                "{}/attestation/{}",
+                self.attestation_url.as_ref().unwrap(),
+                self.session_id.as_ref().unwrap(),
+            ))
+            .send_json(ureq::json!(measurement))
+            .map_err(Error::AttestationRequest)?
+            .into_string()
+            .unwrap();
+
+            let secret: Secret =
+                serde_json::from_str(&secret_resp).map_err(Error::ParseAttestationSecret)?;
+
+            let secret_host_addr = guest_mem
+                .get_host_address(GuestAddress(arch::x86_64::layout::CMDLINE_START))
+                .unwrap() as u64;
+            self.sev_inject_secret(vm_fd, secret, secret_host_addr)
+                .map_err(Error::SevInjectSecret)?;
+        }
 
         self.sev_launch_finish(vm_fd)
             .map_err(Error::SevLaunchFinish)?;

@@ -58,6 +58,9 @@ pub struct VmResources {
     /// The virtio-blk device.
     #[cfg(feature = "amd-sev")]
     pub block: BlockBuilder,
+    /// Base URL for the attestation server.
+    #[cfg(feature = "amd-sev")]
+    pub attestation_url: Option<String>,
 }
 
 impl VmResources {
@@ -185,6 +188,16 @@ impl VmResources {
     /// Sets a vsock device to be attached when the VM starts.
     pub fn set_vsock_device(&mut self, config: VsockDeviceConfig) -> Result<VsockConfigError> {
         self.vsock.insert(config)
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn attestation_url(&self) -> Option<String> {
+        self.attestation_url.clone()
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn set_attestation_url(&mut self, url: String) {
+        self.attestation_url = Some(url);
     }
 }
 

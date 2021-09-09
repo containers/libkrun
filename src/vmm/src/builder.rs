@@ -343,7 +343,14 @@ pub fn build_microvm(
         None => kernel_cmdline.insert_str(DEFAULT_KERNEL_CMDLINE).unwrap(),
         Some(s) => kernel_cmdline.insert_str(s).unwrap(),
     };
-    let mut vm = setup_vm(&guest_memory)?;
+
+    #[cfg(not(feature = "amd-sev"))]
+    let attestation_url = None;
+
+    #[cfg(feature = "amd-sev")]
+    let attestation_url = vm_resources.attestation_url();
+
+    let mut vm = setup_vm(&guest_memory, attestation_url.clone())?;
 
     #[cfg(feature = "amd-sev")]
     let measured_regions = {
@@ -353,21 +360,15 @@ pub fn build_microvm(
         let mut measured_regions: Vec<MeasuredRegion> = vec![
             MeasuredRegion {
                 host_addr: guest_memory
-                    .get_host_address(GuestAddress(kernel_bundle.guest_addr))
-                    .unwrap() as u64,
-                size: kernel_bundle.size,
-            },
-            MeasuredRegion {
-                host_addr: guest_memory
                     .get_host_address(GuestAddress(arch::BIOS_START))
                     .unwrap() as u64,
                 size: qboot_bundle.size,
             },
             MeasuredRegion {
                 host_addr: guest_memory
-                    .get_host_address(GuestAddress(arch::x86_64::layout::CMDLINE_START))
+                    .get_host_address(GuestAddress(kernel_bundle.guest_addr))
                     .unwrap() as u64,
-                size: 4096,
+                size: kernel_bundle.size,
             },
             MeasuredRegion {
                 host_addr: guest_memory
@@ -376,6 +377,15 @@ pub fn build_microvm(
                 size: initrd_bundle.size,
             },
         ];
+
+        if attestation_url.is_none() {
+            measured_regions.push(MeasuredRegion {
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(arch::x86_64::layout::CMDLINE_START))
+                    .unwrap() as u64,
+                size: 4096,
+            })
+        }
 
         measured_regions
     };
@@ -549,13 +559,18 @@ pub fn build_microvm(
 
     // Write the kernel command line to guest memory. This is x86_64 specific, since on
     // aarch64 the command line will be specified through the FDT.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", not(feature = "amd-sev")))]
     load_cmdline(&vmm)?;
+
+    #[cfg(feature = "amd-sev")]
+    if attestation_url.is_none() {
+        load_cmdline(&vmm)?;
+    }
 
     #[cfg(feature = "amd-sev")]
     let _measurement = vmm
         .kvm_vm()
-        .secure_virt_attest(measured_regions)
+        .secure_virt_attest(vmm.guest_memory(), measured_regions)
         .map_err(StartMicrovmError::SecureVirtAttest)?;
 
     vmm.configure_system(vcpus.as_slice(), &None)
@@ -673,11 +688,12 @@ fn load_cmdline(vmm: &Vmm) -> std::result::Result<(), StartMicrovmError> {
 #[cfg(target_os = "linux")]
 pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
+    attestation_url: Option<String>,
 ) -> std::result::Result<Vm, StartMicrovmError> {
     let kvm = KvmContext::new()
         .map_err(Error::KvmContext)
         .map_err(StartMicrovmError::Internal)?;
-    let mut vm = Vm::new(kvm.fd())
+    let mut vm = Vm::new(kvm.fd(), attestation_url)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     vm.memory_init(&guest_memory, kvm.max_memslots())
@@ -688,6 +704,7 @@ pub(crate) fn setup_vm(
 #[cfg(target_os = "macos")]
 pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
+    _attestation_url: Option<String>,
 ) -> std::result::Result<Vm, StartMicrovmError> {
     let mut vm = Vm::new()
         .map_err(Error::Vm)
@@ -1175,7 +1192,7 @@ pub mod tests {
             .map_err(StartMicrovmError::Internal)
             .unwrap();
 
-        let vm = setup_vm(&guest_memory).unwrap();
+        let vm = setup_vm(&guest_memory, None).unwrap();
         let mmio_device_manager = default_mmio_device_manager();
         #[cfg(target_arch = "x86_64")]
         let pio_device_manager = default_portio_device_manager();
@@ -1206,7 +1223,7 @@ pub mod tests {
         let vcpu_count = 2;
 
         let (guest_memory, _arch_memory_info) = default_guest_memory(128).unwrap();
-        let mut vm = setup_vm(&guest_memory).unwrap();
+        let mut vm = setup_vm(&guest_memory, None).unwrap();
         setup_interrupt_controller(&mut vm).unwrap();
         let vcpu_config = VcpuConfig {
             vcpu_count,
@@ -1234,7 +1251,7 @@ pub mod tests {
     #[cfg(target_arch = "aarch64")]
     fn test_create_vcpus_aarch64() {
         let guest_memory = create_guest_memory(128).unwrap();
-        let vm = setup_vm(&guest_memory).unwrap();
+        let vm = setup_vm(&guest_memory, None).unwrap();
         let vcpu_count = 2;
 
         let vcpu_config = VcpuConfig {

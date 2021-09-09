@@ -22,6 +22,8 @@ extern crate codicon;
 #[cfg(feature = "amd-sev")]
 extern crate reqwest;
 #[cfg(feature = "amd-sev")]
+extern crate serde;
+#[cfg(feature = "amd-sev")]
 extern crate sev;
 
 extern crate libc;
