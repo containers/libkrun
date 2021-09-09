@@ -3,6 +3,8 @@ use std::fs::File;
 use std::mem::{size_of_val, MaybeUninit};
 use std::os::unix::io::AsRawFd;
 
+use super::vstate::MeasuredRegion;
+
 use codicon::{Decoder, Encoder};
 use kvm_bindings::kvm_enc_region;
 use kvm_ioctls::{SevCommand, VmFd};
@@ -223,19 +225,12 @@ impl AmdSev {
     pub fn vm_attest(
         &self,
         vm_fd: &VmFd,
-        kernel_uaddr: u64,
-        kernel_size: usize,
-        qboot_uaddr: u64,
-        qboot_size: usize,
-        cmdline_uaddr: u64,
-        cmdline_size: usize,
+        measured_regions: Vec<MeasuredRegion>,
     ) -> Result<Measurement, Error> {
-        self.sev_launch_update_data(vm_fd, kernel_uaddr, kernel_size)
-            .map_err(Error::SevLaunchUpdateData)?;
-        self.sev_launch_update_data(vm_fd, qboot_uaddr, qboot_size)
-            .map_err(Error::SevLaunchUpdateData)?;
-        self.sev_launch_update_data(vm_fd, cmdline_uaddr, cmdline_size)
-            .map_err(Error::SevLaunchUpdateData)?;
+        for region in measured_regions {
+            self.sev_launch_update_data(vm_fd, region.host_addr, region.size)
+                .map_err(Error::SevLaunchUpdateData)?;
+        }
 
         let measurement = self
             .sev_launch_measure(vm_fd)

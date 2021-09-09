@@ -41,9 +41,11 @@ use vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
 #[cfg(not(feature = "amd-sev"))]
 use vmm_config::fs::FsBuilder;
 #[cfg(feature = "amd-sev")]
-use vmm_config::kernel_bundle::QbootBundle;
+use vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
 #[cfg(target_os = "linux")]
 use vstate::KvmContext;
+#[cfg(all(target_os = "linux", feature = "amd-sev"))]
+use vstate::MeasuredRegion;
 use vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
 use {device_manager, VmmEventsObserver};
 
@@ -314,6 +316,11 @@ pub fn build_microvm(
         .qboot_bundle()
         .ok_or(StartMicrovmError::MissingKernelConfig)?;
 
+    #[cfg(feature = "amd-sev")]
+    let initrd_bundle = vm_resources
+        .initrd_bundle()
+        .ok_or(StartMicrovmError::MissingKernelConfig)?;
+
     let (guest_memory, arch_memory_info) = create_guest_memory(
         vm_resources
             .vm_config()
@@ -324,6 +331,8 @@ pub fn build_microvm(
         kernel_bundle.size,
         #[cfg(feature = "amd-sev")]
         qboot_bundle,
+        #[cfg(feature = "amd-sev")]
+        initrd_bundle,
     )?;
     let vcpu_config = vm_resources.vcpu_config();
 
@@ -337,20 +346,38 @@ pub fn build_microvm(
     let mut vm = setup_vm(&guest_memory)?;
 
     #[cfg(feature = "amd-sev")]
-    let (kernel_host_addr, qboot_host_addr, cmdline_host_addr) = {
+    let measured_regions = {
         vm.secure_virt_prepare(&guest_memory)
             .map_err(StartMicrovmError::SecureVirtPrepare)?;
-        (
-            guest_memory
-                .get_host_address(GuestAddress(kernel_bundle.guest_addr))
-                .unwrap(),
-            guest_memory
-                .get_host_address(GuestAddress(arch::BIOS_START))
-                .unwrap(),
-            guest_memory
-                .get_host_address(GuestAddress(arch::x86_64::layout::CMDLINE_START))
-                .unwrap(),
-        )
+
+        let mut measured_regions: Vec<MeasuredRegion> = vec![
+            MeasuredRegion {
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(kernel_bundle.guest_addr))
+                    .unwrap() as u64,
+                size: kernel_bundle.size,
+            },
+            MeasuredRegion {
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(arch::BIOS_START))
+                    .unwrap() as u64,
+                size: qboot_bundle.size,
+            },
+            MeasuredRegion {
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(arch::x86_64::layout::CMDLINE_START))
+                    .unwrap() as u64,
+                size: 4096,
+            },
+            MeasuredRegion {
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(arch::x86_64::layout::INITRD_START))
+                    .unwrap() as u64,
+                size: initrd_bundle.size,
+            },
+        ];
+
+        measured_regions
     };
 
     // On x86_64 always create a serial device,
@@ -528,14 +555,7 @@ pub fn build_microvm(
     #[cfg(feature = "amd-sev")]
     let _measurement = vmm
         .kvm_vm()
-        .secure_virt_attest(
-            kernel_host_addr as u64,
-            kernel_bundle.size,
-            qboot_host_addr as u64,
-            qboot_bundle.size,
-            cmdline_host_addr as u64,
-            4096,
-        )
+        .secure_virt_attest(measured_regions)
         .map_err(StartMicrovmError::SecureVirtAttest)?;
 
     vmm.configure_system(vcpus.as_slice(), &None)
@@ -584,6 +604,7 @@ pub fn create_guest_memory(
     kernel_load_addr: u64,
     kernel_size: usize,
     qboot_bundle: &QbootBundle,
+    initrd_bundle: &InitrdBundle,
 ) -> std::result::Result<(GuestMemoryMmap, ArchMemoryInfo), StartMicrovmError> {
     let mem_size = mem_size_mib << 20;
     let (arch_mem_info, arch_mem_regions) =
@@ -601,6 +622,16 @@ pub fn create_guest_memory(
         unsafe { std::slice::from_raw_parts(qboot_bundle.host_addr as *mut u8, qboot_bundle.size) };
     guest_mem
         .write(qboot_data, GuestAddress(arch::BIOS_START as u64))
+        .unwrap();
+
+    let initrd_data = unsafe {
+        std::slice::from_raw_parts(initrd_bundle.host_addr as *mut u8, initrd_bundle.size)
+    };
+    guest_mem
+        .write(
+            initrd_data,
+            GuestAddress(arch::x86_64::layout::INITRD_START as u64),
+        )
         .unwrap();
 
     Ok((guest_mem, arch_mem_info))

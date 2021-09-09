@@ -356,6 +356,12 @@ impl Display for Error {
 
 pub type Result<T> = result::Result<T, Error>;
 
+#[cfg(feature = "amd-sev")]
+pub struct MeasuredRegion {
+    pub host_addr: u64,
+    pub size: usize,
+}
+
 /// Describes a KVM context that gets attached to the microVM.
 /// It gives access to the functionality of the KVM wrapper as
 /// long as every required KVM capability is present on the host.
@@ -509,25 +515,9 @@ impl Vm {
     }
 
     #[cfg(feature = "amd-sev")]
-    pub fn secure_virt_attest(
-        &self,
-        kernel_uaddr: u64,
-        kernel_size: usize,
-        qboot_uaddr: u64,
-        qboot_size: usize,
-        cmdline_uaddr: u64,
-        cmdline_size: usize,
-    ) -> Result<Measurement> {
+    pub fn secure_virt_attest(&self, measured_regions: Vec<MeasuredRegion>) -> Result<Measurement> {
         self.sev
-            .vm_attest(
-                &self.fd,
-                kernel_uaddr,
-                kernel_size,
-                qboot_uaddr,
-                qboot_size,
-                cmdline_uaddr,
-                cmdline_size,
-            )
+            .vm_attest(&self.fd, measured_regions)
             .map_err(Error::SecVirtAttest)
     }
 
