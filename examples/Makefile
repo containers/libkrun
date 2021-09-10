@@ -10,13 +10,25 @@ ROOTFS_DIR = rootfs_$(ROOTFS_DISTRO)
 
 .PHONY: clean rootfs
 
-all: chroot_vm
+ifeq ($(SEV),1)
+    EXAMPLES := sev-attest sev-noattest
+else
+    EXAMPLES := chroot_vm
+endif
+
+all: $(EXAMPLES)
 
 chroot_vm: chroot_vm.c
 	gcc -o $@ $< $(CFLAGS_$(OS)) $(LDFLAGS_$(ARCH)_$(OS))
 ifeq ($(OS),Darwin)
 	codesign --entitlements chroot_vm.entitlements --force -s - $@
 endif
+
+sev-attest: sev-attest.c
+	gcc -o $@ $< $(CFLAGS_$(OS)) $(LDFLAGS_$(ARCH)_$(OS))
+
+sev-noattest: sev-noattest.c
+	gcc -o $@ $< $(CFLAGS_$(OS)) $(LDFLAGS_$(ARCH)_$(OS))
 
 # Build the rootfs to be used with chroot_vm.
 rootfs:

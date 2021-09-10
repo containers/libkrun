@@ -3,6 +3,9 @@ name = "vmm"
 version = "0.1.0"
 authors = ["Amazon Firecracker team <firecracker-devel@amazon.com>"]
 
+[features]
+amd-sev = [ "codicon", "procfs", "reqwest", "serde", "serde_json", "sev", "ureq" ]
+
 [dependencies]
 libc = ">=0.2.39"
 
@@ -13,6 +16,15 @@ logger = { path = "../logger" }
 vm-memory = { git = "https://github.com/rust-vmm/vm-memory", features = ["backend-mmap"] }
 utils = { path = "../utils"}
 polly = { path = "../polly" }
+
+# Dependencies for amd-sev
+codicon = { version = "3.0.0", optional = true }
+procfs = { version = "0.10.1", optional = true }
+reqwest = { version = "0.9.15", optional = true }
+serde = { version = "1.0.125", optional = true }
+serde_json = { version = "1.0.64", optional = true }
+sev = { version = "0.1.0", features = ["openssl"], optional = true }
+ureq = { version = "*", features = ["json"], optional = true }
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 cpuid = { path = "../cpuid" }

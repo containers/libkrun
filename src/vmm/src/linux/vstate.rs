@@ -19,6 +19,11 @@ use std::thread;
 use super::super::TimestampUs;
 use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 
+#[cfg(feature = "amd-sev")]
+use super::amdsev::{AmdSev, Error as SevError};
+#[cfg(feature = "amd-sev")]
+use sev::launch::Measurement;
+
 use arch;
 #[cfg(target_arch = "aarch64")]
 use arch::aarch64::gic::GICDevice;
@@ -91,6 +96,15 @@ pub enum Error {
     SetupGIC(arch::aarch64::gic::Error),
     /// Cannot set the memory regions.
     SetUserMemoryRegion(kvm_ioctls::Error),
+    #[cfg(feature = "amd-sev")]
+    /// Error initializing the Secure Virtualization Backend.
+    SecVirtInit(SevError),
+    #[cfg(feature = "amd-sev")]
+    /// Error preparing the VM for Secure Virtualization.
+    SecVirtPrepare(SevError),
+    #[cfg(feature = "amd-sev")]
+    /// Error attesting the Secure VM.
+    SecVirtAttest(SevError),
     /// Failed to signal Vcpu.
     SignalVcpu(utils::errno::Error),
     #[cfg(target_arch = "x86_64")]
@@ -230,6 +244,22 @@ impl Display for Error {
                 e
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {}", e),
+            #[cfg(feature = "amd-sev")]
+            SecVirtInit(e) => {
+                write!(
+                    f,
+                    "Error initializing the Secure Virtualization Backend: {:?}",
+                    e
+                )
+            }
+            #[cfg(feature = "amd-sev")]
+            SecVirtPrepare(e) => write!(
+                f,
+                "Error preparing the VM for Secure Virtualization: {:?}",
+                e
+            ),
+            #[cfg(feature = "amd-sev")]
+            SecVirtAttest(e) => write!(f, "Error attesting the Secure VM: {:?}", e),
             SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {}", e),
             #[cfg(target_arch = "x86_64")]
             MSRSConfiguration(e) => write!(f, "Error configuring the MSR registers: {:?}", e),
@@ -326,6 +356,12 @@ impl Display for Error {
 
 pub type Result<T> = result::Result<T, Error>;
 
+#[cfg(feature = "amd-sev")]
+pub struct MeasuredRegion {
+    pub host_addr: u64,
+    pub size: usize,
+}
+
 /// Describes a KVM context that gets attached to the microVM.
 /// It gives access to the functionality of the KVM wrapper as
 /// long as every required KVM capability is present on the host.
@@ -389,11 +425,14 @@ pub struct Vm {
     // On aarch64 we need to keep around the fd obtained by creating the VGIC device.
     #[cfg(target_arch = "aarch64")]
     irqchip_handle: Option<Box<dyn GICDevice>>,
+
+    #[cfg(feature = "amd-sev")]
+    sev: AmdSev,
 }
 
 impl Vm {
     /// Constructs a new `Vm` using the given `Kvm` instance.
-    pub fn new(kvm: &Kvm) -> Result<Self> {
+    pub fn new(kvm: &Kvm, _attestation_url: Option<String>) -> Result<Self> {
         //create fd for interacting with kvm-vm specific functions
         let vm_fd = kvm.create_vm().map_err(Error::VmFd)?;
 
@@ -405,6 +444,9 @@ impl Vm {
         let supported_msrs =
             arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
 
+        #[cfg(feature = "amd-sev")]
+        let sev = AmdSev::new(_attestation_url).map_err(Error::SecVirtInit)?;
+
         Ok(Vm {
             fd: vm_fd,
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -413,6 +455,8 @@ impl Vm {
             supported_msrs,
             #[cfg(target_arch = "aarch64")]
             irqchip_handle: None,
+            #[cfg(feature = "amd-sev")]
+            sev,
         })
     }
 
@@ -461,6 +505,24 @@ impl Vm {
             .map_err(Error::VmSetup)?;
 
         Ok(())
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn secure_virt_prepare(&mut self, guest_mem: &GuestMemoryMmap) -> Result<()> {
+        self.sev
+            .vm_prepare(&self.fd, guest_mem)
+            .map_err(Error::SecVirtPrepare)
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn secure_virt_attest(
+        &self,
+        guest_mem: &GuestMemoryMmap,
+        measured_regions: Vec<MeasuredRegion>,
+    ) -> Result<Measurement> {
+        self.sev
+            .vm_attest(&self.fd, guest_mem, measured_regions)
+            .map_err(Error::SecVirtAttest)
     }
 
     /// Creates the irq chip and an in-kernel device model for the PIT.
@@ -710,7 +772,7 @@ impl Vcpu {
         exit_evt: EventFd,
         create_ts: TimestampUs,
     ) -> Result<Self> {
-        let kvm_vcpu = vm_fd.create_vcpu(id).map_err(Error::VcpuFd)?;
+        let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = channel();
         let (response_sender, response_receiver) = channel();
 
@@ -781,6 +843,7 @@ impl Vcpu {
     }
 
     #[cfg(target_arch = "x86_64")]
+    #[allow(unused_variables)]
     /// Configures a x86_64 specific vcpu and should be called once per vcpu.
     ///
     /// # Arguments
@@ -821,6 +884,7 @@ impl Vcpu {
         arch::x86_64::regs::setup_regs(&self.fd, kernel_start_addr.raw_value() as u64)
             .map_err(Error::REGSConfiguration)?;
         arch::x86_64::regs::setup_fpu(&self.fd).map_err(Error::FPUConfiguration)?;
+        #[cfg(not(feature = "amd-sev"))]
         arch::x86_64::regs::setup_sregs(guest_mem, &self.fd).map_err(Error::SREGSConfiguration)?;
         arch::x86_64::interrupts::set_lint(&self.fd).map_err(Error::LocalIntConfiguration)?;
         Ok(())
@@ -929,7 +993,7 @@ impl Vcpu {
 
         // Build the list of MSRs we want to save.
         let num_msrs = self.msr_list.as_fam_struct_ref().nmsrs as usize;
-        let mut msrs = Msrs::new(num_msrs);
+        let mut msrs = Msrs::new(num_msrs).unwrap();
         {
             let indices = self.msr_list.as_slice();
             let msr_entries = msrs.as_mut_slice();
@@ -1345,7 +1409,7 @@ mod tests {
     fn setup_vcpu(mem_size: usize) -> (Vm, Vcpu, GuestMemoryMmap) {
         let kvm = KvmContext::new().unwrap();
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), mem_size)]).unwrap();
-        let mut vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
+        let mut vm = Vm::new(kvm.fd(), None).expect("Cannot create new vm");
         assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
 
         let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
@@ -1392,7 +1456,7 @@ mod tests {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn test_get_supported_cpuid() {
         let kvm = KvmContext::new().unwrap();
-        let vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
+        let vm = Vm::new(kvm.fd(), None).expect("Cannot create new vm");
         let cpuid = kvm
             .kvm
             .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
@@ -1403,7 +1467,7 @@ mod tests {
     #[test]
     fn test_vm_memory_init() {
         let mut kvm_context = KvmContext::new().unwrap();
-        let mut vm = Vm::new(kvm_context.fd()).expect("Cannot create new vm");
+        let mut vm = Vm::new(kvm_context.fd(), None).expect("Cannot create new vm");
 
         // Create valid memory region and test that the initialization is successful.
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x1000)]).unwrap();
@@ -1424,7 +1488,7 @@ mod tests {
     #[test]
     fn test_setup_irqchip() {
         let kvm_context = KvmContext::new().unwrap();
-        let vm = Vm::new(kvm_context.fd()).expect("Cannot create new vm");
+        let vm = Vm::new(kvm_context.fd(), None).expect("Cannot create new vm");
 
         vm.setup_irqchip().expect("Cannot setup irqchip");
         // Trying to setup two irqchips will result in EEXIST error. At the moment
@@ -1451,7 +1515,7 @@ mod tests {
     fn test_setup_irqchip() {
         let kvm = KvmContext::new().unwrap();
 
-        let mut vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
+        let mut vm = Vm::new(kvm.fd(), None).expect("Cannot create new vm");
         let vcpu_count = 1;
         let _vcpu = Vcpu::new_aarch64(
             1,
@@ -1499,7 +1563,7 @@ mod tests {
     fn test_configure_vcpu() {
         let kvm = KvmContext::new().unwrap();
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
-        let mut vm = Vm::new(kvm.fd()).expect("new vm failed");
+        let mut vm = Vm::new(kvm.fd(), None).expect("new vm failed");
         assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
 
         // Try it for when vcpu id is 0.
@@ -1660,53 +1724,5 @@ mod tests {
     #[test]
     fn test_vcpu_rtsig_offset() {
         assert!(validate_signal_num(sigrtmin() + VCPU_RTSIG_OFFSET).is_ok());
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn test_vm_save_restore_state() {
-        let kvm_fd = Kvm::new().unwrap();
-        let vm = Vm::new(&kvm_fd).expect("new vm failed");
-        // Irqchips, clock and pitstate are not configured so trying to save state should fail.
-        assert!(vm.save_state().is_err());
-
-        let (vm, _, _mem) = setup_vcpu(0x1000);
-        let vm_state = vm.save_state().unwrap();
-        assert_eq!(
-            vm_state.pitstate.flags | KVM_PIT_SPEAKER_DUMMY,
-            KVM_PIT_SPEAKER_DUMMY
-        );
-        assert_eq!(vm_state.clock.flags & KVM_CLOCK_TSC_STABLE, 0);
-        assert_eq!(vm_state.pic_master.chip_id, KVM_IRQCHIP_PIC_MASTER);
-        assert_eq!(vm_state.pic_slave.chip_id, KVM_IRQCHIP_PIC_SLAVE);
-        assert_eq!(vm_state.ioapic.chip_id, KVM_IRQCHIP_IOAPIC);
-
-        let (vm, _, _mem) = setup_vcpu(0x1000);
-        assert!(vm.restore_state(&vm_state).is_ok());
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn test_vcpu_save_restore_state() {
-        let (_vm, vcpu, _mem) = setup_vcpu(0x1000);
-        let state = vcpu.save_state();
-        assert!(state.is_ok());
-        assert!(vcpu.restore_state(state.unwrap()).is_ok());
-
-        unsafe { libc::close(vcpu.fd.as_raw_fd()) };
-        let state = VcpuState {
-            cpuid: CpuId::new(1),
-            msrs: Msrs::new(1),
-            debug_regs: Default::default(),
-            lapic: Default::default(),
-            mp_state: Default::default(),
-            regs: Default::default(),
-            sregs: Default::default(),
-            vcpu_events: Default::default(),
-            xcrs: Default::default(),
-            xsave: Default::default(),
-        };
-        // Setting default state should always fail.
-        assert!(vcpu.restore_state(state).is_err());
     }
 }

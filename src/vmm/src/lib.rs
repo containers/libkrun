@@ -17,6 +17,17 @@ extern crate kvm_bindings;
 #[cfg(target_os = "linux")]
 extern crate kvm_ioctls;
 
+#[cfg(feature = "amd-sev")]
+extern crate codicon;
+#[cfg(feature = "amd-sev")]
+extern crate procfs;
+#[cfg(feature = "amd-sev")]
+extern crate reqwest;
+#[cfg(feature = "amd-sev")]
+extern crate serde;
+#[cfg(feature = "amd-sev")]
+extern crate sev;
+
 extern crate libc;
 extern crate polly;
 

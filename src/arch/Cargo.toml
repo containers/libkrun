@@ -3,6 +3,9 @@ name = "arch"
 version = "0.1.0"
 authors = ["The Chromium OS Authors"]
 
+[features]
+amd-sev = []
+
 [dependencies]
 libc = ">=0.2.39"
 utils = { path = "../utils" }

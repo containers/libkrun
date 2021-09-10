@@ -3,8 +3,13 @@
 
 //#![deny(warnings)]
 
+#[cfg(feature = "amd-sev")]
+use vmm_config::block::{BlockBuilder, BlockConfigError, BlockDeviceConfig};
 use vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
+#[cfg(not(feature = "amd-sev"))]
 use vmm_config::fs::*;
+#[cfg(feature = "amd-sev")]
+use vmm_config::kernel_bundle::{InitrdBundle, QbootBundle, QbootBundleError};
 use vmm_config::kernel_bundle::{KernelBundle, KernelBundleError};
 use vmm_config::logger::LoggerConfigError;
 use vmm_config::machine_config::{VmConfig, VmConfigError};
@@ -21,6 +26,7 @@ pub enum Error {
     /// Boot source configuration error.
     BootSource(BootSourceConfigError),
     /// Fs device configuration error.
+    #[cfg(not(feature = "amd-sev"))]
     FsDevice(FsConfigError),
     /// Logger configuration error.
     Logger(LoggerConfigError),
@@ -40,10 +46,23 @@ pub struct VmResources {
     pub boot_config: BootSourceConfig,
     /// The parameters for the kernel bundle to be loaded in this microVM.
     pub kernel_bundle: Option<KernelBundle>,
+    /// The parameters for the qboot bundle to be loaded in this microVM.
+    #[cfg(feature = "amd-sev")]
+    pub qboot_bundle: Option<QbootBundle>,
+    /// The parameters for the initrd bundle to be loaded in this microVM.
+    #[cfg(feature = "amd-sev")]
+    pub initrd_bundle: Option<InitrdBundle>,
     /// The fs device.
+    #[cfg(not(feature = "amd-sev"))]
     pub fs: FsBuilder,
     /// The vsock device.
     pub vsock: VsockBuilder,
+    /// The virtio-blk device.
+    #[cfg(feature = "amd-sev")]
+    pub block: BlockBuilder,
+    /// Base URL for the attestation server.
+    #[cfg(feature = "amd-sev")]
+    pub attestation_url: Option<String>,
 }
 
 impl VmResources {
@@ -136,13 +155,55 @@ impl VmResources {
         Ok(())
     }
 
+    #[cfg(feature = "amd-sev")]
+    pub fn qboot_bundle(&self) -> Option<&QbootBundle> {
+        self.qboot_bundle.as_ref()
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn set_qboot_bundle(&mut self, qboot_bundle: QbootBundle) -> Result<QbootBundleError> {
+        if qboot_bundle.size != 0x10000 {
+            return Err(QbootBundleError::InvalidSize);
+        }
+
+        self.qboot_bundle = Some(qboot_bundle);
+        Ok(())
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn initrd_bundle(&self) -> Option<&InitrdBundle> {
+        self.initrd_bundle.as_ref()
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn set_initrd_bundle(&mut self, initrd_bundle: InitrdBundle) -> Result<KernelBundleError> {
+        self.initrd_bundle = Some(initrd_bundle);
+        Ok(())
+    }
+
+    #[cfg(not(feature = "amd-sev"))]
     pub fn set_fs_device(&mut self, config: FsDeviceConfig) -> Result<FsConfigError> {
         self.fs.insert(config)
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn set_block_device(&mut self, config: BlockDeviceConfig) -> Result<BlockConfigError> {
+        self.block.insert(config)
     }
 
     /// Sets a vsock device to be attached when the VM starts.
     pub fn set_vsock_device(&mut self, config: VsockDeviceConfig) -> Result<VsockConfigError> {
         self.vsock.insert(config)
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn attestation_url(&self) -> Option<String> {
+        self.attestation_url.clone()
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn set_attestation_url(&mut self, url: String) {
+        self.attestation_url = Some(url);
     }
 }
 

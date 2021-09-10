@@ -1,4 +1,6 @@
 #include <limits.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +13,8 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/wait.h>
+
 
 char DEFAULT_KRUN_INIT[] = "/bin/sh";
 
@@ -51,11 +55,59 @@ void set_rlimits(const char *rlimits)
 int main(int argc, char **argv)
 {
     struct ifreq ifr;
+    int pid;
+    int pipefd[2];
     int sockfd;
+    int wstatus;
     char *hostname;
     char *krun_init;
     char *workdir;
     char *rlimits;
+    char *passp;
+
+    passp = getenv("KRUN_PASS");
+    if (passp) {
+        printf("Unlocking LUKS root filesystem\n");
+
+	    if (mount("proc", "/proc", "proc",
+		      MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
+		    perror("mount(/proc)");
+		    exit(-1);
+	    }
+
+	    pipe(pipefd);
+
+	    pid = fork();
+	    if (pid == 0) {
+            close(pipefd[1]);
+		    dup2(pipefd[0], 0);
+		    close(pipefd[0]);
+
+		    if (execl("/sbin/cryptsetup", "cryptsetup", "open", "/dev/vda", "luksroot", "-", NULL) < 0) {
+                perror("execl");
+                exit(-1);
+            }
+	    } else {
+		    write(pipefd[1], passp, strnlen(passp, 128));
+		    close(pipefd[1]);
+		    waitpid(pid, &wstatus, 0);
+	    }
+
+        printf("Mounting LUKS root filesystem\n");
+
+	    if (mount("/dev/mapper/luksroot", "/luksroot", "ext4", 0, NULL) < 0) {
+		    perror("mount(/luksroot)");
+		    exit(-1);
+	    }
+
+	    chdir("/luksroot");
+
+        if (mount(".", "/", NULL, MS_MOVE, NULL)) {
+            perror("remount root");
+            exit(-1);
+        }
+        chroot(".");
+    }
 
     if (mount("proc", "/proc", "proc",
               MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
@@ -75,7 +127,7 @@ int main(int argc, char **argv)
         exit(-1);
     }
 
-    if (mkdir("/dev/pts", 0755) != 0) {
+    if (mkdir("/dev/pts", 0755) < 0 && errno != EEXIST) {
         perror("mkdir(/dev/pts)");
         exit(-1);
     }
@@ -86,8 +138,11 @@ int main(int argc, char **argv)
         exit(-1);
     }
 
-    /* Ignore error */
-    mkdir("/dev/shm", 0755);
+    if (mkdir("/dev/shm", 0755) < 0 && errno != EEXIST) {
+        perror("mkdir(/dev/shm)");
+        exit(-1);
+    }
+
     if (mount("tmpfs", "/dev/shm", "tmpfs",
               MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
         perror("mount(/dev/shm)");

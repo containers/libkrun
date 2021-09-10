@@ -10,17 +10,25 @@ use std;
 use std::any::Any;
 use std::io::Error as IOError;
 
+#[cfg(not(feature = "amd-sev"))]
 pub mod balloon;
+#[cfg(feature = "amd-sev")]
+pub mod block;
 pub mod console;
 pub mod device;
+#[cfg(not(feature = "amd-sev"))]
 pub mod fs;
 mod mmio;
 mod queue;
 pub mod vsock;
 
+#[cfg(not(feature = "amd-sev"))]
 pub use self::balloon::*;
+#[cfg(feature = "amd-sev")]
+pub use self::block::*;
 pub use self::console::*;
 pub use self::device::*;
+#[cfg(not(feature = "amd-sev"))]
 pub use self::fs::*;
 pub use self::mmio::*;
 pub use self::queue::*;
