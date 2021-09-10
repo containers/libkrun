@@ -10,5 +10,5 @@ task:
   cargo_cache:
     folder: $CARGO_HOME/registry
     fingerprint_script: cat Cargo.lock
-  test_script: cargo test --all-features --all-targets
+  test_script: cargo test
   before_cache_script: rm -rf $CARGO_HOME/registry/index

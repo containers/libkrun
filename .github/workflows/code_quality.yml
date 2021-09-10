@@ -29,5 +29,5 @@ jobs:
       - name: Formatting (rustfmt)
         run: cargo fmt -- --check
 
-      - name: Clippy (all features)
-        run: cargo clippy --all-targets --all-features
+      - name: Clippy (default features)
+        run: cargo clippy
