@@ -13,6 +13,10 @@ ifeq ($(PREFIX),)
     PREFIX := /usr/local
 endif
 
+ifeq ($(SEV),1)
+    FEATURE_FLAGS := --features amd-sev
+endif
+
 .PHONY: install clean
 
 all: $(LIBRARY_RELEASE_$(OS))
@@ -23,10 +27,10 @@ $(INIT_BINARY): init/init.c
 	gcc -O2 -static -Wall -o $@ init/init.c
 
 $(LIBRARY_RELEASE_$(OS)): $(INIT_BINARY)
-	cargo build --release
+	cargo build --release $(FEATURE_FLAGS)
 
 $(LIBRARY_DEBUG_$(OS)): $(INIT_BINARY)
-	cargo build --debug
+	cargo build --debug $(FEATURE_FLAGS)
 
 install: $(LIBRARY_RELEASE_$(OS))
 	install -d $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/

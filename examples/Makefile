@@ -10,7 +10,13 @@ ROOTFS_DIR = rootfs_$(ROOTFS_DISTRO)
 
 .PHONY: clean rootfs
 
-all: chroot_vm
+ifeq ($(SEV),1)
+    EXAMPLES := sev-attest sev-noattest
+else
+    EXAMPLES := chroot_vm
+endif
+
+all: $(EXAMPLES)
 
 chroot_vm: chroot_vm.c
 	gcc -o $@ $< $(CFLAGS_$(OS)) $(LDFLAGS_$(ARCH)_$(OS))
