@@ -286,7 +286,7 @@ mod tests {
             index: MSR_IA32_MISC_ENABLE,
             ..Default::default()
         }];
-        let mut kvm_msrs_wrapper = Msrs::from_entries(&test_kvm_msrs_entry);
+        let mut kvm_msrs_wrapper = Msrs::from_entries(&test_kvm_msrs_entry).unwrap();
 
         // Get_msrs() returns the number of msrs that it succeed in reading.
         // We only want to read one in this test case scenario.

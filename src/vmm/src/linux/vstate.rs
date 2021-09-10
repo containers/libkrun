@@ -1759,7 +1759,7 @@ mod tests {
 
         unsafe { libc::close(vcpu.fd.as_raw_fd()) };
         let state = VcpuState {
-            cpuid: CpuId::new(1),
+            cpuid: CpuId::new(1).unwrap(),
             msrs: Msrs::new(1),
             debug_regs: Default::default(),
             lapic: Default::default(),
