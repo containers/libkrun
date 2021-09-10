@@ -8,9 +8,9 @@ use vmm_config::block::{BlockBuilder, BlockConfigError, BlockDeviceConfig};
 use vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
 #[cfg(not(feature = "amd-sev"))]
 use vmm_config::fs::*;
-use vmm_config::kernel_bundle::{
-    InitrdBundle, KernelBundle, KernelBundleError, QbootBundle, QbootBundleError,
-};
+#[cfg(feature = "amd-sev")]
+use vmm_config::kernel_bundle::{InitrdBundle, QbootBundle, QbootBundleError};
+use vmm_config::kernel_bundle::{KernelBundle, KernelBundleError};
 use vmm_config::logger::LoggerConfigError;
 use vmm_config::machine_config::{VmConfig, VmConfigError};
 use vmm_config::vsock::*;
@@ -47,8 +47,10 @@ pub struct VmResources {
     /// The parameters for the kernel bundle to be loaded in this microVM.
     pub kernel_bundle: Option<KernelBundle>,
     /// The parameters for the qboot bundle to be loaded in this microVM.
+    #[cfg(feature = "amd-sev")]
     pub qboot_bundle: Option<QbootBundle>,
     /// The parameters for the initrd bundle to be loaded in this microVM.
+    #[cfg(feature = "amd-sev")]
     pub initrd_bundle: Option<InitrdBundle>,
     /// The fs device.
     #[cfg(not(feature = "amd-sev"))]
@@ -153,10 +155,12 @@ impl VmResources {
         Ok(())
     }
 
+    #[cfg(feature = "amd-sev")]
     pub fn qboot_bundle(&self) -> Option<&QbootBundle> {
         self.qboot_bundle.as_ref()
     }
 
+    #[cfg(feature = "amd-sev")]
     pub fn set_qboot_bundle(&mut self, qboot_bundle: QbootBundle) -> Result<QbootBundleError> {
         if qboot_bundle.size != 0x10000 {
             return Err(QbootBundleError::InvalidSize);
@@ -166,10 +170,12 @@ impl VmResources {
         Ok(())
     }
 
+    #[cfg(feature = "amd-sev")]
     pub fn initrd_bundle(&self) -> Option<&InitrdBundle> {
         self.initrd_bundle.as_ref()
     }
 
+    #[cfg(feature = "amd-sev")]
     pub fn set_initrd_bundle(&mut self, initrd_bundle: InitrdBundle) -> Result<KernelBundleError> {
         self.initrd_bundle = Some(initrd_bundle);
         Ok(())

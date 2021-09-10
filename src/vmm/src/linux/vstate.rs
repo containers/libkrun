@@ -1409,7 +1409,7 @@ mod tests {
     fn setup_vcpu(mem_size: usize) -> (Vm, Vcpu, GuestMemoryMmap) {
         let kvm = KvmContext::new().unwrap();
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), mem_size)]).unwrap();
-        let mut vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
+        let mut vm = Vm::new(kvm.fd(), None).expect("Cannot create new vm");
         assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
 
         let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
@@ -1456,7 +1456,7 @@ mod tests {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn test_get_supported_cpuid() {
         let kvm = KvmContext::new().unwrap();
-        let vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
+        let vm = Vm::new(kvm.fd(), None).expect("Cannot create new vm");
         let cpuid = kvm
             .kvm
             .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
@@ -1467,7 +1467,7 @@ mod tests {
     #[test]
     fn test_vm_memory_init() {
         let mut kvm_context = KvmContext::new().unwrap();
-        let mut vm = Vm::new(kvm_context.fd()).expect("Cannot create new vm");
+        let mut vm = Vm::new(kvm_context.fd(), None).expect("Cannot create new vm");
 
         // Create valid memory region and test that the initialization is successful.
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x1000)]).unwrap();
@@ -1488,7 +1488,7 @@ mod tests {
     #[test]
     fn test_setup_irqchip() {
         let kvm_context = KvmContext::new().unwrap();
-        let vm = Vm::new(kvm_context.fd()).expect("Cannot create new vm");
+        let vm = Vm::new(kvm_context.fd(), None).expect("Cannot create new vm");
 
         vm.setup_irqchip().expect("Cannot setup irqchip");
         // Trying to setup two irqchips will result in EEXIST error. At the moment
@@ -1515,7 +1515,7 @@ mod tests {
     fn test_setup_irqchip() {
         let kvm = KvmContext::new().unwrap();
 
-        let mut vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
+        let mut vm = Vm::new(kvm.fd(), None).expect("Cannot create new vm");
         let vcpu_count = 1;
         let _vcpu = Vcpu::new_aarch64(
             1,
@@ -1563,7 +1563,7 @@ mod tests {
     fn test_configure_vcpu() {
         let kvm = KvmContext::new().unwrap();
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
-        let mut vm = Vm::new(kvm.fd()).expect("new vm failed");
+        let mut vm = Vm::new(kvm.fd(), None).expect("new vm failed");
         assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
 
         // Try it for when vcpu id is 0.
@@ -1724,53 +1724,5 @@ mod tests {
     #[test]
     fn test_vcpu_rtsig_offset() {
         assert!(validate_signal_num(sigrtmin() + VCPU_RTSIG_OFFSET).is_ok());
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn test_vm_save_restore_state() {
-        let kvm_fd = Kvm::new().unwrap();
-        let vm = Vm::new(&kvm_fd).expect("new vm failed");
-        // Irqchips, clock and pitstate are not configured so trying to save state should fail.
-        assert!(vm.save_state().is_err());
-
-        let (vm, _, _mem) = setup_vcpu(0x1000);
-        let vm_state = vm.save_state().unwrap();
-        assert_eq!(
-            vm_state.pitstate.flags | KVM_PIT_SPEAKER_DUMMY,
-            KVM_PIT_SPEAKER_DUMMY
-        );
-        assert_eq!(vm_state.clock.flags & KVM_CLOCK_TSC_STABLE, 0);
-        assert_eq!(vm_state.pic_master.chip_id, KVM_IRQCHIP_PIC_MASTER);
-        assert_eq!(vm_state.pic_slave.chip_id, KVM_IRQCHIP_PIC_SLAVE);
-        assert_eq!(vm_state.ioapic.chip_id, KVM_IRQCHIP_IOAPIC);
-
-        let (vm, _, _mem) = setup_vcpu(0x1000);
-        assert!(vm.restore_state(&vm_state).is_ok());
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn test_vcpu_save_restore_state() {
-        let (_vm, vcpu, _mem) = setup_vcpu(0x1000);
-        let state = vcpu.save_state();
-        assert!(state.is_ok());
-        assert!(vcpu.restore_state(state.unwrap()).is_ok());
-
-        unsafe { libc::close(vcpu.fd.as_raw_fd()) };
-        let state = VcpuState {
-            cpuid: CpuId::new(1).unwrap(),
-            msrs: Msrs::new(1),
-            debug_regs: Default::default(),
-            lapic: Default::default(),
-            mp_state: Default::default(),
-            regs: Default::default(),
-            sregs: Default::default(),
-            vcpu_events: Default::default(),
-            xcrs: Default::default(),
-            xsave: Default::default(),
-        };
-        // Setting default state should always fail.
-        assert!(vcpu.restore_state(state).is_err());
     }
 }
