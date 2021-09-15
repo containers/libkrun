@@ -13,7 +13,7 @@ use procfs::CpuInfo;
 use serde::{Deserialize, Serialize};
 use sev::certs;
 use sev::firmware::Firmware;
-use sev::launch::{Measurement, Policy, Secret, Start};
+use sev::launch::{Measurement, Policy, PolicyFlags, Secret, Start};
 use sev::session::Session;
 use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
 
@@ -44,6 +44,7 @@ pub enum Error {
     SevLaunchMeasure(kvm_ioctls::Error),
     SevLaunchStart(kvm_ioctls::Error),
     SevLaunchUpdateData(kvm_ioctls::Error),
+    SevLaunchUpdateVmsa(kvm_ioctls::Error),
     StartFromSession(std::io::Error),
     UnknownCpuModel,
 }
@@ -153,12 +154,14 @@ pub struct AmdSev {
     start: Start,
     attestation_url: Option<String>,
     session_id: Option<String>,
+    sev_es: bool,
 }
 
 impl AmdSev {
     pub fn new(attestation_url: Option<String>) -> Result<Self, Error> {
         let mut fw = Firmware::open().map_err(Error::OpenFirmware)?;
         let chain = get_and_store_chain(&mut fw)?;
+        let mut sev_es = false;
 
         let (start, session_id) = if let Some(ref server_url) = attestation_url {
             let build = fw
@@ -174,6 +177,15 @@ impl AmdSev {
             let session_resp: SessionResponse =
                 serde_json::from_str(&response).map_err(Error::ParseSessionResponse)?;
 
+            if session_resp
+                .start
+                .policy
+                .flags
+                .contains(PolicyFlags::ENCRYPTED_STATE)
+            {
+                sev_es = true;
+            }
+
             (session_resp.start, Some(session_resp.id))
         } else {
             let policy = Policy::default();
@@ -186,15 +198,18 @@ impl AmdSev {
             start,
             attestation_url,
             session_id,
+            sev_es,
         })
     }
 
     fn sev_init(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
+        let code = if self.sev_es { 1 } else { 0 };
+
         let mut cmd = SevCommand {
             error: 0,
             data: 0,
             fd: self.fw.as_raw_fd() as u32,
-            code: 0, // SEV_INIT
+            code,
         };
 
         vm_fd.memory_encrypt(&mut cmd)?;
@@ -331,6 +346,17 @@ impl AmdSev {
         vm_fd.memory_encrypt(&mut cmd)
     }
 
+    fn sev_launch_update_vmsa(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
+        let mut cmd = SevCommand {
+            error: 0,
+            data: 0,
+            fd: vm_fd.as_raw_fd() as u32,
+            code: 4, // SEV_LAUNCH_UPDATE_VMSA
+        };
+
+        vm_fd.memory_encrypt(&mut cmd)
+    }
+
     pub fn vm_prepare(&self, vm_fd: &VmFd, guest_mem: &GuestMemoryMmap) -> Result<(), Error> {
         self.sev_init(vm_fd).map_err(Error::SevInit)?;
 
@@ -363,6 +389,11 @@ impl AmdSev {
         for region in measured_regions {
             self.sev_launch_update_data(vm_fd, region.host_addr, region.size)
                 .map_err(Error::SevLaunchUpdateData)?;
+        }
+
+        if self.sev_es {
+            self.sev_launch_update_vmsa(vm_fd)
+                .map_err(Error::SevLaunchUpdateVmsa)?;
         }
 
         let measurement = self
