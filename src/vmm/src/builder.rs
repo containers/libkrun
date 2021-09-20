@@ -567,14 +567,15 @@ pub fn build_microvm(
         load_cmdline(&vmm)?;
     }
 
+    vmm.configure_system(vcpus.as_slice(), &None)
+        .map_err(StartMicrovmError::Internal)?;
+
     #[cfg(feature = "amd-sev")]
     let _measurement = vmm
         .kvm_vm()
         .secure_virt_attest(vmm.guest_memory(), measured_regions)
         .map_err(StartMicrovmError::SecureVirtAttest)?;
 
-    vmm.configure_system(vcpus.as_slice(), &None)
-        .map_err(StartMicrovmError::Internal)?;
     vmm.start_vcpus(vcpus)
         .map_err(StartMicrovmError::Internal)?;
 

@@ -62,19 +62,27 @@ pub fn setup_fpu(vcpu: &VcpuFd) -> Result<()> {
 ///
 /// * `vcpu` - Structure for the VCPU that holds the VCPU's fd.
 /// * `boot_ip` - Starting instruction pointer.
-pub fn setup_regs(vcpu: &VcpuFd, boot_ip: u64) -> Result<()> {
-    let regs: kvm_regs = kvm_regs {
-        rflags: 0x0000_0000_0000_0002u64,
-        rip: boot_ip,
-        // Frame pointer. It gets a snapshot of the stack pointer (rsp) so that when adjustments are
-        // made to rsp (i.e. reserving space for local variables or pushing values on to the stack),
-        // local variables and function parameters are still accessible from a constant offset from rbp.
-        rsp: super::layout::BOOT_STACK_POINTER as u64,
-        // Starting stack pointer.
-        rbp: super::layout::BOOT_STACK_POINTER as u64,
-        // Must point to zero page address per Linux ABI. This is x86_64 specific.
-        rsi: super::layout::ZERO_PAGE_START as u64,
-        ..Default::default()
+pub fn setup_regs(vcpu: &VcpuFd, boot_ip: u64, id: u8) -> Result<()> {
+    let regs: kvm_regs = if id == 0 || cfg!(not(feature = "amd-sev")) {
+        kvm_regs {
+            rflags: 0x0000_0000_0000_0002u64,
+            rip: boot_ip,
+            // Frame pointer. It gets a snapshot of the stack pointer (rsp) so that when adjustments are
+            // made to rsp (i.e. reserving space for local variables or pushing values on to the stack),
+            // local variables and function parameters are still accessible from a constant offset from rbp.
+            rsp: super::layout::BOOT_STACK_POINTER as u64,
+            // Starting stack pointer.
+            rbp: super::layout::BOOT_STACK_POINTER as u64,
+            // Must point to zero page address per Linux ABI. This is x86_64 specific.
+            rsi: super::layout::ZERO_PAGE_START as u64,
+            ..Default::default()
+        }
+    } else {
+        kvm_regs {
+            rflags: 0x0000_0000_0000_0002u64,
+            rip: 0,
+            ..Default::default()
+        }
     };
 
     vcpu.set_regs(&regs).map_err(Error::SetBaseRegisters)
@@ -86,11 +94,18 @@ pub fn setup_regs(vcpu: &VcpuFd, boot_ip: u64) -> Result<()> {
 ///
 /// * `mem` - The memory that will be passed to the guest.
 /// * `vcpu` - Structure for the VCPU that holds the VCPU's fd.
-pub fn setup_sregs(mem: &GuestMemoryMmap, vcpu: &VcpuFd) -> Result<()> {
+pub fn setup_sregs(mem: &GuestMemoryMmap, vcpu: &VcpuFd, id: u8) -> Result<()> {
     let mut sregs: kvm_sregs = vcpu.get_sregs().map_err(Error::GetStatusRegisters)?;
 
-    configure_segments_and_sregs(mem, &mut sregs)?;
-    setup_page_tables(mem, &mut sregs)?; // TODO(dgreid) - Can this be done once per system instead?
+    if cfg!(not(feature = "amd-sev")) {
+        configure_segments_and_sregs(mem, &mut sregs)?;
+        setup_page_tables(mem, &mut sregs)?; // TODO(dgreid) - Can this be done once per system instead
+    } else {
+        if id != 0 {
+            sregs.cs.selector = 0x9100;
+            sregs.cs.base = 0x91000;
+        }
+    }
 
     vcpu.set_sregs(&sregs).map_err(Error::SetStatusRegisters)
 }
@@ -291,7 +306,7 @@ mod tests {
             ..Default::default()
         };
 
-        setup_regs(&vcpu, expected_regs.rip).unwrap();
+        setup_regs(&vcpu, expected_regs.rip, 1).unwrap();
 
         let actual_regs: kvm_regs = vcpu.get_regs().unwrap();
         assert_eq!(actual_regs, expected_regs);
@@ -305,7 +320,7 @@ mod tests {
         let gm = create_guest_mem();
 
         assert!(vcpu.set_sregs(&Default::default()).is_ok());
-        setup_sregs(&gm, &vcpu).unwrap();
+        setup_sregs(&gm, &vcpu, 1).unwrap();
 
         let mut sregs: kvm_sregs = vcpu.get_sregs().unwrap();
         // for AMD KVM_GET_SREGS returns g = 0 for each kvm_segment.
