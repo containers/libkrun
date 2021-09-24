@@ -161,6 +161,7 @@ pub fn arch_memory_regions(
                 shm_start_addr,
                 vec![
                     (GuestAddress(0), MMIO_MEM_START as usize),
+                    (GuestAddress(BIOS_START), BIOS_SIZE),
                     (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
                 ],
             )
