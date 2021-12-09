@@ -253,7 +253,7 @@ impl<'a> HvfVcpu<'a> {
         Ok(Self {
             vcpuid,
             vcpu_exit,
-            cntfrq: cntfrq,
+            cntfrq,
             mmio_buf: [0; 8],
             pending_mmio_read: None,
             pending_advance_pc: false,
