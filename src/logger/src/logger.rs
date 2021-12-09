@@ -90,7 +90,6 @@
 //! Logs can be flushed either to stdout/stderr or to a byte-oriented sink (File, FIFO, Ring Buffer
 //! etc).
 
-use std;
 use std::fmt;
 use std::io::Write;
 use std::result;
@@ -432,7 +431,7 @@ impl Logger {
                 // No need to explicitly call flush because the underlying LineWriter flushes
                 // automatically whenever a newline is detected (and we always end with a
                 // newline the current write).
-                if guard.write_all(&(format!("{}\n", msg)).as_bytes()).is_err() {
+                if guard.write_all(format!("{}\n", msg).as_bytes()).is_err() {
                     // No reason to log the error to stderr here, just increment the metric.
                 }
             } else {
@@ -487,7 +486,7 @@ impl Log for Logger {
         let msg = format!(
             "{}{}{}{}",
             LocalTime::now(),
-            self.create_prefix(&record),
+            self.create_prefix(record),
             MSG_SEPARATOR,
             record.args()
         );
@@ -536,8 +535,8 @@ mod tests {
     #[test]
     fn test_default_values() {
         let l = Logger::new();
-        assert_eq!(l.show_line_numbers(), true);
-        assert_eq!(l.show_level(), true);
+        assert!(l.show_line_numbers());
+        assert!(l.show_level());
     }
 
     #[test]
@@ -546,14 +545,14 @@ mod tests {
         let l = LOGGER.deref();
 
         l.set_include_origin(false, true);
-        assert_eq!(l.show_line_numbers(), false);
+        assert!(!l.show_line_numbers());
 
         l.set_include_origin(true, true)
             .set_include_level(true)
             .set_max_level(log::LevelFilter::Info);
-        assert_eq!(l.show_line_numbers(), true);
-        assert_eq!(l.show_file_path(), true);
-        assert_eq!(l.show_level(), true);
+        assert!(l.show_line_numbers());
+        assert!(l.show_file_path());
+        assert!(l.show_level());
 
         l.set_instance_id(TEST_INSTANCE_ID.to_string());
 
@@ -625,20 +624,20 @@ mod tests {
         l.set_include_level(true).set_include_origin(false, false);
         let error_metadata = MetadataBuilder::new().level(Level::Error).build();
         let log_record = log::Record::builder().metadata(error_metadata).build();
-        Logger::log(&l, &log_record);
+        Logger::log(l, &log_record);
 
-        assert_eq!(l.show_level(), true);
-        assert_eq!(l.show_file_path(), false);
-        assert_eq!(l.show_line_numbers(), false);
+        assert!(l.show_level());
+        assert!(!l.show_file_path());
+        assert!(!l.show_line_numbers());
 
         l.set_include_level(false).set_include_origin(true, true);
         let error_metadata = MetadataBuilder::new().level(Level::Info).build();
         let log_record = log::Record::builder().metadata(error_metadata).build();
-        Logger::log(&l, &log_record);
+        Logger::log(l, &log_record);
 
-        assert_eq!(l.show_level(), false);
-        assert_eq!(l.show_file_path(), true);
-        assert_eq!(l.show_line_numbers(), true);
+        assert!(!l.show_level());
+        assert!(l.show_file_path());
+        assert!(l.show_line_numbers());
     }
 
     #[test]

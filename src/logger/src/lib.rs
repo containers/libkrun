@@ -11,9 +11,9 @@ extern crate utils;
 
 mod logger;
 
+pub use crate::logger::{LoggerError, LOGGER};
 pub use log::Level::*;
 pub use log::*;
-pub use crate::logger::{LoggerError, LOGGER};
 
 use std::io::Write;
 use std::sync::{Mutex, MutexGuard};
