@@ -70,9 +70,9 @@ fn update_extended_cache_topology_entry(
     use crate::cpu_leaf::leaf_0xb::*;
 
     //reset eax, ebx, ecx
-    entry.eax = 0 as u32;
-    entry.ebx = 0 as u32;
-    entry.ecx = 0 as u32;
+    entry.eax = 0_u32;
+    entry.ebx = 0_u32;
+    entry.ecx = 0_u32;
     // EDX bits 31..0 contain x2APIC ID of current logical processor
     // x2APIC increases the size of the APIC ID from 8 bits to 32 bits
     entry.edx = u32::from(vm_spec.cpu_id);
@@ -158,15 +158,15 @@ mod tests {
     use crate::cpu_leaf::leaf_0xb::LEVEL_TYPE_CORE;
     use crate::cpu_leaf::leaf_0xb::LEVEL_TYPE_INVALID;
     use crate::cpu_leaf::leaf_0xb::LEVEL_TYPE_THREAD;
-    use kvm_bindings::kvm_cpuid_entry2;
     use crate::transformer::VmSpec;
+    use kvm_bindings::kvm_cpuid_entry2;
 
     #[test]
     fn test_update_feature_info_entry() {
         use crate::cpu_leaf::leaf_0x1::*;
 
         let vm_spec = VmSpec::new(0, 1, false).expect("Error creating vm_spec");
-        let mut entry = &mut kvm_cpuid_entry2 {
+        let mut entry = kvm_cpuid_entry2 {
             function: leaf_0x1::LEAF_NUM,
             index: 0,
             flags: 0,
@@ -179,13 +179,13 @@ mod tests {
 
         assert!(update_feature_info_entry(&mut entry, &vm_spec).is_ok());
 
-        assert_eq!(entry.ecx.read_bit(ecx::TSC_DEADLINE_TIMER_BITINDEX), true);
+        assert!(entry.ecx.read_bit(ecx::TSC_DEADLINE_TIMER_BITINDEX));
     }
 
     #[test]
     fn test_update_perf_mon_entry() {
         let vm_spec = VmSpec::new(0, 1, false).expect("Error creating vm_spec");
-        let mut entry = &mut kvm_cpuid_entry2 {
+        let mut entry = kvm_cpuid_entry2 {
             function: leaf_0xa::LEAF_NUM,
             index: 0,
             flags: 0,
@@ -213,11 +213,11 @@ mod tests {
         use crate::cpu_leaf::leaf_0x4::*;
 
         let vm_spec = VmSpec::new(0, cpu_count, ht_enabled).expect("Error creating vm_spec");
-        let mut entry = &mut kvm_cpuid_entry2 {
+        let mut entry = kvm_cpuid_entry2 {
             function: 0x0,
             index: 0,
             flags: 0,
-            eax: *(0 as u32).write_bits_in_range(&eax::CACHE_LEVEL_BITRANGE, cache_level),
+            eax: *(0_u32).write_bits_in_range(&eax::CACHE_LEVEL_BITRANGE, cache_level),
             ebx: 0,
             ecx: 0,
             edx: 0,
@@ -245,7 +245,7 @@ mod tests {
         use crate::cpu_leaf::leaf_0xb::*;
 
         let vm_spec = VmSpec::new(0, cpu_count, ht_enabled).expect("Error creating vm_spec");
-        let mut entry = &mut kvm_cpuid_entry2 {
+        let mut entry = kvm_cpuid_entry2 {
             function: 0x0,
             index,
             flags: 0,

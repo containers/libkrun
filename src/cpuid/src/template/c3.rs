@@ -3,8 +3,8 @@
 
 use crate::bit_helper::BitHelper;
 use crate::cpu_leaf::*;
-use kvm_bindings::{kvm_cpuid_entry2, CpuId};
 use crate::transformer::*;
+use kvm_bindings::{kvm_cpuid_entry2, CpuId};
 
 fn update_feature_info_entry(entry: &mut kvm_cpuid_entry2, _vm_spec: &VmSpec) -> Result<(), Error> {
     use crate::cpu_leaf::leaf_0x1::*;

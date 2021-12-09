@@ -5,8 +5,8 @@ use super::*;
 use crate::bit_helper::BitHelper;
 use crate::common::get_cpuid;
 
-use kvm_bindings::{kvm_cpuid_entry2, CpuId};
 use crate::transformer::Error::FamError;
+use kvm_bindings::{kvm_cpuid_entry2, CpuId};
 
 // constants for setting the fields of kvm_cpuid2 structures
 // CPUID bits in ebx, ecx, and edx.
@@ -135,8 +135,8 @@ pub fn use_host_cpuid_function(
 mod tests {
     use super::*;
     use crate::common::tests::get_topoext_fn;
-    use kvm_bindings::kvm_cpuid_entry2;
     use crate::transformer::VmSpec;
+    use kvm_bindings::kvm_cpuid_entry2;
 
     #[test]
     fn test_get_max_cpus_per_package() {
@@ -152,7 +152,7 @@ mod tests {
         use crate::cpu_leaf::leaf_0x1::*;
 
         let vm_spec = VmSpec::new(0, cpu_count, false).expect("Error creating vm_spec");
-        let mut entry = &mut kvm_cpuid_entry2 {
+        let mut entry = kvm_cpuid_entry2 {
             function: 0x0,
             index: 0,
             flags: 0,
@@ -177,11 +177,11 @@ mod tests {
         use crate::cpu_leaf::leaf_cache_parameters::*;
 
         let vm_spec = VmSpec::new(0, cpu_count, ht_enabled).expect("Error creating vm_spec");
-        let mut entry = &mut kvm_cpuid_entry2 {
+        let mut entry = kvm_cpuid_entry2 {
             function: 0x0,
             index: 0,
             flags: 0,
-            eax: *(0 as u32).write_bits_in_range(&eax::CACHE_LEVEL_BITRANGE, cache_level),
+            eax: *(0_u32).write_bits_in_range(&eax::CACHE_LEVEL_BITRANGE, cache_level),
             ebx: 0,
             ecx: 0,
             edx: 0,
