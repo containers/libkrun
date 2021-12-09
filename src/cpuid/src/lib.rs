@@ -10,10 +10,6 @@
 
 #![cfg(target_arch = "x86_64")]
 
-extern crate kvm_bindings;
-extern crate kvm_ioctls;
-extern crate vmm_sys_util;
-
 use kvm_bindings::CpuId;
 
 mod common;
@@ -43,10 +39,6 @@ mod brand_string;
 ///
 /// # Example
 /// ```
-/// extern crate cpuid;
-/// extern crate kvm_bindings;
-/// extern crate kvm_ioctls;
-///
 /// use cpuid::{filter_cpuid, VmSpec};
 /// use kvm_bindings::{CpuId, KVM_MAX_CPUID_ENTRIES};
 /// use kvm_ioctls::Kvm;

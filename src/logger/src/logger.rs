@@ -39,9 +39,6 @@
 //! ## Example for logging to a `File`:
 //!
 //! ```
-//! extern crate libc;
-//! extern crate utils;
-//!
 //! use libc::c_char;
 //! use std::io::Cursor;
 //!
@@ -172,7 +169,6 @@ impl Logger {
     ///
     /// ```
     /// #[macro_use]
-    /// extern crate log;
     /// extern crate logger;
     /// use logger::LOGGER;
     /// use std::ops::Deref;
@@ -254,7 +250,6 @@ impl Logger {
     /// ```
     /// #[macro_use]
     /// extern crate logger;
-    /// extern crate log;
     /// use logger::LOGGER;
     /// use std::ops::Deref;
     ///
@@ -356,7 +351,6 @@ impl Logger {
     /// # Example
     ///
     /// ```
-    /// extern crate logger;
     /// use logger::LOGGER;
     /// use std::ops::Deref;
     ///
@@ -392,7 +386,6 @@ impl Logger {
     /// # Example
     ///
     /// ```
-    /// extern crate logger;
     /// use logger::LOGGER;
     ///
     /// use std::io::Cursor;

@@ -8,8 +8,6 @@
 //! a real-time clock input.
 //!
 
-extern crate utils;
-
 use std::fmt;
 use std::time::Instant;
 use std::{io, result};

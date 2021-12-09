@@ -3,13 +3,11 @@
 
 //! Auxiliary module for configuring the logger.
 
-extern crate logger as logger_crate;
-
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
-use self::logger_crate::{LevelFilter, LOGGER};
 use super::{open_file_nonblock, FcLineWriter};
+use logger::{LevelFilter, LOGGER};
 
 /// Enum used for setting the log level.
 #[derive(Clone, Debug, PartialEq)]

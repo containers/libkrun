@@ -409,8 +409,6 @@ impl Queue {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    extern crate vm_memory;
-
     use std::marker::PhantomData;
     use std::mem;
 

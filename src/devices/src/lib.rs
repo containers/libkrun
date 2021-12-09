@@ -7,13 +7,8 @@
 
 //! Emulates virtual and hardware devices.
 
-extern crate libc;
-extern crate lru;
-
 #[macro_use]
 extern crate logger;
-extern crate polly;
-extern crate vm_memory;
 
 use std::io;
 

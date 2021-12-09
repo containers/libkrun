@@ -10,36 +10,8 @@
 //! machine (microVM).
 //#![deny(missing_docs)]
 
-#[cfg(target_os = "macos")]
-extern crate hvf;
-#[cfg(target_os = "linux")]
-extern crate kvm_bindings;
-#[cfg(target_os = "linux")]
-extern crate kvm_ioctls;
-
-#[cfg(feature = "amd-sev")]
-extern crate codicon;
-#[cfg(feature = "amd-sev")]
-extern crate procfs;
-#[cfg(feature = "amd-sev")]
-extern crate reqwest;
-#[cfg(feature = "amd-sev")]
-extern crate serde;
-#[cfg(feature = "amd-sev")]
-extern crate sev;
-
-extern crate libc;
-extern crate polly;
-
-extern crate arch;
-#[cfg(target_arch = "x86_64")]
-extern crate cpuid;
-extern crate devices;
-extern crate kernel;
 #[macro_use]
 extern crate logger;
-extern crate utils;
-extern crate vm_memory;
 
 /// Handles setup and initialization a `Vmm` object.
 pub mod builder;
@@ -68,12 +40,15 @@ use std::sync::Mutex;
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 
-use arch::ArchMemoryInfo;
-use arch::DeviceType;
-use arch::InitrdConfig;
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
+#[cfg(target_os = "linux")]
+use crate::vstate::VcpuEvent;
+use crate::vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
+use arch::ArchMemoryInfo;
+use arch::DeviceType;
+use arch::InitrdConfig;
 use devices::BusDevice;
 use kernel::cmdline::Cmdline as KernelCmdline;
 use logger::LoggerError;
@@ -82,9 +57,6 @@ use utils::epoll::{EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 use utils::time::TimestampUs;
 use vm_memory::GuestMemoryMmap;
-#[cfg(target_os = "linux")]
-use crate::vstate::VcpuEvent;
-use crate::vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
 
 /// Success exit code.
 pub const FC_EXIT_CODE_OK: u8 = 0;
