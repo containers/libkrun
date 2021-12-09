@@ -243,17 +243,17 @@ impl VsockChannel for VsockMuxer {
             match pkt.op() {
                 uapi::VSOCK_OP_REQUEST_EX => {
                     // A connection request with extended parameters
-                    self.handle_peer_request_ex_pkt(&pkt)
+                    self.handle_peer_request_ex_pkt(pkt)
                         .unwrap_or_else(|_| self.enq_rst(pkt.dst_port(), pkt.src_port()))
                 }
                 uapi::VSOCK_OP_WRAP_LISTEN => {
                     // A listen request for wrapped socket with extended parameters
-                    self.handle_peer_wrap_listen(&pkt)
+                    self.handle_peer_wrap_listen(pkt)
                         .unwrap_or_else(|_| self.enq_rst(pkt.dst_port(), pkt.src_port()))
                 }
                 uapi::VSOCK_OP_WRAP_CLOSE => {
                     // A close request for wrapped socket
-                    self.handle_peer_wrap_close(&pkt);
+                    self.handle_peer_wrap_close(pkt);
                 }
                 _ => {
                     // Send back an RST, to let the drive know we weren't expecting this packet.
@@ -484,7 +484,7 @@ impl VsockMuxer {
                 evset: conn.get_polled_evset(),
             },
         )
-        .and_then(|_| {
+        .map(|_| {
             if conn.has_pending_rx() {
                 // We can safely ignore any error in adding a connection RX indication. Worst
                 // case scenario, the RX queue will get desynchronized, but we'll handle that
@@ -492,7 +492,6 @@ impl VsockMuxer {
                 self.rxq.push(MuxerRx::ConnRx(key));
             }
             self.conn_map.insert(key, conn);
-            Ok(())
         })
     }
 
@@ -537,9 +536,8 @@ impl VsockMuxer {
                 fd,
                 &EpollEvent::new(evset, fd as u64),
             )
-            .and_then(|_| {
+            .map(|_| {
                 self.listener_map.insert(fd, listener);
-                Ok(())
             })
             .map_err(Error::EpollAdd)?;
 

@@ -180,6 +180,7 @@ impl<'a> DescriptorChain<'a> {
     }
 
     /// Produces an iterator over all the descriptors in this chain.
+    #[allow(clippy::should_implement_trait)]
     pub fn into_iter(self) -> DescIter<'a> {
         DescIter { next: Some(self) }
     }
@@ -295,6 +296,7 @@ impl Queue {
     }
 
     /// Returns the number of yet-to-be-popped descriptor chains in the avail ring.
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self, mem: &GuestMemoryMmap) -> u16 {
         (self.avail_idx(mem) - self.next_avail).0
     }
@@ -640,10 +642,6 @@ pub(crate) mod tests {
             q.used_ring = self.used_start();
 
             q
-        }
-
-        pub fn start(&self) -> GuestAddress {
-            self.dtable_start()
         }
 
         pub fn end(&self) -> GuestAddress {
