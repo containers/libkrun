@@ -241,7 +241,7 @@ impl<'a> Arguments<'a> {
             return (&args[..index], &args[index + 1..]);
         }
 
-        (&args, &[])
+        (args, &[])
     }
 
     /// Collect the command line arguments and the values provided for them.
@@ -353,7 +353,7 @@ impl<'a> Arguments<'a> {
         }
 
         // Check the constraints for the `required` and `requires` fields of all arguments.
-        self.validate_requirements(&args)?;
+        self.validate_requirements(args)?;
 
         Ok(())
     }
@@ -460,7 +460,7 @@ mod tests {
         value = Value::String("arg".to_string());
         assert!(Value::as_bool(&value).is_none());
         value = Value::Bool(true);
-        assert_eq!(Value::as_bool(&value).unwrap(), true);
+        assert!(Value::as_bool(&value).unwrap());
     }
 
     #[test]
