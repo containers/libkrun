@@ -49,10 +49,7 @@ impl fmt::Display for Error {
 pub type Result<T> = result::Result<T, Error>;
 
 fn valid_char(c: char) -> bool {
-    match c {
-        ' '..='~' => true,
-        _ => false,
-    }
+    matches!(c, ' '..='~')
 }
 
 fn valid_str(s: &str) -> Result<()> {
@@ -164,7 +161,7 @@ impl Cmdline {
 
     /// Returns the cmdline in progress as CString.
     pub fn as_cstring(&self) -> Result<CString> {
-        Ok(CString::new(self.line.clone()).map_err(|_| Error::InvalidAscii)?)
+        CString::new(self.line.clone()).map_err(|_| Error::InvalidAscii)
     }
 }
 

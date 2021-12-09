@@ -41,7 +41,7 @@ impl fmt::Display for Error {
                 Error::InvalidProgramHeaderSize => "Invalid ELF program header size",
                 Error::InvalidProgramHeaderOffset => "Invalid ELF program header offset",
                 Error::InvalidProgramHeaderAddress => "Invalid ELF program header address",
-                Error::ReadKernelDataStruct(ref e) => e,
+                Error::ReadKernelDataStruct(e) => e,
                 Error::ReadKernelImage => "Failed to write kernel image to guest memory",
                 Error::SeekKernelStart => {
                     "Failed to seek to file offset as pointed by the ELF program header"
