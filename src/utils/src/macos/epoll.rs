@@ -8,6 +8,7 @@ use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::time::Duration;
 
+use bitflags::bitflags;
 use kqueue::{EventData, EventFilter, FilterFlag, Ident, Watcher};
 
 #[repr(i32)]

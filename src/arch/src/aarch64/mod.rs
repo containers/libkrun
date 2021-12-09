@@ -20,8 +20,8 @@ use std::ffi::CStr;
 use std::fmt::Debug;
 
 use self::gic::GICDevice;
+use crate::ArchMemoryInfo;
 use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMmap};
-use ArchMemoryInfo;
 
 /// Errors thrown while configuring aarch64 system.
 #[derive(Debug)]
@@ -38,7 +38,7 @@ pub const MMIO_MEM_START: u64 = layout::MAPPED_IO_START;
 pub const MMIO_SHM_SIZE: u64 = 1 << 29;
 
 pub use self::fdt::DeviceInfoForFDT;
-use DeviceType;
+use crate::DeviceType;
 
 /// Returns a Vec of the valid memory addresses for aarch64.
 /// See [`layout`](layout) module for a drawing of the specific memory model for this platform.

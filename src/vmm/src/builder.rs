@@ -441,7 +441,7 @@ pub fn build_microvm(
     #[cfg(target_os = "macos")]
     let intc = Some(Arc::new(Mutex::new(devices::legacy::Gic::new())));
 
-    #[cfg(not(feature = "amd-sev"))]
+    #[cfg(all(target_os = "linux", not(feature = "amd-sev")))]
     let boot_ip: GuestAddress = GuestAddress(kernel_bundle.guest_addr);
     #[cfg(feature = "amd-sev")]
     let boot_ip: GuestAddress = GuestAddress(arch::RESET_VECTOR);

@@ -713,10 +713,12 @@ pub struct SetattrIn {
 }
 unsafe impl ByteValued for SetattrIn {}
 
-impl From<SetattrIn> for libc::stat64 {
-    fn from(sai: SetattrIn) -> libc::stat64 {
-        let mut out: libc::stat64 = unsafe { mem::zeroed() };
-        out.st_mode = sai.mode;
+impl From<SetattrIn> for bindings::stat64 {
+    #[allow(clippy::useless_conversion)]
+    fn from(sai: SetattrIn) -> bindings::stat64 {
+        let mut out: bindings::stat64 = unsafe { mem::zeroed() };
+        // We need this conversion on macOS.
+        out.st_mode = sai.mode.try_into().unwrap();
         out.st_uid = sai.uid;
         out.st_gid = sai.gid;
         out.st_size = sai.size as i64;
