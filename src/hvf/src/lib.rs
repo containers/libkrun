@@ -6,6 +6,8 @@
 #[allow(dead_code)]
 #[allow(non_snake_case)]
 #[allow(non_upper_case_globals)]
+#[allow(unaligned_references)]
+#[allow(deref_nullptr)]
 mod bindings;
 use bindings::*;
 
