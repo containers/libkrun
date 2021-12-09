@@ -48,9 +48,7 @@ impl FsBuilder {
     }
 
     pub fn create_fs(config: FsDeviceConfig) -> Result<Fs> {
-        Ok(
-            devices::virtio::Fs::new(config.fs_id, config.shared_dir, config.mapped_volumes)
-                .map_err(FsConfigError::CreateFsDevice)?,
-        )
+        devices::virtio::Fs::new(config.fs_id, config.shared_dir, config.mapped_volumes)
+            .map_err(FsConfigError::CreateFsDevice)
     }
 }

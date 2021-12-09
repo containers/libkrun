@@ -21,10 +21,23 @@ use devices::legacy::Serial;
 use devices::virtio::VirtioShmRegion;
 use devices::virtio::{MmioTransport, Vsock, VsockUnixBackend};
 
-use arch::ArchMemoryInfo;
-use polly::event_manager::{Error as EventManagerError, EventManager};
 #[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigwinch_handler;
+#[cfg(feature = "amd-sev")]
+use crate::vmm_config::block::BlockBuilder;
+use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
+#[cfg(not(feature = "amd-sev"))]
+use crate::vmm_config::fs::FsBuilder;
+#[cfg(feature = "amd-sev")]
+use crate::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
+#[cfg(target_os = "linux")]
+use crate::vstate::KvmContext;
+#[cfg(all(target_os = "linux", feature = "amd-sev"))]
+use crate::vstate::MeasuredRegion;
+use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
+use crate::{device_manager, VmmEventsObserver};
+use arch::ArchMemoryInfo;
+use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
 use utils::terminal::Terminal;
 use utils::time::TimestampUs;
@@ -35,19 +48,6 @@ use vm_memory::Bytes;
 #[cfg(target_os = "linux")]
 use vm_memory::GuestMemory;
 use vm_memory::{mmap::MmapRegion, GuestAddress, GuestMemoryMmap};
-#[cfg(feature = "amd-sev")]
-use vmm_config::block::BlockBuilder;
-use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
-#[cfg(not(feature = "amd-sev"))]
-use crate::vmm_config::fs::FsBuilder;
-#[cfg(feature = "amd-sev")]
-use vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
-#[cfg(target_os = "linux")]
-use crate::vstate::KvmContext;
-#[cfg(all(target_os = "linux", feature = "amd-sev"))]
-use vstate::MeasuredRegion;
-use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
-use crate::{device_manager, VmmEventsObserver};
 
 /// Errors associated with starting the instance.
 #[derive(Debug)]
@@ -345,12 +345,14 @@ pub fn build_microvm(
     };
 
     #[cfg(not(feature = "amd-sev"))]
-    let attestation_url = None;
+    let mut vm = { setup_vm(&guest_memory, None)? };
 
     #[cfg(feature = "amd-sev")]
-    let attestation_url = vm_resources.attestation_url();
-
-    let mut vm = setup_vm(&guest_memory, attestation_url.clone())?;
+    let (attestation_url, mut vm) = {
+        let attestation_url = vm_resources.attestation_url();
+        let vm = setup_vm(&guest_memory, attestation_url.clone())?;
+        (attestation_url, vm)
+    };
 
     #[cfg(feature = "amd-sev")]
     let measured_regions = {
@@ -697,7 +699,7 @@ pub(crate) fn setup_vm(
     let mut vm = Vm::new(kvm.fd(), attestation_url)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
-    vm.memory_init(&guest_memory, kvm.max_memslots())
+    vm.memory_init(guest_memory, kvm.max_memslots())
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     Ok(vm)
@@ -1137,14 +1139,14 @@ fn attach_block_devices(
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
+    use crate::vmm_config::vsock::tests::{default_config, TempSockFile};
+    use crate::vmm_config::vsock::VsockBuilder;
     use arch::DeviceType;
     use devices::virtio::TYPE_VSOCK;
     use kernel::cmdline::Cmdline;
     use polly::event_manager::EventManager;
     use utils::tempfile::TempFile;
-    use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
-    use crate::vmm_config::vsock::tests::{default_config, TempSockFile};
-    use crate::vmm_config::vsock::VsockBuilder;
 
     fn default_mmio_device_manager() -> MMIODeviceManager {
         MMIODeviceManager::new(

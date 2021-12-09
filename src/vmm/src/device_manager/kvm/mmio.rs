@@ -21,6 +21,7 @@ use kvm_ioctls::{IoEventAddress, VmFd};
 use utils::eventfd::EventFd;
 
 /// Errors for MMIO device manager.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
 pub enum Error {
     /// Failed to perform an operation on the bus.
@@ -127,8 +128,8 @@ impl MMIODeviceManager {
             (DeviceType::Virtio(type_id), device_id),
             MMIODeviceInfo {
                 addr: self.mmio_base,
-                len: MMIO_LEN,
-                irq: self.irq,
+                _len: MMIO_LEN,
+                _irq: self.irq,
             },
         );
         self.mmio_base += MMIO_LEN;
@@ -258,8 +259,8 @@ impl MMIODeviceManager {
 #[derive(Clone, Debug)]
 pub struct MMIODeviceInfo {
     addr: u64,
-    irq: u32,
-    len: u64,
+    _irq: u32,
+    _len: u64,
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -547,12 +548,12 @@ mod tests {
             );
             assert_eq!(
                 arch::IRQ_BASE,
-                device_manager.id_to_dev_info[&(DeviceType::Virtio(type_id), id.clone())].irq
+                device_manager.id_to_dev_info[&(DeviceType::Virtio(type_id), id.clone())]._irq
             );
         }
         let id = "bar";
         assert!(device_manager
-            .get_device(DeviceType::Virtio(type_id), &id)
+            .get_device(DeviceType::Virtio(type_id), id)
             .is_none());
     }
 }

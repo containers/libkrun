@@ -49,9 +49,9 @@ impl Default for LoggerLevel {
     }
 }
 
-impl Into<LevelFilter> for LoggerLevel {
-    fn into(self) -> LevelFilter {
-        match self {
+impl From<LoggerLevel> for LevelFilter {
+    fn from(level: LoggerLevel) -> LevelFilter {
+        match level {
             LoggerLevel::Error => LevelFilter::Error,
             LoggerLevel::Warning => LevelFilter::Warn,
             LoggerLevel::Info => LevelFilter::Info,
@@ -210,8 +210,8 @@ mod tests {
             LoggerConfig::new(PathBuf::from("log"), LoggerLevel::Debug, false, true);
         assert_eq!(logger_config.log_path, PathBuf::from("log"));
         assert_eq!(logger_config.level, LoggerLevel::Debug);
-        assert_eq!(logger_config.show_level, false);
-        assert_eq!(logger_config.show_log_origin, true);
+        assert!(!logger_config.show_level);
+        assert!(logger_config.show_log_origin);
     }
 
     #[test]

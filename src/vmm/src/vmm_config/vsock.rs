@@ -79,8 +79,7 @@ impl VsockBuilder {
         let backend = VsockUnixBackend::new(u64::from(cfg.guest_cid), cfg.host_port_map)
             .map_err(VsockConfigError::CreateVsockBackend)?;
 
-        Ok(Vsock::new(u64::from(cfg.guest_cid), backend)
-            .map_err(VsockConfigError::CreateVsockDevice)?)
+        Vsock::new(u64::from(cfg.guest_cid), backend).map_err(VsockConfigError::CreateVsockDevice)
     }
 }
 
@@ -101,9 +100,6 @@ pub(crate) mod tests {
                 path: String::from(tmp_file.as_path().to_str().unwrap()),
             }
         }
-        pub fn path(&self) -> &String {
-            &self.path
-        }
     }
 
     impl Drop for TempSockFile {
@@ -112,7 +108,7 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn default_config(tmp_sock_file: &TempSockFile) -> VsockDeviceConfig {
+    pub(crate) fn default_config(_tmp_sock_file: &TempSockFile) -> VsockDeviceConfig {
         let vsock_dev_id = "vsock";
         VsockDeviceConfig {
             vsock_id: vsock_dev_id.to_string(),
