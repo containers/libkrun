@@ -13,7 +13,7 @@ mod logger;
 
 pub use log::Level::*;
 pub use log::*;
-pub use logger::{LoggerError, LOGGER};
+pub use crate::logger::{LoggerError, LOGGER};
 
 use std::io::Write;
 use std::sync::{Mutex, MutexGuard};
