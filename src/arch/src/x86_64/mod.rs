@@ -23,8 +23,8 @@ use vm_memory::Bytes;
 use vm_memory::{
     Address, ByteValued, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion,
 };
-use ArchMemoryInfo;
-use InitrdConfig;
+use crate::ArchMemoryInfo;
+use crate::InitrdConfig;
 
 // This is a workaround to the Rust enforcement specifying that any implementation of a foreign
 // trait (in this case `ByteValued`) where:
