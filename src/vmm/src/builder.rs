@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex};
 use super::{Error, Vmm};
 
 #[cfg(target_arch = "x86_64")]
-use device_manager::legacy::PortIODeviceManager;
-use device_manager::mmio::MMIODeviceManager;
+use crate::device_manager::legacy::PortIODeviceManager;
+use crate::device_manager::mmio::MMIODeviceManager;
 use devices::legacy::Gic;
 use devices::legacy::Serial;
 #[cfg(not(feature = "amd-sev"))]
@@ -24,7 +24,7 @@ use devices::virtio::{MmioTransport, Vsock, VsockUnixBackend};
 use arch::ArchMemoryInfo;
 use polly::event_manager::{Error as EventManagerError, EventManager};
 #[cfg(target_os = "linux")]
-use signal_handler::register_sigwinch_handler;
+use crate::signal_handler::register_sigwinch_handler;
 use utils::eventfd::EventFd;
 use utils::terminal::Terminal;
 use utils::time::TimestampUs;
@@ -37,17 +37,17 @@ use vm_memory::GuestMemory;
 use vm_memory::{mmap::MmapRegion, GuestAddress, GuestMemoryMmap};
 #[cfg(feature = "amd-sev")]
 use vmm_config::block::BlockBuilder;
-use vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
+use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
 #[cfg(not(feature = "amd-sev"))]
-use vmm_config::fs::FsBuilder;
+use crate::vmm_config::fs::FsBuilder;
 #[cfg(feature = "amd-sev")]
 use vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
 #[cfg(target_os = "linux")]
-use vstate::KvmContext;
+use crate::vstate::KvmContext;
 #[cfg(all(target_os = "linux", feature = "amd-sev"))]
 use vstate::MeasuredRegion;
-use vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
-use {device_manager, VmmEventsObserver};
+use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
+use crate::{device_manager, VmmEventsObserver};
 
 /// Errors associated with starting the instance.
 #[derive(Debug)]
@@ -1142,9 +1142,9 @@ pub mod tests {
     use kernel::cmdline::Cmdline;
     use polly::event_manager::EventManager;
     use utils::tempfile::TempFile;
-    use vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
-    use vmm_config::vsock::tests::{default_config, TempSockFile};
-    use vmm_config::vsock::VsockBuilder;
+    use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
+    use crate::vmm_config::vsock::tests::{default_config, TempSockFile};
+    use crate::vmm_config::vsock::VsockBuilder;
 
     fn default_mmio_device_manager() -> MMIODeviceManager {
         MMIODeviceManager::new(
@@ -1302,7 +1302,7 @@ pub mod tests {
 
     #[test]
     fn test_error_messages() {
-        use builder::StartMicrovmError::*;
+        use crate::builder::StartMicrovmError::*;
         let err = AttachBlockDevice(io::Error::from_raw_os_error(0));
         let _ = format!("{}{:?}", err, err);
 

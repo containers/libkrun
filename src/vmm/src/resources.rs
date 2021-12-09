@@ -5,16 +5,16 @@
 
 #[cfg(feature = "amd-sev")]
 use vmm_config::block::{BlockBuilder, BlockConfigError, BlockDeviceConfig};
-use vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
+use crate::vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
 #[cfg(not(feature = "amd-sev"))]
-use vmm_config::fs::*;
+use crate::vmm_config::fs::*;
 #[cfg(feature = "amd-sev")]
 use vmm_config::kernel_bundle::{InitrdBundle, QbootBundle, QbootBundleError};
-use vmm_config::kernel_bundle::{KernelBundle, KernelBundleError};
-use vmm_config::logger::LoggerConfigError;
-use vmm_config::machine_config::{VmConfig, VmConfigError};
-use vmm_config::vsock::*;
-use vstate::VcpuConfig;
+use crate::vmm_config::kernel_bundle::{KernelBundle, KernelBundleError};
+use crate::vmm_config::logger::LoggerConfigError;
+use crate::vmm_config::machine_config::{VmConfig, VmConfigError};
+use crate::vmm_config::vsock::*;
+use crate::vstate::VcpuConfig;
 
 type Result<E> = std::result::Result<(), E>;
 
@@ -209,12 +209,12 @@ impl VmResources {
 
 #[cfg(test)]
 mod tests {
-    use resources::VmResources;
+    use crate::resources::VmResources;
     use utils::tempfile::TempFile;
-    use vmm_config::boot_source::BootSourceConfig;
-    use vmm_config::machine_config::{CpuFeaturesTemplate, VmConfig, VmConfigError};
-    use vmm_config::vsock::tests::{default_config, TempSockFile};
-    use vstate::VcpuConfig;
+    use crate::vmm_config::boot_source::BootSourceConfig;
+    use crate::vmm_config::machine_config::{CpuFeaturesTemplate, VmConfig, VmConfigError};
+    use crate::vmm_config::vsock::tests::{default_config, TempSockFile};
+    use crate::vstate::VcpuConfig;
 
     fn default_boot_cfg() -> BootSourceConfig {
         BootSourceConfig {

@@ -136,7 +136,7 @@ mod tests {
     use utils::tempfile::TempFile;
     use utils::time::TimestampUs;
 
-    use Vmm;
+    use crate::Vmm;
 
     #[test]
     fn test_init_logger() {

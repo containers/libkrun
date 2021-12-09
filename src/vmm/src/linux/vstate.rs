@@ -44,7 +44,7 @@ use utils::sm::StateMachine;
 use vm_memory::{
     Address, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion,
 };
-use vmm_config::machine_config::CpuFeaturesTemplate;
+use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 
 #[cfg(target_arch = "x86_64")]
 const MAGIC_IOPORT_SIGNAL_GUEST_BOOT_COMPLETE: u64 = 0x03f0;

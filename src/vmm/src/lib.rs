@@ -55,7 +55,7 @@ pub mod vmm_config;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-use linux::vstate;
+use crate::linux::vstate;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
@@ -72,8 +72,8 @@ use arch::ArchMemoryInfo;
 use arch::DeviceType;
 use arch::InitrdConfig;
 #[cfg(target_arch = "x86_64")]
-use device_manager::legacy::PortIODeviceManager;
-use device_manager::mmio::MMIODeviceManager;
+use crate::device_manager::legacy::PortIODeviceManager;
+use crate::device_manager::mmio::MMIODeviceManager;
 use devices::BusDevice;
 use kernel::cmdline::Cmdline as KernelCmdline;
 use logger::LoggerError;
@@ -83,8 +83,8 @@ use utils::eventfd::EventFd;
 use utils::time::TimestampUs;
 use vm_memory::GuestMemoryMmap;
 #[cfg(target_os = "linux")]
-use vstate::VcpuEvent;
-use vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
+use crate::vstate::VcpuEvent;
+use crate::vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
 
 /// Success exit code.
 pub const FC_EXIT_CODE_OK: u8 = 0;
