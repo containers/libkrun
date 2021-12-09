@@ -11,12 +11,10 @@
 /// #[macro_use]
 /// use cpuid::bit_helper::*;
 ///
-/// fn main() {
-///     let range = BitRange {
-///         msb_index: 7,
-///         lsb_index: 3,
-///     };
-/// }
+/// let range = BitRange {
+///     msb_index: 7,
+///     lsb_index: 3,
+/// };
 /// ```
 /// The BitRange specified above will represent the following part of the number 72:
 /// +-------------------------------------+---+---+---+---+---+---+---+---+---+---+
@@ -47,13 +45,11 @@ pub trait BitRangeExt<T> {
     /// #[macro_use]
     /// use cpuid::bit_helper::*;
     ///
-    /// fn main() {
-    ///     let range = BitRange {
-    ///         msb_index: 7,
-    ///         lsb_index: 3,
-    ///     };
-    ///     println!("binary value: {:b}", range.get_mask());
-    /// }
+    /// let range = BitRange {
+    ///     msb_index: 7,
+    ///     lsb_index: 3,
+    /// };
+    /// println!("binary value: {:b}", range.get_mask());
     /// ```
     /// The code above will print:
     /// ```bash
@@ -109,14 +105,12 @@ pub trait BitHelper {
     /// #[macro_use]
     /// use cpuid::bit_helper::*;
     ///
-    /// fn main() {
-    ///     let val: u32 = 0b000010001000;
-    ///     let range = BitRange {
-    ///         msb_index: 7,
-    ///         lsb_index: 3,
-    ///     };
-    ///     println!("binary value: {:b}", val.read_bits_in_range(&range));
-    /// }
+    /// let val: u32 = 0b000010001000;
+    /// let range = BitRange {
+    ///     msb_index: 7,
+    ///     lsb_index: 3,
+    /// };
+    /// println!("binary value: {:b}", val.read_bits_in_range(&range));
     /// ```
     /// The code above will print:
     /// ```bash
@@ -132,15 +126,13 @@ pub trait BitHelper {
     /// #[macro_use]
     /// use cpuid::bit_helper::*;
     ///
-    /// fn main() {
-    ///     let mut val: u32 = 0;
-    ///     let range = BitRange {
-    ///         msb_index: 7,
-    ///         lsb_index: 3,
-    ///     };
-    ///     val.write_bits_in_range(&range, 0b10001 as u32);
-    ///     println!("binary value: {:b}", val);
-    /// }
+    /// let mut val: u32 = 0;
+    /// let range = BitRange {
+    ///     msb_index: 7,
+    ///     lsb_index: 3,
+    /// };
+    /// val.write_bits_in_range(&range, 0b10001 as u32);
+    /// println!("binary value: {:b}", val);
     /// ```
     /// The code above will print:
     /// ```bash

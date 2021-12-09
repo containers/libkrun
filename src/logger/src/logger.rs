@@ -354,12 +354,10 @@ impl Logger {
     /// use logger::LOGGER;
     /// use std::ops::Deref;
     ///
-    /// fn main() {
-    ///     LOGGER
-    ///         .deref()
-    ///         .configure(Some("MY-INSTANCE".to_string()))
-    ///         .unwrap();
-    /// }
+    /// LOGGER
+    ///     .deref()
+    ///     .configure(Some("MY-INSTANCE".to_string()))
+    ///     .unwrap();
     /// ```
     pub fn configure(&self, instance_id: Option<String>) -> Result<()> {
         self.try_lock(INITIALIZING)?;
@@ -390,14 +388,12 @@ impl Logger {
     ///
     /// use std::io::Cursor;
     ///
-    /// fn main() {
-    ///     let mut logs = Cursor::new(vec![0; 15]);
+    /// let mut logs = Cursor::new(vec![0; 15]);
     ///
-    ///     LOGGER.init(
-    ///         "Running Firecracker v.x".to_string(),
-    ///         Box::new(logs),
-    ///     );
-    /// }
+    /// LOGGER.init(
+    ///     "Running Firecracker v.x".to_string(),
+    ///     Box::new(logs),
+    /// );
     /// ```
     pub fn init(&self, header: String, log_dest: Box<dyn Write + Send>) -> Result<()> {
         self.try_lock(INITIALIZING)?;
