@@ -100,11 +100,9 @@ pub fn setup_sregs(mem: &GuestMemoryMmap, vcpu: &VcpuFd, id: u8) -> Result<()> {
     if cfg!(not(feature = "amd-sev")) {
         configure_segments_and_sregs(mem, &mut sregs)?;
         setup_page_tables(mem, &mut sregs)?; // TODO(dgreid) - Can this be done once per system instead
-    } else {
-        if id != 0 {
-            sregs.cs.selector = 0x9100;
-            sregs.cs.base = 0x91000;
-        }
+    } else if id != 0 {
+        sregs.cs.selector = 0x9100;
+        sregs.cs.base = 0x91000;
     }
 
     vcpu.set_sregs(&sregs).map_err(Error::SetStatusRegisters)
@@ -220,11 +218,11 @@ mod tests {
     }
 
     fn validate_segments_and_sregs(gm: &GuestMemoryMmap, sregs: &kvm_sregs) {
-        assert_eq!(0x0, read_u64(&gm, BOOT_GDT_OFFSET));
-        assert_eq!(0xaf_9b00_0000_ffff, read_u64(&gm, BOOT_GDT_OFFSET + 8));
-        assert_eq!(0xcf_9300_0000_ffff, read_u64(&gm, BOOT_GDT_OFFSET + 16));
-        assert_eq!(0x8f_8b00_0000_ffff, read_u64(&gm, BOOT_GDT_OFFSET + 24));
-        assert_eq!(0x0, read_u64(&gm, BOOT_IDT_OFFSET));
+        assert_eq!(0x0, read_u64(gm, BOOT_GDT_OFFSET));
+        assert_eq!(0xaf_9b00_0000_ffff, read_u64(gm, BOOT_GDT_OFFSET + 8));
+        assert_eq!(0xcf_9300_0000_ffff, read_u64(gm, BOOT_GDT_OFFSET + 16));
+        assert_eq!(0x8f_8b00_0000_ffff, read_u64(gm, BOOT_GDT_OFFSET + 24));
+        assert_eq!(0x0, read_u64(gm, BOOT_IDT_OFFSET));
 
         assert_eq!(0, sregs.cs.base);
         assert_eq!(0xfffff, sregs.ds.limit);
@@ -249,10 +247,10 @@ mod tests {
     }
 
     fn validate_page_tables(gm: &GuestMemoryMmap, sregs: &kvm_sregs) {
-        assert_eq!(0xa003, read_u64(&gm, PML4_START));
-        assert_eq!(0xb003, read_u64(&gm, PDPTE_START));
+        assert_eq!(0xa003, read_u64(gm, PML4_START));
+        assert_eq!(0xb003, read_u64(gm, PDPTE_START));
         for i in 0..512 {
-            assert_eq!((i << 21) + 0x83u64, read_u64(&gm, PDE_START + (i * 8)));
+            assert_eq!((i << 21) + 0x83u64, read_u64(gm, PDE_START + (i * 8)));
         }
 
         assert_eq!(PML4_START as u64, sregs.cr3);
