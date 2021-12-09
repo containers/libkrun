@@ -338,7 +338,7 @@ pub unsafe extern "C" fn krun_set_mapped_volumes(
                 Ok(s) => s,
                 Err(_) => return -libc::EINVAL,
             };
-            let vol_tuple: Vec<&str> = s.split(":").collect();
+            let vol_tuple: Vec<&str> = s.split(':').collect();
             if vol_tuple.len() != 2 {
                 return -libc::EINVAL;
             }
@@ -363,7 +363,7 @@ pub unsafe extern "C" fn krun_set_mapped_volumes(
             let fs_device_config = match cfg.get_fs_cfg() {
                 Some(fs_cfg) => FsDeviceConfig {
                     fs_id: fs_cfg.fs_id.clone(),
-                    shared_dir: fs_cfg.shared_dir.clone(),
+                    shared_dir: fs_cfg.shared_dir,
                     mapped_volumes: Some(mapped_volumes),
                 },
                 None => FsDeviceConfig {
@@ -423,7 +423,7 @@ pub unsafe extern "C" fn krun_set_port_map(ctx_id: u32, c_port_map: *const *cons
                 Ok(s) => s,
                 Err(_) => return -libc::EINVAL,
             };
-            let port_tuple: Vec<&str> = s.split(":").collect();
+            let port_tuple: Vec<&str> = s.split(':').collect();
             if port_tuple.len() != 2 {
                 return -libc::EINVAL;
             }
@@ -485,7 +485,7 @@ pub unsafe extern "C" fn krun_set_rlimits(ctx_id: u32, c_rlimits: *const *const 
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
-            ctx_cfg.get_mut().set_rlimits(rlimits.to_string());
+            ctx_cfg.get_mut().set_rlimits(rlimits);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -646,17 +646,18 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         ctx_cfg.vmr.set_attestation_url(url);
     }
 
-    let mut boot_source = BootSourceConfig::default();
-    boot_source.kernel_cmdline_prolog = Some(format!(
-        "{} init={} KRUN_INIT={} KRUN_WORKDIR={} {} {}",
-        DEFAULT_KERNEL_CMDLINE,
-        INIT_PATH,
-        ctx_cfg.get_exec_path(),
-        ctx_cfg.get_workdir(),
-        ctx_cfg.get_rlimits(),
-        ctx_cfg.get_env(),
-    ));
-    boot_source.kernel_cmdline_epilog = Some(format!(" -- {}", ctx_cfg.get_args()));
+    let boot_source = BootSourceConfig {
+        kernel_cmdline_prolog: Some(format!(
+            "{} init={} KRUN_INIT={} KRUN_WORKDIR={} {} {}",
+            DEFAULT_KERNEL_CMDLINE,
+            INIT_PATH,
+            ctx_cfg.get_exec_path(),
+            ctx_cfg.get_workdir(),
+            ctx_cfg.get_rlimits(),
+            ctx_cfg.get_env(),
+        )),
+        kernel_cmdline_epilog: Some(format!(" -- {}", ctx_cfg.get_args())),
+    };
 
     if ctx_cfg.vmr.set_boot_source(boot_source).is_err() {
         return -libc::EINVAL;
