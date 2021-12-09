@@ -4,5 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-vm-memory = { git = "https://github.com/rust-vmm/vm-memory", features = ["backend-mmap"] }
+vm-memory = { version = "0.7.0", features = ["backend-mmap"] }
+
 utils = { path = "../utils" }
