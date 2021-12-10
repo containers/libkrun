@@ -128,7 +128,7 @@ pub fn create_fdt<T: DeviceInfoForFDT + Clone + Debug>(
     finish_fdt(&mut fdt, &mut fdt_final)?;
 
     // Write FDT to memory.
-    let fdt_address = GuestAddress(get_fdt_addr(&guest_mem));
+    let fdt_address = GuestAddress(get_fdt_addr(guest_mem));
     guest_mem
         .write_slice(fdt_final.as_slice(), fdt_address)
         .map_err(Error::WriteFDTToMemory)?;
@@ -301,7 +301,7 @@ fn generate_prop64(cells: &[u64]) -> Vec<u8> {
 }
 
 // Following are the auxiliary function for creating the different nodes that we append to our FDT.
-fn create_cpu_nodes(fdt: &mut Vec<u8>, vcpu_mpidr: &Vec<u64>) -> Result<()> {
+fn create_cpu_nodes(fdt: &mut Vec<u8>, vcpu_mpidr: &[u64]) -> Result<()> {
     // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/cpus.yaml.
     append_begin_node(fdt, "cpus")?;
     // As per documentation, on ARM v8 64-bit systems value should be set to 2.
@@ -309,8 +309,8 @@ fn create_cpu_nodes(fdt: &mut Vec<u8>, vcpu_mpidr: &Vec<u64>) -> Result<()> {
     append_property_u32(fdt, "#size-cells", 0x0)?;
     let num_cpus = vcpu_mpidr.len();
 
-    for cpu_index in 0..num_cpus {
-        let cpu_name = format!("cpu@{:x}", cpu_index);
+    for (index, mpidr) in vcpu_mpidr.iter().enumerate() {
+        let cpu_name = format!("cpu@{:x}", index);
         append_begin_node(fdt, &cpu_name)?;
         append_property_string(fdt, "device_type", "cpu")?;
         append_property_string(fdt, "compatible", "arm,arm-v8")?;
@@ -320,7 +320,7 @@ fn create_cpu_nodes(fdt: &mut Vec<u8>, vcpu_mpidr: &Vec<u64>) -> Result<()> {
         }
         // Set the field to first 24 bits of the MPIDR - Multiprocessor Affinity Register.
         // See http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0488c/BABHBJCI.html.
-        append_property_u64(fdt, "reg", vcpu_mpidr[cpu_index] & 0x7FFFFF)?;
+        append_property_u64(fdt, "reg", mpidr & 0x7FFFFF)?;
         append_end_node(fdt)?;
     }
     append_end_node(fdt)?;
@@ -532,7 +532,7 @@ fn create_devices_node<T: DeviceInfoForFDT + Clone + Debug>(
     }
 
     // Sort out virtio devices by address from low to high and insert them into fdt table.
-    ordered_virtio_device.sort_by(|a, b| a.addr().cmp(&b.addr()));
+    ordered_virtio_device.sort_by_key(|a| a.addr());
     for ordered_device_info in ordered_virtio_device.drain(..) {
         create_virtio_node(fdt, ordered_device_info)?;
     }
