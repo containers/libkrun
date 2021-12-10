@@ -30,4 +30,4 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Clippy (default features)
-        run: cargo clippy
+        run: cargo clippy -- -D warnings
