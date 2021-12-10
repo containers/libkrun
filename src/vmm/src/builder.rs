@@ -712,7 +712,7 @@ pub(crate) fn setup_vm(
     let mut vm = Vm::new()
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
-    vm.memory_init(&guest_memory)
+    vm.memory_init(guest_memory)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     Ok(vm)

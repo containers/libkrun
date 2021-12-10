@@ -23,6 +23,7 @@ use utils::eventfd::EventFd;
 use crate::vstate::Vm;
 
 /// Errors for MMIO device manager.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
 pub enum Error {
     /// Failed to perform an operation on the bus.

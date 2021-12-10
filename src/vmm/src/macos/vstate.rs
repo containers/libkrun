@@ -147,8 +147,9 @@ impl Vm {
     }
 
     /// Gets a reference to the irqchip of the VM
+    #[allow(clippy::borrowed_box)]
     pub fn get_irqchip(&self) -> &Box<dyn GICDevice> {
-        &self.irqchip_handle.as_ref().unwrap()
+        self.irqchip_handle.as_ref().unwrap()
     }
 }
 
@@ -377,9 +378,8 @@ impl Vcpu {
                     );
                     let cpuid: usize = (mpidr >> 8) as usize;
                     if let Some(boot_senders) = &self.boot_senders {
-                        match boot_senders.get(cpuid - 1) {
-                            Some(sender) => sender.send(entry).unwrap(),
-                            None => {}
+                        if let Some(sender) = boot_senders.get(cpuid - 1) {
+                            sender.send(entry).unwrap()
                         }
                     }
                     Ok(VcpuEmulation::Handled)
@@ -455,7 +455,7 @@ impl Vcpu {
 
         hvf_vcpu
             .set_initial_state(entry_addr, self.fdt_addr)
-            .expect(&format!("Can't set HVF vCPU {} initial state", hvf_vcpuid));
+            .unwrap_or_else(|_| panic!("Can't set HVF vCPU {} initial state", hvf_vcpuid));
 
         loop {
             match self.run_emulation(&mut hvf_vcpu) {

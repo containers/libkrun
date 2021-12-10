@@ -276,7 +276,7 @@ impl Vmm {
 
         #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
         {
-            let vcpu_mpidr = vcpus.into_iter().map(|cpu| cpu.get_mpidr()).collect();
+            let vcpu_mpidr = vcpus.iter().map(|cpu| cpu.get_mpidr()).collect();
             arch::aarch64::configure_system(
                 &self.guest_memory,
                 &self.arch_memory_info,
@@ -294,7 +294,7 @@ impl Vmm {
 
         #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
         {
-            let vcpu_mpidr = vcpus.into_iter().map(|cpu| cpu.get_mpidr()).collect();
+            let vcpu_mpidr = vcpus.iter().map(|cpu| cpu.get_mpidr()).collect();
             arch::aarch64::configure_system(
                 &self.guest_memory,
                 &self.arch_memory_info,
