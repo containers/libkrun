@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use std::convert::TryInto;
 use std::mem;
 
 use super::bindings;
@@ -714,20 +713,21 @@ pub struct SetattrIn {
 }
 unsafe impl ByteValued for SetattrIn {}
 
-impl Into<bindings::stat64> for SetattrIn {
-    fn into(self) -> bindings::stat64 {
-        // Safe because we are zero-initializing a struct with only POD fields.
+impl From<SetattrIn> for bindings::stat64 {
+    #[allow(clippy::useless_conversion)]
+    fn from(sai: SetattrIn) -> bindings::stat64 {
         let mut out: bindings::stat64 = unsafe { mem::zeroed() };
-        out.st_mode = self.mode.try_into().unwrap();
-        out.st_uid = self.uid;
-        out.st_gid = self.gid;
-        out.st_size = self.size as i64;
-        out.st_atime = self.atime as i64;
-        out.st_mtime = self.mtime as i64;
-        out.st_ctime = self.ctime as i64;
-        out.st_atime_nsec = i64::from(self.atimensec);
-        out.st_mtime_nsec = i64::from(self.mtimensec);
-        out.st_ctime_nsec = i64::from(self.ctimensec);
+        // We need this conversion on macOS.
+        out.st_mode = sai.mode.try_into().unwrap();
+        out.st_uid = sai.uid;
+        out.st_gid = sai.gid;
+        out.st_size = sai.size as i64;
+        out.st_atime = sai.atime as i64;
+        out.st_mtime = sai.mtime as i64;
+        out.st_ctime = sai.ctime as i64;
+        out.st_atime_nsec = sai.atimensec.into();
+        out.st_mtime_nsec = sai.mtimensec.into();
+        out.st_ctime_nsec = sai.ctimensec.into();
 
         out
     }

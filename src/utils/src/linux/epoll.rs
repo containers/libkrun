@@ -5,6 +5,7 @@ use std::io;
 use std::ops::Deref;
 use std::os::unix::io::{AsRawFd, RawFd};
 
+use bitflags::bitflags;
 use libc::{
     epoll_create1, epoll_ctl, epoll_event, epoll_wait, EPOLLERR, EPOLLET, EPOLLEXCLUSIVE, EPOLLHUP,
     EPOLLIN, EPOLLONESHOT, EPOLLOUT, EPOLLPRI, EPOLLRDHUP, EPOLLWAKEUP, EPOLL_CLOEXEC,

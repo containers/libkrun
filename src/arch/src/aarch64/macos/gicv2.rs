@@ -76,7 +76,7 @@ impl GICDevice for GICv2 {
                 GICv2::get_cpu_addr(),
                 GICv2::get_cpu_size(),
             ],
-            vcpu_count: vcpu_count,
+            vcpu_count,
         })
     }
 

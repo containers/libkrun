@@ -157,7 +157,7 @@ impl<F: FileSystem + Sync> Server<F> {
 
         match self
             .fs
-            .lookup(Context::from(in_header), in_header.nodeid.into(), &name)
+            .lookup(Context::from(in_header), in_header.nodeid.into(), name)
         {
             Ok(entry) => {
                 let out = EntryOut::from(entry);
@@ -1315,7 +1315,7 @@ fn reply_ok<T: ByteValued>(
         len += size_of::<T>();
     }
 
-    if let Some(ref data) = data {
+    if let Some(data) = data {
         len += data.len();
     }
 

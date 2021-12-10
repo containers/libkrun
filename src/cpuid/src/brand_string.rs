@@ -1,7 +1,7 @@
 // Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use common::{VENDOR_ID_AMD, VENDOR_ID_INTEL};
+use crate::common::{VENDOR_ID_AMD, VENDOR_ID_INTEL};
 use std::arch::x86_64::__cpuid as host_cpuid;
 use std::slice;
 
@@ -12,6 +12,7 @@ pub enum Error {
 }
 
 /// Register designations used to get/set specific register values within the brand string buffer.
+#[allow(clippy::upper_case_acronyms)]
 pub enum Reg {
     EAX = 0,
     EBX = 1,

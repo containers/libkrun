@@ -9,15 +9,12 @@
 ///
 /// ```
 /// #[macro_use]
-/// extern crate cpuid;
 /// use cpuid::bit_helper::*;
 ///
-/// fn main() {
-///     let range = BitRange {
-///         msb_index: 7,
-///         lsb_index: 3,
-///     };
-/// }
+/// let range = BitRange {
+///     msb_index: 7,
+///     lsb_index: 3,
+/// };
 /// ```
 /// The BitRange specified above will represent the following part of the number 72:
 /// +-------------------------------------+---+---+---+---+---+---+---+---+---+---+
@@ -46,16 +43,13 @@ pub trait BitRangeExt<T> {
     ///
     /// ```
     /// #[macro_use]
-    /// extern crate cpuid;
     /// use cpuid::bit_helper::*;
     ///
-    /// fn main() {
-    ///     let range = BitRange {
-    ///         msb_index: 7,
-    ///         lsb_index: 3,
-    ///     };
-    ///     println!("binary value: {:b}", range.get_mask());
-    /// }
+    /// let range = BitRange {
+    ///     msb_index: 7,
+    ///     lsb_index: 3,
+    /// };
+    /// println!("binary value: {:b}", range.get_mask());
     /// ```
     /// The code above will print:
     /// ```bash
@@ -78,7 +72,7 @@ impl BitRangeExt<u32> for BitRange {
     fn get_mask(&self) -> u32 {
         self.check();
 
-        ((((1 as u64) << (self.msb_index - self.lsb_index + 1)) - 1) << self.lsb_index) as u32
+        ((((1_u64) << (self.msb_index - self.lsb_index + 1)) - 1) << self.lsb_index) as u32
     }
 
     fn is_valid(&self) -> bool {
@@ -109,17 +103,14 @@ pub trait BitHelper {
     ///
     /// ```
     /// #[macro_use]
-    /// extern crate cpuid;
     /// use cpuid::bit_helper::*;
     ///
-    /// fn main() {
-    ///     let val: u32 = 0b000010001000;
-    ///     let range = BitRange {
-    ///         msb_index: 7,
-    ///         lsb_index: 3,
-    ///     };
-    ///     println!("binary value: {:b}", val.read_bits_in_range(&range));
-    /// }
+    /// let val: u32 = 0b000010001000;
+    /// let range = BitRange {
+    ///     msb_index: 7,
+    ///     lsb_index: 3,
+    /// };
+    /// println!("binary value: {:b}", val.read_bits_in_range(&range));
     /// ```
     /// The code above will print:
     /// ```bash
@@ -133,18 +124,15 @@ pub trait BitHelper {
     ///
     /// ```
     /// #[macro_use]
-    /// extern crate cpuid;
     /// use cpuid::bit_helper::*;
     ///
-    /// fn main() {
-    ///     let mut val: u32 = 0;
-    ///     let range = BitRange {
-    ///         msb_index: 7,
-    ///         lsb_index: 3,
-    ///     };
-    ///     val.write_bits_in_range(&range, 0b10001 as u32);
-    ///     println!("binary value: {:b}", val);
-    /// }
+    /// let mut val: u32 = 0;
+    /// let range = BitRange {
+    ///     msb_index: 7,
+    ///     lsb_index: 3,
+    /// };
+    /// val.write_bits_in_range(&range, 0b10001 as u32);
+    /// println!("binary value: {:b}", val);
     /// ```
     /// The code above will print:
     /// ```bash
@@ -188,7 +176,7 @@ impl BitHelper for u32 {
 
 #[cfg(test)]
 mod tests {
-    use bit_helper::*;
+    use crate::bit_helper::*;
 
     #[test]
     #[should_panic]

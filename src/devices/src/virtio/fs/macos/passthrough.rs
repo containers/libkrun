@@ -148,8 +148,8 @@ fn set_xattr(filepath: &str, attr: &[u8], val: u32) -> i32 {
 }
 
 fn fget_xattr_owner(fd: RawFd) -> Option<(u32, u32)> {
-    let uid = fget_xattr(fd, &XATTR_UID);
-    let gid = fget_xattr(fd, &XATTR_GID);
+    let uid = fget_xattr(fd, XATTR_UID);
+    let gid = fget_xattr(fd, XATTR_GID);
     if let Some(uid) = uid {
         if let Some(gid) = gid {
             return Some((uid, gid));
@@ -160,14 +160,14 @@ fn fget_xattr_owner(fd: RawFd) -> Option<(u32, u32)> {
 
 fn fset_xattr_owner(fd: RawFd, uid: u32, gid: u32) -> i32 {
     if uid <= UID_MAX {
-        let res = fset_xattr(fd, &XATTR_UID, uid);
+        let res = fset_xattr(fd, XATTR_UID, uid);
         if res < 0 {
             return res;
         }
     }
 
     if gid <= UID_MAX {
-        let res = fset_xattr(fd, &XATTR_GID, gid);
+        let res = fset_xattr(fd, XATTR_GID, gid);
         if res < 0 {
             return res;
         }
@@ -177,23 +177,23 @@ fn fset_xattr_owner(fd: RawFd, uid: u32, gid: u32) -> i32 {
 }
 
 fn fget_xattr_mode(fd: RawFd) -> Option<u32> {
-    fget_xattr(fd, &XATTR_MODE)
+    fget_xattr(fd, XATTR_MODE)
 }
 
 fn fset_xattr_mode(fd: RawFd, mode: u32) -> i32 {
-    fset_xattr(fd, &XATTR_MODE, mode)
+    fset_xattr(fd, XATTR_MODE, mode)
 }
 
 fn set_xattr_owner(filepath: &str, uid: u32, gid: u32) -> i32 {
     if uid <= UID_MAX {
-        let res = set_xattr(filepath, &XATTR_UID, uid);
+        let res = set_xattr(filepath, XATTR_UID, uid);
         if res < 0 {
             return res;
         }
     }
 
     if gid <= UID_MAX {
-        let res = set_xattr(filepath, &XATTR_GID, gid);
+        let res = set_xattr(filepath, XATTR_GID, gid);
         if res < 0 {
             return res;
         }
@@ -203,7 +203,7 @@ fn set_xattr_owner(filepath: &str, uid: u32, gid: u32) -> i32 {
 }
 
 fn set_xattr_mode(filepath: &str, mode: u32) -> i32 {
-    set_xattr(filepath, &XATTR_MODE, mode)
+    set_xattr(filepath, XATTR_MODE, mode)
 }
 
 fn fstat(f: &File) -> io::Result<bindings::stat64> {
@@ -523,7 +523,7 @@ impl PassthroughFs {
             .unwrap()
             .get(&name.to_str().unwrap().to_string())
         {
-            if let Some(data) = self.inodes.read().unwrap().get(&inode) {
+            if let Some(data) = self.inodes.read().unwrap().get(inode) {
                 let file = self.get_file(data.inode)?;
                 let st = fstat(&file)?;
                 data.refcount.fetch_add(1, Ordering::Acquire);
@@ -542,7 +542,7 @@ impl PassthroughFs {
 
     fn do_lookup(&self, parent: Inode, name: &CStr) -> io::Result<Entry> {
         if parent == fuse::ROOT_ID {
-            if let Some(entry) = self.lookup_host_volume(name).ok() {
+            if let Ok(entry) = self.lookup_host_volume(name) {
                 return Ok(entry);
             }
         }
@@ -665,7 +665,7 @@ impl PassthroughFs {
 
         let dir_stream = if ds.stream == 0 {
             let dir = unsafe { libc::fdopendir(data.file.write().unwrap().as_raw_fd()) };
-            if dir == std::ptr::null_mut() {
+            if dir.is_null() {
                 return Err(linux_error(io::Error::last_os_error()));
             }
             ds.stream = dir as u64;
@@ -682,7 +682,7 @@ impl PassthroughFs {
             ds.offset = unsafe { libc::telldir(dir_stream) };
 
             let dentry = unsafe { libc::readdir(dir_stream) };
-            if dentry == std::ptr::null_mut() {
+            if dentry.is_null() {
                 break;
             }
 
@@ -863,7 +863,8 @@ fn forget_one(
             // Synchronizes with the acquire load in `do_lookup`.
             if data
                 .refcount
-                .compare_and_swap(refcount, new_count, Ordering::Release)
+                .compare_exchange(refcount, new_count, Ordering::Release, Ordering::Relaxed)
+                .unwrap()
                 == refcount
             {
                 if new_count == 0 {
@@ -1795,7 +1796,7 @@ impl FileSystem for PassthroughFs {
     }
 
     fn listxattr(&self, _ctx: Context, inode: Inode, size: u32) -> io::Result<ListxattrReply> {
-        let mut buf = vec![0; 512 as usize];
+        let mut buf = vec![0; 512_usize];
 
         let file = self.get_file(inode)?;
 
@@ -1832,7 +1833,7 @@ impl FileSystem for PassthroughFs {
             let mut clean_buf = Vec::new();
 
             for attr in buf.split(|c| *c == 0) {
-                if attr.len() == 0
+                if attr.is_empty()
                     || attr.starts_with(&XATTR_UID[..XATTR_UID.len() - 1])
                     || attr.starts_with(&XATTR_GID[..XATTR_GID.len() - 1])
                     || attr.starts_with(&XATTR_MODE[..XATTR_MODE.len() - 1])

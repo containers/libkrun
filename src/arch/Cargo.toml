@@ -2,16 +2,17 @@
 name = "arch"
 version = "0.1.0"
 authors = ["The Chromium OS Authors"]
+edition = "2021"
 
 [features]
 amd-sev = []
 
 [dependencies]
 libc = ">=0.2.39"
-utils = { path = "../utils" }
+vm-memory = { version = "0.7.0", features = ["backend-mmap"] }
 
 arch_gen = { path = "../arch_gen" }
-vm-memory = { git = "https://github.com/rust-vmm/vm-memory", features = ["backend-mmap"] }
+utils = { path = "../utils" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 kvm-bindings = { version = ">=0.2", features = ["fam-wrappers"] }

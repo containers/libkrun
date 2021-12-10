@@ -17,14 +17,14 @@ pub mod msr;
 /// Logic for configuring x86_64 registers.
 pub mod regs;
 
+use crate::ArchMemoryInfo;
+use crate::InitrdConfig;
 use arch_gen::x86::bootparam::{boot_params, E820_RAM};
 #[cfg(not(feature = "amd-sev"))]
 use vm_memory::Bytes;
 use vm_memory::{
     Address, ByteValued, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion,
 };
-use ArchMemoryInfo;
-use InitrdConfig;
 
 // This is a workaround to the Rust enforcement specifying that any implementation of a foreign
 // trait (in this case `ByteValued`) where:
@@ -310,8 +310,8 @@ mod tests {
     use super::*;
     use arch_gen::x86::bootparam::e820entry;
 
-    const KERNEL_LOAD_ADDR: u64 = 0x1_000_000;
-    const KERNEL_SIZE: usize = 0x1E00_000;
+    const KERNEL_LOAD_ADDR: u64 = 0x0100_0000;
+    const KERNEL_SIZE: usize = 0x01E0_0000;
 
     #[test]
     fn regions_lt_4gb() {
@@ -347,6 +347,7 @@ mod tests {
         let info = ArchMemoryInfo::default();
         let config_err = configure_system(&gm, &info, GuestAddress(0), 0, &None, 1);
         assert!(config_err.is_err());
+        #[cfg(not(feature = "amd-sev"))]
         assert_eq!(
             config_err.unwrap_err(),
             super::Error::MpTableSetup(mptable::Error::NotEnoughMemory)

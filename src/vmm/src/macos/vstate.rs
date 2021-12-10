@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use super::super::TimestampUs;
 use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
+use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 
 use arch;
 use arch::aarch64::gic::GICDevice;
@@ -26,7 +27,6 @@ use utils::eventfd::EventFd;
 use vm_memory::{
     Address, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion,
 };
-use vmm_config::machine_config::CpuFeaturesTemplate;
 
 /// Errors associated with the wrappers over KVM ioctls.
 #[derive(Debug)]
@@ -119,23 +119,23 @@ impl Vm {
 
     /// Initializes the guest memory.
     pub fn memory_init(&mut self, guest_mem: &GuestMemoryMmap) -> Result<()> {
-        guest_mem
-            .with_regions(|_index, region| {
-                // It's safe to unwrap because the guest address is valid.
-                let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
-                debug!(
-                    "Guest memory host_addr={:x?} guest_addr={:x?} len={:x?}",
-                    host_addr,
-                    region.start_addr().raw_value(),
-                    region.len()
-                );
-                self.hvf_vm.map_memory(
+        for region in guest_mem.iter() {
+            // It's safe to unwrap because the guest address is valid.
+            let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
+            debug!(
+                "Guest memory host_addr={:x?} guest_addr={:x?} len={:x?}",
+                host_addr,
+                region.start_addr().raw_value(),
+                region.len()
+            );
+            self.hvf_vm
+                .map_memory(
                     host_addr as u64,
                     region.start_addr().raw_value() as u64,
                     region.len() as u64,
                 )
-            })
-            .map_err(Error::SetUserMemoryRegion)?;
+                .map_err(Error::SetUserMemoryRegion)?;
+        }
 
         Ok(())
     }
@@ -147,8 +147,9 @@ impl Vm {
     }
 
     /// Gets a reference to the irqchip of the VM
+    #[allow(clippy::borrowed_box)]
     pub fn get_irqchip(&self) -> &Box<dyn GICDevice> {
-        &self.irqchip_handle.as_ref().unwrap()
+        self.irqchip_handle.as_ref().unwrap()
     }
 }
 
@@ -377,9 +378,8 @@ impl Vcpu {
                     );
                     let cpuid: usize = (mpidr >> 8) as usize;
                     if let Some(boot_senders) = &self.boot_senders {
-                        match boot_senders.get(cpuid - 1) {
-                            Some(sender) => sender.send(entry).unwrap(),
-                            None => {}
+                        if let Some(sender) = boot_senders.get(cpuid - 1) {
+                            sender.send(entry).unwrap()
                         }
                     }
                     Ok(VcpuEmulation::Handled)
@@ -455,7 +455,7 @@ impl Vcpu {
 
         hvf_vcpu
             .set_initial_state(entry_addr, self.fdt_addr)
-            .expect(&format!("Can't set HVF vCPU {} initial state", hvf_vcpuid));
+            .unwrap_or_else(|_| panic!("Can't set HVF vCPU {} initial state", hvf_vcpuid));
 
         loop {
             match self.run_emulation(&mut hvf_vcpu) {

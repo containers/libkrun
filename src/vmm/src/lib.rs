@@ -10,36 +10,8 @@
 //! machine (microVM).
 //#![deny(missing_docs)]
 
-#[cfg(target_os = "macos")]
-extern crate hvf;
-#[cfg(target_os = "linux")]
-extern crate kvm_bindings;
-#[cfg(target_os = "linux")]
-extern crate kvm_ioctls;
-
-#[cfg(feature = "amd-sev")]
-extern crate codicon;
-#[cfg(feature = "amd-sev")]
-extern crate procfs;
-#[cfg(feature = "amd-sev")]
-extern crate reqwest;
-#[cfg(feature = "amd-sev")]
-extern crate serde;
-#[cfg(feature = "amd-sev")]
-extern crate sev;
-
-extern crate libc;
-extern crate polly;
-
-extern crate arch;
-#[cfg(target_arch = "x86_64")]
-extern crate cpuid;
-extern crate devices;
-extern crate kernel;
 #[macro_use]
 extern crate logger;
-extern crate utils;
-extern crate vm_memory;
 
 /// Handles setup and initialization a `Vmm` object.
 pub mod builder;
@@ -55,7 +27,7 @@ pub mod vmm_config;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-use linux::vstate;
+use crate::linux::vstate;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
@@ -68,12 +40,15 @@ use std::sync::Mutex;
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 
+#[cfg(target_arch = "x86_64")]
+use crate::device_manager::legacy::PortIODeviceManager;
+use crate::device_manager::mmio::MMIODeviceManager;
+#[cfg(target_os = "linux")]
+use crate::vstate::VcpuEvent;
+use crate::vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
 use arch::ArchMemoryInfo;
 use arch::DeviceType;
 use arch::InitrdConfig;
-#[cfg(target_arch = "x86_64")]
-use device_manager::legacy::PortIODeviceManager;
-use device_manager::mmio::MMIODeviceManager;
 use devices::BusDevice;
 use kernel::cmdline::Cmdline as KernelCmdline;
 use logger::LoggerError;
@@ -82,9 +57,6 @@ use utils::epoll::{EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 use utils::time::TimestampUs;
 use vm_memory::GuestMemoryMmap;
-#[cfg(target_os = "linux")]
-use vstate::VcpuEvent;
-use vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
 
 /// Success exit code.
 pub const FC_EXIT_CODE_OK: u8 = 0;
@@ -304,7 +276,7 @@ impl Vmm {
 
         #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
         {
-            let vcpu_mpidr = vcpus.into_iter().map(|cpu| cpu.get_mpidr()).collect();
+            let vcpu_mpidr = vcpus.iter().map(|cpu| cpu.get_mpidr()).collect();
             arch::aarch64::configure_system(
                 &self.guest_memory,
                 &self.arch_memory_info,
@@ -322,7 +294,7 @@ impl Vmm {
 
         #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
         {
-            let vcpu_mpidr = vcpus.into_iter().map(|cpu| cpu.get_mpidr()).collect();
+            let vcpu_mpidr = vcpus.iter().map(|cpu| cpu.get_mpidr()).collect();
             arch::aarch64::configure_system(
                 &self.guest_memory,
                 &self.arch_memory_info,

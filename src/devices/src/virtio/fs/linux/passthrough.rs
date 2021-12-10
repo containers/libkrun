@@ -663,12 +663,11 @@ fn forget_one(
             let new_count = refcount.saturating_sub(count);
 
             // Synchronizes with the acquire load in `do_lookup`.
-            if data.refcount.compare_exchange(
-                refcount,
-                new_count,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) == Ok(refcount)
+            if data
+                .refcount
+                .compare_exchange(refcount, new_count, Ordering::Release, Ordering::Relaxed)
+                .unwrap()
+                == refcount
             {
                 if new_count == 0 {
                     // We just removed the last refcount for this inode. There's no need for an
@@ -1842,7 +1841,7 @@ impl FileSystem for PassthroughFs {
                     libc::PROT_NONE,
                     libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_FIXED,
                     -1,
-                    0 as libc::off_t,
+                    0_i64,
                 )
             };
             if ret == libc::MAP_FAILED {

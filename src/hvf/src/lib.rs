@@ -6,6 +6,8 @@
 #[allow(dead_code)]
 #[allow(non_snake_case)]
 #[allow(non_upper_case_globals)]
+#[allow(unaligned_references)]
+#[allow(deref_nullptr)]
 mod bindings;
 use bindings::*;
 
@@ -253,7 +255,7 @@ impl<'a> HvfVcpu<'a> {
         Ok(Self {
             vcpuid,
             vcpu_exit,
-            cntfrq: cntfrq,
+            cntfrq,
             mmio_buf: [0; 8],
             pending_mmio_read: None,
             pending_advance_pc: false,

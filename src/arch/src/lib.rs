@@ -3,15 +3,6 @@
 
 //! Implements platform specific functionality.
 //! Supported platforms: x86_64 and aarch64.
-#[cfg(target_os = "linux")]
-extern crate kvm_bindings;
-#[cfg(target_os = "linux")]
-extern crate kvm_ioctls;
-extern crate libc;
-
-extern crate arch_gen;
-extern crate utils;
-extern crate vm_memory;
 
 use std::fmt;
 use std::result;
@@ -39,7 +30,7 @@ pub use aarch64::{
 pub mod x86_64;
 
 #[cfg(target_arch = "x86_64")]
-pub use x86_64::{
+pub use crate::x86_64::{
     arch_memory_regions, configure_system, get_kernel_start, initrd_load_addr,
     layout::CMDLINE_MAX_SIZE, layout::IRQ_BASE, layout::IRQ_MAX, Error, BIOS_SIZE, BIOS_START,
     MMIO_MEM_START, MMIO_SHM_SIZE, RESET_VECTOR,

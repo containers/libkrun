@@ -368,7 +368,7 @@ mod tests {
         let intr_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
         let serial_out = SharedBuffer::new();
 
-        let mut serial = Serial::new_out(intr_evt, Box::new(serial_out.clone()));
+        let mut serial = Serial::new_out(intr_evt, Box::new(serial_out));
         // A serial without in does not have any events in the list.
         assert!(serial.interest_list().is_empty());
         // Even though there is no in, process should not panic. Call it to validate this.
@@ -386,7 +386,7 @@ mod tests {
         let mut serial = Serial::new_in_out(
             intr_evt.try_clone().unwrap(),
             Box::new(serial_in_out.clone()),
-            Box::new(serial_in_out.clone()),
+            Box::new(serial_in_out),
         );
         // Check that the interest list contains the EPOLL_IN event.
         assert_eq!(serial.interest_list().len(), 1);
@@ -525,8 +525,8 @@ mod tests {
         let mut serial = Serial::new_sink(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap());
 
         serial.write(0, u64::from(LCR), &[LCR_DLAB_BIT as u8]);
-        serial.write(0, u64::from(DLAB_LOW), &[0x12 as u8]);
-        serial.write(0, u64::from(DLAB_HIGH), &[0x34 as u8]);
+        serial.write(0, u64::from(DLAB_LOW), &[0x12_u8]);
+        serial.write(0, u64::from(DLAB_HIGH), &[0x34_u8]);
 
         let mut data = [0u8];
         serial.read(0, u64::from(LCR), &mut data[..]);
@@ -563,10 +563,10 @@ mod tests {
     fn test_serial_scratch() {
         let mut serial = Serial::new_sink(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap());
 
-        serial.write(0, u64::from(SCR), &[0x12 as u8]);
+        serial.write(0, u64::from(SCR), &[0x12_u8]);
 
         let mut data = [0u8];
         serial.read(0, u64::from(SCR), &mut data[..]);
-        assert_eq!(data[0], 0x12 as u8);
+        assert_eq!(data[0], 0x12_u8);
     }
 }

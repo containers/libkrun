@@ -49,7 +49,7 @@ impl BlockBuilder {
     }
 
     pub fn create_block(config: BlockDeviceConfig) -> Result<Block> {
-        Ok(devices::virtio::Block::new(
+        devices::virtio::Block::new(
             config.block_id,
             None,
             config.cache_type,
@@ -57,6 +57,6 @@ impl BlockBuilder {
             config.is_disk_read_only,
             config.is_disk_root,
         )
-        .map_err(BlockConfigError::CreateBlockDevice)?)
+        .map_err(BlockConfigError::CreateBlockDevice)
     }
 }

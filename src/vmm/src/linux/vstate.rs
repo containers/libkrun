@@ -24,6 +24,7 @@ use super::amdsev::{AmdSev, Error as SevError};
 #[cfg(feature = "amd-sev")]
 use sev::launch::Measurement;
 
+use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 use arch;
 #[cfg(target_arch = "aarch64")]
 use arch::aarch64::gic::GICDevice;
@@ -44,7 +45,6 @@ use utils::sm::StateMachine;
 use vm_memory::{
     Address, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion,
 };
-use vmm_config::machine_config::CpuFeaturesTemplate;
 
 #[cfg(target_arch = "x86_64")]
 const MAGIC_IOPORT_SIGNAL_GUEST_BOOT_COMPLETE: u64 = 0x03f0;
@@ -481,23 +481,25 @@ impl Vm {
         if guest_mem.num_regions() > kvm_max_memslots {
             return Err(Error::NotEnoughMemorySlots);
         }
-        guest_mem
-            .with_regions(|index, region| {
-                // It's safe to unwrap because the guest address is valid.
-                let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
-                info!("Guest memory starts at {:x?}", host_addr);
-                let memory_region = kvm_userspace_memory_region {
-                    slot: index as u32,
-                    guest_phys_addr: region.start_addr().raw_value() as u64,
-                    memory_size: region.len() as u64,
-                    userspace_addr: host_addr as u64,
-                    flags: 0,
-                };
-                // Safe because we mapped the memory region, we made sure that the regions
-                // are not overlapping.
-                unsafe { self.fd.set_user_memory_region(memory_region) }
-            })
-            .map_err(Error::SetUserMemoryRegion)?;
+        for (index, region) in guest_mem.iter().enumerate() {
+            // It's safe to unwrap because the guest address is valid.
+            let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
+            info!("Guest memory starts at {:x?}", host_addr);
+            let memory_region = kvm_userspace_memory_region {
+                slot: index as u32,
+                guest_phys_addr: region.start_addr().raw_value() as u64,
+                memory_size: region.len() as u64,
+                userspace_addr: host_addr as u64,
+                flags: 0,
+            };
+            // Safe because we mapped the memory region, we made sure that the regions
+            // are not overlapping.
+            unsafe {
+                self.fd
+                    .set_user_memory_region(memory_region)
+                    .map_err(Error::SetUserMemoryRegion)?;
+            };
+        }
 
         #[cfg(target_arch = "x86_64")]
         self.fd
@@ -529,10 +531,12 @@ impl Vm {
     #[cfg(target_arch = "x86_64")]
     pub fn setup_irqchip(&self) -> Result<()> {
         self.fd.create_irq_chip().map_err(Error::VmSetup)?;
-        let mut pit_config = kvm_pit_config::default();
-        // We need to enable the emulation of a dummy speaker port stub so that writing to port 0x61
-        // (i.e. KVM_SPEAKER_BASE_ADDRESS) does not trigger an exit to user space.
-        pit_config.flags = KVM_PIT_SPEAKER_DUMMY;
+        let pit_config = kvm_pit_config {
+            // We need to enable the emulation of a dummy speaker port stub so that writing to port
+            // 0x61 (i.e. KVM_SPEAKER_BASE_ADDRESS) does not trigger an exit to user space.
+            flags: KVM_PIT_SPEAKER_DUMMY,
+            ..Default::default()
+        };
         self.fd.create_pit2(pit_config).map_err(Error::VmSetup)
     }
 
@@ -566,20 +570,26 @@ impl Vm {
         // This bit is not accepted in SET_CLOCK, clear it.
         clock.flags &= !KVM_CLOCK_TSC_STABLE;
 
-        let mut pic_master = kvm_irqchip::default();
-        pic_master.chip_id = KVM_IRQCHIP_PIC_MASTER;
+        let mut pic_master = kvm_irqchip {
+            chip_id: KVM_IRQCHIP_PIC_MASTER,
+            ..Default::default()
+        };
         self.fd
             .get_irqchip(&mut pic_master)
             .map_err(Error::VmGetIrqChip)?;
 
-        let mut pic_slave = kvm_irqchip::default();
-        pic_slave.chip_id = KVM_IRQCHIP_PIC_SLAVE;
+        let mut pic_slave = kvm_irqchip {
+            chip_id: KVM_IRQCHIP_PIC_SLAVE,
+            ..Default::default()
+        };
         self.fd
             .get_irqchip(&mut pic_slave)
             .map_err(Error::VmGetIrqChip)?;
 
-        let mut ioapic = kvm_irqchip::default();
-        ioapic.chip_id = KVM_IRQCHIP_IOAPIC;
+        let mut ioapic = kvm_irqchip {
+            chip_id: KVM_IRQCHIP_IOAPIC,
+            ..Default::default()
+        };
         self.fd
             .get_irqchip(&mut ioapic)
             .map_err(Error::VmGetIrqChip)?;
@@ -645,6 +655,7 @@ pub struct Vcpu {
     id: u8,
     create_ts: TimestampUs,
     mmio_bus: Option<devices::Bus>,
+    #[allow(dead_code)]
     #[cfg_attr(all(test, target_arch = "aarch64"), allow(unused))]
     exit_evt: EventFd,
 
@@ -1379,16 +1390,10 @@ enum VcpuEmulation {
 #[cfg(test)]
 mod tests {
     use std::fs::File;
-    #[cfg(target_arch = "x86_64")]
-    use std::os::unix::io::AsRawFd;
-    #[cfg(target_arch = "x86_64")]
-    use std::sync::mpsc;
     use std::sync::{Arc, Barrier};
-    #[cfg(target_arch = "x86_64")]
-    use std::time::Duration;
 
-    use super::super::super::devices;
     use super::*;
+    use devices;
 
     use utils::signal::validate_signal_num;
 
@@ -1690,35 +1695,6 @@ mod tests {
         handle.join().expect("failed to join thread");
         // Verify that the Vcpu saw its kvm immediate-exit as set.
         assert!(success.load(Ordering::Acquire));
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    // Sends an event to a vcpu and expects a particular response.
-    fn queue_event_expect_response(handle: &VcpuHandle, event: VcpuEvent, response: VcpuResponse) {
-        handle
-            .send_event(event)
-            .expect("failed to send event to vcpu");
-        assert_eq!(
-            handle
-                .response_receiver()
-                .recv_timeout(Duration::from_millis(100))
-                .expect("did not receive event response from vcpu"),
-            response
-        );
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    // Sends an event to a vcpu and expects no response.
-    fn queue_event_expect_timeout(handle: &VcpuHandle, event: VcpuEvent) {
-        handle
-            .send_event(event)
-            .expect("failed to send event to vcpu");
-        assert_eq!(
-            handle
-                .response_receiver()
-                .recv_timeout(Duration::from_millis(100)),
-            Err(mpsc::RecvTimeoutError::Timeout)
-        );
     }
 
     #[test]

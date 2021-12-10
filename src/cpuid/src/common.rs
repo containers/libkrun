@@ -6,7 +6,7 @@ use std::arch::x86::{CpuidResult, __cpuid_count, __get_cpuid_max};
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{CpuidResult, __cpuid_count, __get_cpuid_max};
 
-use cpu_leaf::*;
+use crate::cpu_leaf::*;
 
 pub const VENDOR_ID_INTEL: &[u8; 12] = b"GenuineIntel";
 pub const VENDOR_ID_AMD: &[u8; 12] = b"AuthenticAMD";
@@ -71,7 +71,7 @@ pub fn get_vendor_id() -> Result<[u8; 12], Error> {
 
 #[cfg(test)]
 pub mod tests {
-    use common::*;
+    use crate::common::*;
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     pub fn get_topoext_fn() -> u32 {
@@ -123,10 +123,9 @@ pub mod tests {
     fn test_get_vendor_id() {
         let vendor_id = get_vendor_id();
         assert!(vendor_id.is_ok());
-        assert!(match &vendor_id.ok().unwrap() {
-            VENDOR_ID_INTEL => true,
-            VENDOR_ID_AMD => true,
-            _ => false,
-        });
+        assert!(matches!(
+            &vendor_id.ok().unwrap(),
+            VENDOR_ID_INTEL | VENDOR_ID_AMD
+        ));
     }
 }

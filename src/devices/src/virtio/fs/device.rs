@@ -170,10 +170,10 @@ impl Fs {
         let queue = &mut self.queues[queue_index];
         let mut used_any = false;
         while let Some(head) = queue.pop(mem) {
-            let reader = Reader::new(&mem, head.clone())
+            let reader = Reader::new(mem, head.clone())
                 .map_err(FsError::QueueReader)
                 .unwrap();
-            let writer = Writer::new(&mem, head.clone())
+            let writer = Writer::new(mem, head.clone())
                 .map_err(FsError::QueueWriter)
                 .unwrap();
 
