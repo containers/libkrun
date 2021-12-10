@@ -26,19 +26,10 @@ bitflags! {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct EpollEvent {
     pub events: u32,
     u64: u64,
-}
-
-impl Default for EpollEvent {
-    fn default() -> Self {
-        EpollEvent {
-            events: 0u32,
-            u64: 0u64,
-        }
-    }
 }
 
 impl EpollEvent {
