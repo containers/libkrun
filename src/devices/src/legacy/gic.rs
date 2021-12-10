@@ -36,6 +36,12 @@ pub struct Gic {
     vtimer_irq: u32,
 }
 
+impl Default for Gic {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Gic {
     pub fn new() -> Self {
         Self {
@@ -145,11 +151,7 @@ impl Gic {
             }
             Entry::Occupied(mut vcpu_entry) => {
                 let vcpu = vcpu_entry.get_mut();
-                if vcpu.pending_irqs.is_empty() {
-                    false
-                } else {
-                    true
-                }
+                !vcpu.pending_irqs.is_empty()
             }
         }
     }
@@ -277,11 +279,8 @@ impl Gic {
         assert!(vcpuid < MAX_CPUS);
 
         let mut val = 0;
-        match offset {
-            0xc => {
-                val = self.get_pending_irq(vcpuid as u8);
-            }
-            _ => {}
+        if offset == 0xc {
+            val = self.get_pending_irq(vcpuid as u8);
         }
         for (i, b) in val.to_le_bytes().iter().enumerate() {
             data[i] = *b;
@@ -313,16 +312,12 @@ impl Gic {
             vcpuid, offset, data
         );
         let val: u32 = u32::from_le_bytes(data.try_into().unwrap());
-        match offset {
-            0x10 => {
-                let irq = val & 0x3FF;
-                if irq < IRQ_NUM {
-                    if irq == self.vtimer_irq {
-                        vcpu_set_vtimer_mask(vcpuid, false).unwrap();
-                    }
-                }
+
+        if offset == 0x10 {
+            let irq = val & 0x3FF;
+            if irq < IRQ_NUM && irq == self.vtimer_irq {
+                vcpu_set_vtimer_mask(vcpuid, false).unwrap();
             }
-            _ => {}
         }
     }
 }

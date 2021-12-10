@@ -133,7 +133,7 @@ impl BusDevice for RTC {
         let v;
         let mut read_ok = true;
 
-        if offset < AMBA_ID_HIGH && offset >= AMBA_ID_LOW {
+        if (AMBA_ID_LOW..AMBA_ID_HIGH).contains(&offset) {
             let index = ((offset - AMBA_ID_LOW) >> 2) as usize;
             v = u32::from(PL031_ID[index]);
         } else {
@@ -167,7 +167,7 @@ impl BusDevice for RTC {
 
     fn write(&mut self, _vcpuid: u64, offset: u64, data: &[u8]) {
         if data.len() <= 4 {
-            let v = byte_order::read_le_u32(&data[..]);
+            let v = byte_order::read_le_u32(data);
             if let Err(e) = self.handle_write(offset, v) {
                 warn!("Failed to write to RTC PL031 device: {}", e);
             }
