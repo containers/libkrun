@@ -69,38 +69,38 @@ int main(int argc, char **argv)
     if (passp) {
         printf("Unlocking LUKS root filesystem\n");
 
-	    if (mount("proc", "/proc", "proc",
-		      MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
-		    perror("mount(/proc)");
-		    exit(-1);
-	    }
+        if (mount("proc", "/proc", "proc",
+            MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
+            perror("mount(/proc)");
+            exit(-1);
+        }
 
-	    pipe(pipefd);
+        pipe(pipefd);
 
-	    pid = fork();
-	    if (pid == 0) {
+        pid = fork();
+        if (pid == 0) {
             close(pipefd[1]);
-		    dup2(pipefd[0], 0);
-		    close(pipefd[0]);
+            dup2(pipefd[0], 0);
+            close(pipefd[0]);
 
-		    if (execl("/sbin/cryptsetup", "cryptsetup", "open", "/dev/vda", "luksroot", "-", NULL) < 0) {
+            if (execl("/sbin/cryptsetup", "cryptsetup", "open", "/dev/vda", "luksroot", "-", NULL) < 0) {
                 perror("execl");
                 exit(-1);
             }
-	    } else {
-		    write(pipefd[1], passp, strnlen(passp, 128));
-		    close(pipefd[1]);
-		    waitpid(pid, &wstatus, 0);
-	    }
+        } else {
+            write(pipefd[1], passp, strnlen(passp, 128));
+            close(pipefd[1]);
+            waitpid(pid, &wstatus, 0);
+        }
 
         printf("Mounting LUKS root filesystem\n");
 
-	    if (mount("/dev/mapper/luksroot", "/luksroot", "ext4", 0, NULL) < 0) {
-		    perror("mount(/luksroot)");
-		    exit(-1);
-	    }
+        if (mount("/dev/mapper/luksroot", "/luksroot", "ext4", 0, NULL) < 0) {
+            perror("mount(/luksroot)");
+            exit(-1);
+        }
 
-	    chdir("/luksroot");
+        chdir("/luksroot");
 
         if (mount(".", "/", NULL, MS_MOVE, NULL)) {
             perror("remount root");
@@ -110,19 +110,19 @@ int main(int argc, char **argv)
     }
 
     if (mount("proc", "/proc", "proc",
-              MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
+        MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
         perror("mount(/proc)");
         exit(-1);
     }
 
     if (mount("sysfs", "/sys", "sysfs",
-              MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
+        MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
         perror("mount(/sys)");
         exit(-1);
     }
 
     if (mount("cgroup2", "/sys/fs/cgroup", "cgroup2",
-              MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
+        MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
         perror("mount(/sys/fs/cgroup)");
         exit(-1);
     }
@@ -133,7 +133,7 @@ int main(int argc, char **argv)
     }
 
     if (mount("devpts", "/dev/pts", "devpts",
-              MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
+        MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
         perror("mount(/dev/pts)");
         exit(-1);
     }
@@ -144,7 +144,7 @@ int main(int argc, char **argv)
     }
 
     if (mount("tmpfs", "/dev/shm", "tmpfs",
-              MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
+        MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
         perror("mount(/dev/shm)");
         exit(-1);
     }
