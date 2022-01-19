@@ -1,4 +1,5 @@
 #include <limits.h>
+#include <err.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -29,7 +30,7 @@ void set_rlimits(const char *rlimits)
 
         lim_id = strtoull(item, &item, 10);
         if (lim_id == ULLONG_MAX) {
-            printf("Invalid rlimit ID\n");
+            fprintf(stderr, "Invalid rlimit ID\n");
             break;
         }
 
@@ -41,7 +42,7 @@ void set_rlimits(const char *rlimits)
         rlim.rlim_cur = lim_cur;
         rlim.rlim_max = lim_max;
         if (setrlimit(lim_id, &rlim) != 0) {
-            printf("Error setting rlimit for ID=%lld\n", lim_id);
+            fprintf(stderr, "Can't set rlimit for ID=%llu\n", lim_id);
         }
 
         if (*item != '\0') {
@@ -78,17 +79,21 @@ int main(int argc, char **argv)
         pipe(pipefd);
 
         pid = fork();
-        if (pid == 0) {
+        if (pid == -1) {
+            err(-1, "fork");
+        } else if (pid == 0) {
             close(pipefd[1]);
             dup2(pipefd[0], 0);
             close(pipefd[0]);
 
-            if (execl("/sbin/cryptsetup", "cryptsetup", "open", "/dev/vda", "luksroot", "-", NULL) < 0) {
-                perror("execl");
-                exit(-1);
+            if (execl("/sbin/cryptsetup", "cryptsetup", "open", "/dev/vda",
+                "luksroot", "-", NULL) < 0) {
+                err(-1, "execl");
             }
         } else {
-            write(pipefd[1], passp, strnlen(passp, 128));
+            if (write(pipefd[1], passp, strnlen(passp, 128)) < 0) {
+                warn("write"); // XXX - ignores short count
+            }
             close(pipefd[1]);
             waitpid(pid, &wstatus, 0);
         }
@@ -96,57 +101,48 @@ int main(int argc, char **argv)
         printf("Mounting LUKS root filesystem\n");
 
         if (mount("/dev/mapper/luksroot", "/luksroot", "ext4", 0, NULL) < 0) {
-            perror("mount(/luksroot)");
-            exit(-1);
+            err(-1, "mount(/luksroot)");
         }
 
         chdir("/luksroot");
 
         if (mount(".", "/", NULL, MS_MOVE, NULL)) {
-            perror("remount root");
-            exit(-1);
+            err(-1, "remount root");
         }
         chroot(".");
     }
 
     if (mount("proc", "/proc", "proc",
         MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
-        perror("mount(/proc)");
-        exit(-1);
+        err(-1, "mount(/proc)");
     }
 
     if (mount("sysfs", "/sys", "sysfs",
         MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
-        perror("mount(/sys)");
-        exit(-1);
+        err(-1, "mount(/sys)");
     }
 
     if (mount("cgroup2", "/sys/fs/cgroup", "cgroup2",
         MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
-        perror("mount(/sys/fs/cgroup)");
-        exit(-1);
+        err(-1, "mount(/sys/fs/cgroup)");
     }
 
     if (mkdir("/dev/pts", 0755) < 0 && errno != EEXIST) {
-        perror("mkdir(/dev/pts)");
-        exit(-1);
+        err(-1, "mkdir(/dev/pts)");
     }
 
     if (mount("devpts", "/dev/pts", "devpts",
         MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
-        perror("mount(/dev/pts)");
-        exit(-1);
+        err(-1, "mount(/dev/pts)");
     }
 
     if (mkdir("/dev/shm", 0755) < 0 && errno != EEXIST) {
-        perror("mkdir(/dev/shm)");
-        exit(-1);
+        err(-1, "mkdir(/dev/shm)");
     }
 
     if (mount("tmpfs", "/dev/shm", "tmpfs",
         MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
-        perror("mount(/dev/shm)");
-        exit(-1);
+        err(-1, "mount(/dev/shm)");
     }
 
     /* May fail if already exists and that's fine. */
