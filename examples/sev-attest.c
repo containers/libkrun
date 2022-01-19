@@ -39,8 +39,7 @@ int main(int argc, char *const argv[])
     int i;
 
     if (argc != 3) {
-        printf("Invalid arguments\n");
-        printf("Usage: %s DISK_IMAGE ATTESTATION_URL\n", argv[0]);
+        fprintf(stderr, "usage: %s DISK_IMAGE ATTESTATION_URL\n", argv[0]);
         return -1;
     }
 

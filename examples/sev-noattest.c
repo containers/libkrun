@@ -45,8 +45,7 @@ int main(int argc, char *const argv[])
     int i;
 
     if (argc < 4) {
-        printf("Invalid arguments\n");
-        printf("Usage: %s DISK_IMAGE PASSPHRASE COMMAND [ARG...]\n", argv[0]);
+        fprintf(stderr, "usage: %s DISK_IMAGE PASSPHRASE COMMAND [ARG...]\n", argv[0]);
         return -1;
     }
 

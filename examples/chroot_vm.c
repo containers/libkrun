@@ -45,8 +45,7 @@ int main(int argc, char *const argv[])
     int i;
 
     if (argc < 3) {
-        printf("Invalid arguments\n");
-        printf("Usage: %s NEWROOT COMMAND [ARG...]\n", argv[0]);
+        fprintf(stderr, "usage: %s NEWROOT COMMAND [ARG...]\n", argv[0]);
         return -1;
     }
 
