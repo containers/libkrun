@@ -89,8 +89,8 @@ int main(int argc, char *const argv[])
     volume_len = strlen(current_path) + strlen(volume_tail) + 1;
     volume = malloc(volume_len);
     if (volume == NULL) {
-        errno = -err;
         perror("Error allocating memory for volume string");
+        return -1;
     }
 
     snprintf(volume, volume_len, "%s%s", current_path, volume_tail);
