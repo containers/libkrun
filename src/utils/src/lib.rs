@@ -5,7 +5,6 @@ pub use vmm_sys_util::{errno, tempdir, tempfile, terminal};
 #[cfg(target_os = "linux")]
 pub use vmm_sys_util::{eventfd, ioctl};
 
-pub mod arg_parser;
 pub mod byte_order;
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -21,7 +20,5 @@ pub mod rand;
 #[cfg(target_os = "linux")]
 pub mod signal;
 pub mod sm;
-pub mod structs;
 pub mod syscall;
 pub mod time;
-pub mod validators;
