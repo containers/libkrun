@@ -1,0 +1,67 @@
+use std::fmt;
+use std::os::unix::io::{AsRawFd, RawFd};
+
+use super::muxer::MuxerRx;
+use super::packet::{TsiAcceptReq, TsiConnectReq, TsiListenReq, TsiSendtoAddr, VsockPacket};
+use utils::epoll::EventSet;
+
+#[derive(Debug)]
+pub enum RecvPkt {
+    Close,
+    Error,
+    Read(usize),
+    WaitForCredit,
+}
+
+#[derive(Debug)]
+pub enum ProxyError {
+    CreatingSocket(nix::errno::Errno),
+    SettingReusePort(nix::errno::Errno),
+}
+
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum ProxyStatus {
+    Idle,
+    Connecting,
+    Connected,
+    Listening,
+    Closed,
+    WaitingCreditUpdate,
+    ReverseInit,
+}
+
+#[derive(Default)]
+pub struct ProxyUpdate {
+    pub signal_queue: bool,
+    pub remove_proxy: bool,
+    pub polling: Option<(u64, RawFd, EventSet)>,
+    pub new_proxy: Option<(u32, RawFd)>,
+    pub push_accept: Option<(u64, u64)>,
+    pub push_credit_req: Option<MuxerRx>,
+}
+
+impl fmt::Display for ProxyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+pub trait Proxy: Send + AsRawFd {
+    fn id(&self) -> u64;
+    fn status(&self) -> ProxyStatus;
+    fn connect(&mut self, pkt: &VsockPacket, req: TsiConnectReq) -> ProxyUpdate;
+    fn confirm_connect(&mut self, _pkt: &VsockPacket) {}
+    fn getpeername(&mut self, pkt: &VsockPacket);
+    fn sendmsg(&mut self, pkt: &VsockPacket) -> ProxyUpdate;
+    fn sendto_addr(&mut self, req: TsiSendtoAddr) -> ProxyUpdate;
+    fn sendto_data(&mut self, _pkt: &VsockPacket) {}
+    fn listen(&mut self, pkt: &VsockPacket, req: TsiListenReq) -> ProxyUpdate;
+    fn accept(&mut self, pkt: &VsockPacket, req: TsiAcceptReq) -> ProxyUpdate;
+    fn update_peer_credit(&mut self, pkt: &VsockPacket) -> ProxyUpdate;
+    fn push_op_request(&self) {}
+    fn process_op_response(&mut self, pkt: &VsockPacket) -> ProxyUpdate;
+    fn push_accept_rsp(&self, _result: i32) {}
+    fn shutdown(&mut self, _pkt: &VsockPacket) {}
+    fn release(&mut self) -> ProxyUpdate;
+    fn process_event(&mut self, evset: EventSet) -> ProxyUpdate;
+}
