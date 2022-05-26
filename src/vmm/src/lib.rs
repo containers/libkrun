@@ -11,7 +11,7 @@
 //#![deny(missing_docs)]
 
 #[macro_use]
-extern crate logger;
+extern crate log;
 
 /// Handles setup and initialization a `Vmm` object.
 pub mod builder;
@@ -51,7 +51,6 @@ use arch::DeviceType;
 use arch::InitrdConfig;
 use devices::BusDevice;
 use kernel::cmdline::Cmdline as KernelCmdline;
-use logger::LoggerError;
 use polly::event_manager::{self, EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
 use utils::eventfd::EventFd;
@@ -102,8 +101,6 @@ pub enum Error {
     LegacyIOBus(device_manager::legacy::Error),
     /// Cannot load command line.
     LoadCommandline(kernel::cmdline::Error),
-    /// Internal logger error.
-    Logger(LoggerError),
     /// Cannot add a device to the MMIO Bus.
     RegisterMMIODevice(device_manager::mmio::Error),
     /// Write to the serial console failed.
@@ -144,7 +141,6 @@ impl Display for Error {
             #[cfg(target_arch = "x86_64")]
             LegacyIOBus(e) => write!(f, "Cannot add devices to the legacy I/O Bus. {}", e),
             LoadCommandline(e) => write!(f, "Cannot load command line: {}", e),
-            Logger(e) => write!(f, "Logger error: {}", e),
             RegisterMMIODevice(e) => write!(f, "Cannot add a device to the MMIO Bus. {}", e),
             Serial(e) => write!(f, "Error writing to the serial console: {:?}", e),
             TimerFd(e) => write!(f, "Error creating timer fd: {}", e),

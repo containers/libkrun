@@ -15,7 +15,7 @@ use std::convert::TryInto;
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
 
-use logger::debug;
+use log::debug;
 
 extern "C" {
     pub fn mach_absolute_time() -> u64;
