@@ -99,7 +99,7 @@ impl Display for LoggerConfigError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         use self::LoggerConfigError::*;
         match *self {
-            InitializationFailure(ref err_msg) => write!(f, "{}", err_msg.replace("\"", "")),
+            InitializationFailure(ref err_msg) => write!(f, "{}", err_msg.replace('\"', "")),
         }
     }
 }

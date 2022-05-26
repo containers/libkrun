@@ -120,7 +120,7 @@ impl Display for StartMicrovmError {
             GuestMemoryMmap(ref err) => {
                 // Remove imbricated quotes from error message.
                 let mut err_msg = format!("{:?}", err);
-                err_msg = err_msg.replace("\"", "");
+                err_msg = err_msg.replace('\"', "");
                 write!(f, "Invalid Memory Configuration: {}", err_msg)
             }
             InitrdLoad => write!(
@@ -132,7 +132,7 @@ impl Display for StartMicrovmError {
             KernelCmdline(ref err) => write!(f, "Invalid kernel command line: {}", err),
             KernelBundle(ref err) => {
                 let mut err_msg = format!("{}", err);
-                err_msg = err_msg.replace("\"", "");
+                err_msg = err_msg.replace('\"', "");
                 write!(
                     f,
                     "Cannot inject the kernel into the guest memory due to a problem with the \
@@ -142,7 +142,7 @@ impl Display for StartMicrovmError {
             }
             LoadCommandline(ref err) => {
                 let mut err_msg = format!("{}", err);
-                err_msg = err_msg.replace("\"", "");
+                err_msg = err_msg.replace('\"', "");
                 write!(f, "Cannot load command line string. {}", err_msg)
             }
             MicroVMAlreadyRunning => write!(f, "Microvm already running."),
@@ -155,13 +155,13 @@ impl Display for StartMicrovmError {
             }
             OpenBlockDevice(ref err) => {
                 let mut err_msg = format!("{:?}", err);
-                err_msg = err_msg.replace("\"", "");
+                err_msg = err_msg.replace('\"', "");
 
                 write!(f, "Cannot open the block device backing file. {}", err_msg)
             }
             RegisterBalloonDevice(ref err) => {
                 let mut err_msg = format!("{}", err);
-                err_msg = err_msg.replace("\"", "");
+                err_msg = err_msg.replace('\"', "");
                 write!(
                     f,
                     "Cannot initialize a MMIO Balloon Device or add a device to the MMIO Bus. {}",
@@ -170,7 +170,7 @@ impl Display for StartMicrovmError {
             }
             RegisterBlockDevice(ref err) => {
                 let mut err_msg = format!("{}", err);
-                err_msg = err_msg.replace("\"", "");
+                err_msg = err_msg.replace('\"', "");
                 write!(
                     f,
                     "Cannot initialize a MMIO Block Device or add a device to the MMIO Bus. {}",
@@ -180,7 +180,7 @@ impl Display for StartMicrovmError {
             RegisterEvent(ref err) => write!(f, "Cannot register EventHandler. {:?}", err),
             RegisterFsDevice(ref err) => {
                 let mut err_msg = format!("{}", err);
-                err_msg = err_msg.replace("\"", "");
+                err_msg = err_msg.replace('\"', "");
 
                 write!(
                     f,
@@ -191,7 +191,7 @@ impl Display for StartMicrovmError {
             #[cfg(target_os = "linux")]
             RegisterFsSigwinch(ref err) => {
                 let mut err_msg = format!("{}", err);
-                err_msg = err_msg.replace("\"", "");
+                err_msg = err_msg.replace('\"', "");
 
                 write!(
                     f,
@@ -201,7 +201,7 @@ impl Display for StartMicrovmError {
             }
             RegisterNetDevice(ref err) => {
                 let mut err_msg = format!("{}", err);
-                err_msg = err_msg.replace("\"", "");
+                err_msg = err_msg.replace('\"', "");
 
                 write!(
                     f,
@@ -211,7 +211,7 @@ impl Display for StartMicrovmError {
             }
             RegisterVsockDevice(ref err) => {
                 let mut err_msg = format!("{}", err);
-                err_msg = err_msg.replace("\"", "");
+                err_msg = err_msg.replace('\"', "");
 
                 write!(
                     f,
@@ -221,7 +221,7 @@ impl Display for StartMicrovmError {
             }
             SecureVirtAttest(ref err) => {
                 let mut err_msg = format!("{}", err);
-                err_msg = err_msg.replace("\"", "");
+                err_msg = err_msg.replace('\"', "");
 
                 write!(
                     f,
@@ -231,7 +231,7 @@ impl Display for StartMicrovmError {
             }
             SecureVirtPrepare(ref err) => {
                 let mut err_msg = format!("{}", err);
-                err_msg = err_msg.replace("\"", "");
+                err_msg = err_msg.replace('\"', "");
 
                 write!(
                     f,

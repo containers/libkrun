@@ -116,6 +116,7 @@ pub trait BitHelper {
     /// ```bash
     /// binary value: 10001
     /// ```
+    #[must_use]
     fn read_bits_in_range(&self, bit_range: &BitRange) -> Self;
 
     /// Stores a value within the specified range of bits
@@ -295,7 +296,7 @@ mod tests {
     #[should_panic]
     fn test_invalid_read_bits() {
         let val: u32 = 30;
-        val.read_bits_in_range(&BitRange {
+        let _ = val.read_bits_in_range(&BitRange {
             msb_index: 32,
             lsb_index: 2,
         });
