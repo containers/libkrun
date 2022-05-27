@@ -550,9 +550,10 @@ impl Vm {
     }
 
     /// Gets a reference to the irqchip of the VM
+    #[allow(clippy::borrowed_box)]
     #[cfg(target_arch = "aarch64")]
     pub fn get_irqchip(&self) -> &Box<dyn GICDevice> {
-        &self.irqchip_handle.as_ref().unwrap()
+        self.irqchip_handle.as_ref().unwrap()
     }
 
     /// Gets a reference to the kvm file descriptor owned by this VM.
@@ -819,7 +820,7 @@ impl Vcpu {
         exit_evt: EventFd,
         create_ts: TimestampUs,
     ) -> Result<Self> {
-        let kvm_vcpu = vm_fd.create_vcpu(id).map_err(Error::VcpuFd)?;
+        let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = channel();
         let (response_sender, response_receiver) = channel();
 

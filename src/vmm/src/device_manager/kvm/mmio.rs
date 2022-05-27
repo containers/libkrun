@@ -171,12 +171,12 @@ impl MMIODeviceManager {
             return Err(Error::IrqsExhausted);
         }
 
-        vm.register_irqfd(&serial.lock().unwrap().interrupt_evt(), self.irq)
+        vm.register_irqfd(serial.lock().unwrap().interrupt_evt(), self.irq)
             .map_err(Error::RegisterIrqFd)?;
 
         self.bus
             .insert(serial, self.mmio_base, MMIO_LEN)
-            .map_err(|err| Error::BusError(err))?;
+            .map_err(Error::BusError)?;
 
         cmdline
             .insert("earlycon", &format!("uart,mmio,0x{:08x}", self.mmio_base))
@@ -187,8 +187,8 @@ impl MMIODeviceManager {
             (DeviceType::Serial, DeviceType::Serial.to_string()),
             MMIODeviceInfo {
                 addr: ret,
-                len: MMIO_LEN,
-                irq: self.irq,
+                _len: MMIO_LEN,
+                _irq: self.irq,
             },
         );
 
@@ -213,15 +213,15 @@ impl MMIODeviceManager {
 
         self.bus
             .insert(Arc::new(Mutex::new(device)), self.mmio_base, MMIO_LEN)
-            .map_err(|err| Error::BusError(err))?;
+            .map_err(Error::BusError)?;
 
         let ret = self.mmio_base;
         self.id_to_dev_info.insert(
             (DeviceType::RTC, "rtc".to_string()),
             MMIODeviceInfo {
                 addr: ret,
-                len: MMIO_LEN,
-                irq: self.irq,
+                _len: MMIO_LEN,
+                _irq: self.irq,
             },
         );
 
@@ -269,10 +269,10 @@ impl DeviceInfoForFDT for MMIODeviceInfo {
         self.addr
     }
     fn irq(&self) -> u32 {
-        self.irq
+        self._irq
     }
     fn length(&self) -> u64 {
-        self.len
+        self._len
     }
 }
 

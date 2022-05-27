@@ -700,7 +700,7 @@ dependencies = [
 [[package]]
 name = "kvm-ioctls"
 version = "0.10.0"
-source = "git+https://github.com/slp/kvm-ioctls?branch=amdsev#bdc1d339eb3e955379dfd2e52dccf04aa5aa1979"
+source = "git+https://github.com/slp/kvm-ioctls?branch=amdsev#28704262a9f7b333ebc1d5e5dd1d116268f44a9e"
 dependencies = [
  "kvm-bindings",
  "libc",
