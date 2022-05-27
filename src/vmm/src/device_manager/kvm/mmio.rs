@@ -187,8 +187,8 @@ impl MMIODeviceManager {
             (DeviceType::Serial, DeviceType::Serial.to_string()),
             MMIODeviceInfo {
                 addr: ret,
-                len: MMIO_LEN,
-                irq: self.irq,
+                _len: MMIO_LEN,
+                _irq: self.irq,
             },
         );
 
@@ -220,8 +220,8 @@ impl MMIODeviceManager {
             (DeviceType::RTC, "rtc".to_string()),
             MMIODeviceInfo {
                 addr: ret,
-                len: MMIO_LEN,
-                irq: self.irq,
+                _len: MMIO_LEN,
+                _irq: self.irq,
             },
         );
 
@@ -269,10 +269,10 @@ impl DeviceInfoForFDT for MMIODeviceInfo {
         self.addr
     }
     fn irq(&self) -> u32 {
-        self.irq
+        self._irq
     }
     fn length(&self) -> u64 {
-        self.len
+        self._len
     }
 }
 

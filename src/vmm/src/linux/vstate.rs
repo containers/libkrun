@@ -819,7 +819,7 @@ impl Vcpu {
         exit_evt: EventFd,
         create_ts: TimestampUs,
     ) -> Result<Self> {
-        let kvm_vcpu = vm_fd.create_vcpu(id).map_err(Error::VcpuFd)?;
+        let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = channel();
         let (response_sender, response_receiver) = channel();
 
