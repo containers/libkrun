@@ -38,7 +38,7 @@ const PSR_I_BIT: u64 = 0x0000_0080;
 const PSR_A_BIT: u64 = 0x0000_0100;
 const PSR_D_BIT: u64 = 0x0000_0200;
 // Taken from arch/arm64/kvm/inject_fault.c.
-const PSTATE_FAULT_BITS_64: u64 = (PSR_MODE_EL1h | PSR_A_BIT | PSR_F_BIT | PSR_I_BIT | PSR_D_BIT);
+const PSTATE_FAULT_BITS_64: u64 = PSR_MODE_EL1h | PSR_A_BIT | PSR_F_BIT | PSR_I_BIT | PSR_D_BIT;
 
 // Following are macros that help with getting the ID of a aarch64 core register.
 // The core register are represented by the user_pt_regs structure. Look for it in
@@ -54,7 +54,7 @@ const PSTATE_FAULT_BITS_64: u64 = (PSR_MODE_EL1h | PSR_A_BIT | PSR_F_BIT | PSR_I
 // we're just doing pointer math on it, so in theory, it should safe.
 macro_rules! offset__of {
     ($str:ty, $field:ident) => {
-        unsafe { &(*(0 as *const $str)).$field as *const _ as usize }
+        unsafe { &(*(std::ptr::null::<user_pt_regs>())).$field as *const _ as usize }
     };
 }
 
@@ -124,12 +124,14 @@ arm64_sys_reg!(MPIDR_EL1, 3, 0, 0, 0, 5);
 /// * `mem` - Reserved DRAM for current VM.
 pub fn setup_regs(vcpu: &VcpuFd, cpu_id: u8, boot_ip: u64, mem: &GuestMemoryMmap) -> Result<()> {
     // Get the register index of the PSTATE (Processor State) register.
+    #[allow(deref_nullptr)]
     vcpu.set_one_reg(arm64_core_reg!(pstate), PSTATE_FAULT_BITS_64)
         .map_err(Error::SetCoreRegister)?;
 
     // Other vCPUs are powered off initially awaiting PSCI wakeup.
     if cpu_id == 0 {
         // Setting the PC (Processor Counter) to the current program address (kernel address).
+        #[allow(deref_nullptr)]
         vcpu.set_one_reg(arm64_core_reg!(pc), boot_ip)
             .map_err(Error::SetCoreRegister)?;
 
@@ -137,6 +139,7 @@ pub fn setup_regs(vcpu: &VcpuFd, cpu_id: u8, boot_ip: u64, mem: &GuestMemoryMmap
         // "The device tree blob (dtb) must be placed on an 8-byte boundary and must
         // not exceed 2 megabytes in size." -> https://www.kernel.org/doc/Documentation/arm64/booting.txt.
         // We are choosing to place it the end of DRAM. See `get_fdt_addr`.
+        #[allow(deref_nullptr)]
         vcpu.set_one_reg(arm64_core_reg!(regs), get_fdt_addr(mem) as u64)
             .map_err(Error::SetCoreRegister)?;
     }

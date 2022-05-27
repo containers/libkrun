@@ -171,12 +171,12 @@ impl MMIODeviceManager {
             return Err(Error::IrqsExhausted);
         }
 
-        vm.register_irqfd(&serial.lock().unwrap().interrupt_evt(), self.irq)
+        vm.register_irqfd(serial.lock().unwrap().interrupt_evt(), self.irq)
             .map_err(Error::RegisterIrqFd)?;
 
         self.bus
             .insert(serial, self.mmio_base, MMIO_LEN)
-            .map_err(|err| Error::BusError(err))?;
+            .map_err(Error::BusError)?;
 
         cmdline
             .insert("earlycon", &format!("uart,mmio,0x{:08x}", self.mmio_base))
@@ -213,7 +213,7 @@ impl MMIODeviceManager {
 
         self.bus
             .insert(Arc::new(Mutex::new(device)), self.mmio_base, MMIO_LEN)
-            .map_err(|err| Error::BusError(err))?;
+            .map_err(Error::BusError)?;
 
         let ret = self.mmio_base;
         self.id_to_dev_info.insert(

@@ -136,7 +136,7 @@ pub fn create_fdt<T: DeviceInfoForFDT + Clone + Debug>(
 }
 
 // Following are auxiliary functions for allocating and finishing the FDT.
-fn allocate_fdt(fdt: &mut Vec<u8>) -> Result<()> {
+fn allocate_fdt(fdt: &mut [u8]) -> Result<()> {
     // Safe since we allocated this array with FDT_MAX_SIZE.
     let mut fdt_ret = unsafe { fdt_create(fdt.as_mut_ptr() as *mut c_void, FDT_MAX_SIZE as c_int) };
 
@@ -157,7 +157,7 @@ fn allocate_fdt(fdt: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
-fn finish_fdt(from_fdt: &mut Vec<u8>, to_fdt: &mut Vec<u8>) -> Result<()> {
+fn finish_fdt(from_fdt: &mut [u8], to_fdt: &mut [u8]) -> Result<()> {
     // Safe since we allocated `fdt_final` and previously passed in its size.
     let mut fdt_ret = unsafe { fdt_finish(from_fdt.as_mut_ptr() as *mut c_void) };
     if fdt_ret != 0 {
@@ -185,7 +185,7 @@ fn finish_fdt(from_fdt: &mut Vec<u8>, to_fdt: &mut Vec<u8>) -> Result<()> {
 }
 
 // Following are auxiliary functions for appending nodes to FDT.
-fn append_begin_node(fdt: &mut Vec<u8>, name: &str) -> Result<()> {
+fn append_begin_node(fdt: &mut [u8], name: &str) -> Result<()> {
     let cstr_name = CString::new(name).map_err(CstringFDTTransform)?;
 
     // Safe because we allocated fdt and converted name to a CString
@@ -196,7 +196,7 @@ fn append_begin_node(fdt: &mut Vec<u8>, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn append_end_node(fdt: &mut Vec<u8>) -> Result<()> {
+fn append_end_node(fdt: &mut [u8]) -> Result<()> {
     // Safe because we allocated fdt.
     let fdt_ret = unsafe { fdt_end_node(fdt.as_mut_ptr() as *mut c_void) };
     if fdt_ret != 0 {
@@ -206,20 +206,20 @@ fn append_end_node(fdt: &mut Vec<u8>) -> Result<()> {
 }
 
 // Following are auxiliary functions for appending property nodes to the nodes of the FDT.
-fn append_property_u32(fdt: &mut Vec<u8>, name: &str, val: u32) -> Result<()> {
+fn append_property_u32(fdt: &mut [u8], name: &str, val: u32) -> Result<()> {
     append_property(fdt, name, &to_be32(val))
 }
 
-fn append_property_u64(fdt: &mut Vec<u8>, name: &str, val: u64) -> Result<()> {
+fn append_property_u64(fdt: &mut [u8], name: &str, val: u64) -> Result<()> {
     append_property(fdt, name, &to_be64(val))
 }
 
-fn append_property_string(fdt: &mut Vec<u8>, name: &str, value: &str) -> Result<()> {
+fn append_property_string(fdt: &mut [u8], name: &str, value: &str) -> Result<()> {
     let cstr_value = CString::new(value).map_err(CstringFDTTransform)?;
     append_property_cstring(fdt, name, &cstr_value)
 }
 
-fn append_property_cstring(fdt: &mut Vec<u8>, name: &str, cstr_value: &CStr) -> Result<()> {
+fn append_property_cstring(fdt: &mut [u8], name: &str, cstr_value: &CStr) -> Result<()> {
     let value_bytes = cstr_value.to_bytes_with_nul();
     let cstr_name = CString::new(name).map_err(CstringFDTTransform)?;
     // Safe because we allocated fdt, converted name and value to CStrings
@@ -237,7 +237,7 @@ fn append_property_cstring(fdt: &mut Vec<u8>, name: &str, cstr_value: &CStr) -> 
     Ok(())
 }
 
-fn append_property_null(fdt: &mut Vec<u8>, name: &str) -> Result<()> {
+fn append_property_null(fdt: &mut [u8], name: &str) -> Result<()> {
     let cstr_name = CString::new(name).map_err(CstringFDTTransform)?;
 
     // Safe because we allocated fdt, converted name to a CString
@@ -255,7 +255,7 @@ fn append_property_null(fdt: &mut Vec<u8>, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn append_property(fdt: &mut Vec<u8>, name: &str, val: &[u8]) -> Result<()> {
+fn append_property(fdt: &mut [u8], name: &str, val: &[u8]) -> Result<()> {
     let cstr_name = CString::new(name).map_err(CstringFDTTransform)?;
     let val_ptr = val.as_ptr() as *const c_void;
 
@@ -301,7 +301,7 @@ fn generate_prop64(cells: &[u64]) -> Vec<u8> {
 }
 
 // Following are the auxiliary function for creating the different nodes that we append to our FDT.
-fn create_cpu_nodes(fdt: &mut Vec<u8>, vcpu_mpidr: &[u64]) -> Result<()> {
+fn create_cpu_nodes(fdt: &mut [u8], vcpu_mpidr: &[u64]) -> Result<()> {
     // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/cpus.yaml.
     append_begin_node(fdt, "cpus")?;
     // As per documentation, on ARM v8 64-bit systems value should be set to 2.
@@ -328,7 +328,7 @@ fn create_cpu_nodes(fdt: &mut Vec<u8>, vcpu_mpidr: &[u64]) -> Result<()> {
 }
 
 fn create_memory_node(
-    fdt: &mut Vec<u8>,
+    fdt: &mut [u8],
     _guest_mem: &GuestMemoryMmap,
     arch_memory_info: &ArchMemoryInfo,
 ) -> Result<()> {
@@ -344,11 +344,7 @@ fn create_memory_node(
     Ok(())
 }
 
-fn create_chosen_node(
-    fdt: &mut Vec<u8>,
-    cmdline: &CStr,
-    initrd: &Option<InitrdConfig>,
-) -> Result<()> {
+fn create_chosen_node(fdt: &mut [u8], cmdline: &CStr, initrd: &Option<InitrdConfig>) -> Result<()> {
     append_begin_node(fdt, "chosen")?;
     append_property_cstring(fdt, "bootargs", cmdline)?;
 
@@ -370,7 +366,7 @@ fn create_chosen_node(
     Ok(())
 }
 
-fn create_gic_node(fdt: &mut Vec<u8>, gic_device: &Box<dyn GICDevice>) -> Result<()> {
+fn create_gic_node(fdt: &mut [u8], gic_device: &Box<dyn GICDevice>) -> Result<()> {
     let gic_reg_prop = generate_prop64(gic_device.device_properties());
 
     append_begin_node(fdt, "intc")?;
@@ -398,7 +394,7 @@ fn create_gic_node(fdt: &mut Vec<u8>, gic_device: &Box<dyn GICDevice>) -> Result
     Ok(())
 }
 
-fn create_clock_node(fdt: &mut Vec<u8>) -> Result<()> {
+fn create_clock_node(fdt: &mut [u8]) -> Result<()> {
     // The Advanced Peripheral Bus (APB) is part of the Advanced Microcontroller Bus Architecture
     // (AMBA) protocol family. It defines a low-cost interface that is optimized for minimal power
     // consumption and reduced interface complexity.
@@ -414,7 +410,7 @@ fn create_clock_node(fdt: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
-fn create_timer_node(fdt: &mut Vec<u8>) -> Result<()> {
+fn create_timer_node(fdt: &mut [u8]) -> Result<()> {
     // See
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/interrupt-controller/arch_timer.txt
     // These are fixed interrupt numbers for the timer device.
@@ -438,7 +434,7 @@ fn create_timer_node(fdt: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
-fn create_psci_node(fdt: &mut Vec<u8>) -> Result<()> {
+fn create_psci_node(fdt: &mut [u8]) -> Result<()> {
     let compatible = "arm,psci-0.2";
     append_begin_node(fdt, "psci")?;
     append_property_string(fdt, "compatible", compatible)?;
@@ -452,7 +448,7 @@ fn create_psci_node(fdt: &mut Vec<u8>) -> Result<()> {
 }
 
 fn create_virtio_node<T: DeviceInfoForFDT + Clone + Debug>(
-    fdt: &mut Vec<u8>,
+    fdt: &mut [u8],
     dev_info: &T,
 ) -> Result<()> {
     let device_reg_prop = generate_prop64(&[dev_info.addr(), dev_info.length()]);
@@ -476,7 +472,7 @@ fn create_virtio_node<T: DeviceInfoForFDT + Clone + Debug>(
 }
 
 fn create_serial_node<T: DeviceInfoForFDT + Clone + Debug>(
-    fdt: &mut Vec<u8>,
+    fdt: &mut [u8],
     dev_info: &T,
 ) -> Result<()> {
     let serial_reg_prop = generate_prop64(&[dev_info.addr(), dev_info.length()]);
@@ -494,7 +490,7 @@ fn create_serial_node<T: DeviceInfoForFDT + Clone + Debug>(
 }
 
 fn create_rtc_node<T: DeviceInfoForFDT + Clone + Debug>(
-    fdt: &mut Vec<u8>,
+    fdt: &mut [u8],
     dev_info: &T,
 ) -> Result<()> {
     let compatible = b"arm,pl031\0arm,primecell\0";
@@ -515,7 +511,7 @@ fn create_rtc_node<T: DeviceInfoForFDT + Clone + Debug>(
 }
 
 fn create_devices_node<T: DeviceInfoForFDT + Clone + Debug>(
-    fdt: &mut Vec<u8>,
+    fdt: &mut [u8],
     dev_info: &HashMap<(DeviceType, String), T>,
 ) -> Result<()> {
     // Create one temp Vec to store all virtio devices

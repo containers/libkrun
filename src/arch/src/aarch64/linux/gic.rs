@@ -76,10 +76,10 @@ pub trait GICDevice {
         Self: Sized,
     {
         let attr = kvm_bindings::kvm_device_attr {
-            group: group,
-            attr: attr,
-            addr: addr,
-            flags: flags,
+            group,
+            attr,
+            addr,
+            flags,
         };
         fd.set_device_attr(&attr)
             .map_err(Error::SetDeviceAttribute)?;
@@ -120,6 +120,7 @@ pub trait GICDevice {
     }
 
     /// Method to initialize the GIC device
+    #[allow(clippy::new_ret_no_self)]
     fn new(vm: &VmFd, vcpu_count: u64) -> Result<Box<dyn GICDevice>>
     where
         Self: Sized,

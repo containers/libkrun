@@ -78,14 +78,14 @@ impl GICDevice for GICv3 {
 
     fn create_device(fd: DeviceFd, vcpu_count: u64) -> Box<dyn GICDevice> {
         Box::new(GICv3 {
-            fd: fd,
+            fd,
             properties: [
                 GICv3::get_dist_addr(),
                 GICv3::get_dist_size(),
                 GICv3::get_redists_addr(vcpu_count),
                 GICv3::get_redists_size(vcpu_count),
             ],
-            vcpu_count: vcpu_count,
+            vcpu_count,
         })
     }
 
@@ -94,7 +94,7 @@ impl GICDevice for GICv3 {
          We are placing the GIC below 1GB so we need to substract the size of the distributor.
         */
         Self::set_device_attribute(
-            &gic_device.device_fd(),
+            gic_device.device_fd(),
             kvm_bindings::KVM_DEV_ARM_VGIC_GRP_ADDR,
             u64::from(kvm_bindings::KVM_VGIC_V3_ADDR_TYPE_DIST),
             &GICv3::get_dist_addr() as *const u64 as u64,
@@ -105,10 +105,10 @@ impl GICDevice for GICv3 {
         We are calculating here the start of the redistributors address. We have one per CPU.
         */
         Self::set_device_attribute(
-            &gic_device.device_fd(),
+            gic_device.device_fd(),
             kvm_bindings::KVM_DEV_ARM_VGIC_GRP_ADDR,
             u64::from(kvm_bindings::KVM_VGIC_V3_ADDR_TYPE_REDIST),
-            &GICv3::get_redists_addr(u64::from(gic_device.vcpu_count())) as *const u64 as u64,
+            &GICv3::get_redists_addr(gic_device.vcpu_count()) as *const u64 as u64,
             0,
         )?;
 
