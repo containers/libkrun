@@ -48,10 +48,10 @@ use crate::DeviceType;
 pub fn arch_memory_regions(
     size: usize,
     _kernel_load_addr: u64,
-    kernel_size: usize,
+    _kernel_size: usize,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let dram_size = min(size as u64, layout::DRAM_MEM_MAX_SIZE) as usize;
-    let ram_last_addr = layout::DRAM_MEM_START + (kernel_size as u64) + (dram_size as u64);
+    let ram_last_addr = layout::DRAM_MEM_START + (dram_size as u64);
     let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
     let info = ArchMemoryInfo {
         ram_last_addr,
@@ -61,10 +61,7 @@ pub fn arch_memory_regions(
     (
         info,
         vec![
-            (
-                GuestAddress(layout::DRAM_MEM_START + kernel_size as u64),
-                dram_size,
-            ),
+            (GuestAddress(layout::DRAM_MEM_START), dram_size),
             (GuestAddress(shm_start_addr), MMIO_SHM_SIZE as usize),
         ],
     )

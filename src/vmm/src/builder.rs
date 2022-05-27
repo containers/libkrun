@@ -41,9 +41,9 @@ use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
 use utils::terminal::Terminal;
 use utils::time::TimestampUs;
-#[cfg(all(target_os = "linux", not(feature = "amd-sev")))]
+#[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "amd-sev")))]
 use vm_memory::mmap::GuestRegionMmap;
-#[cfg(any(target_os = "macos", feature = "amd-sev"))]
+#[cfg(any(target_arch = "aarch64", feature = "amd-sev"))]
 use vm_memory::Bytes;
 #[cfg(target_os = "linux")]
 use vm_memory::GuestMemory;
@@ -590,7 +590,7 @@ pub fn build_microvm(
 }
 
 /// Creates GuestMemory of `mem_size_mib` MiB in size.
-#[cfg(all(target_os = "linux", not(feature = "amd-sev")))]
+#[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "amd-sev")))]
 pub fn create_guest_memory(
     mem_size_mib: usize,
     kernel_region: MmapRegion,
@@ -615,7 +615,7 @@ pub fn create_guest_memory(
 }
 
 /// Creates GuestMemory of `mem_size_mib` MiB in size.
-#[cfg(all(target_os = "linux", feature = "amd-sev"))]
+#[cfg(all(target_os = "linux", target_arch = "x86_64", feature = "amd-sev"))]
 pub fn create_guest_memory(
     mem_size_mib: usize,
     kernel_region: MmapRegion,
@@ -655,7 +655,7 @@ pub fn create_guest_memory(
     Ok((guest_mem, arch_mem_info))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(target_arch = "aarch64")]
 pub fn create_guest_memory(
     mem_size_mib: usize,
     kernel_region: MmapRegion,
