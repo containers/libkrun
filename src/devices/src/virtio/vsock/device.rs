@@ -6,20 +6,6 @@
 // found in the THIRD-PARTY file.
 
 use std::result;
-/// This is the `VirtioDevice` implementation for our vsock device. It handles the virtio-level
-/// device logic: feature negociation, device configuration, and device activation.
-///
-/// We aim to conform to the VirtIO v1.1 spec:
-/// https://docs.oasis-open.org/virtio/virtio/v1.1/virtio-v1.1.html
-///
-/// The vsock device has two input parameters: a CID to identify the device, and a `VsockBackend`
-/// to use for offloading vsock traffic.
-///
-/// Upon its activation, the vsock device registers handlers for the following events/FDs:
-/// - an RX queue FD;
-/// - a TX queue FD;
-/// - an event queue FD; and
-/// - a backend FD.
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -32,72 +18,78 @@ use super::super::{
     ActivateError, ActivateResult, DeviceState, Queue as VirtQueue, VirtioDevice, VsockError,
     VIRTIO_MMIO_INT_VRING,
 };
+use super::muxer::VsockMuxer;
 use super::packet::VsockPacket;
-use super::VsockBackend;
 use super::{defs, defs::uapi};
 use crate::legacy::Gic;
 
 pub(crate) const RXQ_INDEX: usize = 0;
 pub(crate) const TXQ_INDEX: usize = 1;
-pub(crate) const EVQ_INDEX: usize = 2;
+pub(crate) const DRQ_INDEX: usize = 2;
+pub(crate) const DTQ_INDEX: usize = 3;
+pub(crate) const EVQ_INDEX: usize = 4;
 
 /// The virtio features supported by our vsock device:
 /// - VIRTIO_F_VERSION_1: the device conforms to at least version 1.0 of the VirtIO spec.
 /// - VIRTIO_F_IN_ORDER: the device returns used buffers in the same order that the driver makes
 ///   them available.
-pub(crate) const AVAIL_FEATURES: u64 =
-    1 << uapi::VIRTIO_F_VERSION_1 as u64 | 1 << uapi::VIRTIO_F_IN_ORDER as u64;
+pub(crate) const AVAIL_FEATURES: u64 = 1 << uapi::VIRTIO_F_VERSION_1 as u64
+    | 1 << uapi::VIRTIO_F_IN_ORDER as u64
+    | 1 << uapi::VIRTIO_VSOCK_F_DGRAM;
 
-pub struct Vsock<B> {
+pub struct Vsock {
     cid: u64,
+    pub(crate) muxer: VsockMuxer,
+    pub(crate) queue_rx: Arc<Mutex<VirtQueue>>,
+    pub(crate) queue_tx: Arc<Mutex<VirtQueue>>,
+    pub(crate) queue_dr: Arc<Mutex<VirtQueue>>,
+    //pub(crate) queue_ev: Arc<Mutex<VirtQueue>>,
     pub(crate) queues: Vec<VirtQueue>,
     pub(crate) queue_events: Vec<EventFd>,
-    pub(crate) backend: B,
     pub(crate) avail_features: u64,
     pub(crate) acked_features: u64,
     pub(crate) interrupt_status: Arc<AtomicUsize>,
     pub(crate) interrupt_evt: EventFd,
-    // This EventFd is the only one initially registered for a vsock device, and is used to convert
-    // a VirtioDevice::activate call into an EventHandler read event which allows the other events
-    // (queue and backend related) to be registered post virtio device activation. That's
-    // mostly something we wanted to happen for the backend events, to prevent (potentially)
-    // continuous triggers from happening before the device gets activated.
     pub(crate) activate_evt: EventFd,
     pub(crate) device_state: DeviceState,
     intc: Option<Arc<Mutex<Gic>>>,
     irq_line: Option<u32>,
 }
 
-// TODO: Detect / handle queue deadlock:
-// 1. If the driver halts RX queue processing, we'll need to notify `self.backend`, so that it
-//    can unregister any EPOLLIN listeners, since otherwise it will keep spinning, unable to consume
-//    its EPOLLIN events.
-
-impl<B> Vsock<B>
-where
-    B: VsockBackend,
-{
-    pub(crate) fn with_queues(
-        cid: u64,
-        backend: B,
-        queues: Vec<VirtQueue>,
-    ) -> super::Result<Vsock<B>> {
+impl Vsock {
+    pub(crate) fn with_queues(cid: u64, queues: Vec<VirtQueue>) -> super::Result<Vsock> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
             queue_events
                 .push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(VsockError::EventFd)?);
         }
 
+        //let queue_ev = Arc::new(Mutex::new(queues[EVQ_INDEX].clone()));
+        let queue_tx = Arc::new(Mutex::new(queues[TXQ_INDEX].clone()));
+        let queue_rx = Arc::new(Mutex::new(queues[RXQ_INDEX].clone()));
+        let queue_dr = Arc::new(Mutex::new(queues[DRQ_INDEX].clone()));
+
+        let interrupt_evt =
+            EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(VsockError::EventFd)?;
+        let interrupt_status = Arc::new(AtomicUsize::new(0));
+
         Ok(Vsock {
             cid,
+            muxer: VsockMuxer::new(
+                cid,
+                interrupt_evt.try_clone().unwrap(),
+                interrupt_status.clone(),
+            ),
+            queue_rx,
+            queue_tx,
+            queue_dr,
+            //queue_ev,
             queues,
             queue_events,
-            backend,
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
-            interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
-                .map_err(VsockError::EventFd)?,
+            interrupt_status,
+            interrupt_evt,
             activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
                 .map_err(VsockError::EventFd)?,
             device_state: DeviceState::Inactive,
@@ -106,13 +98,13 @@ where
         })
     }
 
-    /// Create a new virtio-vsock device with the given VM CID and vsock backend.
-    pub fn new(cid: u64, backend: B) -> super::Result<Vsock<B>> {
+    /// Create a new virtio-vsock device with the given VM CID.
+    pub fn new(cid: u64) -> super::Result<Vsock> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
             .iter()
             .map(|&max_size| VirtQueue::new(max_size))
             .collect();
-        Self::with_queues(cid, backend, queues)
+        Self::with_queues(cid, queues)
     }
 
     pub fn id(&self) -> &str {
@@ -125,10 +117,6 @@ where
 
     pub fn cid(&self) -> u64 {
         self.cid
-    }
-
-    pub fn backend(&self) -> &B {
-        &self.backend
     }
 
     /// Signal the guest driver that we've used some virtio buffers that it had previously made
@@ -151,8 +139,8 @@ where
     /// Walk the driver-provided RX queue buffers and attempt to fill them up with any data that we
     /// have pending. Return `true` if descriptors have been added to the used ring, and `false`
     /// otherwise.
-    pub fn process_rx(&mut self) -> bool {
-        debug!("vsock: process_rx()");
+    pub fn process_stream_rx(&mut self) -> bool {
+        debug!("vsock: process_stream_rx()");
         let mem = match self.device_state {
             DeviceState::Activated(ref mem) => mem,
             // This should never happen, it's been already validated in the event handler.
@@ -161,15 +149,18 @@ where
 
         let mut have_used = false;
 
-        while let Some(head) = self.queues[RXQ_INDEX].pop(mem) {
+        debug!("vsock: process_rx before while");
+        let mut queue_rx = self.queue_rx.lock().unwrap();
+        while let Some(head) = queue_rx.pop(mem) {
+            debug!("vsock: process_rx inside while");
             let used_len = match VsockPacket::from_rx_virtq_head(&head) {
                 Ok(mut pkt) => {
-                    if self.backend.recv_pkt(&mut pkt).is_ok() {
+                    if self.muxer.recv_stream_pkt(&mut pkt).is_ok() {
                         pkt.hdr().len() as u32 + pkt.len()
                     } else {
                         // We are using a consuming iterator over the virtio buffers, so, if we can't
                         // fill in this buffer, we'll need to undo the last iterator step.
-                        self.queues[RXQ_INDEX].undo_pop();
+                        queue_rx.undo_pop();
                         break;
                     }
                 }
@@ -179,18 +170,16 @@ where
                 }
             };
 
+            debug!("vsock: process_rx: something to queue");
             have_used = true;
-            self.queues[RXQ_INDEX].add_used(mem, head.index, used_len);
+            queue_rx.add_used(mem, head.index, used_len);
         }
 
         have_used
     }
 
-    /// Walk the driver-provided TX queue buffers, package them up as vsock packets, and send them
-    /// to the backend for processing. Return `true` if descriptors have been added to the used
-    /// ring, and `false` otherwise.
-    pub fn process_tx(&mut self) -> bool {
-        debug!("vsock::process_tx()");
+    pub fn process_dgram_rx(&mut self) -> bool {
+        debug!("vsock: process_dgram_rx()");
         let mem = match self.device_state {
             DeviceState::Activated(ref mem) => mem,
             // This should never happen, it's been already validated in the event handler.
@@ -199,34 +188,107 @@ where
 
         let mut have_used = false;
 
-        while let Some(head) = self.queues[TXQ_INDEX].pop(mem) {
+        debug!("vsock: process_rx before while");
+        let mut queue_dr = self.queue_dr.lock().unwrap();
+        while let Some(head) = queue_dr.pop(mem) {
+            debug!("vsock: process_rx inside while");
+            let used_len = match VsockPacket::from_rx_virtq_head(&head) {
+                Ok(mut pkt) => {
+                    if self.muxer.recv_dgram_pkt(&mut pkt).is_ok() {
+                        pkt.hdr().len() as u32 + pkt.len()
+                    } else {
+                        // We are using a consuming iterator over the virtio buffers, so, if we can't
+                        // fill in this buffer, we'll need to undo the last iterator step.
+                        queue_dr.undo_pop();
+                        break;
+                    }
+                }
+                Err(e) => {
+                    warn!("vsock: RX queue error: {:?}", e);
+                    0
+                }
+            };
+
+            debug!("vsock: process_rx: something to queue");
+            have_used = true;
+            queue_dr.add_used(mem, head.index, used_len);
+        }
+
+        have_used
+    }
+
+    /// Walk the driver-provided TX queue buffers, package them up as vsock packets, and process
+    /// them. Return `true` if descriptors have been added to the used ring, and `false` otherwise.
+    pub fn process_stream_tx(&mut self) -> bool {
+        debug!("vsock::process_stream_tx()");
+        let mem = match self.device_state {
+            DeviceState::Activated(ref mem) => mem,
+            // This should never happen, it's been already validated in the event handler.
+            DeviceState::Inactive => unreachable!(),
+        };
+
+        let mut have_used = false;
+
+        let mut queue_tx = self.queue_tx.lock().unwrap();
+        while let Some(head) = queue_tx.pop(mem) {
             let pkt = match VsockPacket::from_tx_virtq_head(&head) {
                 Ok(pkt) => pkt,
                 Err(e) => {
                     error!("vsock: error reading TX packet: {:?}", e);
                     have_used = true;
-                    self.queues[TXQ_INDEX].add_used(mem, head.index, 0);
+                    queue_tx.add_used(mem, head.index, 0);
                     continue;
                 }
             };
 
-            if self.backend.send_pkt(&pkt).is_err() {
-                self.queues[TXQ_INDEX].undo_pop();
+            if self.muxer.send_stream_pkt(&pkt).is_err() {
+                queue_tx.undo_pop();
                 break;
             }
 
             have_used = true;
-            self.queues[TXQ_INDEX].add_used(mem, head.index, 0);
+            queue_tx.add_used(mem, head.index, 0);
+        }
+
+        have_used
+    }
+
+    pub fn process_dgram_tx(&mut self) -> bool {
+        debug!("vsock::process_dgram_tx()");
+        let mem = match self.device_state {
+            DeviceState::Activated(ref mem) => mem,
+            // This should never happen, it's been already validated in the event handler.
+            DeviceState::Inactive => unreachable!(),
+        };
+
+        let mut have_used = false;
+
+        //let mut queue_tx = self.queue_tx.lock().unwrap();
+        while let Some(head) = self.queues[DTQ_INDEX].pop(mem) {
+            let pkt = match VsockPacket::from_tx_virtq_head(&head) {
+                Ok(pkt) => pkt,
+                Err(e) => {
+                    error!("vsock: error reading TX packet: {:?}", e);
+                    have_used = true;
+                    self.queues[DTQ_INDEX].add_used(mem, head.index, 0);
+                    continue;
+                }
+            };
+
+            if self.muxer.send_dgram_pkt(&pkt).is_err() {
+                self.queues[DTQ_INDEX].undo_pop();
+                break;
+            }
+
+            have_used = true;
+            self.queues[DTQ_INDEX].add_used(mem, head.index, 0);
         }
 
         have_used
     }
 }
 
-impl<B> VirtioDevice for Vsock<B>
-where
-    B: VsockBackend + 'static,
-{
+impl VirtioDevice for Vsock {
     fn avail_features(&self) -> u64 {
         self.avail_features
     }
@@ -307,6 +369,17 @@ where
             return Err(ActivateError::BadActivate);
         }
 
+        self.queue_tx = Arc::new(Mutex::new(self.queues[TXQ_INDEX].clone()));
+        self.queue_rx = Arc::new(Mutex::new(self.queues[RXQ_INDEX].clone()));
+        self.queue_dr = Arc::new(Mutex::new(self.queues[DRQ_INDEX].clone()));
+        self.muxer.activate(
+            mem.clone(),
+            self.queue_rx.clone(),
+            self.queue_dr.clone(),
+            self.intc.clone(),
+            self.irq_line,
+        );
+
         self.device_state = DeviceState::Activated(mem);
 
         Ok(())
@@ -317,82 +390,5 @@ where
             DeviceState::Inactive => false,
             DeviceState::Activated(_) => true,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::tests::TestContext;
-    use super::*;
-    use crate::virtio::vsock::defs::uapi;
-
-    #[test]
-    fn test_virtio_device() {
-        let mut ctx = TestContext::new();
-        let device_features = AVAIL_FEATURES;
-        let driver_features: u64 = AVAIL_FEATURES | 1 | (1 << 32);
-        let device_pages = [
-            (device_features & 0xffff_ffff) as u32,
-            (device_features >> 32) as u32,
-        ];
-        let driver_pages = [
-            (driver_features & 0xffff_ffff) as u32,
-            (driver_features >> 32) as u32,
-        ];
-        assert_eq!(ctx.device.device_type(), uapi::VIRTIO_ID_VSOCK);
-        assert_eq!(ctx.device.avail_features_by_page(0), device_pages[0]);
-        assert_eq!(ctx.device.avail_features_by_page(1), device_pages[1]);
-        assert_eq!(ctx.device.avail_features_by_page(2), 0);
-
-        // Ack device features, page 0.
-        ctx.device.ack_features_by_page(0, driver_pages[0]);
-        // Ack device features, page 1.
-        ctx.device.ack_features_by_page(1, driver_pages[1]);
-        // Ack some bogus page (i.e. 2). This should have no side effect.
-        ctx.device.ack_features_by_page(2, 0);
-        // Attempt to un-ack the first feature page. This should have no side effect.
-        ctx.device.ack_features_by_page(0, !driver_pages[0]);
-        // Check that no side effect are present, and that the acked features are exactly the same
-        // as the device features.
-        assert_eq!(ctx.device.acked_features, device_features & driver_features);
-
-        // Test reading 32-bit chunks.
-        let mut data = [0u8; 8];
-        ctx.device.read_config(0, &mut data[..4]);
-        assert_eq!(
-            u64::from(byte_order::read_le_u32(&data[..])),
-            ctx.cid & 0xffff_ffff
-        );
-        ctx.device.read_config(4, &mut data[4..]);
-        assert_eq!(
-            u64::from(byte_order::read_le_u32(&data[4..])),
-            (ctx.cid >> 32) & 0xffff_ffff
-        );
-
-        // Test reading 64-bit.
-        let mut data = [0u8; 8];
-        ctx.device.read_config(0, &mut data);
-        assert_eq!(byte_order::read_le_u64(&data), ctx.cid);
-
-        // Check that out-of-bounds reading doesn't mutate the destination buffer.
-        let mut data = [0u8, 1, 2, 3, 4, 5, 6, 7];
-        ctx.device.read_config(2, &mut data);
-        assert_eq!(data, [0u8, 1, 2, 3, 4, 5, 6, 7]);
-
-        // Just covering lines here, since the vsock device has no writable config.
-        // A warning is, however, logged, if the guest driver attempts to write any config data.
-        ctx.device.write_config(0, &data[..4]);
-
-        // Test a bad activation.
-        // let bad_activate = ctx.device.activate(
-        //     ctx.mem.clone(),
-        // );
-        // match bad_activate {
-        //     Err(ActivateError::BadActivate) => (),
-        //     other => panic!("{:?}", other),
-        // }
-
-        // Test a correct activation.
-        ctx.device.activate(ctx.mem.clone()).unwrap();
     }
 }

@@ -19,7 +19,7 @@ use devices::legacy::Gic;
 use devices::legacy::Serial;
 #[cfg(not(feature = "amd-sev"))]
 use devices::virtio::VirtioShmRegion;
-use devices::virtio::{MmioTransport, Vsock, VsockUnixBackend};
+use devices::virtio::{MmioTransport, Vsock};
 
 #[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigwinch_handler;
@@ -1046,7 +1046,7 @@ fn attach_console_devices(
 
 fn attach_unixsock_vsock_device(
     vmm: &mut Vmm,
-    unix_vsock: &Arc<Mutex<Vsock<VsockUnixBackend>>>,
+    unix_vsock: &Arc<Mutex<Vsock>>,
     event_manager: &mut EventManager,
     intc: Option<Arc<Mutex<Gic>>>,
 ) -> std::result::Result<(), StartMicrovmError> {
@@ -1139,38 +1139,6 @@ fn attach_block_devices(
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
-    use crate::vmm_config::vsock::tests::{default_config, TempSockFile};
-    use crate::vmm_config::vsock::VsockBuilder;
-    use arch::DeviceType;
-    use devices::virtio::TYPE_VSOCK;
-    use kernel::cmdline::Cmdline;
-    use polly::event_manager::EventManager;
-    use utils::tempfile::TempFile;
-
-    fn default_mmio_device_manager() -> MMIODeviceManager {
-        MMIODeviceManager::new(
-            &mut (arch::MMIO_MEM_START as u64),
-            (arch::IRQ_BASE, arch::IRQ_MAX),
-        )
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    fn default_portio_device_manager() -> PortIODeviceManager {
-        PortIODeviceManager::new(
-            Some(Arc::new(Mutex::new(Serial::new_sink(
-                EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-            )))),
-            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-        )
-        .unwrap()
-    }
-
-    fn default_kernel_cmdline() -> Cmdline {
-        let mut kernel_cmdline = kernel::cmdline::Cmdline::new(4096);
-        kernel_cmdline.insert_str(DEFAULT_KERNEL_CMDLINE).unwrap();
-        kernel_cmdline
-    }
 
     fn default_guest_memory(
         mem_size_mib: usize,
@@ -1184,34 +1152,6 @@ pub mod tests {
         };
 
         create_guest_memory(mem_size_mib, kernel_region, kernel_guest_addr, kernel_size)
-    }
-
-    fn default_vmm() -> Vmm {
-        let (guest_memory, arch_memory_info) = default_guest_memory(128).unwrap();
-        let kernel_cmdline = default_kernel_cmdline();
-
-        let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
-            .map_err(Error::EventFd)
-            .map_err(StartMicrovmError::Internal)
-            .unwrap();
-
-        let vm = setup_vm(&guest_memory, None).unwrap();
-        let mmio_device_manager = default_mmio_device_manager();
-        #[cfg(target_arch = "x86_64")]
-        let pio_device_manager = default_portio_device_manager();
-
-        Vmm {
-            //events_observer: Some(Box::new(SerialStdin::get())),
-            guest_memory,
-            arch_memory_info,
-            kernel_cmdline,
-            vcpus_handles: Vec::new(),
-            exit_evt,
-            vm,
-            mmio_device_manager,
-            #[cfg(target_arch = "x86_64")]
-            pio_device_manager,
-        }
     }
 
     #[test]
@@ -1275,31 +1215,6 @@ pub mod tests {
         )
         .unwrap();
         assert_eq!(vcpu_vec.len(), vcpu_count as usize);
-    }
-
-    #[test]
-    fn test_attach_vsock_device() {
-        let mut event_manager = EventManager::new().expect("Unable to create EventManager");
-        let mut vmm = default_vmm();
-
-        #[cfg(target_arch = "x86_64")]
-        setup_interrupt_controller(&mut vmm.vm).unwrap();
-
-        #[cfg(target_arch = "aarch64")]
-        setup_interrupt_controller(&mut vmm.vm, 1).unwrap();
-
-        let tmp_sock_file = TempSockFile::new(TempFile::new().unwrap());
-        let vsock_config = default_config(&tmp_sock_file);
-
-        let vsock_dev_id = vsock_config.vsock_id.clone();
-        let vsock = VsockBuilder::create_unixsock_vsock(vsock_config).unwrap();
-        let vsock = Arc::new(Mutex::new(vsock));
-        assert!(attach_unixsock_vsock_device(&mut vmm, &vsock, &mut event_manager, None).is_ok());
-
-        assert!(vmm
-            .mmio_device_manager
-            .get_device(DeviceType::Virtio(TYPE_VSOCK), &vsock_dev_id)
-            .is_some());
     }
 
     #[test]

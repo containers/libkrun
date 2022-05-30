@@ -6,10 +6,11 @@
 
 use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
+use std::ptr;
 use std::time::Duration;
 
 use bitflags::bitflags;
-use kqueue::{EventData, EventFilter, FilterFlag, Ident, Watcher};
+use log::debug;
 
 #[repr(i32)]
 pub enum ControlOperation {
@@ -26,14 +27,69 @@ bitflags! {
     }
 }
 
-#[derive(Clone, Default)]
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct Kevent(libc::kevent);
+
+impl std::fmt::Debug for Kevent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{ ident: {}, data: {} }}", self.ident(), self.data())
+    }
+}
+
+impl Default for Kevent {
+    fn default() -> Self {
+        Kevent(libc::kevent {
+            ident: 0,
+            filter: 0,
+            flags: 0,
+            fflags: 0,
+            data: 0,
+            udata: ptr::null_mut(),
+        })
+    }
+}
+
+impl Kevent {
+    pub fn new(ident: usize, filter: i16, flags: u16, udata: u64) -> Self {
+        Kevent(libc::kevent {
+            ident,
+            filter,
+            flags,
+            fflags: 0,
+            data: 0,
+            udata: udata as *mut libc::c_void,
+        })
+    }
+
+    pub fn ident(&self) -> usize {
+        self.0.ident
+    }
+
+    pub fn data(&self) -> isize {
+        self.0.data
+    }
+
+    pub fn udata(&self) -> u64 {
+        self.0.udata as u64
+    }
+}
+
+#[derive(Clone, Copy, Default)]
 pub struct EpollEvent {
     pub events: u32,
     u64: u64,
 }
 
+impl std::fmt::Debug for EpollEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{ events: {}, data: {} }}", self.events(), self.data())
+    }
+}
+
 impl EpollEvent {
     pub fn new(events: EventSet, data: u64) -> Self {
+        debug!("EpollEvent new: {}", data);
         EpollEvent {
             events: events.bits(),
             u64: data,
@@ -52,6 +108,7 @@ impl EpollEvent {
     }
 
     pub fn data(&self) -> u64 {
+        debug!("EpollEvent data: {}", self.u64);
         self.u64
     }
 
@@ -60,23 +117,23 @@ impl EpollEvent {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Epoll {
-    watcher: Watcher,
+    queue: RawFd,
 }
 
 impl Epoll {
     pub fn new() -> io::Result<Self> {
-        let watcher = Watcher::new()?;
-        Ok(Epoll { watcher })
-    }
-
-    pub fn disable_clears(&mut self) {
-        self.watcher.disable_clears();
+        let queue = unsafe { libc::kqueue() };
+        if queue == -1 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(Epoll { queue })
+        }
     }
 
     pub fn ctl(
-        &mut self,
+        &self,
         operation: ControlOperation,
         fd: RawFd,
         event: &EpollEvent,
@@ -85,65 +142,111 @@ impl Epoll {
 
         match operation {
             ControlOperation::Add | ControlOperation::Modify => {
+                let mut kevs: Vec<Kevent> = Vec::new();
                 if eset.contains(EventSet::IN) {
-                    self.watcher
-                        .add_fd(fd, EventFilter::EVFILT_READ, FilterFlag::empty())?;
+                    debug!("add fd in: {}", fd);
+                    kevs.push(Kevent::new(fd as usize, -1, 0x1, event.u64));
                 }
                 if eset.contains(EventSet::OUT) {
-                    self.watcher
-                        .add_fd(fd, EventFilter::EVFILT_WRITE, FilterFlag::empty())?;
+                    debug!("add fd out: {}", fd);
+                    kevs.push(Kevent::new(fd as usize, -2, 0x1, event.u64));
                 }
+                let ret = unsafe {
+                    libc::kevent(
+                        self.queue,
+                        kevs.as_ptr() as *const libc::kevent,
+                        kevs.len() as i32,
+                        ptr::null_mut(),
+                        0,
+                        ptr::null(),
+                    )
+                };
+                assert_eq!(ret, 0);
             }
             ControlOperation::Delete => {
-                // Remove all possible event filters for this fd, ignoring errors.
-                match self.watcher.remove_fd(fd, EventFilter::EVFILT_READ) {
-                    Err(_) => {}
-                    Ok(()) => {}
+                let mut kevs: Vec<Kevent> = Vec::new();
+                if eset.bits() == 0 {
+                    debug!("remove fd in and out: {}", fd);
+                    kevs.push(Kevent::new(fd as usize, -1, 0x2, event.u64));
+                    kevs.push(Kevent::new(fd as usize, -2, 0x2, event.u64));
+                } else {
+                    if eset.contains(EventSet::IN) {
+                        debug!("remove fd in: {}", fd);
+                        kevs.push(Kevent::new(fd as usize, -1, 0x2, event.u64));
+                    }
+                    if eset.contains(EventSet::OUT) {
+                        debug!("remove fd out: {}", fd);
+                        kevs.push(Kevent::new(fd as usize, -2, 0x2, event.u64));
+                    }
                 }
-                match self.watcher.remove_fd(fd, EventFilter::EVFILT_WRITE) {
-                    Err(_) => {}
-                    Ok(()) => {}
-                }
+                let _ = unsafe {
+                    libc::kevent(
+                        self.queue,
+                        kevs.as_ptr() as *const libc::kevent,
+                        kevs.len() as i32,
+                        ptr::null_mut(),
+                        0,
+                        ptr::null(),
+                    )
+                };
             }
         }
-        self.watcher.watch()?;
         Ok(())
     }
 
     pub fn wait(
-        &mut self,
-        _max_events: usize,
+        &self,
+        max_events: usize,
         timeout: i32,
         events: &mut [EpollEvent],
     ) -> io::Result<usize> {
-        let tout = if timeout >= 0 {
+        let _tout = if timeout >= 0 {
             Some(Duration::from_millis(timeout as u64))
         } else {
             None
         };
 
-        match self.watcher.poll_forever(tout) {
-            Some(event) => {
-                let fd = match event.ident {
-                    Ident::Fd(fd) => fd,
-                    _ => panic!("Unexpected event type"),
-                };
-                match event.data {
-                    EventData::ReadReady(_) => events[0].events = EventSet::IN.bits(),
-                    EventData::WriteReady(_) => events[0].events = EventSet::OUT.bits(),
-                    _ => panic!("Unexpected EventData type"),
-                }
-                events[0].u64 = fd as u64;
-                Ok(1)
+        let ts = libc::timespec {
+            tv_sec: 3,
+            tv_nsec: 0,
+        };
+
+        let mut kevs = vec![Kevent::default(); events.len()];
+        debug!("kevs len: {}", kevs.len());
+        let ret = unsafe {
+            libc::kevent(
+                self.queue,
+                ptr::null(),
+                0,
+                kevs.as_mut_ptr() as *mut libc::kevent,
+                max_events as i32,
+                &ts as *const libc::timespec,
+            )
+        };
+
+        debug!("ret: {}", ret);
+
+        for i in 0..ret {
+            debug!("kev: {:?}", kevs[i as usize]);
+            if kevs[i as usize].0.filter == -1 {
+                events[i as usize].events = EventSet::IN.bits();
+            } else if kevs[i as usize].0.filter == -2 {
+                events[i as usize].events = EventSet::OUT.bits();
             }
-            None => Ok(0),
+            events[i as usize].u64 = kevs[i as usize].udata() as u64;
+        }
+
+        match ret {
+            -1 => Err(io::Error::last_os_error()),
+            0 => Ok(0),
+            nev => Ok(nev as usize),
         }
     }
 }
 
 impl AsRawFd for Epoll {
     fn as_raw_fd(&self) -> RawFd {
-        self.watcher.as_raw_fd()
+        self.queue
     }
 }
 
@@ -151,8 +254,7 @@ impl AsRawFd for Epoll {
 mod tests {
     use super::*;
 
-    use crate::eventfd;
-    use crate::eventfd::EventFd;
+    use crate::eventfd::{EventFd, EFD_NONBLOCK};
 
     #[test]
     fn test_event_ops() {
@@ -169,25 +271,29 @@ mod tests {
     }
 
     #[test]
+    fn test_events_debug() {
+        let events = EpollEvent::new(EventSet::IN, 42);
+        assert_eq!(format!("{:?}", events), "{ events: 1, data: 42 }")
+    }
+
+    #[test]
     fn test_epoll() {
         const DEFAULT__TIMEOUT: i32 = 250;
         const EVENT_BUFFER_SIZE: usize = 128;
-        const MAX_EVENTS: usize = 10;
 
-        let mut epoll = Epoll::new().unwrap();
-        //assert_eq!(epoll.epoll_fd, epoll.as_raw_fd());
+        let epoll = Epoll::new().unwrap();
+        assert_eq!(epoll.queue, epoll.as_raw_fd());
 
         // Let's test different scenarios for `epoll_ctl()` and `epoll_wait()` functionality.
 
-        let event_fd_1 = EventFd::new(eventfd::EFD_NONBLOCK).unwrap();
+        let event_fd_1 = EventFd::new(EFD_NONBLOCK).unwrap();
         // For EPOLLOUT to be available it is enough only to be possible to write a value of
         // at least 1 to the eventfd counter without blocking.
         // If we write a value greater than 0 to this counter, the fd will be available for
         // EPOLLIN events too.
         event_fd_1.write(1).unwrap();
 
-        let mut event_1 =
-            EpollEvent::new(EventSet::IN | EventSet::OUT, event_fd_1.as_raw_fd() as u64);
+        let event_1 = EpollEvent::new(EventSet::IN, event_fd_1.as_raw_fd() as u64);
 
         // For EPOLL_CTL_ADD behavior we will try to add some fds with different event masks into
         // the interest list of epoll instance.
@@ -195,20 +301,11 @@ mod tests {
             .ctl(
                 ControlOperation::Add,
                 event_fd_1.as_raw_fd() as i32,
-                &event_1
+                event_1
             )
             .is_ok());
 
-        // We can't add twice the same fd to epoll interest list.
-        assert!(epoll
-            .ctl(
-                ControlOperation::Add,
-                event_fd_1.as_raw_fd() as i32,
-                &event_1
-            )
-            .is_err());
-
-        let event_fd_2 = EventFd::new(eventfd::EFD_NONBLOCK).unwrap();
+        let event_fd_2 = EventFd::new(EFD_NONBLOCK).unwrap();
         event_fd_2.write(1).unwrap();
         assert!(epoll
             .ctl(
@@ -216,122 +313,40 @@ mod tests {
                 event_fd_2.as_raw_fd() as i32,
                 // For this fd, we want an Event instance that has `data` field set to other
                 // value than the value of the fd and `events` without EPOLLIN type set.
-                &EpollEvent::new(EventSet::OUT, 10)
-            )
-            .is_ok());
-
-        // For the following eventfd we won't write anything to its counter, so we expect EPOLLIN
-        // event to not be available for this fd, even if we say that we want to monitor this type
-        // of event via EPOLL_CTL_ADD operation.
-        let event_fd_3 = EventFd::new(eventfd::EFD_NONBLOCK).unwrap();
-        let event_3 = EpollEvent::new(EventSet::OUT | EventSet::IN, event_fd_3.as_raw_fd() as u64);
-        assert!(epoll
-            .ctl(
-                ControlOperation::Add,
-                event_fd_3.as_raw_fd() as i32,
-                &event_3
+                EpollEvent::new(EventSet::IN, 10)
             )
             .is_ok());
 
         // Let's check `epoll_wait()` behavior for our epoll instance.
         let mut ready_events = vec![EpollEvent::default(); EVENT_BUFFER_SIZE];
-        let mut ev_count = epoll
-            .wait(MAX_EVENTS, DEFAULT__TIMEOUT, &mut ready_events[..])
-            .unwrap();
+        let mut ev_count = epoll.wait(DEFAULT__TIMEOUT, &mut ready_events[..]).unwrap();
 
         // We expect to have 3 fds in the ready list of epoll instance.
-        assert_eq!(ev_count, 3);
+        assert_eq!(ev_count, 2);
 
         // Let's check also the Event values that are now returned in the ready list.
         assert_eq!(ready_events[0].data(), event_fd_1.as_raw_fd() as u64);
-        // For this fd, `data` field was populated with random data instead of the
-        // corresponding fd value.
-        assert_eq!(ready_events[1].data(), 10);
-        assert_eq!(ready_events[2].data(), event_fd_3.as_raw_fd() as u64);
+        assert_eq!(ready_events[1].data(), 10 as u64);
 
         // EPOLLIN and EPOLLOUT should be available for this fd.
-        assert_eq!(
-            ready_events[0].events(),
-            (EventSet::IN | EventSet::OUT).bits()
-        );
+        assert_eq!(ready_events[0].events(), EventSet::IN.bits());
         // Only EPOLLOUT is expected because we didn't want to monitor EPOLLIN on this fd.
-        assert_eq!(ready_events[1].events(), EventSet::OUT.bits());
-        // Only EPOLLOUT too because eventfd counter value is 0 (we didn't write a value
-        // greater than 0 to it).
-        assert_eq!(ready_events[2].events(), EventSet::OUT.bits());
-
-        // Now we're gonna modify the Event instance for a fd to test EPOLL_CTL_MOD
-        // behavior.
-        // We create here a new Event with some events, other than those previously set,
-        // that we want to monitor this time on event_fd_1.
-        event_1 = EpollEvent::new(EventSet::OUT, 20);
-        assert!(epoll
-            .ctl(
-                ControlOperation::Modify,
-                event_fd_1.as_raw_fd() as i32,
-                &event_1
-            )
-            .is_ok());
-
-        let event_fd_4 = EventFd::new(eventfd::EFD_NONBLOCK).unwrap();
-        // Can't modify a fd that wasn't added to epoll interest list.
-        assert!(epoll
-            .ctl(
-                ControlOperation::Modify,
-                event_fd_4.as_raw_fd() as i32,
-                &EpollEvent::default()
-            )
-            .is_err());
-
-        let _ = epoll
-            .wait(MAX_EVENTS, DEFAULT__TIMEOUT, &mut ready_events[..])
-            .unwrap();
-
-        // Let's check that Event fields were indeed changed for the `event_fd_1` fd.
-        assert_eq!(ready_events[0].data(), 20);
-        // EPOLLOUT is now available for this fd as we've intended with EPOLL_CTL_MOD operation.
-        assert_eq!(ready_events[0].events(), EventSet::OUT.bits());
-
-        // Now let's set for a fd to not have any events monitored.
-        assert!(epoll
-            .ctl(
-                ControlOperation::Modify,
-                event_fd_1.as_raw_fd() as i32,
-                &EpollEvent::default()
-            )
-            .is_ok());
-
-        // In this particular case we expect to remain only with 2 fds in the ready list.
-        ev_count = epoll
-            .wait(MAX_EVENTS, DEFAULT__TIMEOUT, &mut ready_events[..])
-            .unwrap();
-        assert_eq!(ev_count, 2);
+        assert_eq!(ready_events[1].events(), EventSet::IN.bits());
 
         // Let's also delete a fd from the interest list.
         assert!(epoll
             .ctl(
                 ControlOperation::Delete,
                 event_fd_2.as_raw_fd() as i32,
-                &EpollEvent::default()
+                EpollEvent::default()
             )
             .is_ok());
 
         // We expect to have only one fd remained in the ready list (event_fd_3).
-        ev_count = epoll
-            .wait(MAX_EVENTS, DEFAULT__TIMEOUT, &mut ready_events[..])
-            .unwrap();
+        ev_count = epoll.wait(DEFAULT__TIMEOUT, &mut ready_events[..]).unwrap();
 
         assert_eq!(ev_count, 1);
-        assert_eq!(ready_events[0].data(), event_fd_3.as_raw_fd() as u64);
-        assert_eq!(ready_events[0].events(), EventSet::OUT.bits());
-
-        // If we try to remove a fd from epoll interest list that wasn't added before it will fail.
-        assert!(epoll
-            .ctl(
-                ControlOperation::Delete,
-                event_fd_4.as_raw_fd() as i32,
-                &EpollEvent::default()
-            )
-            .is_err());
+        assert_eq!(ready_events[0].data(), event_fd_1.as_raw_fd() as u64);
+        assert_eq!(ready_events[0].events(), EventSet::IN.bits());
     }
 }

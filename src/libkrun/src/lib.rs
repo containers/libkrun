@@ -33,7 +33,7 @@ use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
 // Minimum krunfw version we require.
-const KRUNFW_MIN_VERSION: u32 = 1;
+const KRUNFW_MIN_VERSION: u32 = 2;
 // Value returned on success. We use libc's errors otherwise.
 const KRUN_SUCCESS: i32 = 0;
 // Maximum number of arguments/environment variables we allow
@@ -189,7 +189,7 @@ pub extern "C" fn krun_set_log_level(level: u32) -> i32 {
 pub extern "C" fn krun_create_ctx() -> i32 {
     let krunfw_version = unsafe { krunfw_get_version() };
     if krunfw_version < KRUNFW_MIN_VERSION {
-        warn!("Unsupported libkrunfw version: {}", krunfw_version);
+        eprintln!("Unsupported libkrunfw version: {}", krunfw_version);
         return -libc::EINVAL;
     }
 

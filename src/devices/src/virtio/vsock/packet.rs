@@ -19,6 +19,7 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::result;
 
+use nix::sys::socket::Ipv4Addr;
 use utils::byte_order;
 use vm_memory::{self, GuestAddress, GuestMemory, GuestMemoryError};
 
@@ -90,6 +91,92 @@ const HDROFF_BUF_ALLOC: usize = 36;
 // belongs). For instance, for our Unix backend, this counter would be the total number of bytes
 // we have successfully written to a backing Unix socket.
 const HDROFF_FWD_CNT: usize = 40;
+
+#[repr(C)]
+pub struct TsiProxyCreate {
+    pub peer_port: u32,
+    pub _type: u16,
+}
+
+#[repr(C)]
+pub struct TsiConnectReq {
+    pub peer_port: u32,
+    pub addr: Ipv4Addr,
+    pub port: u16,
+}
+
+#[repr(C)]
+pub struct TsiConnectRsp {
+    pub result: i32,
+}
+
+#[repr(C)]
+pub struct TsiGetnameReq {
+    pub peer_port: u32,
+    pub local_port: u32,
+    pub peer: u32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct TsiGetnameRsp {
+    pub addr: Ipv4Addr,
+    pub port: u16,
+    pub result: i32,
+}
+
+impl Default for TsiGetnameRsp {
+    fn default() -> Self {
+        TsiGetnameRsp {
+            addr: Ipv4Addr::new(0, 0, 0, 0),
+            port: 0,
+            result: -1,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct TsiSendtoAddr {
+    pub peer_port: u32,
+    pub addr: Ipv4Addr,
+    pub port: u16,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct TsiListenReq {
+    pub peer_port: u32,
+    pub addr: Ipv4Addr,
+    pub port: u16,
+    pub vm_port: u32,
+    pub backlog: i32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct TsiListenRsp {
+    pub result: i32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct TsiAcceptReq {
+    pub peer_port: u32,
+    pub flags: u32,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct TsiAcceptRsp {
+    pub result: i32,
+}
+
+#[repr(C)]
+pub struct TsiReleaseReq {
+    pub peer_port: u32,
+    pub local_port: u32,
+}
 
 /// The vsock packet, implemented as a wrapper over a virtq descriptor chain:
 /// - the chain head, holding the packet header; and
@@ -375,315 +462,152 @@ impl VsockPacket {
             None
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
+    pub fn read_proxy_create(&self) -> Option<TsiProxyCreate> {
+        if self.buf_size >= 6 {
+            let peer_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[0..]);
+            let _type: u16 = byte_order::read_le_u16(&self.buf().unwrap()[4..]);
 
-    use vm_memory::{GuestAddress, GuestMemoryMmap};
-
-    use super::super::tests::TestContext;
-    use super::*;
-    use crate::virtio::queue::tests::VirtqDesc as GuestQDesc;
-    use crate::virtio::vsock::defs::MAX_PKT_BUF_SIZE;
-    use crate::virtio::vsock::device::{RXQ_INDEX, TXQ_INDEX};
-    use crate::virtio::VIRTQ_DESC_F_WRITE;
-
-    macro_rules! create_context {
-        ($test_ctx:ident, $handler_ctx:ident) => {
-            let $test_ctx = TestContext::new();
-            let mut $handler_ctx = $test_ctx.create_event_handler_context();
-            // For TX packets, hdr.len should be set to a valid value.
-            set_pkt_len(1024, &$handler_ctx.guest_txvq.dtable[0], &$test_ctx.mem);
-        };
+            Some(TsiProxyCreate { peer_port, _type })
+        } else {
+            None
+        }
     }
 
-    macro_rules! expect_asm_error {
-        (tx, $test_ctx:expr, $handler_ctx:expr, $err:pat) => {
-            expect_asm_error!($test_ctx, $handler_ctx, $err, from_tx_virtq_head, TXQ_INDEX);
-        };
-        (rx, $test_ctx:expr, $handler_ctx:expr, $err:pat) => {
-            expect_asm_error!($test_ctx, $handler_ctx, $err, from_rx_virtq_head, RXQ_INDEX);
-        };
-        ($test_ctx:expr, $handler_ctx:expr, $err:pat, $ctor:ident, $vq_index:ident) => {
-            match VsockPacket::$ctor(
-                &$handler_ctx.device.queues[$vq_index]
-                    .pop(&$test_ctx.mem)
-                    .unwrap(),
-            ) {
-                Err($err) => (),
-                Ok(_) => panic!("Packet assembly should've failed!"),
-                Err(other) => panic!("Packet assembly failed with: {:?}", other),
+    pub fn read_connect_req(&self) -> Option<TsiConnectReq> {
+        if self.buf_size >= 10 {
+            let peer_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[0..]);
+            let port: u16 = byte_order::read_be_u16(&self.buf().unwrap()[8..]);
+
+            let ptr = &self.buf().unwrap()[4];
+            let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, 4) };
+            let addr = Ipv4Addr::new(slice[0], slice[1], slice[2], slice[3]);
+
+            Some(TsiConnectReq {
+                peer_port,
+                addr,
+                port,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn write_connect_rsp(&mut self, rsp: TsiConnectRsp) {
+        if self.buf_size >= 4 {
+            if let Some(buf) = self.buf_mut() {
+                byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
             }
-        };
-    }
-
-    fn set_pkt_len(len: u32, guest_desc: &GuestQDesc, mem: &GuestMemoryMmap) {
-        let hdr_gpa = guest_desc.addr.get();
-        let hdr_ptr = get_host_address(mem, GuestAddress(hdr_gpa), VSOCK_PKT_HDR_SIZE).unwrap();
-        let len_ptr = unsafe { hdr_ptr.add(HDROFF_LEN) };
-
-        byte_order::write_le_u32(unsafe { std::slice::from_raw_parts_mut(len_ptr, 4) }, len);
-    }
-
-    #[test]
-    #[allow(clippy::cognitive_complexity)]
-    fn test_tx_packet_assembly() {
-        // Test case: successful TX packet assembly.
-        {
-            create_context!(test_ctx, handler_ctx);
-
-            let pkt = VsockPacket::from_tx_virtq_head(
-                &handler_ctx.device.queues[TXQ_INDEX]
-                    .pop(&test_ctx.mem)
-                    .unwrap(),
-            )
-            .unwrap();
-            assert_eq!(pkt.hdr().len(), VSOCK_PKT_HDR_SIZE);
-            assert_eq!(
-                pkt.buf().unwrap().len(),
-                handler_ctx.guest_txvq.dtable[1].len.get() as usize
-            );
-        }
-
-        // Test case: error on write-only hdr descriptor.
-        {
-            create_context!(test_ctx, handler_ctx);
-            handler_ctx.guest_txvq.dtable[0]
-                .flags
-                .set(VIRTQ_DESC_F_WRITE);
-            expect_asm_error!(tx, test_ctx, handler_ctx, VsockError::UnreadableDescriptor);
-        }
-
-        // Test case: header descriptor has insufficient space to hold the packet header.
-        {
-            create_context!(test_ctx, handler_ctx);
-            handler_ctx.guest_txvq.dtable[0]
-                .len
-                .set(VSOCK_PKT_HDR_SIZE as u32 - 1);
-            expect_asm_error!(tx, test_ctx, handler_ctx, VsockError::HdrDescTooSmall(_));
-        }
-
-        // Test case: zero-length TX packet.
-        {
-            create_context!(test_ctx, handler_ctx);
-            set_pkt_len(0, &handler_ctx.guest_txvq.dtable[0], &test_ctx.mem);
-            let mut pkt = VsockPacket::from_tx_virtq_head(
-                &handler_ctx.device.queues[TXQ_INDEX]
-                    .pop(&test_ctx.mem)
-                    .unwrap(),
-            )
-            .unwrap();
-            assert!(pkt.buf().is_none());
-            assert!(pkt.buf_mut().is_none());
-        }
-
-        // Test case: TX packet has more data than we can handle.
-        {
-            create_context!(test_ctx, handler_ctx);
-            set_pkt_len(
-                MAX_PKT_BUF_SIZE as u32 + 1,
-                &handler_ctx.guest_txvq.dtable[0],
-                &test_ctx.mem,
-            );
-            expect_asm_error!(tx, test_ctx, handler_ctx, VsockError::InvalidPktLen(_));
-        }
-
-        // Test case:
-        // - packet header advertises some data length; and
-        // - the data descriptor is missing.
-        {
-            create_context!(test_ctx, handler_ctx);
-            set_pkt_len(1024, &handler_ctx.guest_txvq.dtable[0], &test_ctx.mem);
-            handler_ctx.guest_txvq.dtable[0].flags.set(0);
-            expect_asm_error!(tx, test_ctx, handler_ctx, VsockError::BufDescMissing);
-        }
-
-        // Test case: error on write-only buf descriptor.
-        {
-            create_context!(test_ctx, handler_ctx);
-            handler_ctx.guest_txvq.dtable[1]
-                .flags
-                .set(VIRTQ_DESC_F_WRITE);
-            expect_asm_error!(tx, test_ctx, handler_ctx, VsockError::UnreadableDescriptor);
-        }
-
-        // Test case: the buffer descriptor cannot fit all the data advertised by the the
-        // packet header `len` field.
-        {
-            create_context!(test_ctx, handler_ctx);
-            set_pkt_len(8 * 1024, &handler_ctx.guest_txvq.dtable[0], &test_ctx.mem);
-            handler_ctx.guest_txvq.dtable[1].len.set(4 * 1024);
-            expect_asm_error!(tx, test_ctx, handler_ctx, VsockError::BufDescTooSmall);
         }
     }
 
-    #[test]
-    fn test_rx_packet_assembly() {
-        // Test case: successful RX packet assembly.
-        {
-            create_context!(test_ctx, handler_ctx);
-            let pkt = VsockPacket::from_rx_virtq_head(
-                &handler_ctx.device.queues[RXQ_INDEX]
-                    .pop(&test_ctx.mem)
-                    .unwrap(),
-            )
-            .unwrap();
-            assert_eq!(pkt.hdr().len(), VSOCK_PKT_HDR_SIZE);
-            assert_eq!(
-                pkt.buf().unwrap().len(),
-                handler_ctx.guest_rxvq.dtable[1].len.get() as usize
-            );
-        }
-
-        // Test case: read-only RX packet header.
-        {
-            create_context!(test_ctx, handler_ctx);
-            handler_ctx.guest_rxvq.dtable[0].flags.set(0);
-            expect_asm_error!(rx, test_ctx, handler_ctx, VsockError::UnwritableDescriptor);
-        }
-
-        // Test case: RX descriptor head cannot fit the entire packet header.
-        {
-            create_context!(test_ctx, handler_ctx);
-            handler_ctx.guest_rxvq.dtable[0]
-                .len
-                .set(VSOCK_PKT_HDR_SIZE as u32 - 1);
-            expect_asm_error!(rx, test_ctx, handler_ctx, VsockError::HdrDescTooSmall(_));
-        }
-
-        // Test case: RX descriptor chain is missing the packet buffer descriptor.
-        {
-            create_context!(test_ctx, handler_ctx);
-            handler_ctx.guest_rxvq.dtable[0]
-                .flags
-                .set(VIRTQ_DESC_F_WRITE);
-            expect_asm_error!(rx, test_ctx, handler_ctx, VsockError::BufDescMissing);
+    pub fn read_getname_req(&self) -> Option<TsiGetnameReq> {
+        if self.buf_size >= 12 {
+            let peer_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[0..]);
+            let local_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[4..]);
+            let peer: u32 = byte_order::read_le_u32(&self.buf().unwrap()[8..]);
+            Some(TsiGetnameReq {
+                peer_port,
+                local_port,
+                peer,
+            })
+        } else {
+            None
         }
     }
 
-    #[test]
-    #[allow(clippy::cognitive_complexity)]
-    fn test_packet_hdr_accessors() {
-        const SRC_CID: u64 = 1;
-        const DST_CID: u64 = 2;
-        const SRC_PORT: u32 = 3;
-        const DST_PORT: u32 = 4;
-        const LEN: u32 = 5;
-        const TYPE: u16 = 6;
-        const OP: u16 = 7;
-        const FLAGS: u32 = 8;
-        const BUF_ALLOC: u32 = 9;
-        const FWD_CNT: u32 = 10;
-
-        create_context!(test_ctx, handler_ctx);
-        let mut pkt = VsockPacket::from_rx_virtq_head(
-            &handler_ctx.device.queues[RXQ_INDEX]
-                .pop(&test_ctx.mem)
-                .unwrap(),
-        )
-        .unwrap();
-
-        // Test field accessors.
-        pkt.set_src_cid(SRC_CID)
-            .set_dst_cid(DST_CID)
-            .set_src_port(SRC_PORT)
-            .set_dst_port(DST_PORT)
-            .set_len(LEN)
-            .set_type(TYPE)
-            .set_op(OP)
-            .set_flags(FLAGS)
-            .set_buf_alloc(BUF_ALLOC)
-            .set_fwd_cnt(FWD_CNT);
-
-        assert_eq!(pkt.src_cid(), SRC_CID);
-        assert_eq!(pkt.dst_cid(), DST_CID);
-        assert_eq!(pkt.src_port(), SRC_PORT);
-        assert_eq!(pkt.dst_port(), DST_PORT);
-        assert_eq!(pkt.len(), LEN);
-        assert_eq!(pkt.type_(), TYPE);
-        assert_eq!(pkt.op(), OP);
-        assert_eq!(pkt.flags(), FLAGS);
-        assert_eq!(pkt.buf_alloc(), BUF_ALLOC);
-        assert_eq!(pkt.fwd_cnt(), FWD_CNT);
-
-        // Test individual flag setting.
-        let flags = pkt.flags() | 0b1000;
-        pkt.set_flag(0b1000);
-        assert_eq!(pkt.flags(), flags);
-
-        // Test packet header as-slice access.
-        //
-
-        assert_eq!(pkt.hdr().len(), VSOCK_PKT_HDR_SIZE);
-
-        assert_eq!(
-            SRC_CID,
-            byte_order::read_le_u64(&pkt.hdr()[HDROFF_SRC_CID..])
-        );
-        assert_eq!(
-            DST_CID,
-            byte_order::read_le_u64(&pkt.hdr()[HDROFF_DST_CID..])
-        );
-        assert_eq!(
-            SRC_PORT,
-            byte_order::read_le_u32(&pkt.hdr()[HDROFF_SRC_PORT..])
-        );
-        assert_eq!(
-            DST_PORT,
-            byte_order::read_le_u32(&pkt.hdr()[HDROFF_DST_PORT..])
-        );
-        assert_eq!(LEN, byte_order::read_le_u32(&pkt.hdr()[HDROFF_LEN..]));
-        assert_eq!(TYPE, byte_order::read_le_u16(&pkt.hdr()[HDROFF_TYPE..]));
-        assert_eq!(OP, byte_order::read_le_u16(&pkt.hdr()[HDROFF_OP..]));
-        assert_eq!(FLAGS, byte_order::read_le_u32(&pkt.hdr()[HDROFF_FLAGS..]));
-        assert_eq!(
-            BUF_ALLOC,
-            byte_order::read_le_u32(&pkt.hdr()[HDROFF_BUF_ALLOC..])
-        );
-        assert_eq!(
-            FWD_CNT,
-            byte_order::read_le_u32(&pkt.hdr()[HDROFF_FWD_CNT..])
-        );
-
-        assert_eq!(pkt.hdr_mut().len(), VSOCK_PKT_HDR_SIZE);
-        for b in pkt.hdr_mut() {
-            *b = 0;
+    pub fn write_getname_rsp(&mut self, rsp: TsiGetnameRsp) {
+        if self.buf_size >= 10 {
+            if let Some(buf) = self.buf_mut() {
+                for (i, b) in rsp.addr.octets().iter().enumerate() {
+                    buf[i] = *b;
+                }
+                byte_order::write_be_u16(&mut buf[4..], rsp.port);
+                byte_order::write_le_u32(&mut buf[6..], rsp.result as u32);
+            }
         }
-        assert_eq!(pkt.src_cid(), 0);
-        assert_eq!(pkt.dst_cid(), 0);
-        assert_eq!(pkt.src_port(), 0);
-        assert_eq!(pkt.dst_port(), 0);
-        assert_eq!(pkt.len(), 0);
-        assert_eq!(pkt.type_(), 0);
-        assert_eq!(pkt.op(), 0);
-        assert_eq!(pkt.flags(), 0);
-        assert_eq!(pkt.buf_alloc(), 0);
-        assert_eq!(pkt.fwd_cnt(), 0);
     }
 
-    #[test]
-    fn test_packet_buf() {
-        create_context!(test_ctx, handler_ctx);
-        let mut pkt = VsockPacket::from_rx_virtq_head(
-            &handler_ctx.device.queues[RXQ_INDEX]
-                .pop(&test_ctx.mem)
-                .unwrap(),
-        )
-        .unwrap();
+    pub fn read_sendto_addr(&self) -> Option<TsiSendtoAddr> {
+        if self.buf_size >= 10 {
+            let peer_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[0..]);
+            let port: u16 = byte_order::read_be_u16(&self.buf().unwrap()[8..]);
 
-        assert_eq!(
-            pkt.buf().unwrap().len(),
-            handler_ctx.guest_rxvq.dtable[1].len.get() as usize
-        );
-        assert_eq!(
-            pkt.buf_mut().unwrap().len(),
-            handler_ctx.guest_rxvq.dtable[1].len.get() as usize
-        );
+            let ptr = &self.buf().unwrap()[4];
+            let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, 4) };
+            let addr = Ipv4Addr::new(slice[0], slice[1], slice[2], slice[3]);
 
-        for i in 0..pkt.buf().unwrap().len() {
-            pkt.buf_mut().unwrap()[i] = (i % 0x100) as u8;
-            assert_eq!(pkt.buf().unwrap()[i], (i % 0x100) as u8);
+            Some(TsiSendtoAddr {
+                peer_port,
+                addr,
+                port,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn read_listen_req(&self) -> Option<TsiListenReq> {
+        if self.buf_size >= 18 {
+            let peer_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[0..]);
+
+            let ptr = &self.buf().unwrap()[4];
+            let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, 4) };
+            let addr = Ipv4Addr::new(slice[0], slice[1], slice[2], slice[3]);
+
+            let port: u16 = byte_order::read_be_u16(&self.buf().unwrap()[8..]);
+            let vm_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[10..]);
+            let backlog: u32 = byte_order::read_le_u32(&self.buf().unwrap()[14..]);
+
+            Some(TsiListenReq {
+                peer_port,
+                addr,
+                port,
+                vm_port,
+                backlog: backlog as i32,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn write_listen_rsp(&mut self, rsp: TsiListenRsp) {
+        if self.buf_size >= 4 {
+            if let Some(buf) = self.buf_mut() {
+                byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
+            }
+        }
+    }
+
+    pub fn read_accept_req(&self) -> Option<TsiAcceptReq> {
+        if self.buf_size >= 8 {
+            let peer_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[0..]);
+            let flags: u32 = byte_order::read_le_u32(&self.buf().unwrap()[4..]);
+
+            Some(TsiAcceptReq { peer_port, flags })
+        } else {
+            None
+        }
+    }
+
+    pub fn write_accept_rsp(&mut self, rsp: TsiAcceptRsp) {
+        if self.buf_size >= 4 {
+            if let Some(buf) = self.buf_mut() {
+                byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
+            }
+        }
+    }
+
+    pub fn read_release_req(&self) -> Option<TsiReleaseReq> {
+        if self.buf_size >= 8 {
+            let peer_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[0..]);
+            let local_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[4..]);
+            Some(TsiReleaseReq {
+                peer_port,
+                local_port,
+            })
+        } else {
+            None
         }
     }
 }
