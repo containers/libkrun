@@ -11,7 +11,6 @@ use crate::vmm_config::fs::*;
 #[cfg(feature = "amd-sev")]
 use crate::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle, QbootBundleError};
 use crate::vmm_config::kernel_bundle::{KernelBundle, KernelBundleError};
-use crate::vmm_config::logger::LoggerConfigError;
 use crate::vmm_config::machine_config::{VmConfig, VmConfigError};
 use crate::vmm_config::vsock::*;
 use crate::vstate::VcpuConfig;
@@ -28,8 +27,6 @@ pub enum Error {
     /// Fs device configuration error.
     #[cfg(not(feature = "amd-sev"))]
     FsDevice(FsConfigError),
-    /// Logger configuration error.
-    Logger(LoggerConfigError),
     /// microVM vCpus or memory configuration error.
     VmConfig(VmConfigError),
     /// Vsock device configuration error.

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::os::unix::io::AsRawFd;
 
-use logger::{debug, error, warn};
+use log::{debug, error, warn};
 use polly::event_manager::{EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
 

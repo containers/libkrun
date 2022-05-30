@@ -1,5 +1,5 @@
 #[macro_use]
-extern crate logger;
+extern crate log;
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -10,15 +10,14 @@ use std::ffi::CStr;
 use std::ffi::CString;
 #[cfg(not(feature = "amd-sev"))]
 use std::path::Path;
-use std::process;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Mutex;
 
 #[cfg(feature = "amd-sev")]
 use devices::virtio::CacheType;
+use env_logger::Env;
 use libc::{c_char, size_t};
-use logger::{LevelFilter, LOGGER};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
 use vmm::resources::VmResources;
@@ -175,22 +174,14 @@ extern "C" {
 #[no_mangle]
 pub extern "C" fn krun_set_log_level(level: u32) -> i32 {
     let log_level = match level {
-        0 => LevelFilter::Off,
-        1 => LevelFilter::Error,
-        2 => LevelFilter::Warn,
-        3 => LevelFilter::Info,
-        4 => LevelFilter::Debug,
-        _ => LevelFilter::Trace,
+        0 => "off",
+        1 => "error",
+        2 => "warn",
+        3 => "info",
+        4 => "debug",
+        _ => "trace",
     };
-
-    if LOGGER
-        .set_max_level(log_level)
-        .configure(Some(format!("libkrun-{}", process::id())))
-        .is_err()
-    {
-        return -libc::EINVAL;
-    }
-
+    env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
     KRUN_SUCCESS
 }
 

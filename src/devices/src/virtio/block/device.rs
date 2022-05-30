@@ -15,7 +15,7 @@ use std::result;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use logger::{error, warn};
+use log::{error, warn};
 use utils::eventfd::EventFd;
 use virtio_gen::virtio_blk::*;
 use vm_memory::{Bytes, GuestMemoryError, GuestMemoryMmap};

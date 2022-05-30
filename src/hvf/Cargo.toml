@@ -5,4 +5,5 @@ authors = ["Sergio Lopez <slp@sinrega.org>"]
 edition = "2021"
 
 [dependencies]
-logger = { path = "../logger" }
+log = "0.4.0"
+env_logger = "0.9.0"
