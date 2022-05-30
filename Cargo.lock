@@ -744,7 +744,7 @@ checksum = "349d5a591cd28b49e1d1037471617a32ddcda5731b99419008085f72d5a53836"
 
 [[package]]
 name = "libkrun"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "cc",
  "devices",
