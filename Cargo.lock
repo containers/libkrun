@@ -42,7 +42,6 @@ name = "arch"
 version = "0.1.0"
 dependencies = [
  "arch_gen",
- "device_tree",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
@@ -303,12 +302,6 @@ dependencies = [
  "cfg-if 0.1.10",
  "lazy_static",
 ]
-
-[[package]]
-name = "device_tree"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f18f717c5c7c2e3483feb64cccebd077245ad6d19007c2db0fd341d38595353c"
 
 [[package]]
 name = "devices"
@@ -746,7 +739,6 @@ checksum = "349d5a591cd28b49e1d1037471617a32ddcda5731b99419008085f72d5a53836"
 name = "libkrun"
 version = "0.2.0"
 dependencies = [
- "cc",
  "devices",
  "env_logger",
  "libc",

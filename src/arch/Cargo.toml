@@ -20,4 +20,3 @@ kvm-ioctls = ">=0.4"
 
 [dev-dependencies]
 utils = { path = "../utils" }
-device_tree = ">=1.1.0"
