@@ -19,9 +19,6 @@ polly = { path = "../polly" }
 utils = { path = "../utils" }
 vmm = { path = "../vmm" }
 
-[build-dependencies]
-cc = "1.0"
-
 [lib]
 name = "krun"
 crate-type = ["cdylib"]

@@ -562,14 +562,6 @@ mod tests {
             LEN
         }
     }
-    // The `load` function from the `device_tree` will mistakenly check the actual size
-    // of the buffer with the allocated size. This works around that.
-    fn set_size(buf: &mut [u8], pos: usize, val: usize) {
-        buf[pos] = ((val >> 24) & 0xff) as u8;
-        buf[pos + 1] = ((val >> 16) & 0xff) as u8;
-        buf[pos + 2] = ((val >> 8) & 0xff) as u8;
-        buf[pos + 3] = (val & 0xff) as u8;
-    }
 
     #[test]
     fn test_create_fdt_with_devices() {
@@ -611,100 +603,5 @@ mod tests {
             &None,
         )
         .is_ok())
-    }
-
-    #[test]
-    fn test_create_fdt() {
-        let regions = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000);
-        let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
-        let kvm = Kvm::new().unwrap();
-        let vm = kvm.create_vm().unwrap();
-        let gic = create_gic(&vm, 1).unwrap();
-        let mut dtb = create_fdt(
-            &mem,
-            vec![0],
-            &CString::new("console=tty0").unwrap(),
-            &HashMap::<(DeviceType, std::string::String), MMIODeviceInfo>::new(),
-            &gic,
-            &None,
-        )
-        .unwrap();
-
-        /* Use this code when wanting to generate a new DTB sample.
-        {
-            use std::fs;
-            use std::io::Write;
-            use std::path::PathBuf;
-            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            let mut output = fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .open(path.join("src/aarch64/output.dtb"))
-                .unwrap();
-            output.write_all(&dtb).unwrap();
-        }
-        */
-
-        let bytes = include_bytes!("output.dtb");
-        let pos = 4;
-        let val = layout::FDT_MAX_SIZE;
-        let mut buf = vec![];
-        buf.extend_from_slice(bytes);
-
-        set_size(&mut buf, pos, val);
-        set_size(&mut dtb, pos, val);
-        let original_fdt = device_tree::DeviceTree::load(&buf).unwrap();
-        let generated_fdt = device_tree::DeviceTree::load(&dtb).unwrap();
-        assert!(format!("{:?}", original_fdt) == format!("{:?}", generated_fdt));
-    }
-
-    #[test]
-    fn test_create_fdt_with_initrd() {
-        let regions = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000);
-        let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
-        let kvm = Kvm::new().unwrap();
-        let vm = kvm.create_vm().unwrap();
-        let gic = create_gic(&vm, 1).unwrap();
-        let initrd = InitrdConfig {
-            address: GuestAddress(0x10000000),
-            size: 0x1000,
-        };
-
-        let mut dtb = create_fdt(
-            &mem,
-            vec![0],
-            &CString::new("console=tty0").unwrap(),
-            &HashMap::<(DeviceType, std::string::String), MMIODeviceInfo>::new(),
-            &gic,
-            &Some(initrd),
-        )
-        .unwrap();
-
-        /* Use this code when wanting to generate a new DTB sample.
-        {
-            use std::fs;
-            use std::io::Write;
-            use std::path::PathBuf;
-            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            let mut output = fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .open(path.join("src/aarch64/output_with_initrd.dtb"))
-                .unwrap();
-            output.write_all(&dtb).unwrap();
-        }
-        */
-
-        let bytes = include_bytes!("output_with_initrd.dtb");
-        let pos = 4;
-        let val = layout::FDT_MAX_SIZE;
-        let mut buf = vec![];
-        buf.extend_from_slice(bytes);
-
-        set_size(&mut buf, pos, val);
-        set_size(&mut dtb, pos, val);
-        let original_fdt = device_tree::DeviceTree::load(&buf).unwrap();
-        let generated_fdt = device_tree::DeviceTree::load(&dtb).unwrap();
-        assert!(format!("{:?}", original_fdt) == format!("{:?}", generated_fdt));
     }
 }
