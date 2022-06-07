@@ -3,6 +3,7 @@ OS = $(shell uname -s)
 LDFLAGS_x86_64_Linux = -lkrun
 LDFLAGS_aarch64_Linux = -lkrun -lfdt
 LDFLAGS_arm64_Darwin = -L/opt/homebrew/lib -lkrun -lfdt
+LDFLAGS_sev = -lkrun-sev
 CFLAGS_Linux = -O2 -g
 CFLAGS_Darwin = -O2 -g -I/opt/homebrew/include
 ROOTFS_DISTRO := fedora
@@ -25,10 +26,10 @@ ifeq ($(OS),Darwin)
 endif
 
 sev-attest: sev-attest.c
-	gcc -o $@ $< $(CFLAGS_$(OS)) $(LDFLAGS_$(ARCH)_$(OS))
+	gcc -o $@ $< $(CFLAGS_$(OS)) $(LDFLAGS_sev)
 
 sev-noattest: sev-noattest.c
-	gcc -o $@ $< $(CFLAGS_$(OS)) $(LDFLAGS_$(ARCH)_$(OS))
+	gcc -o $@ $< $(CFLAGS_$(OS)) $(LDFLAGS_sev)
 
 # Build the rootfs to be used with chroot_vm.
 rootfs:
