@@ -7,8 +7,8 @@ use std::os::unix::io::AsRawFd;
 use super::vstate::MeasuredRegion;
 
 use codicon::{Decoder, Encoder};
-use kvm_bindings::kvm_enc_region;
-use kvm_ioctls::{SevCommand, VmFd};
+use kvm_bindings::{kvm_enc_region, kvm_sev_cmd};
+use kvm_ioctls::VmFd;
 use procfs::CpuInfo;
 use serde::{Deserialize, Serialize};
 use sev::certs;
@@ -203,16 +203,16 @@ impl AmdSev {
     }
 
     fn sev_init(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
-        let code = if self.sev_es { 1 } else { 0 };
+        let id = if self.sev_es { 1 } else { 0 };
 
-        let mut cmd = SevCommand {
-            error: 0,
+        let mut cmd = kvm_sev_cmd {
+            id,
             data: 0,
-            fd: self.fw.as_raw_fd() as u32,
-            code,
+            error: 0,
+            sev_fd: self.fw.as_raw_fd() as u32,
         };
 
-        vm_fd.memory_encrypt(&mut cmd)?;
+        vm_fd.encrypt_op_sev(&mut cmd)?;
         Ok(())
     }
 
@@ -236,15 +236,14 @@ impl AmdSev {
             session_size: size_of_val(&self.start.session) as u32,
         };
 
-        let mut cmd = SevCommand {
-            error: 0,
+        let mut cmd = kvm_sev_cmd {
+            id: 2, // SEV_LAUNCH_START
             data: &mut data as *mut _ as u64,
-            fd: self.fw.as_raw_fd() as u32,
-            code: 2, // SEV_LAUNCH_START
+            error: 0,
+            sev_fd: self.fw.as_raw_fd() as u32,
         };
 
-        vm_fd.memory_encrypt(&mut cmd)?;
-        Ok(())
+        vm_fd.encrypt_op_sev(&mut cmd)
     }
 
     fn sev_launch_update_data(
@@ -264,15 +263,14 @@ impl AmdSev {
             size: data_size as u32,
         };
 
-        let mut cmd = SevCommand {
-            error: 0,
+        let mut cmd = kvm_sev_cmd {
+            id: 3, // SEV_LAUNCH_UPDATE_DATA
             data: &mut data as *mut _ as u64,
-            fd: self.fw.as_raw_fd() as u32,
-            code: 3, // SEV_LAUNCH_UPDATE_DATA
+            error: 0,
+            sev_fd: self.fw.as_raw_fd() as u32,
         };
 
-        vm_fd.memory_encrypt(&mut cmd)?;
-        Ok(())
+        vm_fd.encrypt_op_sev(&mut cmd)
     }
 
     fn sev_launch_measure(&self, vm_fd: &VmFd) -> Result<Measurement, kvm_ioctls::Error> {
@@ -288,27 +286,27 @@ impl AmdSev {
             size: size_of_val(&measurement) as u32,
         };
 
-        let mut cmd = SevCommand {
-            error: 0,
+        let mut cmd = kvm_sev_cmd {
+            id: 6, // SEV_LAUNCH_MEASURE
             data: &mut data as *mut _ as u64,
-            fd: self.fw.as_raw_fd() as u32,
-            code: 6, // SEV_LAUNCH_MEASURE
+            error: 0,
+            sev_fd: self.fw.as_raw_fd() as u32,
         };
 
-        vm_fd.memory_encrypt(&mut cmd)?;
+        vm_fd.encrypt_op_sev(&mut cmd)?;
 
         Ok(unsafe { measurement.assume_init() })
     }
 
     fn sev_launch_finish(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
-        let mut cmd = SevCommand {
-            error: 0,
+        let mut cmd = kvm_sev_cmd {
+            id: 7, // SEV_LAUNCH_FINISH
             data: 0,
-            fd: self.fw.as_raw_fd() as u32,
-            code: 7, // SEV_LAUNCH_FINISH
+            error: 0,
+            sev_fd: self.fw.as_raw_fd() as u32,
         };
 
-        vm_fd.memory_encrypt(&mut cmd)
+        vm_fd.encrypt_op_sev(&mut cmd)
     }
 
     fn sev_inject_secret(
@@ -336,25 +334,25 @@ impl AmdSev {
             trans_size: secret.ciphertext.len() as u32,
         };
 
-        let mut cmd = SevCommand {
-            error: 0,
+        let mut cmd = kvm_sev_cmd {
+            id: 5, // SEV_LAUNCH_SECRET
             data: &mut data as *mut _ as u64,
-            fd: vm_fd.as_raw_fd() as u32,
-            code: 5, // SEV_LAUNCH_SECRET
+            error: 0,
+            sev_fd: vm_fd.as_raw_fd() as u32,
         };
 
-        vm_fd.memory_encrypt(&mut cmd)
+        vm_fd.encrypt_op_sev(&mut cmd)
     }
 
     fn sev_launch_update_vmsa(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
-        let mut cmd = SevCommand {
-            error: 0,
+        let mut cmd = kvm_sev_cmd {
+            id: 4, // SEV_LAUNCH_UPDATE_VMSA
             data: 0,
-            fd: vm_fd.as_raw_fd() as u32,
-            code: 4, // SEV_LAUNCH_UPDATE_VMSA
+            error: 0,
+            sev_fd: vm_fd.as_raw_fd() as u32,
         };
 
-        vm_fd.memory_encrypt(&mut cmd)
+        vm_fd.encrypt_op_sev(&mut cmd)
     }
 
     pub fn vm_prepare(&self, vm_fd: &VmFd, guest_mem: &GuestMemoryMmap) -> Result<(), Error> {
@@ -367,11 +365,9 @@ impl AmdSev {
                 addr: host_addr as u64,
                 size: region.len() as u64,
             };
-            unsafe {
-                vm_fd
-                    .memory_encrypt_reg_region(&enc_region)
-                    .map_err(|_| Error::MemoryEncryptRegion)?;
-            }
+            vm_fd
+                .register_enc_memory_region(&enc_region)
+                .map_err(|_| Error::MemoryEncryptRegion)?;
         }
 
         self.sev_launch_start(vm_fd)

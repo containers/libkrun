@@ -4,11 +4,16 @@ INIT_BINARY = init/init
 ABI_VERSION=0
 FULL_VERSION=0.2.1
 
+ifeq ($(SEV),1)
+    VARIANT = -sev
+    FEATURE_FLAGS := --features amd-sev
+endif
+
 OS = $(shell uname -s)
 
-KRUN_BINARY_Linux = libkrun.so.$(FULL_VERSION)
-KRUN_SONAME_Linux = libkrun.so.$(ABI_VERSION)
-KRUN_BASE_Linux = libkrun.so
+KRUN_BINARY_Linux = libkrun$(VARIANT).so.$(FULL_VERSION)
+KRUN_SONAME_Linux = libkrun$(VARIANT).so.$(ABI_VERSION)
+KRUN_BASE_Linux = libkrun$(VARIANT).so
 
 KRUN_BINARY_Darwin = libkrun.$(FULL_VERSION).dylib
 KRUN_SONAME_Darwin = libkrun.$(ABI_VERSION).dylib
@@ -26,10 +31,6 @@ ifeq ($(PREFIX),)
     PREFIX := /usr/local
 endif
 
-ifeq ($(SEV),1)
-    FEATURE_FLAGS := --features amd-sev
-endif
-
 .PHONY: install clean
 
 all: $(LIBRARY_RELEASE_$(OS))
@@ -41,6 +42,9 @@ $(INIT_BINARY): init/init.c
 
 $(LIBRARY_RELEASE_$(OS)): $(INIT_BINARY)
 	cargo build --release $(FEATURE_FLAGS)
+ifeq ($(SEV),1)
+	mv target/release/libkrun.so target/release/$(KRUN_BASE_$(OS))
+endif
 ifeq ($(OS),Linux)
 	patchelf --set-soname $(KRUN_SONAME_$(OS)) --output $(LIBRARY_RELEASE_$(OS)) target/release/$(KRUN_BASE_$(OS))
 else
@@ -48,9 +52,12 @@ else
 endif
 
 $(LIBRARY_DEBUG_$(OS)): $(INIT_BINARY)
-	cargo build --debug $(FEATURE_FLAGS)
+	cargo build $(FEATURE_FLAGS)
+ifeq ($(SEV),1)
+	mv target/debug/libkrun.so target/debug/$(KRUN_BASE_$(OS))
+endif
 ifeq ($(OS),Linux)
-	patchelf --set-soname $(KRUN_SONAME_$(OS)) --output $(LIBRARY_DEBUG_$(OS)) target/release/$(KRUN_BASE_$(OS))
+	patchelf --set-soname $(KRUN_SONAME_$(OS)) --output $(LIBRARY_DEBUG_$(OS)) target/debug/$(KRUN_BASE_$(OS))
 else
 	cp target/debug/$(KRUN_BASE_$(OS)) $(LIBRARY_DEBUG_$(OS))
 endif
