@@ -1458,6 +1458,7 @@ mod tests {
         assert!(vcpu.mmio_bus.is_some());
     }
 
+    #[ignore]
     #[test]
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn test_get_supported_cpuid() {
