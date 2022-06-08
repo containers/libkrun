@@ -1113,6 +1113,21 @@ pub trait FileSystem {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn ioctl(
+        &self,
+        ctx: Context,
+        inode: Self::Inode,
+        handle: Self::Handle,
+        flags: u32,
+        cmd: u32,
+        arg: u64,
+        in_size: u32,
+        out_size: u32,
+    ) -> io::Result<Vec<u8>> {
+        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
+    }
+
     /// TODO: support this
     fn getlk(&self) -> io::Result<()> {
         Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
@@ -1125,11 +1140,6 @@ pub trait FileSystem {
 
     /// TODO: support this
     fn setlkw(&self) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
-    }
-
-    /// TODO: support this
-    fn ioctl(&self) -> io::Result<()> {
         Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
 

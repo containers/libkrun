@@ -1091,11 +1091,34 @@ impl<F: FileSystem + Sync> Server<F> {
         Ok(0)
     }
 
-    fn ioctl(&self, in_header: InHeader, _r: Reader, w: Writer) -> Result<usize> {
-        if let Err(e) = self.fs.ioctl() {
-            reply_error(e, in_header.unique, w)
-        } else {
-            Ok(0)
+    fn ioctl(&self, in_header: InHeader, mut r: Reader, w: Writer) -> Result<usize> {
+        let IoctlIn {
+            fh,
+            flags,
+            cmd,
+            arg,
+            in_size,
+            out_size,
+        } = r.read_obj().map_err(Error::DecodeMessage)?;
+
+        match self.fs.ioctl(
+            Context::from(in_header),
+            in_header.nodeid.into(),
+            fh.into(),
+            flags,
+            cmd,
+            arg,
+            in_size,
+            out_size,
+        ) {
+            Ok(data) => {
+                let out = IoctlOut {
+                    result: 0,
+                    ..Default::default()
+                };
+                reply_ok(Some(out), Some(&data), in_header.unique, w)
+            }
+            Err(e) => reply_error(e, in_header.unique, w),
         }
     }
 
