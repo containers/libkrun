@@ -20,6 +20,8 @@ pub mod device;
 pub mod fs;
 mod mmio;
 mod queue;
+#[cfg(not(feature = "amd-sev"))]
+pub mod rng;
 pub mod vsock;
 
 #[cfg(not(feature = "amd-sev"))]
@@ -32,6 +34,8 @@ pub use self::device::*;
 pub use self::fs::*;
 pub use self::mmio::*;
 pub use self::queue::*;
+#[cfg(not(feature = "amd-sev"))]
+pub use self::rng::*;
 pub use self::vsock::*;
 
 /// When the driver initializes the device, it lets the device know about the

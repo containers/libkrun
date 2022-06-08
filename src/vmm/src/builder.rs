@@ -540,6 +540,8 @@ pub fn build_microvm(
 
     #[cfg(not(feature = "amd-sev"))]
     attach_balloon_device(&mut vmm, event_manager, intc.clone())?;
+    #[cfg(not(feature = "amd-sev"))]
+    attach_rng_device(&mut vmm, event_manager, intc.clone())?;
     attach_console_devices(&mut vmm, event_manager, intc.clone())?;
     #[cfg(not(feature = "amd-sev"))]
     attach_fs_devices(
@@ -1132,6 +1134,33 @@ fn attach_block_devices(
         )
         .map_err(RegisterBlockDevice)?;
     }
+
+    Ok(())
+}
+
+#[cfg(not(feature = "amd-sev"))]
+fn attach_rng_device(
+    vmm: &mut Vmm,
+    event_manager: &mut EventManager,
+    intc: Option<Arc<Mutex<Gic>>>,
+) -> std::result::Result<(), StartMicrovmError> {
+    use self::StartMicrovmError::*;
+
+    let rng = Arc::new(Mutex::new(devices::virtio::Rng::new().unwrap()));
+
+    event_manager
+        .add_subscriber(rng.clone())
+        .map_err(RegisterEvent)?;
+
+    let id = String::from(rng.lock().unwrap().id());
+
+    if let Some(intc) = intc {
+        rng.lock().unwrap().set_intc(intc);
+    }
+
+    // The device mutex mustn't be locked here otherwise it will deadlock.
+    attach_mmio_device(vmm, id, MmioTransport::new(vmm.guest_memory().clone(), rng))
+        .map_err(RegisterBalloonDevice)?;
 
     Ok(())
 }
