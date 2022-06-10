@@ -70,6 +70,7 @@ This technique supports both outgoing and incoming connections. It's possible fo
 * [libkrunfw](https://github.com/containers/libkrunfw)
 * A working [Rust](https://www.rust-lang.org/) toolchain
 * C Library static libraries, as the [init](init/init.c) binary is statically linked (package ```glibc-static``` in Fedora)
+* patchelf
 
 #### Compiling
 
@@ -90,6 +91,7 @@ sudo make install
 * The SEV variant of [libkrunfw](https://github.com/containers/libkrunfw), which provides a ```libkrunfw-sev.so``` library.
 * A working [Rust](https://www.rust-lang.org/) toolchain
 * C Library static libraries, as the [init](init/init.c) binary is statically linked (package ```glibc-static``` in Fedora)
+* patchelf
 * OpenSSL headers and libraries (package ```openssl-devel``` in Fedora).
 
 #### Compiling
