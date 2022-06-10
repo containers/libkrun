@@ -24,40 +24,53 @@ It integrates a VMM (Virtual Machine Monitor, the userspace side of an Hyperviso
 
 * Become a generic VMM.
 * Be compatible with all kinds of workloads.
-* Provide the best possible performance.
 
-## Device support
+## Variants
 
-### Virtio devices
+This project provides two different variants of the library:
+
+- **libkrun**: Generic variant compatible with all Virtualization-capable systems.
+- **libkrun-sev**: Variant including support for AMD SEV (bare SEV and SEV-ES) memory encryption and remote attestation. Requires an SEV-capable CPU.
+
+Each variant generates a dynamic library with a different name (and ```soname```), so both can be installed at the same time in the same system.
+
+## Virtio device support
+
+### All variants
 
 * virtio-console
+* virtio-vsock (specialized for TSI, Transparent Socket Impersonation)
+
+### libkrun
+
 * virtio-fs
-* virtio-vsock
 * virtio-balloon (only free-page reporting)
+* virtior-rng
 
-### Networking
+### libkrun-sev
 
-In ```libkrun```, networking is implemented using a novel technique called **socket-to-vsock impersonation**. This allows the VM to have network connectivity without a virtual interface (hence, ```virtio-net``` is not among the list of supported devices).
+* virtio-block
 
-The current implementation of this technique, found part in this repository and the other part in the kernel patches included with [libkrunfw](https://github.com/containers/libkrunfw) is just a **proof-of-concept**. It's limited to IPv4 TCP and UNIX connections, only supports recv/send operations, and the implementation itself is still quite hacky. We expect this technique to mature within ```libkrun```, so it can be eventually upstreamed into the Linux kernel and other VMMs.
+## Networking
 
-#### DNS resolutions issues
+In ```libkrun```, networking is implemented using a novel technique called **Transparent Socket Impersonation**, or **TSI**. This allows the VM to have network connectivity without a virtual interface (hence, ```virtio-net``` is not among the list of supported devices).
 
-As, by default, ```glibc``` will use UDP for DNS requests, which is not yet supported by the **socket-to-vsock impersonation** technique described above, name resolution will fail with the default configuration. To work around this, you need to add the following line to the ```/etc/resolv.conf``` of the root filesystem servicing the isolated process:
+This technique supports both outgoing and incoming connections. It's possible for userspace applications running in the VM are able to transparently connect to endpoints outside the VM, and also receive connections from the outside to ports listening inside the VM.
 
-```
-options use-vc
-```
+### Limitations
+
+**TSI** only supports impersonating AF_INET SOCK_DGRAM and SOCK_STREAM sockets. This implies it's not possible to communicate outside the VM with raw sockets.
 
 ## Building and installing
 
-### Linux
+### Linux (generic variant)
 
 #### Requirements
 
 * [libkrunfw](https://github.com/containers/libkrunfw)
 * A working [Rust](https://www.rust-lang.org/) toolchain
 * C Library static libraries, as the [init](init/init.c) binary is statically linked (package ```glibc-static``` in Fedora)
+* patchelf
 
 #### Compiling
 
@@ -69,6 +82,28 @@ make
 
 ```
 sudo make install
+```
+
+### Linux (SEV variant)
+
+#### Requirements
+
+* The SEV variant of [libkrunfw](https://github.com/containers/libkrunfw), which provides a ```libkrunfw-sev.so``` library.
+* A working [Rust](https://www.rust-lang.org/) toolchain
+* C Library static libraries, as the [init](init/init.c) binary is statically linked (package ```glibc-static``` in Fedora)
+* patchelf
+* OpenSSL headers and libraries (package ```openssl-devel``` in Fedora).
+
+#### Compiling
+
+```
+make SEV=1
+```
+
+#### Installing
+
+```
+sudo make SEV=1 install
 ```
 
 ### macOS
@@ -133,9 +168,7 @@ LD_LIBRARY_PATH=/usr/local/lib64 ./chroot_vm rootfs/ /bin/sh
 
 ## Status
 
-While functional, ```libkrun``` is still in a **very early development stage**.
-
-Our first priority now is **getting feedback from potential users of the library**, to build a Community around it that would **help us set the priorities and shape it** to be useful for them.
+```libkrun``` has achieved maturity and starting version ```1.0.0``` the public API is guaranteed to be stable, following [SemVer](https://semver.org/).
 
 ## Acknowledgments
 
