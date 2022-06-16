@@ -82,6 +82,20 @@ impl TcpProxy {
         };
 
         setsockopt(fd, sockopt::ReusePort, &true).map_err(ProxyError::SettingReusePort)?;
+        #[cfg(target_os = "macos")]
+        {
+            // nix doesn't provide an abstraction for SO_NOSIGPIPE, fall back to libc.
+            let option_value: libc::c_int = 1;
+            unsafe {
+                libc::setsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_NOSIGPIPE,
+                    &option_value as *const _ as *const libc::c_void,
+                    std::mem::size_of_val(&option_value) as libc::socklen_t,
+                )
+            };
+        }
 
         Ok(TcpProxy {
             id,
@@ -422,7 +436,12 @@ impl Proxy for TcpProxy {
         let mut update = ProxyUpdate::default();
 
         let ret = if let Some(buf) = pkt.buf() {
-            match send(self.fd, buf, MsgFlags::empty()) {
+            #[cfg(target_os = "macos")]
+            let flags = MsgFlags::empty();
+            #[cfg(target_os = "linux")]
+            let flags = MsgFlags::MSG_NOSIGNAL;
+
+            match send(self.fd, buf, flags) {
                 Ok(sent) => {
                     if sent != buf.len() {
                         error!("couldn't set everything: buf={}, sent={}", buf.len(), sent);

@@ -71,6 +71,21 @@ impl UdpProxy {
             Err(e) => error!("couldn't obtain fd flags id={}, err={}", id, e),
         };
 
+        #[cfg(target_os = "macos")]
+        {
+            // nix doesn't provide an abstraction for SO_NOSIGPIPE, fall back to libc.
+            let option_value: libc::c_int = 1;
+            unsafe {
+                libc::setsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_NOSIGPIPE,
+                    &option_value as *const _ as *const libc::c_void,
+                    std::mem::size_of_val(&option_value) as libc::socklen_t,
+                )
+            };
+        }
+
         Ok(UdpProxy {
             id,
             cid,
@@ -267,7 +282,12 @@ impl Proxy for UdpProxy {
         debug!("vsock: udp_proxy: sendmsg");
 
         let ret = if let Some(buf) = pkt.buf() {
-            match send(self.fd, buf, MsgFlags::empty()) {
+            #[cfg(target_os = "macos")]
+            let flags = MsgFlags::empty();
+            #[cfg(target_os = "linux")]
+            let flags = MsgFlags::MSG_NOSIGNAL;
+
+            match send(self.fd, buf, flags) {
                 Ok(sent) => {
                     self.tx_cnt += Wrapping(sent as u32);
                     sent as i32
@@ -313,7 +333,12 @@ impl Proxy for UdpProxy {
 
         if let Some(addr) = self.sendto_addr {
             if let Some(buf) = pkt.buf() {
-                match sendto(self.fd, buf, &addr, MsgFlags::empty()) {
+                #[cfg(target_os = "macos")]
+                let flags = MsgFlags::empty();
+                #[cfg(target_os = "linux")]
+                let flags = MsgFlags::MSG_NOSIGNAL;
+
+                match sendto(self.fd, buf, &addr, flags) {
                     Ok(sent) => {
                         self.tx_cnt += Wrapping(sent as u32);
                     }
