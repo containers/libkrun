@@ -1,3 +1,4 @@
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::num::Wrapping;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
@@ -5,10 +6,12 @@ use std::sync::{Arc, Mutex};
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
     accept, bind, connect, getpeername, listen, recv, send, setsockopt, shutdown, socket, sockopt,
-    AddressFamily, InetAddr, IpAddr, Ipv4Addr, MsgFlags, Shutdown, SockAddr, SockFlag, SockType,
+    AddressFamily, MsgFlags, Shutdown, SockFlag, SockType, SockaddrIn,
 };
 use nix::unistd::close;
 
+#[cfg(target_os = "macos")]
+use super::super::linux_errno::linux_errno_raw;
 use super::super::Queue as VirtQueue;
 use super::defs;
 use super::defs::uapi;
@@ -42,6 +45,7 @@ pub struct TcpProxy {
     peer_buf_alloc: u32,
     peer_fwd_cnt: Wrapping<u32>,
     push_cnt: Wrapping<u32>,
+    pending_accepts: u64,
 }
 
 impl TcpProxy {
@@ -80,6 +84,20 @@ impl TcpProxy {
         };
 
         setsockopt(fd, sockopt::ReusePort, &true).map_err(ProxyError::SettingReusePort)?;
+        #[cfg(target_os = "macos")]
+        {
+            // nix doesn't provide an abstraction for SO_NOSIGPIPE, fall back to libc.
+            let option_value: libc::c_int = 1;
+            unsafe {
+                libc::setsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_NOSIGPIPE,
+                    &option_value as *const _ as *const libc::c_void,
+                    std::mem::size_of_val(&option_value) as libc::socklen_t,
+                )
+            };
+        }
 
         Ok(TcpProxy {
             id,
@@ -101,6 +119,7 @@ impl TcpProxy {
             peer_buf_alloc: 0,
             peer_fwd_cnt: Wrapping(0),
             push_cnt: Wrapping(0),
+            pending_accepts: 0,
         })
     }
 
@@ -142,6 +161,7 @@ impl TcpProxy {
             peer_buf_alloc: 0,
             peer_fwd_cnt: Wrapping(0),
             push_cnt: Wrapping(0),
+            pending_accepts: 0,
         }
     }
 
@@ -264,6 +284,21 @@ impl TcpProxy {
         push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
     }
 
+    fn push_accept_rsp(&self, result: i32) {
+        debug!(
+            "push_accept_rsp: control_port: {}, result: {}",
+            self.control_port, result
+        );
+
+        // This packet goes to the control port (DGRAM).
+        let rx = MuxerRx::AcceptResponse {
+            local_port: 1030,
+            peer_port: self.control_port,
+            result,
+        };
+        push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
+    }
+
     fn push_reset(&self) {
         debug!(
             "push_reset: id: {}, peer_port: {}, local_port: {}",
@@ -314,7 +349,7 @@ impl Proxy for TcpProxy {
 
         let result = match connect(
             self.fd,
-            &SockAddr::Inet(InetAddr::new(IpAddr::V4(req.addr), req.port)),
+            &SockaddrIn::from(SocketAddrV4::new(req.addr, req.port)),
         ) {
             Ok(()) => {
                 debug!("vsock: connect: Connected");
@@ -328,7 +363,11 @@ impl Proxy for TcpProxy {
             }
             Err(e) => {
                 debug!("vsock: TcpProxy: Error connecting: {}", e);
-                -nix::errno::errno()
+                #[cfg(target_os = "macos")]
+                let errno = -linux_errno_raw(nix::errno::errno());
+                #[cfg(target_os = "linux")]
+                let errno = -nix::errno::errno();
+                errno
             }
         };
 
@@ -376,15 +415,18 @@ impl Proxy for TcpProxy {
     fn getpeername(&mut self, pkt: &VsockPacket) {
         debug!("getpeername: id={}", self.id);
 
-        let (result, addr, port) = match getpeername(self.fd) {
-            Ok(name) => match name {
-                SockAddr::Inet(iaddr) => match iaddr.ip() {
-                    IpAddr::V4(ipv4) => (0, ipv4, iaddr.port()),
-                    _ => (-libc::EINVAL, Ipv4Addr::new(0, 0, 0, 0), 0),
-                },
-                _ => (-libc::EINVAL, Ipv4Addr::new(0, 0, 0, 0), 0),
-            },
-            Err(e) => (-(e as i32), Ipv4Addr::new(0, 0, 0, 0), 0),
+        let (result, addr, port) = match getpeername::<SockaddrIn>(self.fd) {
+            Ok(name) => {
+                let addr = Ipv4Addr::from(name.ip());
+                (0, addr, name.port())
+            }
+            Err(e) => {
+                #[cfg(target_os = "macos")]
+                let errno = -linux_errno_raw(e as i32);
+                #[cfg(target_os = "linux")]
+                let errno = -(e as i32);
+                (errno, Ipv4Addr::new(0, 0, 0, 0), 0)
+            }
         };
 
         let data = TsiGetnameRsp { addr, port, result };
@@ -406,7 +448,12 @@ impl Proxy for TcpProxy {
         let mut update = ProxyUpdate::default();
 
         let ret = if let Some(buf) = pkt.buf() {
-            match send(self.fd, buf, MsgFlags::empty()) {
+            #[cfg(target_os = "macos")]
+            let flags = MsgFlags::empty();
+            #[cfg(target_os = "linux")]
+            let flags = MsgFlags::MSG_NOSIGNAL;
+
+            match send(self.fd, buf, flags) {
                 Ok(sent) => {
                     if sent != buf.len() {
                         error!("couldn't set everything: buf={}, sent={}", buf.len(), sent);
@@ -414,7 +461,13 @@ impl Proxy for TcpProxy {
                     self.tx_cnt += Wrapping(sent as u32);
                     sent as i32
                 }
-                Err(err) => -(err as i32),
+                Err(err) => {
+                    #[cfg(target_os = "macos")]
+                    let errno = -linux_errno_raw(err as i32);
+                    #[cfg(target_os = "linux")]
+                    let errno = -(err as i32);
+                    errno
+                }
             }
         } else {
             -libc::EINVAL
@@ -459,12 +512,14 @@ impl Proxy for TcpProxy {
         );
         let mut update = ProxyUpdate::default();
 
-        let result = if self.status == ProxyStatus::Listening {
+        let result = if self.status == ProxyStatus::Listening
+            || self.status == ProxyStatus::WaitingOnAccept
+        {
             0
         } else {
             match bind(
                 self.fd,
-                &SockAddr::Inet(InetAddr::new(IpAddr::V4(req.addr), req.port)),
+                &SockaddrIn::from(SocketAddrV4::new(req.addr, req.port)),
             ) {
                 Ok(_) => {
                     debug!("tcp bind: id={}", self.id);
@@ -475,13 +530,21 @@ impl Proxy for TcpProxy {
                         }
                         Err(e) => {
                             warn!("tcp: proxy: id={} err={}", self.id, e);
-                            -(e as i32)
+                            #[cfg(target_os = "macos")]
+                            let errno = -linux_errno_raw(e as i32);
+                            #[cfg(target_os = "linux")]
+                            let errno = -(e as i32);
+                            errno
                         }
                     }
                 }
                 Err(e) => {
                     warn!("tcp bind: id={} err={}", self.id, e);
-                    -(e as i32)
+                    #[cfg(target_os = "macos")]
+                    let errno = -linux_errno_raw(e as i32);
+                    #[cfg(target_os = "linux")]
+                    let errno = -(e as i32);
+                    errno
                 }
             }
         };
@@ -503,26 +566,20 @@ impl Proxy for TcpProxy {
         update
     }
 
-    fn accept(&mut self, pkt: &VsockPacket, req: TsiAcceptReq) -> ProxyUpdate {
+    fn accept(&mut self, req: TsiAcceptReq) -> ProxyUpdate {
         debug!("accept: id={} flags={}", req.peer_port, req.flags);
 
         let mut update = ProxyUpdate::default();
-        let result = match accept(self.fd) {
-            Ok(accept_fd) => {
-                update.new_proxy = Some((self.peer_port, accept_fd));
-                0
-            }
-            Err(e) => -(e as i32),
-        };
 
-        if result != -libc::EAGAIN {
-            // This packet goes to the control port (DGRAM).
-            let rx = MuxerRx::AcceptResponse {
-                local_port: pkt.dst_port(),
-                peer_port: pkt.src_port(),
-                result,
-            };
-            push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
+        if self.pending_accepts > 0 {
+            self.pending_accepts -= 1;
+            self.push_accept_rsp(0);
+            update.signal_queue = true;
+        } else if (req.flags & libc::O_NONBLOCK as u32) != 0 {
+            self.push_accept_rsp(-libc::EWOULDBLOCK);
+            update.signal_queue = true;
+        } else {
+            self.status = ProxyStatus::WaitingOnAccept;
         }
 
         update
@@ -580,19 +637,15 @@ impl Proxy for TcpProxy {
         }
     }
 
-    fn push_accept_rsp(&self, result: i32) {
-        debug!(
-            "push_accept_rsp: control_port: {}, result: {}",
-            self.control_port, result
-        );
+    fn enqueue_accept(&mut self) {
+        debug!("enqueue_accept: control_port: {}", self.control_port);
 
-        // This packet goes to the control port (DGRAM).
-        let rx = MuxerRx::AcceptResponse {
-            local_port: 1030,
-            peer_port: self.control_port,
-            result,
-        };
-        push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
+        if self.status == ProxyStatus::WaitingOnAccept {
+            self.status = ProxyStatus::Listening;
+            self.push_accept_rsp(0);
+        } else {
+            self.pending_accepts += 1;
+        }
     }
 
     fn shutdown(&mut self, pkt: &VsockPacket) {
@@ -670,7 +723,9 @@ impl Proxy for TcpProxy {
                     debug!("process_event: WaitingCreditUpdate");
                     update.polling = Some((self.id(), self.fd, EventSet::empty()));
                 }
-            } else if self.status == ProxyStatus::Listening {
+            } else if self.status == ProxyStatus::Listening
+                || self.status == ProxyStatus::WaitingOnAccept
+            {
                 match accept(self.fd) {
                     Ok(accept_fd) => {
                         update.new_proxy = Some((self.peer_port, accept_fd));

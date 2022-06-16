@@ -18,6 +18,8 @@ pub mod console;
 pub mod device;
 #[cfg(not(feature = "amd-sev"))]
 pub mod fs;
+#[cfg(target_os = "macos")]
+pub mod linux_errno;
 mod mmio;
 mod queue;
 #[cfg(not(feature = "amd-sev"))]

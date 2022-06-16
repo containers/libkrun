@@ -33,7 +33,7 @@ use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
 // Minimum krunfw version we require.
-const KRUNFW_MIN_VERSION: u32 = 2;
+const KRUNFW_MIN_VERSION: u32 = 3;
 // Value returned on success. We use libc's errors otherwise.
 const KRUN_SUCCESS: i32 = 0;
 // Maximum number of arguments/environment variables we allow

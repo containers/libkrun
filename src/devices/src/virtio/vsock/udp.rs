@@ -1,14 +1,17 @@
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::num::Wrapping;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
-    bind, connect, getpeername, recv, send, sendto, socket, AddressFamily, InetAddr, IpAddr,
-    MsgFlags, SockAddr, SockFlag, SockType,
+    bind, connect, getpeername, recv, send, sendto, socket, AddressFamily, MsgFlags, SockFlag,
+    SockType, SockaddrIn,
 };
 use nix::unistd::close;
 
+#[cfg(target_os = "macos")]
+use super::super::linux_errno::linux_errno_raw;
 use super::super::Queue as VirtQueue;
 use super::defs;
 use super::defs::uapi;
@@ -29,7 +32,7 @@ pub struct UdpProxy {
     peer_port: u32,
     fd: RawFd,
     pub status: ProxyStatus,
-    sendto_addr: Option<SockAddr>,
+    sendto_addr: Option<SockaddrIn>,
     listening: bool,
     mem: GuestMemoryMmap,
     queue_dgram: Arc<Mutex<VirtQueue>>,
@@ -69,6 +72,21 @@ impl UdpProxy {
             },
             Err(e) => error!("couldn't obtain fd flags id={}, err={}", id, e),
         };
+
+        #[cfg(target_os = "macos")]
+        {
+            // nix doesn't provide an abstraction for SO_NOSIGPIPE, fall back to libc.
+            let option_value: libc::c_int = 1;
+            unsafe {
+                libc::setsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_NOSIGPIPE,
+                    &option_value as *const _ as *const libc::c_void,
+                    std::mem::size_of_val(&option_value) as libc::socklen_t,
+                )
+            };
+        }
 
         Ok(UdpProxy {
             id,
@@ -211,7 +229,7 @@ impl Proxy for UdpProxy {
         debug!("vsock: udp: connect: addr={}, port={}", req.addr, req.port);
         let res = match connect(
             self.fd,
-            &SockAddr::Inet(InetAddr::new(IpAddr::V4(req.addr), req.port)),
+            &SockaddrIn::from(SocketAddrV4::new(req.addr, req.port)),
         ) {
             Ok(()) => {
                 debug!("vsock: connect: Connected");
@@ -220,7 +238,11 @@ impl Proxy for UdpProxy {
             }
             Err(e) => {
                 debug!("vsock: UdpProxy: Error connecting: {}", e);
-                -nix::errno::errno()
+                #[cfg(target_os = "macos")]
+                let errno = -linux_errno_raw(e as i32);
+                #[cfg(target_os = "linux")]
+                let errno = -(e as i32);
+                errno
             }
         };
 
@@ -245,17 +267,11 @@ impl Proxy for UdpProxy {
     fn getpeername(&mut self, pkt: &VsockPacket) {
         debug!("vsock: udp: process_getpeername");
 
-        let name = getpeername(self.fd).unwrap();
-        let (ipv4, port) = match name {
-            SockAddr::Inet(iaddr) => match iaddr.ip() {
-                IpAddr::V4(ipv4) => (ipv4, iaddr.port()),
-                _ => panic!("IPv6 is not yet supported"),
-            },
-            _ => panic!("unknown SockAddr family"),
-        };
+        let name = getpeername::<SockaddrIn>(self.fd).unwrap();
+        let addr = Ipv4Addr::from(name.ip());
         let data = TsiGetnameRsp {
-            addr: ipv4,
-            port,
+            addr,
+            port: name.port(),
             result: 0,
         };
 
@@ -272,7 +288,12 @@ impl Proxy for UdpProxy {
         debug!("vsock: udp_proxy: sendmsg");
 
         let ret = if let Some(buf) = pkt.buf() {
-            match send(self.fd, buf, MsgFlags::empty()) {
+            #[cfg(target_os = "macos")]
+            let flags = MsgFlags::empty();
+            #[cfg(target_os = "linux")]
+            let flags = MsgFlags::MSG_NOSIGNAL;
+
+            match send(self.fd, buf, flags) {
                 Ok(sent) => {
                     self.tx_cnt += Wrapping(sent as u32);
                     sent as i32
@@ -296,15 +317,9 @@ impl Proxy for UdpProxy {
 
         let mut update = ProxyUpdate::default();
 
-        self.sendto_addr = Some(SockAddr::Inet(InetAddr::new(
-            IpAddr::V4(req.addr),
-            req.port,
-        )));
+        self.sendto_addr = Some(SockaddrIn::from(SocketAddrV4::new(req.addr, req.port)));
         if !self.listening {
-            match bind(
-                self.fd,
-                &SockAddr::Inet(InetAddr::new(IpAddr::new_v4(0, 0, 0, 0), 0)),
-            ) {
+            match bind(self.fd, &SockaddrIn::new(0, 0, 0, 0, 0)) {
                 Ok(_) => {
                     self.listening = true;
                     update.polling = Some((self.id, self.fd, EventSet::IN));
@@ -324,7 +339,12 @@ impl Proxy for UdpProxy {
 
         if let Some(addr) = self.sendto_addr {
             if let Some(buf) = pkt.buf() {
-                match sendto(self.fd, buf, &addr, MsgFlags::empty()) {
+                #[cfg(target_os = "macos")]
+                let flags = MsgFlags::empty();
+                #[cfg(target_os = "linux")]
+                let flags = MsgFlags::MSG_NOSIGNAL;
+
+                match sendto(self.fd, buf, &addr, flags) {
                     Ok(sent) => {
                         self.tx_cnt += Wrapping(sent as u32);
                     }
@@ -342,7 +362,7 @@ impl Proxy for UdpProxy {
         ProxyUpdate::default()
     }
 
-    fn accept(&mut self, _pkt: &VsockPacket, _req: TsiAcceptReq) -> ProxyUpdate {
+    fn accept(&mut self, _req: TsiAcceptReq) -> ProxyUpdate {
         ProxyUpdate::default()
     }
 
