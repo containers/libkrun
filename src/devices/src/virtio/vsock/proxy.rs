@@ -28,6 +28,7 @@ pub enum ProxyStatus {
     Closed,
     WaitingCreditUpdate,
     ReverseInit,
+    WaitingOnAccept,
 }
 
 #[derive(Default)]
@@ -56,10 +57,11 @@ pub trait Proxy: Send + AsRawFd {
     fn sendto_addr(&mut self, req: TsiSendtoAddr) -> ProxyUpdate;
     fn sendto_data(&mut self, _pkt: &VsockPacket) {}
     fn listen(&mut self, pkt: &VsockPacket, req: TsiListenReq) -> ProxyUpdate;
-    fn accept(&mut self, pkt: &VsockPacket, req: TsiAcceptReq) -> ProxyUpdate;
+    fn accept(&mut self, req: TsiAcceptReq) -> ProxyUpdate;
     fn update_peer_credit(&mut self, pkt: &VsockPacket) -> ProxyUpdate;
     fn push_op_request(&self) {}
     fn process_op_response(&mut self, pkt: &VsockPacket) -> ProxyUpdate;
+    fn enqueue_accept(&mut self) {}
     fn push_accept_rsp(&self, _result: i32) {}
     fn shutdown(&mut self, _pkt: &VsockPacket) {}
     fn release(&mut self) -> ProxyUpdate;

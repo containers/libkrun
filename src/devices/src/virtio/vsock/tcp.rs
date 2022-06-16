@@ -42,6 +42,7 @@ pub struct TcpProxy {
     peer_buf_alloc: u32,
     peer_fwd_cnt: Wrapping<u32>,
     push_cnt: Wrapping<u32>,
+    pending_accepts: u64,
 }
 
 impl TcpProxy {
@@ -101,6 +102,7 @@ impl TcpProxy {
             peer_buf_alloc: 0,
             peer_fwd_cnt: Wrapping(0),
             push_cnt: Wrapping(0),
+            pending_accepts: 0,
         })
     }
 
@@ -142,6 +144,7 @@ impl TcpProxy {
             peer_buf_alloc: 0,
             peer_fwd_cnt: Wrapping(0),
             push_cnt: Wrapping(0),
+            pending_accepts: 0,
         }
     }
 
@@ -258,6 +261,21 @@ impl TcpProxy {
         // This response goes to the control port (DGRAM).
         let rx = MuxerRx::ConnResponse {
             local_port: 1025,
+            peer_port: self.control_port,
+            result,
+        };
+        push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
+    }
+
+    fn push_accept_rsp(&self, result: i32) {
+        debug!(
+            "push_accept_rsp: control_port: {}, result: {}",
+            self.control_port, result
+        );
+
+        // This packet goes to the control port (DGRAM).
+        let rx = MuxerRx::AcceptResponse {
+            local_port: 1030,
             peer_port: self.control_port,
             result,
         };
@@ -459,7 +477,9 @@ impl Proxy for TcpProxy {
         );
         let mut update = ProxyUpdate::default();
 
-        let result = if self.status == ProxyStatus::Listening {
+        let result = if self.status == ProxyStatus::Listening
+            || self.status == ProxyStatus::WaitingOnAccept
+        {
             0
         } else {
             match bind(
@@ -503,26 +523,20 @@ impl Proxy for TcpProxy {
         update
     }
 
-    fn accept(&mut self, pkt: &VsockPacket, req: TsiAcceptReq) -> ProxyUpdate {
+    fn accept(&mut self, req: TsiAcceptReq) -> ProxyUpdate {
         debug!("accept: id={} flags={}", req.peer_port, req.flags);
 
         let mut update = ProxyUpdate::default();
-        let result = match accept(self.fd) {
-            Ok(accept_fd) => {
-                update.new_proxy = Some((self.peer_port, accept_fd));
-                0
-            }
-            Err(e) => -(e as i32),
-        };
 
-        if result != -libc::EAGAIN {
-            // This packet goes to the control port (DGRAM).
-            let rx = MuxerRx::AcceptResponse {
-                local_port: pkt.dst_port(),
-                peer_port: pkt.src_port(),
-                result,
-            };
-            push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
+        if self.pending_accepts > 0 {
+            self.pending_accepts -= 1;
+            self.push_accept_rsp(0);
+            update.signal_queue = true;
+        } else if (req.flags & libc::O_NONBLOCK as u32) != 0 {
+            self.push_accept_rsp(-libc::EWOULDBLOCK);
+            update.signal_queue = true;
+        } else {
+            self.status = ProxyStatus::WaitingOnAccept;
         }
 
         update
@@ -580,19 +594,15 @@ impl Proxy for TcpProxy {
         }
     }
 
-    fn push_accept_rsp(&self, result: i32) {
-        debug!(
-            "push_accept_rsp: control_port: {}, result: {}",
-            self.control_port, result
-        );
+    fn enqueue_accept(&mut self) {
+        debug!("enqueue_accept: control_port: {}", self.control_port);
 
-        // This packet goes to the control port (DGRAM).
-        let rx = MuxerRx::AcceptResponse {
-            local_port: 1030,
-            peer_port: self.control_port,
-            result,
-        };
-        push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
+        if self.status == ProxyStatus::WaitingOnAccept {
+            self.status = ProxyStatus::Listening;
+            self.push_accept_rsp(0);
+        } else {
+            self.pending_accepts += 1;
+        }
     }
 
     fn shutdown(&mut self, pkt: &VsockPacket) {
@@ -670,7 +680,9 @@ impl Proxy for TcpProxy {
                     debug!("process_event: WaitingCreditUpdate");
                     update.polling = Some((self.id(), self.fd, EventSet::empty()));
                 }
-            } else if self.status == ProxyStatus::Listening {
+            } else if self.status == ProxyStatus::Listening
+                || self.status == ProxyStatus::WaitingOnAccept
+            {
                 match accept(self.fd) {
                     Ok(accept_fd) => {
                         update.new_proxy = Some((self.peer_port, accept_fd));

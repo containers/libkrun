@@ -387,7 +387,7 @@ impl VsockMuxer {
                 .read()
                 .unwrap()
                 .get(&id)
-                .map(|proxy| proxy.lock().unwrap().accept(pkt, req));
+                .map(|proxy| proxy.lock().unwrap().accept(req));
 
             if let Some(update) = update {
                 self.process_proxy_update(id, update);
@@ -499,7 +499,7 @@ impl VsockMuxer {
                     .read()
                     .unwrap()
                     .get(&parent_id)
-                    .map(|proxy| proxy.lock().unwrap().push_accept_rsp(0))
+                    .map(|proxy| proxy.lock().unwrap().enqueue_accept())
             });
 
         if let Some(update) = update {

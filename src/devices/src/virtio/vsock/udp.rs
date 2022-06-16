@@ -342,7 +342,7 @@ impl Proxy for UdpProxy {
         ProxyUpdate::default()
     }
 
-    fn accept(&mut self, _pkt: &VsockPacket, _req: TsiAcceptReq) -> ProxyUpdate {
+    fn accept(&mut self, _req: TsiAcceptReq) -> ProxyUpdate {
         ProxyUpdate::default()
     }
 
