@@ -2,7 +2,7 @@ LIBRARY_HEADER = include/libkrun.h
 INIT_BINARY = init/init
 
 ABI_VERSION=1
-FULL_VERSION=1.0.0
+FULL_VERSION=1.1.0
 
 ifeq ($(SEV),1)
     VARIANT = -sev
