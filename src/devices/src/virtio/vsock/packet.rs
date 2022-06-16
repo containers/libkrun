@@ -16,10 +16,10 @@
 /// to temporary buffers, before passing it on to the vsock backend.
 use std::convert::TryInto;
 use std::ffi::CStr;
+use std::net::Ipv4Addr;
 use std::os::raw::c_char;
 use std::result;
 
-use nix::sys::socket::Ipv4Addr;
 use utils::byte_order;
 use vm_memory::{self, GuestAddress, GuestMemory, GuestMemoryError};
 

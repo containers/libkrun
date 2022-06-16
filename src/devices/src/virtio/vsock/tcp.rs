@@ -1,3 +1,4 @@
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::num::Wrapping;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
@@ -5,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
     accept, bind, connect, getpeername, listen, recv, send, setsockopt, shutdown, socket, sockopt,
-    AddressFamily, InetAddr, IpAddr, Ipv4Addr, MsgFlags, Shutdown, SockAddr, SockFlag, SockType,
+    AddressFamily, MsgFlags, Shutdown, SockFlag, SockType, SockaddrIn,
 };
 use nix::unistd::close;
 
@@ -332,7 +333,7 @@ impl Proxy for TcpProxy {
 
         let result = match connect(
             self.fd,
-            &SockAddr::Inet(InetAddr::new(IpAddr::V4(req.addr), req.port)),
+            &SockaddrIn::from(SocketAddrV4::new(req.addr, req.port)),
         ) {
             Ok(()) => {
                 debug!("vsock: connect: Connected");
@@ -394,14 +395,11 @@ impl Proxy for TcpProxy {
     fn getpeername(&mut self, pkt: &VsockPacket) {
         debug!("getpeername: id={}", self.id);
 
-        let (result, addr, port) = match getpeername(self.fd) {
-            Ok(name) => match name {
-                SockAddr::Inet(iaddr) => match iaddr.ip() {
-                    IpAddr::V4(ipv4) => (0, ipv4, iaddr.port()),
-                    _ => (-libc::EINVAL, Ipv4Addr::new(0, 0, 0, 0), 0),
-                },
-                _ => (-libc::EINVAL, Ipv4Addr::new(0, 0, 0, 0), 0),
-            },
+        let (result, addr, port) = match getpeername::<SockaddrIn>(self.fd) {
+            Ok(name) => {
+                let addr = Ipv4Addr::from(name.ip());
+                (0, addr, name.port())
+            }
             Err(e) => (-(e as i32), Ipv4Addr::new(0, 0, 0, 0), 0),
         };
 
@@ -484,7 +482,7 @@ impl Proxy for TcpProxy {
         } else {
             match bind(
                 self.fd,
-                &SockAddr::Inet(InetAddr::new(IpAddr::V4(req.addr), req.port)),
+                &SockaddrIn::from(SocketAddrV4::new(req.addr, req.port)),
             ) {
                 Ok(_) => {
                     debug!("tcp bind: id={}", self.id);
