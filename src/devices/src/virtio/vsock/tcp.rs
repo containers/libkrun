@@ -10,6 +10,8 @@ use nix::sys::socket::{
 };
 use nix::unistd::close;
 
+#[cfg(target_os = "macos")]
+use super::super::linux_errno::linux_errno_raw;
 use super::super::Queue as VirtQueue;
 use super::defs;
 use super::defs::uapi;
@@ -361,7 +363,11 @@ impl Proxy for TcpProxy {
             }
             Err(e) => {
                 debug!("vsock: TcpProxy: Error connecting: {}", e);
-                -nix::errno::errno()
+                #[cfg(target_os = "macos")]
+                let errno = -linux_errno_raw(nix::errno::errno());
+                #[cfg(target_os = "linux")]
+                let errno = -nix::errno::errno();
+                errno
             }
         };
 
@@ -414,7 +420,13 @@ impl Proxy for TcpProxy {
                 let addr = Ipv4Addr::from(name.ip());
                 (0, addr, name.port())
             }
-            Err(e) => (-(e as i32), Ipv4Addr::new(0, 0, 0, 0), 0),
+            Err(e) => {
+                #[cfg(target_os = "macos")]
+                let errno = -linux_errno_raw(e as i32);
+                #[cfg(target_os = "linux")]
+                let errno = -(e as i32);
+                (errno, Ipv4Addr::new(0, 0, 0, 0), 0)
+            }
         };
 
         let data = TsiGetnameRsp { addr, port, result };
@@ -449,7 +461,13 @@ impl Proxy for TcpProxy {
                     self.tx_cnt += Wrapping(sent as u32);
                     sent as i32
                 }
-                Err(err) => -(err as i32),
+                Err(err) => {
+                    #[cfg(target_os = "macos")]
+                    let errno = -linux_errno_raw(err as i32);
+                    #[cfg(target_os = "linux")]
+                    let errno = -(err as i32);
+                    errno
+                }
             }
         } else {
             -libc::EINVAL
@@ -512,13 +530,21 @@ impl Proxy for TcpProxy {
                         }
                         Err(e) => {
                             warn!("tcp: proxy: id={} err={}", self.id, e);
-                            -(e as i32)
+                            #[cfg(target_os = "macos")]
+                            let errno = -linux_errno_raw(e as i32);
+                            #[cfg(target_os = "linux")]
+                            let errno = -(e as i32);
+                            errno
                         }
                     }
                 }
                 Err(e) => {
                     warn!("tcp bind: id={} err={}", self.id, e);
-                    -(e as i32)
+                    #[cfg(target_os = "macos")]
+                    let errno = -linux_errno_raw(e as i32);
+                    #[cfg(target_os = "linux")]
+                    let errno = -(e as i32);
+                    errno
                 }
             }
         };

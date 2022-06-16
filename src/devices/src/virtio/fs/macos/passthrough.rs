@@ -18,6 +18,7 @@ use std::time::Duration;
 use lru::LruCache;
 use vm_memory::ByteValued;
 
+use super::super::super::linux_errno::{linux_error, LINUX_ERANGE};
 use super::super::bindings;
 use super::super::filesystem::{
     Context, DirEntry, Entry, FileSystem, FsOptions, GetxattrReply, ListxattrReply, OpenOptions,
@@ -25,7 +26,6 @@ use super::super::filesystem::{
 };
 use super::super::fuse;
 use super::super::multikey::MultikeyBTreeMap;
-use super::linux_errno::{linux_error, LINUX_ERANGE};
 
 const INIT_CSTR: &[u8] = b"init.krun\0";
 const XATTR_UID: &[u8] = b"virtiofs.uid\0";

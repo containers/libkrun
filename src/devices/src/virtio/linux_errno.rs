@@ -88,7 +88,11 @@ const LINUX_ENOTRECOVERABLE: i32 = 131;
 pub const LINUX_ERANGE: i32 = 34;
 
 pub fn linux_error(error: std::io::Error) -> std::io::Error {
-    let raw_os_error: i32 = match error.raw_os_error().unwrap_or(libc::EIO) {
+    std::io::Error::from_raw_os_error(linux_errno_raw(error.raw_os_error().unwrap_or(libc::EIO)))
+}
+
+pub fn linux_errno_raw(errno: i32) -> i32 {
+    match errno {
         libc::EPERM => LINUX_EPERM,
         libc::ENOENT => LINUX_ENOENT,
         libc::ESRCH => LINUX_ESRCH,
@@ -176,7 +180,5 @@ pub fn linux_error(error: std::io::Error) -> std::io::Error {
         libc::ENOTRECOVERABLE => LINUX_ENOTRECOVERABLE,
         libc::EOWNERDEAD => LINUX_EOWNERDEAD,
         _ => LINUX_EIO,
-    };
-
-    std::io::Error::from_raw_os_error(raw_os_error)
+    }
 }

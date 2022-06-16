@@ -10,6 +10,8 @@ use nix::sys::socket::{
 };
 use nix::unistd::close;
 
+#[cfg(target_os = "macos")]
+use super::super::linux_errno::linux_errno_raw;
 use super::super::Queue as VirtQueue;
 use super::defs;
 use super::defs::uapi;
@@ -236,7 +238,11 @@ impl Proxy for UdpProxy {
             }
             Err(e) => {
                 debug!("vsock: UdpProxy: Error connecting: {}", e);
-                -nix::errno::errno()
+                #[cfg(target_os = "macos")]
+                let errno = -linux_errno_raw(e as i32);
+                #[cfg(target_os = "linux")]
+                let errno = -(e as i32);
+                errno
             }
         };
 
