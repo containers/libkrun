@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::num::Wrapping;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -178,6 +179,53 @@ impl TcpProxy {
             .set_type(uapi::VSOCK_TYPE_STREAM)
             .set_buf_alloc(defs::CONN_TX_BUF_SIZE as u32)
             .set_fwd_cnt(self.tx_cnt.0);
+    }
+
+    fn try_listen(&mut self, req: &TsiListenReq, host_port_map: &Option<HashMap<u16, u16>>) -> i32 {
+        if self.status == ProxyStatus::Listening || self.status == ProxyStatus::WaitingOnAccept {
+            return 0;
+        }
+
+        let port = if let Some(port_map) = host_port_map {
+            if let Some(port) = port_map.get(&req.port) {
+                *port
+            } else {
+                return -libc::EPERM;
+            }
+        } else {
+            req.port
+        };
+
+        match bind(
+            self.fd,
+            &SockaddrIn::from(SocketAddrV4::new(req.addr, port)),
+        ) {
+            Ok(_) => {
+                debug!("tcp bind: id={}", self.id);
+                match listen(self.fd, req.backlog as usize) {
+                    Ok(_) => {
+                        debug!("tcp: proxy: id={}", self.id);
+                        0
+                    }
+                    Err(e) => {
+                        warn!("tcp: proxy: id={} err={}", self.id, e);
+                        #[cfg(target_os = "macos")]
+                        let errno = -linux_errno_raw(e as i32);
+                        #[cfg(target_os = "linux")]
+                        let errno = -(e as i32);
+                        errno
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("tcp bind: id={} err={}", self.id, e);
+                #[cfg(target_os = "macos")]
+                let errno = -linux_errno_raw(e as i32);
+                #[cfg(target_os = "linux")]
+                let errno = -(e as i32);
+                errno
+            }
+        }
     }
 
     fn peer_avail_credit(&self) -> usize {
@@ -505,49 +553,19 @@ impl Proxy for TcpProxy {
         ProxyUpdate::default()
     }
 
-    fn listen(&mut self, pkt: &VsockPacket, req: TsiListenReq) -> ProxyUpdate {
+    fn listen(
+        &mut self,
+        pkt: &VsockPacket,
+        req: TsiListenReq,
+        host_port_map: &Option<HashMap<u16, u16>>,
+    ) -> ProxyUpdate {
         debug!(
             "listen: id={} addr={}, port={}, vm_port={} backlog={}",
             self.id, req.addr, req.port, req.vm_port, req.backlog
         );
         let mut update = ProxyUpdate::default();
 
-        let result = if self.status == ProxyStatus::Listening
-            || self.status == ProxyStatus::WaitingOnAccept
-        {
-            0
-        } else {
-            match bind(
-                self.fd,
-                &SockaddrIn::from(SocketAddrV4::new(req.addr, req.port)),
-            ) {
-                Ok(_) => {
-                    debug!("tcp bind: id={}", self.id);
-                    match listen(self.fd, req.backlog as usize) {
-                        Ok(_) => {
-                            debug!("tcp: proxy: id={}", self.id);
-                            0
-                        }
-                        Err(e) => {
-                            warn!("tcp: proxy: id={} err={}", self.id, e);
-                            #[cfg(target_os = "macos")]
-                            let errno = -linux_errno_raw(e as i32);
-                            #[cfg(target_os = "linux")]
-                            let errno = -(e as i32);
-                            errno
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("tcp bind: id={} err={}", self.id, e);
-                    #[cfg(target_os = "macos")]
-                    let errno = -linux_errno_raw(e as i32);
-                    #[cfg(target_os = "linux")]
-                    let errno = -(e as i32);
-                    errno
-                }
-            }
-        };
+        let result = self.try_listen(&req, host_port_map);
 
         // This packet goes to the control port (DGRAM).
         let rx = MuxerRx::ListenResponse {

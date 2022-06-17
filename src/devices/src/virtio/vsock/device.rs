@@ -5,6 +5,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
+use std::collections::HashMap;
 use std::result;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -57,7 +58,11 @@ pub struct Vsock {
 }
 
 impl Vsock {
-    pub(crate) fn with_queues(cid: u64, queues: Vec<VirtQueue>) -> super::Result<Vsock> {
+    pub(crate) fn with_queues(
+        cid: u64,
+        host_port_map: Option<HashMap<u16, u16>>,
+        queues: Vec<VirtQueue>,
+    ) -> super::Result<Vsock> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
             queue_events
@@ -77,6 +82,7 @@ impl Vsock {
             cid,
             muxer: VsockMuxer::new(
                 cid,
+                host_port_map,
                 interrupt_evt.try_clone().unwrap(),
                 interrupt_status.clone(),
             ),
@@ -99,12 +105,12 @@ impl Vsock {
     }
 
     /// Create a new virtio-vsock device with the given VM CID.
-    pub fn new(cid: u64) -> super::Result<Vsock> {
+    pub fn new(cid: u64, host_port_map: Option<HashMap<u16, u16>>) -> super::Result<Vsock> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
             .iter()
             .map(|&max_size| VirtQueue::new(max_size))
             .collect();
-        Self::with_queues(cid, queues)
+        Self::with_queues(cid, host_port_map, queues)
     }
 
     pub fn id(&self) -> &str {

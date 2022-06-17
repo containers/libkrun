@@ -90,6 +90,7 @@ pub fn push_packet(
 
 pub struct VsockMuxer {
     cid: u64,
+    host_port_map: Option<HashMap<u16, u16>>,
     queue_stream: Option<Arc<Mutex<VirtQueue>>>,
     queue_dgram: Option<Arc<Mutex<VirtQueue>>>,
     mem: Option<GuestMemoryMmap>,
@@ -106,11 +107,13 @@ pub struct VsockMuxer {
 impl VsockMuxer {
     pub(crate) fn new(
         cid: u64,
+        host_port_map: Option<HashMap<u16, u16>>,
         interrupt_evt: EventFd,
         interrupt_status: Arc<AtomicUsize>,
     ) -> Self {
         VsockMuxer {
             cid,
+            host_port_map,
             queue_stream: None,
             queue_dgram: None,
             mem: None,
@@ -369,7 +372,7 @@ impl VsockMuxer {
                 .read()
                 .unwrap()
                 .get(&id)
-                .map(|proxy| proxy.lock().unwrap().listen(pkt, req));
+                .map(|proxy| proxy.lock().unwrap().listen(pkt, req, &self.host_port_map));
 
             if let Some(update) = update {
                 self.process_proxy_update(id, update);

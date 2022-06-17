@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::os::unix::io::{AsRawFd, RawFd};
 
@@ -56,7 +57,12 @@ pub trait Proxy: Send + AsRawFd {
     fn sendmsg(&mut self, pkt: &VsockPacket) -> ProxyUpdate;
     fn sendto_addr(&mut self, req: TsiSendtoAddr) -> ProxyUpdate;
     fn sendto_data(&mut self, _pkt: &VsockPacket) {}
-    fn listen(&mut self, pkt: &VsockPacket, req: TsiListenReq) -> ProxyUpdate;
+    fn listen(
+        &mut self,
+        pkt: &VsockPacket,
+        req: TsiListenReq,
+        host_port_map: &Option<HashMap<u16, u16>>,
+    ) -> ProxyUpdate;
     fn accept(&mut self, req: TsiAcceptReq) -> ProxyUpdate;
     fn update_peer_credit(&mut self, pkt: &VsockPacket) -> ProxyUpdate;
     fn push_op_request(&self) {}
