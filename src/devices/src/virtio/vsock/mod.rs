@@ -13,6 +13,7 @@ mod muxer_thread;
 #[allow(dead_code)]
 mod packet;
 mod proxy;
+mod reaper;
 mod tcp;
 mod udp;
 

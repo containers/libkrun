@@ -32,10 +32,22 @@ pub enum ProxyStatus {
     WaitingOnAccept,
 }
 
+pub enum ProxyRemoval {
+    Keep,
+    Immediate,
+    Deferred,
+}
+
+impl Default for ProxyRemoval {
+    fn default() -> ProxyRemoval {
+        ProxyRemoval::Keep
+    }
+}
+
 #[derive(Default)]
 pub struct ProxyUpdate {
     pub signal_queue: bool,
-    pub remove_proxy: bool,
+    pub remove_proxy: ProxyRemoval,
     pub polling: Option<(u64, RawFd, EventSet)>,
     pub new_proxy: Option<(u32, RawFd)>,
     pub push_accept: Option<(u64, u64)>,

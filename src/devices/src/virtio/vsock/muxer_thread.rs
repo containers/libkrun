@@ -1,5 +1,6 @@
 use std::os::unix::io::RawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -8,7 +9,7 @@ use super::super::Queue as VirtQueue;
 use super::super::VIRTIO_MMIO_INT_VRING;
 use super::muxer::{push_packet, MuxerRx, ProxyMap};
 use super::muxer_rxq::MuxerRxQ;
-use super::proxy::ProxyUpdate;
+use super::proxy::{ProxyRemoval, ProxyUpdate};
 use super::tcp::TcpProxy;
 
 use rand::{rngs::ThreadRng, thread_rng, Rng};
@@ -29,6 +30,7 @@ pub struct MuxerThread {
     interrupt_status: Arc<AtomicUsize>,
     intc: Option<Arc<Mutex<Gic>>>,
     irq_line: Option<u32>,
+    reaper_sender: Sender<u64>,
 }
 
 impl MuxerThread {
@@ -46,6 +48,7 @@ impl MuxerThread {
         interrupt_status: Arc<AtomicUsize>,
         intc: Option<Arc<Mutex<Gic>>>,
         irq_line: Option<u32>,
+        reaper_sender: Sender<u64>,
     ) -> Self {
         MuxerThread {
             cid,
@@ -60,6 +63,7 @@ impl MuxerThread {
             interrupt_status,
             intc,
             irq_line,
+            reaper_sender,
         }
     }
 
@@ -101,8 +105,18 @@ impl MuxerThread {
             self.send_credit_request(credit_rx);
         }
 
-        if update.remove_proxy {
-            self.proxy_map.write().unwrap().remove(&id);
+        match update.remove_proxy {
+            ProxyRemoval::Keep => {}
+            ProxyRemoval::Immediate => {
+                warn!("immediately removing proxy: {}", id);
+                self.proxy_map.write().unwrap().remove(&id);
+            }
+            ProxyRemoval::Deferred => {
+                warn!("deferring proxy removal: {}", id);
+                if self.reaper_sender.send(id).is_err() {
+                    self.proxy_map.write().unwrap().remove(&id);
+                }
+            }
         }
 
         let mut should_signal = update.signal_queue;

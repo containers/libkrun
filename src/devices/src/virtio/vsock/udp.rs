@@ -21,7 +21,7 @@ use super::muxer_rxq::MuxerRxQ;
 use super::packet::{
     TsiAcceptReq, TsiConnectReq, TsiGetnameRsp, TsiListenReq, TsiSendtoAddr, VsockPacket,
 };
-use super::proxy::{Proxy, ProxyError, ProxyStatus, ProxyUpdate, RecvPkt};
+use super::proxy::{Proxy, ProxyError, ProxyRemoval, ProxyStatus, ProxyUpdate, RecvPkt};
 use utils::epoll::EventSet;
 
 use vm_memory::GuestMemoryMmap;
@@ -394,8 +394,13 @@ impl Proxy for UdpProxy {
 
     fn release(&mut self) -> ProxyUpdate {
         debug!("release");
+        let remove_proxy = if self.status == ProxyStatus::Listening {
+            ProxyRemoval::Immediate
+        } else {
+            ProxyRemoval::Deferred
+        };
         ProxyUpdate {
-            remove_proxy: true,
+            remove_proxy,
             ..Default::default()
         }
     }
@@ -404,7 +409,11 @@ impl Proxy for UdpProxy {
         let mut update = ProxyUpdate::default();
 
         if evset.contains(EventSet::HANG_UP) {
-            update.remove_proxy = true;
+            update.remove_proxy = if self.status == ProxyStatus::Listening {
+                ProxyRemoval::Immediate
+            } else {
+                ProxyRemoval::Deferred
+            };
             return update;
         }
 

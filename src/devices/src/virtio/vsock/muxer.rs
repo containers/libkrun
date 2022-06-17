@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::os::unix::io::RawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex, RwLock};
 
 use super::super::super::legacy::Gic;
@@ -11,7 +12,8 @@ use super::defs::uapi;
 use super::muxer_rxq::{rx_to_pkt, MuxerRxQ};
 use super::muxer_thread::MuxerThread;
 use super::packet::{TsiGetnameRsp, VsockPacket};
-use super::proxy::{Proxy, ProxyUpdate};
+use super::proxy::{Proxy, ProxyRemoval, ProxyUpdate};
+use super::reaper::ReaperThread;
 use super::tcp::TcpProxy;
 use super::udp::UdpProxy;
 use super::VsockError;
@@ -102,6 +104,7 @@ pub struct VsockMuxer {
     intc: Option<Arc<Mutex<Gic>>>,
     irq_line: Option<u32>,
     proxy_map: ProxyMap,
+    reaper_sender: Option<Sender<u64>>,
 }
 
 impl VsockMuxer {
@@ -125,6 +128,7 @@ impl VsockMuxer {
             intc: None,
             irq_line: None,
             proxy_map: Arc::new(RwLock::new(HashMap::new())),
+            reaper_sender: None,
         }
     }
 
@@ -142,6 +146,8 @@ impl VsockMuxer {
         self.intc = intc.clone();
         self.irq_line = irq_line;
 
+        let (sender, receiver) = channel();
+
         let thread = MuxerThread::new(
             self.cid,
             self.epoll.clone(),
@@ -155,8 +161,13 @@ impl VsockMuxer {
             self.interrupt_status.clone(),
             intc,
             irq_line,
+            sender.clone(),
         );
         thread.run();
+
+        self.reaper_sender = Some(sender);
+        let reaper = ReaperThread::new(receiver, self.proxy_map.clone());
+        reaper.run();
     }
 
     pub(crate) fn has_pending_stream_rx(&self) -> bool {
@@ -212,8 +223,20 @@ impl VsockMuxer {
             self.update_polling(polling.0, polling.1, polling.2);
         }
 
-        if update.remove_proxy {
-            self.proxy_map.write().unwrap().remove(&id);
+        match update.remove_proxy {
+            ProxyRemoval::Keep => {}
+            ProxyRemoval::Immediate => {
+                warn!("immediately removing proxy: {}", id);
+                self.proxy_map.write().unwrap().remove(&id);
+            }
+            ProxyRemoval::Deferred => {
+                warn!("deferring proxy removal: {}", id);
+                if let Some(reaper_sender) = &self.reaper_sender {
+                    if reaper_sender.send(id).is_err() {
+                        self.proxy_map.write().unwrap().remove(&id);
+                    }
+                }
+            }
         }
 
         if update.signal_queue {
