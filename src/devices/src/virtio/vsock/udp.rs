@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::num::Wrapping;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -358,7 +359,12 @@ impl Proxy for UdpProxy {
         }
     }
 
-    fn listen(&mut self, _pkt: &VsockPacket, _req: TsiListenReq) -> ProxyUpdate {
+    fn listen(
+        &mut self,
+        _pkt: &VsockPacket,
+        _req: TsiListenReq,
+        _host_port_map: &Option<HashMap<u16, u16>>,
+    ) -> ProxyUpdate {
         ProxyUpdate::default()
     }
 

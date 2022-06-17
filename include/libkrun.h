@@ -93,11 +93,22 @@ int32_t krun_set_mapped_volumes(uint32_t ctx_id, char *const mapped_volumes[]);
  * Configures a map of host to guest TCP ports for the microVM.
  *
  * Arguments:
- *  "ctx_id"         - the configuration context ID.
- *  "mapped_volumes" - an array of string pointers with format "host_port:guest_port"
+ *  "ctx_id"   - the configuration context ID.
+ *  "port_map" - an array of string pointers with format "host_port:guest_port"
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
+ *
+ * Notes:
+ *  Passing NULL (or not calling this function) as "port_map" has a different meaning than
+ *  passing an empty array. The first one will instruct libkrun to attempt to expose all
+ *  listening ports in the guest to the host, while the second means that no port from
+ *  the guest will be exposed to host.
+ *
+ *  Exposed ports will only become accessible by their "host_port" in the guest too. This
+ *  means that for a map such as "8080:80", applications running inside the guest will also
+ *  need to access the service through the "8080" port.
+ *
  */
 int32_t krun_set_port_map(uint32_t ctx_id, char *const port_map[]);
 
