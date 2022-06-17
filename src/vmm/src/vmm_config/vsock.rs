@@ -71,7 +71,8 @@ impl VsockBuilder {
 
     /// Creates a Vsock device from a VsockDeviceConfig.
     pub fn create_vsock(cfg: VsockDeviceConfig) -> Result<Vsock> {
-        Vsock::new(u64::from(cfg.guest_cid)).map_err(VsockConfigError::CreateVsockDevice)
+        Vsock::new(u64::from(cfg.guest_cid), cfg.host_port_map)
+            .map_err(VsockConfigError::CreateVsockDevice)
     }
 }
 
