@@ -18,8 +18,7 @@ use std::fmt::{Display, Formatter, Result};
 
 #[cfg(all(target_os = "linux", not(feature = "amd-sev")))]
 pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 nomodules console=hvc0 \
-                                          rootflags=dax rootfstype=virtiofs rw quiet no-kvmapf \
-                                          tsi_hijack";
+                                          rootfstype=virtiofs rw quiet no-kvmapf tsi_hijack";
 
 #[cfg(feature = "amd-sev")]
 pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 nomodules console=hvc0 \
