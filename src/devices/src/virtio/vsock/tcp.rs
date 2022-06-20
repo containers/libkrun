@@ -21,7 +21,7 @@ use super::muxer_rxq::MuxerRxQ;
 use super::packet::{
     TsiAcceptReq, TsiConnectReq, TsiGetnameRsp, TsiListenReq, TsiSendtoAddr, VsockPacket,
 };
-use super::proxy::{Proxy, ProxyError, ProxyStatus, ProxyUpdate, RecvPkt};
+use super::proxy::{Proxy, ProxyError, ProxyRemoval, ProxyStatus, ProxyUpdate, RecvPkt};
 use utils::epoll::EventSet;
 
 use vm_memory::GuestMemoryMmap;
@@ -688,8 +688,13 @@ impl Proxy for TcpProxy {
             "release: id={}, tx_cnt={}, last_tx_cnt={}",
             self.id, self.tx_cnt, self.last_tx_cnt_sent
         );
+        let remove_proxy = if self.status == ProxyStatus::Listening {
+            ProxyRemoval::Immediate
+        } else {
+            ProxyRemoval::Deferred
+        };
         ProxyUpdate {
-            remove_proxy: true,
+            remove_proxy,
             ..Default::default()
         }
     }
@@ -708,7 +713,11 @@ impl Proxy for TcpProxy {
             self.status = ProxyStatus::Closed;
             update.polling = Some((self.id, self.fd, EventSet::empty()));
             update.signal_queue = true;
-            update.remove_proxy = true;
+            update.remove_proxy = if self.status == ProxyStatus::Listening {
+                ProxyRemoval::Immediate
+            } else {
+                ProxyRemoval::Deferred
+            };
             return update;
         }
 
