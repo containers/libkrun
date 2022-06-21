@@ -9,7 +9,7 @@ amd-sev = []
 
 [dependencies]
 libc = ">=0.2.39"
-vm-memory = { version = "0.7.0", features = ["backend-mmap"] }
+vm-memory = { version = "0.8.0", features = ["backend-mmap"] }
 
 arch_gen = { path = "../arch_gen" }
 utils = { path = "../utils" }
