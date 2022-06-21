@@ -55,7 +55,6 @@ impl ReaperThread {
         loop {
             let timeout = self.check_expiration();
             if let Ok(id) = self.receiver.recv_timeout(timeout) {
-                println!("reaper alive");
                 self.released_map.insert(id, Instant::now());
             }
         }
