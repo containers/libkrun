@@ -170,6 +170,15 @@ LD_LIBRARY_PATH=/usr/local/lib64 ./chroot_vm rootfs/ /bin/sh
 
 ```libkrun``` has achieved maturity and starting version ```1.0.0``` the public API is guaranteed to be stable, following [SemVer](https://semver.org/).
 
+### Known users
+
+- [crun](https://github.com/containers/crun): An OCI runtime that can make use of libkrun to run containers with Virtualization-based isolation.
+- [krunvm](https://github.com/slp/krunvm): A CLI tool for creating and running microVMs based on OCI images.
+
+## Getting in contact
+
+The main communication channel is the [VirTEE Matrix channel](https://matrix.to/#/#virtee:matrix.org).
+
 ## Acknowledgments
 
 ```libkrun``` incorporates code from [Firecracker](https://github.com/firecracker-microvm/firecracker), [rust-vmm](https://github.com/rust-vmm/) and [Cloud-Hypervisor](https://github.com/cloud-hypervisor/).
