@@ -28,9 +28,7 @@ use super::super::fuse;
 use super::super::multikey::MultikeyBTreeMap;
 
 const INIT_CSTR: &[u8] = b"init.krun\0";
-const XATTR_UID: &[u8] = b"virtiofs.uid\0";
-const XATTR_GID: &[u8] = b"virtiofs.gid\0";
-const XATTR_MODE: &[u8] = b"virtiofs.mode\0";
+const XATTR_KEY: &[u8] = b"user.containers.override_stat\0";
 
 const UID_MAX: u32 = u32::MAX - 1;
 
@@ -95,115 +93,150 @@ fn get_filepath(fd: RawFd) -> io::Result<String> {
     Ok(std::str::from_utf8(&filepath).unwrap().to_string())
 }
 
-fn fget_xattr(fd: RawFd, attr: &[u8]) -> Option<u32> {
-    let mut buf = vec![0; 12];
-    let res = unsafe {
-        libc::fgetxattr(
-            fd,
-            attr.as_ptr() as *const i8,
-            buf.as_mut_ptr() as *mut libc::c_void,
-            8,
-            0,
-            0,
-        )
-    };
-    if res < 0 {
-        return None;
-    }
+#[derive(Clone)]
+enum StatFile {
+    Path(String),
+    Fd(RawFd),
+}
 
-    buf.resize(res as usize, 0);
-    match std::str::from_utf8(&buf) {
-        Ok(val) => val.parse().ok(),
+fn item_to_value(item: &[u8], radix: u32) -> Option<u32> {
+    match std::str::from_utf8(item) {
+        Ok(val) => match u32::from_str_radix(val, radix) {
+            Ok(i) => Some(i),
+            Err(e) => {
+                debug!("invalid value: {} err={}", radix, e);
+                None
+            }
+        },
         Err(_) => None,
     }
 }
 
-fn fset_xattr(fd: RawFd, attr: &[u8], val: u32) -> i32 {
-    let buf = val.to_string();
-    unsafe {
-        libc::fsetxattr(
-            fd,
-            attr.as_ptr() as *const i8,
-            buf.as_ptr() as *const libc::c_void,
-            buf.len() as libc::size_t,
-            0,
-            0,
+fn get_xattr_stat(file: StatFile) -> Option<(u32, u32, u32)> {
+    let mut buf: Vec<u8> = vec![0; 32];
+    let res = match file {
+        StatFile::Path(path) => {
+            let cpath = CString::new(path).unwrap();
+            unsafe {
+                libc::getxattr(
+                    cpath.as_ptr(),
+                    XATTR_KEY.as_ptr() as *const i8,
+                    buf.as_mut_ptr() as *mut libc::c_void,
+                    32,
+                    0,
+                    0,
+                )
+            }
+        }
+        StatFile::Fd(fd) => unsafe {
+            libc::fgetxattr(
+                fd,
+                XATTR_KEY.as_ptr() as *const i8,
+                buf.as_mut_ptr() as *mut libc::c_void,
+                64,
+                0,
+                0,
+            )
+        },
+    };
+    if res < 0 {
+        debug!("fget_xattr error: {}", res);
+        return None;
+    }
+
+    buf.resize(res as usize, 0);
+
+    let mut items = buf.split(|c| *c == b':');
+
+    let uid = match items.next() {
+        Some(item) => match item_to_value(item, 10) {
+            Some(item) => item,
+            None => return None,
+        },
+        None => return None,
+    };
+    let gid = match items.next() {
+        Some(item) => match item_to_value(item, 10) {
+            Some(item) => item,
+            None => return None,
+        },
+        None => return None,
+    };
+    let mode = match items.next() {
+        Some(item) => match item_to_value(item, 8) {
+            Some(item) => item,
+            None => return None,
+        },
+        None => return None,
+    };
+
+    Some((uid, gid, mode))
+}
+
+fn is_valid_owner(owner: Option<(u32, u32)>) -> bool {
+    if let Some(owner) = owner {
+        if owner.0 < UID_MAX && owner.1 < UID_MAX {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn set_xattr_stat(file: StatFile, owner: Option<(u32, u32)>, mode: Option<u32>) -> i32 {
+    let buf = if is_valid_owner(owner) && mode.is_some() {
+        let owner = owner.unwrap();
+        format!("{}:{}:0{:o}", owner.0, owner.1, mode.unwrap())
+    } else {
+        let (orig_owner, orig_mode) =
+            if let Some((xuid, xgid, xmode)) = get_xattr_stat(file.clone()) {
+                ((xuid, xgid), xmode)
+            } else {
+                ((0, 0), 0o0777)
+            };
+
+        let new_owner = match owner {
+            Some(o) => {
+                let uid = if o.0 < UID_MAX { o.0 } else { orig_owner.0 };
+                let gid = if o.1 < UID_MAX { o.1 } else { orig_owner.1 };
+                (uid, gid)
+            }
+            None => orig_owner,
+        };
+
+        format!(
+            "{}:{}:0{:o}",
+            new_owner.0,
+            new_owner.1,
+            mode.unwrap_or(orig_mode)
         )
-    }
-}
+    };
 
-fn set_xattr(filepath: &str, attr: &[u8], val: u32) -> i32 {
-    let buf = val.to_string();
-    let cpath = CString::new(filepath).unwrap();
-    unsafe {
-        libc::setxattr(
-            cpath.as_ptr(),
-            attr.as_ptr() as *const i8,
-            buf.as_ptr() as *const libc::c_void,
-            buf.len() as libc::size_t,
-            0,
-            0,
-        )
-    }
-}
-
-fn fget_xattr_owner(fd: RawFd) -> Option<(u32, u32)> {
-    let uid = fget_xattr(fd, XATTR_UID);
-    let gid = fget_xattr(fd, XATTR_GID);
-    if let Some(uid) = uid {
-        if let Some(gid) = gid {
-            return Some((uid, gid));
+    match file {
+        StatFile::Path(path) => {
+            let cpath = CString::new(path).unwrap();
+            unsafe {
+                libc::setxattr(
+                    cpath.as_ptr(),
+                    XATTR_KEY.as_ptr() as *const i8,
+                    buf.as_ptr() as *mut libc::c_void,
+                    buf.len() as libc::size_t,
+                    0,
+                    0,
+                )
+            }
         }
+        StatFile::Fd(fd) => unsafe {
+            libc::fsetxattr(
+                fd,
+                XATTR_KEY.as_ptr() as *const i8,
+                buf.as_ptr() as *mut libc::c_void,
+                buf.len() as libc::size_t,
+                0,
+                0,
+            )
+        },
     }
-    None
-}
-
-fn fset_xattr_owner(fd: RawFd, uid: u32, gid: u32) -> i32 {
-    if uid <= UID_MAX {
-        let res = fset_xattr(fd, XATTR_UID, uid);
-        if res < 0 {
-            return res;
-        }
-    }
-
-    if gid <= UID_MAX {
-        let res = fset_xattr(fd, XATTR_GID, gid);
-        if res < 0 {
-            return res;
-        }
-    }
-
-    0
-}
-
-fn fget_xattr_mode(fd: RawFd) -> Option<u32> {
-    fget_xattr(fd, XATTR_MODE)
-}
-
-fn fset_xattr_mode(fd: RawFd, mode: u32) -> i32 {
-    fset_xattr(fd, XATTR_MODE, mode)
-}
-
-fn set_xattr_owner(filepath: &str, uid: u32, gid: u32) -> i32 {
-    if uid <= UID_MAX {
-        let res = set_xattr(filepath, XATTR_UID, uid);
-        if res < 0 {
-            return res;
-        }
-    }
-
-    if gid <= UID_MAX {
-        let res = set_xattr(filepath, XATTR_GID, gid);
-        if res < 0 {
-            return res;
-        }
-    }
-
-    0
-}
-
-fn set_xattr_mode(filepath: &str, mode: u32) -> i32 {
-    set_xattr(filepath, XATTR_MODE, mode)
 }
 
 fn fstat(f: &File) -> io::Result<bindings::stat64> {
@@ -216,12 +249,9 @@ fn fstat(f: &File) -> io::Result<bindings::stat64> {
         // Safe because the kernel guarantees that the struct is now fully initialized.
         let mut st = unsafe { st.assume_init() };
 
-        if let Some((uid, gid)) = fget_xattr_owner(f.as_raw_fd()) {
+        if let Some((uid, gid, mode)) = get_xattr_stat(StatFile::Fd(f.as_raw_fd())) {
             st.st_uid = uid;
             st.st_gid = gid;
-        }
-
-        if let Some(mode) = fget_xattr_mode(f.as_raw_fd()) {
             if mode as u16 & libc::S_IFMT == 0 {
                 st.st_mode = (st.st_mode & libc::S_IFMT) | mode as u16;
             } else {
@@ -1093,8 +1123,11 @@ impl FileSystem for PassthroughFs {
         let res = unsafe { libc::mkdirat(file.as_raw_fd(), name.as_ptr(), 0o700) };
         if res == 0 {
             let filepath = format!("{}/{}", self.get_path(parent)?, name.to_str().unwrap(),);
-            set_xattr_owner(&filepath, ctx.uid, ctx.gid);
-            set_xattr_mode(&filepath, mode & !umask);
+            set_xattr_stat(
+                StatFile::Path(filepath),
+                Some((ctx.uid, ctx.gid)),
+                Some(mode & !umask),
+            );
             self.do_lookup(parent, name)
         } else {
             Err(linux_error(io::Error::last_os_error()))
@@ -1204,8 +1237,11 @@ impl FileSystem for PassthroughFs {
             return Err(linux_error(io::Error::last_os_error()));
         }
 
-        fset_xattr_owner(fd, ctx.uid, ctx.gid);
-        fset_xattr_mode(fd, libc::S_IFREG as u32 | (mode & !(umask & 0o777)));
+        set_xattr_stat(
+            StatFile::Fd(fd),
+            Some((ctx.uid, ctx.gid)),
+            Some(libc::S_IFREG as u32 | (mode & !(umask & 0o777))),
+        );
 
         // Safe because we just opened this fd.
         let file = RwLock::new(unsafe { File::from_raw_fd(fd) });
@@ -1340,10 +1376,12 @@ impl FileSystem for PassthroughFs {
 
         if valid.contains(SetattrValid::MODE) {
             let res = match data {
-                Data::Handle(_, fd) => fset_xattr_mode(fd, attr.st_mode as u32),
+                Data::Handle(_, fd) => {
+                    set_xattr_stat(StatFile::Fd(fd), None, Some(attr.st_mode as u32))
+                }
                 Data::FilePath => {
                     let filepath = self.get_path(inode)?;
-                    set_xattr_mode(&filepath, attr.st_mode as u32)
+                    set_xattr_stat(StatFile::Path(filepath), None, Some(attr.st_mode as u32))
                 }
             };
             if res < 0 {
@@ -1366,7 +1404,7 @@ impl FileSystem for PassthroughFs {
             };
 
             // Safe because this doesn't modify any memory and we check the return value.
-            let res = fset_xattr_owner(file.as_raw_fd(), uid, gid);
+            let res = set_xattr_stat(StatFile::Fd(file.as_raw_fd()), Some((uid, gid)), None);
             if res < 0 {
                 return Err(linux_error(io::Error::last_os_error()));
             }
@@ -1474,7 +1512,7 @@ impl FileSystem for PassthroughFs {
                     )
                 };
                 if fd > 0 {
-                    fset_xattr_mode(fd, (libc::S_IFCHR | 0o600) as u32);
+                    set_xattr_stat(StatFile::Fd(fd), None, Some((libc::S_IFCHR | 0o600) as u32));
                     unsafe { libc::close(fd) };
                 }
             }
@@ -1525,8 +1563,11 @@ impl FileSystem for PassthroughFs {
         if fd < 0 {
             Err(linux_error(io::Error::last_os_error()))
         } else {
-            fset_xattr_mode(fd, mode & !umask);
-            fset_xattr_owner(fd, ctx.uid, ctx.gid);
+            set_xattr_stat(
+                StatFile::Fd(fd),
+                Some((ctx.uid, ctx.gid)),
+                Some(mode & !umask),
+            );
             unsafe { libc::close(fd) };
             self.do_lookup(parent, name)
         }
@@ -1569,7 +1610,11 @@ impl FileSystem for PassthroughFs {
         let res = unsafe { libc::symlinkat(linkname.as_ptr(), file.as_raw_fd(), name.as_ptr()) };
         if res == 0 {
             let entry = self.do_lookup(parent, name)?;
-            set_xattr_owner(&self.get_path(entry.inode)?, ctx.uid, ctx.gid);
+            set_xattr_stat(
+                StatFile::Path(self.get_path(entry.inode)?),
+                Some((ctx.uid, ctx.gid)),
+                None,
+            );
             Ok(entry)
         } else {
             Err(linux_error(io::Error::last_os_error()))
@@ -1714,10 +1759,12 @@ impl FileSystem for PassthroughFs {
             "setxattr: inode={} name={:?} value={:?}",
             inode, name, value
         );
-        if name.to_bytes() == XATTR_UID
-            || name.to_bytes() == XATTR_GID
-            || name.to_bytes() == XATTR_MODE
-        {
+
+        if !self.cfg.xattr {
+            return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
+        }
+
+        if name.to_bytes() == XATTR_KEY {
             return Err(linux_error(io::Error::from_raw_os_error(libc::EACCES)));
         }
 
@@ -1757,14 +1804,16 @@ impl FileSystem for PassthroughFs {
         size: u32,
     ) -> io::Result<GetxattrReply> {
         debug!("getxattr: inode={} name={:?}", inode, name);
+
+        if !self.cfg.xattr {
+            return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
+        }
+
         if inode == self.init_inode {
             return Err(linux_error(io::Error::from_raw_os_error(libc::ENODATA)));
         }
 
-        if name.to_bytes() == XATTR_UID
-            || name.to_bytes() == XATTR_GID
-            || name.to_bytes() == XATTR_MODE
-        {
+        if name.to_bytes() == XATTR_KEY {
             return Err(linux_error(io::Error::from_raw_os_error(libc::EACCES)));
         }
 
@@ -1796,6 +1845,10 @@ impl FileSystem for PassthroughFs {
     }
 
     fn listxattr(&self, _ctx: Context, inode: Inode, size: u32) -> io::Result<ListxattrReply> {
+        if !self.cfg.xattr {
+            return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
+        }
+
         let mut buf = vec![0; 512_usize];
 
         let file = self.get_file(inode)?;
@@ -1819,12 +1872,8 @@ impl FileSystem for PassthroughFs {
             let mut clean_size = res as usize;
 
             for attr in buf.split(|c| *c == 0) {
-                if attr.starts_with(&XATTR_UID[..XATTR_UID.len() - 1]) {
-                    clean_size -= XATTR_UID.len();
-                } else if attr.starts_with(&XATTR_GID[..XATTR_GID.len() - 1]) {
-                    clean_size -= XATTR_GID.len();
-                } else if attr.starts_with(&XATTR_MODE[..XATTR_MODE.len() - 1]) {
-                    clean_size -= XATTR_MODE.len();
+                if attr.starts_with(&XATTR_KEY[..XATTR_KEY.len() - 1]) {
+                    clean_size -= XATTR_KEY.len();
                 }
             }
 
@@ -1833,11 +1882,7 @@ impl FileSystem for PassthroughFs {
             let mut clean_buf = Vec::new();
 
             for attr in buf.split(|c| *c == 0) {
-                if attr.is_empty()
-                    || attr.starts_with(&XATTR_UID[..XATTR_UID.len() - 1])
-                    || attr.starts_with(&XATTR_GID[..XATTR_GID.len() - 1])
-                    || attr.starts_with(&XATTR_MODE[..XATTR_MODE.len() - 1])
-                {
+                if attr.is_empty() || attr.starts_with(&XATTR_KEY[..XATTR_KEY.len() - 1]) {
                     continue;
                 }
 
@@ -1856,10 +1901,11 @@ impl FileSystem for PassthroughFs {
     }
 
     fn removexattr(&self, _ctx: Context, inode: Inode, name: &CStr) -> io::Result<()> {
-        if name.to_bytes() == XATTR_UID
-            || name.to_bytes() == XATTR_GID
-            || name.to_bytes() == XATTR_MODE
-        {
+        if !self.cfg.xattr {
+            return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
+        }
+
+        if name.to_bytes() == XATTR_KEY {
             return Err(linux_error(io::Error::from_raw_os_error(
                 bindings::LINUX_EACCES,
             )));
