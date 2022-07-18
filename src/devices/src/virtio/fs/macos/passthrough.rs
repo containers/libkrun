@@ -1714,6 +1714,11 @@ impl FileSystem for PassthroughFs {
             "setxattr: inode={} name={:?} value={:?}",
             inode, name, value
         );
+
+        if !self.cfg.xattr {
+            return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
+        }
+
         if name.to_bytes() == XATTR_UID
             || name.to_bytes() == XATTR_GID
             || name.to_bytes() == XATTR_MODE
@@ -1757,6 +1762,11 @@ impl FileSystem for PassthroughFs {
         size: u32,
     ) -> io::Result<GetxattrReply> {
         debug!("getxattr: inode={} name={:?}", inode, name);
+
+        if !self.cfg.xattr {
+            return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
+        }
+
         if inode == self.init_inode {
             return Err(linux_error(io::Error::from_raw_os_error(libc::ENODATA)));
         }
@@ -1796,6 +1806,10 @@ impl FileSystem for PassthroughFs {
     }
 
     fn listxattr(&self, _ctx: Context, inode: Inode, size: u32) -> io::Result<ListxattrReply> {
+        if !self.cfg.xattr {
+            return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
+        }
+
         let mut buf = vec![0; 512_usize];
 
         let file = self.get_file(inode)?;
@@ -1856,6 +1870,10 @@ impl FileSystem for PassthroughFs {
     }
 
     fn removexattr(&self, _ctx: Context, inode: Inode, name: &CStr) -> io::Result<()> {
+        if !self.cfg.xattr {
+            return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
+        }
+
         if name.to_bytes() == XATTR_UID
             || name.to_bytes() == XATTR_GID
             || name.to_bytes() == XATTR_MODE
