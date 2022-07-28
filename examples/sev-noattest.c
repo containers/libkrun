@@ -45,8 +45,7 @@ int main(int argc, char *const argv[])
     int i;
 
     if (argc < 4) {
-        printf("Invalid arguments\n");
-        printf("Usage: %s DISK_IMAGE PASSPHRASE COMMAND [ARG...]\n", argv[0]);
+        fprintf(stderr, "usage: %s DISK_IMAGE PASSPHRASE COMMAND [ARG...]\n", argv[0]);
         return -1;
     }
 
@@ -89,8 +88,8 @@ int main(int argc, char *const argv[])
     volume_len = strlen(current_path) + strlen(volume_tail) + 1;
     volume = malloc(volume_len);
     if (volume == NULL) {
-        errno = -err;
         perror("Error allocating memory for volume string");
+        return -1;
     }
 
     // Map port 18000 in the host to 8000 in the guest.
