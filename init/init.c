@@ -63,7 +63,6 @@ static void set_rlimits(const char *rlimits)
 #ifdef SEV
 static char * get_luks_passphrase(int *pass_len)
 {
-	struct stat stat;
 	char *pass = NULL;
 	int len;
 	int fd;
@@ -90,20 +89,17 @@ static char * get_luks_passphrase(int *pass_len)
 		goto cleanup_sfs;
 	}
 
-	if (fstat(fd, &stat) != 0) {
-		goto cleanup_fd;
-	}
-
-	pass = malloc(stat.st_size);
+	pass = malloc(MAX_PASS_SIZE);
 	if (!pass) {
 		goto cleanup_fd;
 	}
 
-	if ((len = read(fd, pass, stat.st_size)) < 0) {
+	if ((len = read(fd, pass, MAX_PASS_SIZE)) < 0) {
 		free(pass);
 		pass = NULL;
 	} else {
 		*pass_len = len;
+		unlink(CMDLINE_SECRET_PATH);
 	}
 
 cleanup_fd:
@@ -155,6 +151,8 @@ static int chroot_luks()
 		close(pipefd[1]);
 		waitpid(pid, &wstatus, 0);
 	}
+
+	memset(pass, 0, pass_len);
 
 	printf("Mounting LUKS root filesystem\n");
 
