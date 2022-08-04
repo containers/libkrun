@@ -158,10 +158,12 @@ static int jsmn_parse_primitive(jsmn_parser *parser, const char *js,
                    /* to quiet a warning from gcc*/
       break;
     }
+    /* libkrun: Let's be permissive with non-ASCII bytes
     if (js[parser->pos] < 32 || js[parser->pos] >= 127) {
       parser->pos = start;
       return JSMN_ERROR_INVAL;
     }
+    */
   }
 #ifdef JSMN_STRICT
   /* In strict mode primitive must be followed by a comma/object/array */
