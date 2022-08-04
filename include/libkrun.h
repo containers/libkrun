@@ -159,6 +159,20 @@ int32_t krun_set_exec(uint32_t ctx_id,
                       char *const envp[]);
 
 /*
+ * Sets environment variables to be configured in the context of the executable.
+ *
+ * Arguments:
+ *  "ctx_id"    - the configuration context ID.
+ *  "envp"      - an array of string pointers to be injected as environment variables into the
+ *                context of the executable. If NULL, it will auto-generate an array collecting the
+ *                the variables currently present in the environment.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_env(uint32_t ctx_id, char *const envp[]);
+
+/*
  * Sets the base URL to the attestation server. If no attestation server is configured, the guest
  * memory will be encrypted but its contents won't be attested. Only available in libkrun-SEV.
  *

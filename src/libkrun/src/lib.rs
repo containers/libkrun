@@ -578,6 +578,35 @@ pub unsafe extern "C" fn krun_set_exec(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+pub unsafe extern "C" fn krun_set_env(ctx_id: u32, c_envp: *const *const c_char) -> i32 {
+    let env = if !c_envp.is_null() {
+        let envp_array: &[*const c_char] = slice::from_raw_parts(c_envp, MAX_ARGS);
+        match collapse_str_array(envp_array) {
+            Ok(s) => s,
+            Err(e) => {
+                debug!("Error parsing args: {:?}", e);
+                return -libc::EINVAL;
+            }
+        }
+    } else {
+        env::vars()
+            .map(|(key, value)| format!(" {}=\"{}\"", key, value))
+            .collect()
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.set_env(env);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
 #[cfg(feature = "amd-sev")]
 pub unsafe extern "C" fn krun_set_attestation_url(ctx_id: u32, c_url: *const c_char) -> i32 {
     let url = match CStr::from_ptr(c_url).to_str() {
