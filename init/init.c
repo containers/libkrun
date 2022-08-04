@@ -299,9 +299,9 @@ static char ** config_parse_args(char *data, jsmntok_t *token)
 	return argv;
 }
 
-static char * config_parse_workdir(char *data, jsmntok_t *token)
+static char * config_parse_string(char *data, jsmntok_t *token)
 {
-	char *workdir;
+	char *string;
 	char *val;
 	int len;
 
@@ -311,15 +311,15 @@ static char * config_parse_workdir(char *data, jsmntok_t *token)
 		return NULL;
 	}
 
-	workdir = malloc(len + 1);
+	string = malloc(len + 1);
 
-	if (!workdir) {
+	if (!string) {
 		return NULL;
 	}
-	memcpy(workdir, val, len);
-	workdir[len] = '\0';
+	memcpy(string, val, len);
+	string[len] = '\0';
 
-	return workdir;
+	return string;
 }
 
 static int jsoneq(const char *json, jsmntok_t *tok, const char *s) {
@@ -330,13 +330,36 @@ static int jsoneq(const char *json, jsmntok_t *tok, const char *s) {
 	return -1;
 }
 
+char ** concat_entrypoint_argv(char **entrypoint, char **config_argv)
+{
+	char **argv;
+	int i, j;
+
+	argv = malloc(MAX_ARGS * sizeof(char *));
+
+	for (i = 0; i < MAX_ARGS && entrypoint[i]; i++) {
+		argv[i] = entrypoint[i];
+		printf("foo\n");
+	}
+
+	for (j = 0; j < MAX_ARGS && config_argv[j]; i++, j++) {
+		argv[i] = config_argv[j];
+	}
+
+	argv[i] = NULL;
+
+	return argv;
+}
+
 static int config_parse_file(char ***argv, char **workdir)
 {
 	jsmn_parser parser;
 	jsmntok_t *tokens;
 	struct stat stat;
 	char *data;
-	int parsed_env, parsed_workdir, parsed_args;
+	char **config_argv;
+	char **entrypoint;
+	int parsed_env, parsed_workdir, parsed_args, parsed_entrypoint;
 	int num_tokens;
 	int ret = -1;
 	int fd;
@@ -382,7 +405,9 @@ static int config_parse_file(char ***argv, char **workdir)
 		goto cleanup_tokens;
 	}
 
-	parsed_env = parsed_workdir = parsed_args = 0;
+	config_argv = NULL;
+	entrypoint = NULL;
+	parsed_env = parsed_workdir = parsed_args = parsed_entrypoint = 0;
 
 	for (i = 1; i < num_tokens && (!parsed_env || !parsed_args || !parsed_workdir); i++) {
 		if (!parsed_env && jsoneq(data, &tokens[i], "Env") == 0) {
@@ -391,14 +416,25 @@ static int config_parse_file(char ***argv, char **workdir)
 		}
 
 		if (!parsed_args && jsoneq(data, &tokens[i], "Cmd") == 0) {
-			*argv = config_parse_args(data, &tokens[i + 1]);
+			config_argv = config_parse_args(data, &tokens[i + 1]);
 			parsed_args = 1;
 		}
 
 		if (!parsed_workdir && jsoneq(data, &tokens[i], "WorkingDir") == 0) {
-			*workdir = config_parse_workdir(data, &tokens[i + 1]);
+			*workdir = config_parse_string(data, &tokens[i + 1]);
 			parsed_workdir = 1;
 		}
+
+		if (!parsed_entrypoint && jsoneq(data, &tokens[i], "Entrypoint") == 0) {
+			entrypoint = config_parse_args(data, &tokens[i + 1]);
+			parsed_workdir = 1;
+		}
+	}
+
+	if (config_argv && entrypoint) {
+		*argv = concat_entrypoint_argv(entrypoint, config_argv);
+	} else {
+		*argv = config_argv;
 	}
 
 	ret = 0;
