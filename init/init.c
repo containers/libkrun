@@ -248,7 +248,7 @@ static void config_parse_env(char *data, jsmntok_t *token)
 		*env_val = '\0';
 		env_val++;
 
-		setenv(env, env_val, 1);
+		setenv(env, env_val, 0);
 	}
 }
 
