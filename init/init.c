@@ -175,10 +175,22 @@ static int chroot_luks()
 
 static int create_dirs()
 {
-	char *const DIRS[] = {"/proc", "/sys", "/sys/fs", "/sys/fs/cgroup", "/dev", "/dev/pts", "/dev/shm"};
+	char *const DIRS[] = {"/proc", "/sys", "/sys/fs", "/sys/fs/cgroup", "/dev/pts", "/dev/shm"};
 	int i;
 
-	for (i = 0; i < 7; ++i) {
+	if (access("/dev", F_OK) != 0) {
+		if (mkdir("/dev", 0755) < 0 && errno != EEXIST) {
+			printf("Error creating directory /dev\n");
+			return -1;
+		}
+		if (mount("devtmpfs", "/dev", "devtmpfs",
+			  MS_RELATIME, NULL) < 0) {
+			perror("mount(/dev)");
+			return -1;
+		}
+	}
+
+	for (i = 0; i < 6; ++i) {
 		if (mkdir(DIRS[i], 0755) < 0 && errno != EEXIST) {
 			printf("Error creating directory (%s)\n", DIRS[i]);
 			return -1;
