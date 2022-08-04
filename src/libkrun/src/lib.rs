@@ -41,10 +41,6 @@ const MAX_ARGS: usize = 4096;
 
 // Path to the init binary to be executed inside the VM.
 const INIT_PATH: &str = "/init.krun";
-// Default binary to be executed inside the VM.
-const DEFAULT_EXEC_PATH: &str = "/bin/sh";
-// Default working directory for the binary to be executed inside the VM.
-const DEFAULT_WORKDIR: &str = "/";
 
 #[derive(Default)]
 struct ContextConfig {
@@ -70,8 +66,8 @@ impl ContextConfig {
 
     fn get_workdir(&self) -> String {
         match &self.workdir {
-            Some(workdir) => workdir.clone(),
-            None => DEFAULT_WORKDIR.to_string(),
+            Some(workdir) => format!("KRUN_WORKDIR={}", workdir),
+            None => "".to_string(),
         }
     }
 
@@ -81,8 +77,8 @@ impl ContextConfig {
 
     fn get_exec_path(&self) -> String {
         match &self.exec_path {
-            Some(exec_path) => exec_path.clone(),
-            None => DEFAULT_EXEC_PATH.to_string(),
+            Some(exec_path) => format!("KRUN_INIT={}", exec_path),
+            None => "".to_string(),
         }
     }
 
@@ -645,7 +641,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     let boot_source = BootSourceConfig {
         kernel_cmdline_prolog: Some(format!(
-            "{} init={} KRUN_INIT={} KRUN_WORKDIR={} {} {}",
+            "{} init={} {} {} {} {}",
             DEFAULT_KERNEL_CMDLINE,
             INIT_PATH,
             ctx_cfg.get_exec_path(),
