@@ -38,6 +38,8 @@ use crate::vstate::MeasuredRegion;
 use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
 use crate::{device_manager, VmmEventsObserver};
 use arch::ArchMemoryInfo;
+#[cfg(feature = "amd-sev")]
+use arch::InitrdConfig;
 use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
 use utils::terminal::Terminal;
@@ -371,9 +373,15 @@ pub fn build_microvm(
             },
             MeasuredRegion {
                 host_addr: guest_memory
-                    .get_host_address(GuestAddress(arch::x86_64::layout::INITRD_START))
+                    .get_host_address(GuestAddress(arch::x86_64::layout::INITRD_SEV_START))
                     .unwrap() as u64,
                 size: initrd_bundle.size,
+            },
+            MeasuredRegion {
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(arch::x86_64::layout::ZERO_PAGE_START))
+                    .unwrap() as u64,
+                size: 4096,
             },
         ]
     };
@@ -552,7 +560,16 @@ pub fn build_microvm(
     #[cfg(all(target_arch = "x86_64", not(feature = "amd-sev")))]
     load_cmdline(&vmm)?;
 
-    vmm.configure_system(vcpus.as_slice(), &None)
+    #[cfg(feature = "amd-sev")]
+    let initrd_config = Some(InitrdConfig {
+        address: GuestAddress(arch::x86_64::layout::INITRD_SEV_START as u64),
+        size: arch::x86_64::layout::INITRD_SEV_SIZE,
+    });
+
+    #[cfg(not(feature = "amd-sev"))]
+    let initrd_config = None;
+
+    vmm.configure_system(vcpus.as_slice(), &initrd_config)
         .map_err(StartMicrovmError::Internal)?;
 
     #[cfg(feature = "amd-sev")]
@@ -630,7 +647,7 @@ pub fn create_guest_memory(
     guest_mem
         .write(
             initrd_data,
-            GuestAddress(arch::x86_64::layout::INITRD_START as u64),
+            GuestAddress(arch::x86_64::layout::INITRD_SEV_START as u64),
         )
         .unwrap();
 

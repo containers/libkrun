@@ -260,15 +260,23 @@ impl Vmm {
     /// Configures the system for boot.
     pub fn configure_system(&self, vcpus: &[Vcpu], initrd: &Option<InitrdConfig>) -> Result<()> {
         #[cfg(target_arch = "x86_64")]
-        arch::x86_64::configure_system(
-            &self.guest_memory,
-            &self.arch_memory_info,
-            vm_memory::GuestAddress(arch::x86_64::layout::CMDLINE_START),
-            self.kernel_cmdline.len() + 1,
-            initrd,
-            vcpus.len() as u8,
-        )
-        .map_err(Error::ConfigureSystem)?;
+        {
+            let cmdline_len = if cfg!(feature = "amd-sev") {
+                arch::x86_64::layout::CMDLINE_SEV_SIZE
+            } else {
+                self.kernel_cmdline.len() + 1
+            };
+
+            arch::x86_64::configure_system(
+                &self.guest_memory,
+                &self.arch_memory_info,
+                vm_memory::GuestAddress(arch::x86_64::layout::CMDLINE_START),
+                cmdline_len,
+                initrd,
+                vcpus.len() as u8,
+            )
+            .map_err(Error::ConfigureSystem)?;
+        }
 
         #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
         {

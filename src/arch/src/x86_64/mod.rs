@@ -20,7 +20,6 @@ pub mod regs;
 use crate::ArchMemoryInfo;
 use crate::InitrdConfig;
 use arch_gen::x86::bootparam::{boot_params, E820_RAM};
-#[cfg(not(feature = "amd-sev"))]
 use vm_memory::Bytes;
 use vm_memory::{
     Address, ByteValued, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion,
@@ -54,6 +53,7 @@ pub enum Error {
 // Where BIOS/VGA magic would live on a real PC.
 const EBDA_START: u64 = 0x9fc00;
 pub const RESET_VECTOR: u64 = 0xfff0;
+pub const RESET_VECTOR_SEV_AP: u64 = 0xfff3;
 pub const BIOS_START: u64 = 0xffff_0000;
 pub const BIOS_SIZE: usize = 65536;
 const FIRST_ADDR_PAST_32BITS: u64 = 1 << 32;
@@ -234,10 +234,16 @@ pub fn configure_system(
     params.0.hdr.header = KERNEL_HDR_MAGIC;
     params.0.hdr.cmd_line_ptr = cmdline_addr.raw_value() as u32;
     params.0.hdr.cmdline_size = cmdline_size as u32;
+
     params.0.hdr.kernel_alignment = KERNEL_MIN_ALIGNMENT_BYTES;
     if let Some(initrd_config) = initrd {
         params.0.hdr.ramdisk_image = initrd_config.address.raw_value() as u32;
         params.0.hdr.ramdisk_size = initrd_config.size as u32;
+    }
+
+    #[cfg(feature = "amd-sev")]
+    {
+        params.0.hdr.syssize = num_cpus as u32;
     }
 
     add_e820_entry(&mut params.0, 0, EBDA_START, E820_RAM)?;
@@ -274,13 +280,10 @@ pub fn configure_system(
         }
     }
 
-    #[cfg(not(feature = "amd-sev"))]
-    {
-        let zero_page_addr = GuestAddress(layout::ZERO_PAGE_START);
-        guest_mem
-            .write_obj(params, zero_page_addr)
-            .map_err(|_| Error::ZeroPageSetup)?;
-    }
+    let zero_page_addr = GuestAddress(layout::ZERO_PAGE_START);
+    guest_mem
+        .write_obj(params, zero_page_addr)
+        .map_err(|_| Error::ZeroPageSetup)?;
 
     Ok(())
 }
