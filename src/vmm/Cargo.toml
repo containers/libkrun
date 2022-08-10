@@ -5,7 +5,7 @@ authors = ["Amazon Firecracker team <firecracker-devel@amazon.com>"]
 edition = "2021"
 
 [features]
-amd-sev = [ "codicon", "procfs", "serde", "serde_json", "sev", "ureq" ]
+amd-sev = [ "codicon", "kbs-types", "procfs", "serde", "serde_json", "sev", "ureq" ]
 
 [dependencies]
 env_logger = "0.9.0"
@@ -21,11 +21,12 @@ polly = { path = "../polly" }
 
 # Dependencies for amd-sev
 codicon = { version = "3.0.0", optional = true }
+kbs-types = { git = "https://github.com/virtee/kbs-types", features = ["tee-sev"], optional = true }
 procfs = { version = "0.10.1", optional = true }
 serde = { version = "1.0.125", optional = true }
 serde_json = { version = "1.0.64", optional = true }
 sev = { version = "0.3", features = ["openssl"], optional = true }
-ureq = { version = "*", features = ["json"], optional = true }
+ureq = { version = "*", features = ["json", "cookies"], optional = true }
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 cpuid = { path = "../cpuid" }
