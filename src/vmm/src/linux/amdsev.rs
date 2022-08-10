@@ -110,14 +110,19 @@ fn fetch_chain(fw: &mut Firmware) -> Result<certs::Chain, Error> {
     let id = fw.get_identifier().map_err(|_| Error::FetchIdentifier)?;
     let url = format!("{}/{}", CEK_SVC, id);
 
-    let mut rsp = reqwest::get(&url).map_err(|_| Error::DownloadCek)?;
-    assert!(rsp.status().is_success());
+    let mut rsp = ureq::get(&url)
+        .call()
+        .map_err(|_| Error::DownloadCek)?
+        .into_reader();
 
     chain.cek = (certs::sev::Certificate::decode(&mut rsp, ())).map_err(|_| Error::DecodeCek)?;
 
     let cpu_model = find_cpu_model()?;
     let url = format!("{}/ask_ark_{}.cert", ASK_ARK_SVC, cpu_model);
-    let mut rsp = reqwest::get(&url).map_err(|_| Error::DownloadAskArk)?;
+    let mut rsp = ureq::get(&url)
+        .call()
+        .map_err(|_| Error::DownloadAskArk)?
+        .into_reader();
 
     Ok(certs::Chain {
         ca: certs::ca::Chain::decode(&mut rsp, ()).map_err(|_| Error::DecodeAskArk)?,
