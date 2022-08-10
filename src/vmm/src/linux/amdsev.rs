@@ -14,7 +14,7 @@ use procfs::CpuInfo;
 use serde::{Deserialize, Serialize};
 use sev::certs;
 use sev::firmware::Firmware;
-use sev::launch::{Measurement, Policy, PolicyFlags, Secret, Start};
+use sev::launch::sev::{Measurement, Policy, PolicyFlags, Secret, Start};
 use sev::session::Session;
 use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
 
@@ -154,7 +154,7 @@ struct SessionRequest {
 #[derive(Serialize, Deserialize)]
 struct SessionResponse {
     id: String,
-    start: sev::launch::Start,
+    start: Start,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -240,7 +240,7 @@ impl AmdSev {
         #[repr(C)]
         struct Data {
             handle: u32,
-            policy: sev::launch::Policy,
+            policy: Policy,
             dh_addr: u64,
             dh_size: u32,
             session_addr: u64,

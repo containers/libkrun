@@ -167,9 +167,9 @@ dependencies = [
 
 [[package]]
 name = "dirs"
-version = "3.0.2"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30baa043103c9d0c2a57cf537cc2f35623889dc0d405e6c3cccfadbc81c71309"
+checksum = "ca3aa72a6f96ea37bbc5aa912f6788242832f75369bdfdadcb0e38423f100059"
 dependencies = [
  "dirs-sys",
 ]
@@ -662,6 +662,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-big-array"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3323f09a748af288c3dc2474ea6803ee81f118321775bffa3ac8f7e65c5e90e7"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_bytes"
 version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -694,9 +703,9 @@ dependencies = [
 
 [[package]]
 name = "sev"
-version = "0.1.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14e7912c3660e45c8fc84f103ad9c17541c90bfb8dad2e36aeffbe1676bce8f2"
+checksum = "2919b04dac9b0fb31814196863cfa6e749db09706af24071e96ebbac80649172"
 dependencies = [
  "bitfield",
  "bitflags",
@@ -705,6 +714,7 @@ dependencies = [
  "iocuddle",
  "openssl",
  "serde",
+ "serde-big-array",
  "serde_bytes",
 ]
 
