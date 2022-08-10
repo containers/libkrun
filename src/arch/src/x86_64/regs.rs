@@ -80,7 +80,7 @@ pub fn setup_regs(vcpu: &VcpuFd, boot_ip: u64, id: u8) -> Result<()> {
     } else {
         kvm_regs {
             rflags: 0x0000_0000_0000_0002u64,
-            rip: 0,
+            rip: super::RESET_VECTOR_SEV_AP,
             ..Default::default()
         }
     };
@@ -101,8 +101,8 @@ pub fn setup_sregs(mem: &GuestMemoryMmap, vcpu: &VcpuFd, id: u8) -> Result<()> {
         configure_segments_and_sregs(mem, &mut sregs)?;
         setup_page_tables(mem, &mut sregs)?; // TODO(dgreid) - Can this be done once per system instead
     } else if id != 0 {
-        sregs.cs.selector = 0x9100;
-        sregs.cs.base = 0x91000;
+        //sregs.cs.selector = 0x9100;
+        //sregs.cs.base = 0x91000;
     }
 
     vcpu.set_sregs(&sregs).map_err(Error::SetStatusRegisters)

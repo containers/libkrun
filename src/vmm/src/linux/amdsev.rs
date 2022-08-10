@@ -1,19 +1,23 @@
-use std::convert::TryFrom;
 use std::fmt;
 use std::fs::File;
+use std::io::BufReader;
 use std::mem::{size_of_val, MaybeUninit};
 use std::os::unix::io::AsRawFd;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
 use super::vstate::MeasuredRegion;
 
 use codicon::{Decoder, Encoder};
+use kbs_types::{Attestation, Challenge, Request, SevChallenge, SevRequest, Tee, TeePubKey};
 use kvm_bindings::{kvm_enc_region, kvm_sev_cmd};
 use kvm_ioctls::VmFd;
 use procfs::CpuInfo;
 use serde::{Deserialize, Serialize};
 use sev::certs;
 use sev::firmware::Firmware;
-use sev::launch::{Measurement, Policy, PolicyFlags, Secret, Start};
+use sev::launch::sev::{Measurement, Policy, PolicyFlags, Secret, Start};
 use sev::session::Session;
 use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
 
@@ -29,9 +33,11 @@ pub enum Error {
     FetchIdentifier,
     InvalidCpuData,
     OpenFirmware(std::io::Error),
+    OpenTeeConfig(std::io::Error),
     OpenTmpFile,
     ParseAttestationSecret(serde_json::Error),
     ParseSessionResponse(serde_json::Error),
+    ParseTeeConfig(serde_json::Error),
     PlatformStatus,
     MemoryEncryptRegion,
     ReadingCpuData(procfs::ProcError),
@@ -107,14 +113,19 @@ fn fetch_chain(fw: &mut Firmware) -> Result<certs::Chain, Error> {
     let id = fw.get_identifier().map_err(|_| Error::FetchIdentifier)?;
     let url = format!("{}/{}", CEK_SVC, id);
 
-    let mut rsp = reqwest::get(&url).map_err(|_| Error::DownloadCek)?;
-    assert!(rsp.status().is_success());
+    let mut rsp = ureq::get(&url)
+        .call()
+        .map_err(|_| Error::DownloadCek)?
+        .into_reader();
 
     chain.cek = (certs::sev::Certificate::decode(&mut rsp, ())).map_err(|_| Error::DecodeCek)?;
 
     let cpu_model = find_cpu_model()?;
     let url = format!("{}/ask_ark_{}.cert", ASK_ARK_SVC, cpu_model);
-    let mut rsp = reqwest::get(&url).map_err(|_| Error::DownloadAskArk)?;
+    let mut rsp = ureq::get(&url)
+        .call()
+        .map_err(|_| Error::DownloadAskArk)?
+        .into_reader();
 
     Ok(certs::Chain {
         ca: certs::ca::Chain::decode(&mut rsp, ()).map_err(|_| Error::DecodeAskArk)?,
@@ -146,38 +157,68 @@ struct SessionRequest {
 #[derive(Serialize, Deserialize)]
 struct SessionResponse {
     id: String,
-    start: sev::launch::Start,
+    start: Start,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TeeConfig {
+    pub workload_id: String,
+    pub tee: kbs_types::Tee,
+    pub attestation_url: String,
 }
 
 pub struct AmdSev {
+    tee_config: TeeConfig,
     fw: Firmware,
     start: Start,
-    attestation_url: Option<String>,
     session_id: Option<String>,
     sev_es: bool,
+    ureq_agent: Option<Arc<ureq::Agent>>,
 }
 
 impl AmdSev {
-    pub fn new(attestation_url: Option<String>) -> Result<Self, Error> {
+    pub fn new(tee_config_file: PathBuf) -> Result<Self, Error> {
         let mut fw = Firmware::open().map_err(Error::OpenFirmware)?;
         let chain = get_and_store_chain(&mut fw)?;
         let mut sev_es = false;
 
-        let (start, session_id) = if let Some(ref server_url) = attestation_url {
+        let file = File::open(tee_config_file.as_path()).map_err(Error::OpenTeeConfig)?;
+        let reader = BufReader::new(file);
+        let tee_config: TeeConfig =
+            serde_json::from_reader(reader).map_err(Error::ParseTeeConfig)?;
+
+        let (start, session_id, ureq_agent) = if !tee_config.attestation_url.is_empty() {
             let build = fw
                 .platform_status()
                 .map_err(|_| Error::PlatformStatus)?
                 .build;
 
-            let response = ureq::post(format!("{}/session", server_url).as_str())
-                .send_json(ureq::json!(SessionRequest { build, chain }))
+            let sev_request = SevRequest { build, chain };
+            let request = Request {
+                version: "0.0.0".to_string(),
+                workload_id: tee_config.workload_id.clone(),
+                tee: tee_config.tee.clone(),
+                extra_params: ureq::json!(sev_request).to_string(),
+            };
+
+            let ureq_agent = ureq::AgentBuilder::new()
+                .timeout_read(Duration::from_secs(5))
+                .timeout_write(Duration::from_secs(5))
+                .build();
+
+            let response = ureq_agent
+                .post(format!("{}/kbs/v0/auth", tee_config.attestation_url).as_str())
+                .send_json(ureq::json!(request))
                 .map_err(Error::SessionRequest)?
                 .into_string()
                 .unwrap();
-            let session_resp: SessionResponse =
-                serde_json::from_str(&response).map_err(Error::ParseSessionResponse)?;
 
-            if session_resp
+            let challenge: Challenge =
+                serde_json::from_str(&response).map_err(Error::ParseSessionResponse)?;
+            let sev_challenge: SevChallenge = serde_json::from_str(&challenge.extra_params)
+                .map_err(Error::ParseSessionResponse)?;
+
+            if sev_challenge
                 .start
                 .policy
                 .flags
@@ -186,19 +227,28 @@ impl AmdSev {
                 sev_es = true;
             }
 
-            (session_resp.start, Some(session_resp.id))
+            (
+                sev_challenge.start,
+                Some(sev_challenge.id),
+                Some(Arc::new(ureq_agent)),
+            )
         } else {
             let policy = Policy::default();
             let session = Session::try_from(policy).map_err(Error::SessionFromPolicy)?;
-            (session.start(chain).map_err(Error::StartFromSession)?, None)
+            (
+                session.start(chain).map_err(Error::StartFromSession)?,
+                None,
+                None,
+            )
         };
 
         Ok(AmdSev {
+            tee_config,
             fw,
             start,
-            attestation_url,
             session_id,
             sev_es,
+            ureq_agent,
         })
     }
 
@@ -220,7 +270,7 @@ impl AmdSev {
         #[repr(C)]
         struct Data {
             handle: u32,
-            policy: sev::launch::Policy,
+            policy: Policy,
             dh_addr: u64,
             dh_size: u32,
             session_addr: u64,
@@ -381,7 +431,7 @@ impl AmdSev {
         vm_fd: &VmFd,
         guest_mem: &GuestMemoryMmap,
         measured_regions: Vec<MeasuredRegion>,
-    ) -> Result<Measurement, Error> {
+    ) -> Result<(), Error> {
         for region in measured_regions {
             self.sev_launch_update_data(vm_fd, region.host_addr, region.size)
                 .map_err(Error::SevLaunchUpdateData)?;
@@ -396,16 +446,38 @@ impl AmdSev {
             .sev_launch_measure(vm_fd)
             .map_err(Error::SevLaunchMeasure)?;
 
-        if self.attestation_url.is_some() && self.session_id.is_some() {
-            let secret_resp = ureq::post(&format!(
-                "{}/attestation/{}",
-                self.attestation_url.as_ref().unwrap(),
-                self.session_id.as_ref().unwrap(),
-            ))
-            .send_json(ureq::json!(measurement))
-            .map_err(Error::AttestationRequest)?
-            .into_string()
-            .unwrap();
+        if !self.tee_config.attestation_url.is_empty() {
+            let tee_pubkey = TeePubKey {
+                algorithm: "".to_string(),
+                pubkey_length: "".to_string(),
+                pubkey: "".to_string(),
+            };
+
+            let attestation = Attestation {
+                nonce: self.session_id.as_ref().unwrap().clone(),
+                tee: Tee::Sev,
+                tee_pubkey,
+                tee_evidence: ureq::json!(measurement).to_string(),
+            };
+
+            let ureq_agent = self.ureq_agent.as_ref().unwrap().clone();
+            ureq_agent
+                .post(&format!(
+                    "{}/kbs/v0/attest",
+                    self.tee_config.attestation_url,
+                ))
+                .send_json(ureq::json!(attestation))
+                .map_err(Error::AttestationRequest)?;
+
+            let secret_resp = ureq_agent
+                .get(&format!(
+                    "{}/kbs/v0/key/{}",
+                    self.tee_config.attestation_url, self.tee_config.workload_id,
+                ))
+                .call()
+                .map_err(Error::AttestationRequest)?
+                .into_string()
+                .unwrap();
 
             let secret: Secret =
                 serde_json::from_str(&secret_resp).map_err(Error::ParseAttestationSecret)?;
@@ -420,6 +492,6 @@ impl AmdSev {
         self.sev_launch_finish(vm_fd)
             .map_err(Error::SevLaunchFinish)?;
 
-        Ok(measurement)
+        Ok(())
     }
 }

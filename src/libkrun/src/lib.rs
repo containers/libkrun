@@ -10,6 +10,8 @@ use std::ffi::CStr;
 use std::ffi::CString;
 #[cfg(not(feature = "amd-sev"))]
 use std::path::Path;
+#[cfg(feature = "amd-sev")]
+use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Mutex;
@@ -56,7 +58,7 @@ struct ContextConfig {
     block_cfg: Option<BlockDeviceConfig>,
     port_map: Option<HashMap<u16, u16>>,
     #[cfg(feature = "amd-sev")]
-    attestation_url: Option<String>,
+    tee_config_file: Option<PathBuf>,
 }
 
 impl ContextConfig {
@@ -144,13 +146,13 @@ impl ContextConfig {
     }
 
     #[cfg(feature = "amd-sev")]
-    fn set_attestation_url(&mut self, url: String) {
-        self.attestation_url = Some(url);
+    fn set_tee_config_file(&mut self, filepath: PathBuf) {
+        self.tee_config_file = Some(filepath);
     }
 
     #[cfg(feature = "amd-sev")]
-    fn get_attestation_url(&self) -> Option<String> {
-        self.attestation_url.clone()
+    fn get_tee_config_file(&self) -> Option<PathBuf> {
+        self.tee_config_file.clone()
     }
 }
 
@@ -608,16 +610,16 @@ pub unsafe extern "C" fn krun_set_env(ctx_id: u32, c_envp: *const *const c_char)
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 #[cfg(feature = "amd-sev")]
-pub unsafe extern "C" fn krun_set_attestation_url(ctx_id: u32, c_url: *const c_char) -> i32 {
-    let url = match CStr::from_ptr(c_url).to_str() {
-        Ok(u) => u,
+pub unsafe extern "C" fn krun_set_tee_config_file(ctx_id: u32, c_filepath: *const c_char) -> i32 {
+    let filepath = match CStr::from_ptr(c_filepath).to_str() {
+        Ok(f) => f,
         Err(_) => return -libc::EINVAL,
     };
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            cfg.set_attestation_url(url.to_string());
+            cfg.set_tee_config_file(PathBuf::from(filepath.to_string()));
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -664,8 +666,8 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     }
 
     #[cfg(feature = "amd-sev")]
-    if let Some(url) = ctx_cfg.get_attestation_url() {
-        ctx_cfg.vmr.set_attestation_url(url);
+    if let Some(filepath) = ctx_cfg.get_tee_config_file() {
+        ctx_cfg.vmr.set_tee_config_file(filepath);
     }
 
     let boot_source = BootSourceConfig {
@@ -695,7 +697,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     let _vmm = match vmm::builder::build_microvm(&ctx_cfg.vmr, &mut event_manager) {
         Ok(vmm) => vmm,
         Err(e) => {
-            warn!("Building the microVM failed: {:?}", e);
+            error!("Building the microVM failed: {:?}", e);
             return -libc::EINVAL;
         }
     };
@@ -704,7 +706,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         match event_manager.run() {
             Ok(_) => {}
             Err(e) => {
-                warn!("Error in EventManager loop: {:?}", e);
+                error!("Error in EventManager loop: {:?}", e);
                 return -libc::EINVAL;
             }
         }

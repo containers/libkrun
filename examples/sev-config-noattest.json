@@ -1,0 +1,5 @@
+{
+    "workload_id": "sevtest",
+    "tee": "sev",
+    "attestation_url": ""
+}
