@@ -12,7 +12,7 @@ ROOTFS_DIR = rootfs_$(ROOTFS_DISTRO)
 .PHONY: clean rootfs
 
 ifeq ($(SEV),1)
-    EXAMPLES := sev-attest sev-noattest
+    EXAMPLES := launch-tee
 else
     EXAMPLES := chroot_vm
 endif
@@ -25,10 +25,7 @@ ifeq ($(OS),Darwin)
 	codesign --entitlements chroot_vm.entitlements --force -s - $@
 endif
 
-sev-attest: sev-attest.c
-	gcc -o $@ $< $(CFLAGS_$(OS)) $(LDFLAGS_sev)
-
-sev-noattest: sev-noattest.c
+launch-tee: launch-tee.c
 	gcc -o $@ $< $(CFLAGS_$(OS)) $(LDFLAGS_sev)
 
 # Build the rootfs to be used with chroot_vm.

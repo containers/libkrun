@@ -9,6 +9,7 @@ use libc::{c_int, c_void, siginfo_t};
 use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::io;
+use std::path::PathBuf;
 use std::result;
 use std::sync::atomic::{fence, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
@@ -21,8 +22,6 @@ use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 
 #[cfg(feature = "amd-sev")]
 use super::amdsev::{AmdSev, Error as SevError};
-#[cfg(feature = "amd-sev")]
-use sev::launch::Measurement;
 
 use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 use arch;
@@ -80,6 +79,9 @@ pub enum Error {
     #[cfg(target_arch = "x86_64")]
     /// Cannot set the local interruption due to bad configuration.
     LocalIntConfiguration(arch::x86_64::interrupts::Error),
+    #[cfg(feature = "amd-sev")]
+    /// Missing TEE config
+    MissingTeeConfig,
     #[cfg(target_arch = "x86_64")]
     /// Error configuring the MSR registers
     MSRSConfiguration(arch::x86_64::msr::Error),
@@ -261,6 +263,8 @@ impl Display for Error {
             #[cfg(feature = "amd-sev")]
             SecVirtAttest(e) => write!(f, "Error attesting the Secure VM: {:?}", e),
             SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {}", e),
+            #[cfg(feature = "amd-sev")]
+            MissingTeeConfig => write!(f, "Missing TEE configuration"),
             #[cfg(target_arch = "x86_64")]
             MSRSConfiguration(e) => write!(f, "Error configuring the MSR registers: {:?}", e),
             #[cfg(target_arch = "aarch64")]
@@ -432,7 +436,7 @@ pub struct Vm {
 
 impl Vm {
     /// Constructs a new `Vm` using the given `Kvm` instance.
-    pub fn new(kvm: &Kvm, _attestation_url: Option<String>) -> Result<Self> {
+    pub fn new(kvm: &Kvm, _tee_config_file: Option<PathBuf>) -> Result<Self> {
         //create fd for interacting with kvm-vm specific functions
         let vm_fd = kvm.create_vm().map_err(Error::VmFd)?;
 
@@ -445,7 +449,13 @@ impl Vm {
             arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
 
         #[cfg(feature = "amd-sev")]
-        let sev = AmdSev::new(_attestation_url).map_err(Error::SecVirtInit)?;
+        let sev = {
+            if let Some(config_file) = _tee_config_file {
+                AmdSev::new(config_file).map_err(Error::SecVirtInit)?
+            } else {
+                return Err(Error::MissingTeeConfig);
+            }
+        };
 
         Ok(Vm {
             fd: vm_fd,
@@ -521,7 +531,7 @@ impl Vm {
         &self,
         guest_mem: &GuestMemoryMmap,
         measured_regions: Vec<MeasuredRegion>,
-    ) -> Result<Measurement> {
+    ) -> Result<()> {
         self.sev
             .vm_attest(&self.fd, guest_mem, measured_regions)
             .map_err(Error::SecVirtAttest)

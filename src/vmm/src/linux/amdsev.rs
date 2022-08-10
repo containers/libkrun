@@ -1,8 +1,9 @@
-use std::convert::TryFrom;
 use std::fmt;
 use std::fs::File;
+use std::io::BufReader;
 use std::mem::{size_of_val, MaybeUninit};
 use std::os::unix::io::AsRawFd;
+use std::path::PathBuf;
 
 use super::vstate::MeasuredRegion;
 
@@ -29,9 +30,11 @@ pub enum Error {
     FetchIdentifier,
     InvalidCpuData,
     OpenFirmware(std::io::Error),
+    OpenTeeConfig(std::io::Error),
     OpenTmpFile,
     ParseAttestationSecret(serde_json::Error),
     ParseSessionResponse(serde_json::Error),
+    ParseTeeConfig(serde_json::Error),
     PlatformStatus,
     MemoryEncryptRegion,
     ReadingCpuData(procfs::ProcError),
@@ -149,27 +152,39 @@ struct SessionResponse {
     start: sev::launch::Start,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct TeeConfig {
+    pub workload_id: String,
+    pub tee: String,
+    pub attestation_url: String,
+}
+
 pub struct AmdSev {
+    tee_config: TeeConfig,
     fw: Firmware,
     start: Start,
-    attestation_url: Option<String>,
     session_id: Option<String>,
     sev_es: bool,
 }
 
 impl AmdSev {
-    pub fn new(attestation_url: Option<String>) -> Result<Self, Error> {
+    pub fn new(tee_config_file: PathBuf) -> Result<Self, Error> {
         let mut fw = Firmware::open().map_err(Error::OpenFirmware)?;
         let chain = get_and_store_chain(&mut fw)?;
         let mut sev_es = false;
 
-        let (start, session_id) = if let Some(ref server_url) = attestation_url {
+        let file = File::open(tee_config_file.as_path()).map_err(Error::OpenTeeConfig)?;
+        let reader = BufReader::new(file);
+        let tee_config: TeeConfig =
+            serde_json::from_reader(reader).map_err(Error::ParseTeeConfig)?;
+
+        let (start, session_id) = if !tee_config.attestation_url.is_empty() {
             let build = fw
                 .platform_status()
                 .map_err(|_| Error::PlatformStatus)?
                 .build;
 
-            let response = ureq::post(format!("{}/session", server_url).as_str())
+            let response = ureq::post(format!("{}/session", tee_config.attestation_url).as_str())
                 .send_json(ureq::json!(SessionRequest { build, chain }))
                 .map_err(Error::SessionRequest)?
                 .into_string()
@@ -194,9 +209,9 @@ impl AmdSev {
         };
 
         Ok(AmdSev {
+            tee_config,
             fw,
             start,
-            attestation_url,
             session_id,
             sev_es,
         })
@@ -381,7 +396,7 @@ impl AmdSev {
         vm_fd: &VmFd,
         guest_mem: &GuestMemoryMmap,
         measured_regions: Vec<MeasuredRegion>,
-    ) -> Result<Measurement, Error> {
+    ) -> Result<(), Error> {
         for region in measured_regions {
             self.sev_launch_update_data(vm_fd, region.host_addr, region.size)
                 .map_err(Error::SevLaunchUpdateData)?;
@@ -396,10 +411,10 @@ impl AmdSev {
             .sev_launch_measure(vm_fd)
             .map_err(Error::SevLaunchMeasure)?;
 
-        if self.attestation_url.is_some() && self.session_id.is_some() {
+        if !self.tee_config.attestation_url.is_empty() {
             let secret_resp = ureq::post(&format!(
                 "{}/attestation/{}",
-                self.attestation_url.as_ref().unwrap(),
+                self.tee_config.attestation_url,
                 self.session_id.as_ref().unwrap(),
             ))
             .send_json(ureq::json!(measurement))
@@ -420,6 +435,6 @@ impl AmdSev {
         self.sev_launch_finish(vm_fd)
             .map_err(Error::SevLaunchFinish)?;
 
-        Ok(measurement)
+        Ok(())
     }
 }

@@ -19,11 +19,6 @@
 
 int main(int argc, char *const argv[])
 {
-    char *envp[] =
-    {
-        "TEST=works",
-        0
-    };
     char *const port_map[] =
     {
         "18000:8000",
@@ -35,7 +30,6 @@ int main(int argc, char *const argv[])
         "6=4096:8192",
         0
     };
-    char passphrase[MAX_ARGS_LEN];
     char current_path[MAX_PATH];
     char volume_tail[] = ":/work\0";
     char *volume;
@@ -44,14 +38,14 @@ int main(int argc, char *const argv[])
     int err;
     int i;
 
-    if (argc < 4) {
+    if (argc != 3) {
         printf("Invalid arguments\n");
-        printf("Usage: %s DISK_IMAGE PASSPHRASE COMMAND [ARG...]\n", argv[0]);
+        printf("Usage: %s DISK_IMAGE TEE_CONFIG_FILE\n", argv[0]);
         return -1;
     }
 
-    // Set the log level to "off".
-    err = krun_set_log_level(0);
+    // Set the log level to "error".
+    err = krun_set_log_level(1);
     if (err) {
         errno = -err;
         perror("Error configuring log level");
@@ -114,14 +108,9 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    snprintf(&passphrase[0], MAX_ARGS_LEN, "KRUN_PASS=%s", argv[2]);
-    envp[0] = &passphrase[0];
-
-    // Use the third argument as the path of the binary to be executed in the isolated
-    // context, relative to the root path.
-    if (err = krun_set_exec(ctx_id, argv[3], &argv[4], &envp[0])) {
+    if (err = krun_set_tee_config_file(ctx_id, argv[2])) {
         errno = -err;
-        perror("Error configuring the parameters for the executable to be run");
+        perror("Error configuring the attestation server");
         return -1;
     }
 

@@ -6,6 +6,7 @@
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
+use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
@@ -345,21 +346,17 @@ pub fn build_microvm(
     };
 
     #[cfg(not(feature = "amd-sev"))]
-    let mut vm = { setup_vm(&guest_memory, None)? };
+    let mut vm = setup_vm(&guest_memory, None)?;
 
     #[cfg(feature = "amd-sev")]
-    let (attestation_url, mut vm) = {
-        let attestation_url = vm_resources.attestation_url();
-        let vm = setup_vm(&guest_memory, attestation_url.clone())?;
-        (attestation_url, vm)
-    };
+    let mut vm = setup_vm(&guest_memory, vm_resources.tee_config_file())?;
 
     #[cfg(feature = "amd-sev")]
     let measured_regions = {
         vm.secure_virt_prepare(&guest_memory)
             .map_err(StartMicrovmError::SecureVirtPrepare)?;
 
-        let mut measured_regions: Vec<MeasuredRegion> = vec![
+        vec![
             MeasuredRegion {
                 host_addr: guest_memory
                     .get_host_address(GuestAddress(arch::BIOS_START))
@@ -378,18 +375,7 @@ pub fn build_microvm(
                     .unwrap() as u64,
                 size: initrd_bundle.size,
             },
-        ];
-
-        if attestation_url.is_none() {
-            measured_regions.push(MeasuredRegion {
-                host_addr: guest_memory
-                    .get_host_address(GuestAddress(arch::x86_64::layout::CMDLINE_START))
-                    .unwrap() as u64,
-                size: 4096,
-            })
-        }
-
-        measured_regions
+        ]
     };
 
     // On x86_64 always create a serial device,
@@ -566,17 +552,11 @@ pub fn build_microvm(
     #[cfg(all(target_arch = "x86_64", not(feature = "amd-sev")))]
     load_cmdline(&vmm)?;
 
-    #[cfg(feature = "amd-sev")]
-    if attestation_url.is_none() {
-        load_cmdline(&vmm)?;
-    }
-
     vmm.configure_system(vcpus.as_slice(), &None)
         .map_err(StartMicrovmError::Internal)?;
 
     #[cfg(feature = "amd-sev")]
-    let _measurement = vmm
-        .kvm_vm()
+    vmm.kvm_vm()
         .secure_virt_attest(vmm.guest_memory(), measured_regions)
         .map_err(StartMicrovmError::SecureVirtAttest)?;
 
@@ -678,7 +658,7 @@ pub fn create_guest_memory(
     Ok((guest_mem, arch_mem_info))
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(feature = "amd-sev")))]
 fn load_cmdline(vmm: &Vmm) -> std::result::Result<(), StartMicrovmError> {
     kernel::loader::load_cmdline(
         vmm.guest_memory(),
@@ -693,12 +673,12 @@ fn load_cmdline(vmm: &Vmm) -> std::result::Result<(), StartMicrovmError> {
 #[cfg(target_os = "linux")]
 pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
-    attestation_url: Option<String>,
+    tee_config_file: Option<PathBuf>,
 ) -> std::result::Result<Vm, StartMicrovmError> {
     let kvm = KvmContext::new()
         .map_err(Error::KvmContext)
         .map_err(StartMicrovmError::Internal)?;
-    let mut vm = Vm::new(kvm.fd(), attestation_url)
+    let mut vm = Vm::new(kvm.fd(), tee_config_file)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     vm.memory_init(guest_memory, kvm.max_memslots())
@@ -709,7 +689,7 @@ pub(crate) fn setup_vm(
 #[cfg(target_os = "macos")]
 pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
-    _attestation_url: Option<String>,
+    __tee_config_file: Option<PathBuf>,
 ) -> std::result::Result<Vm, StartMicrovmError> {
     let mut vm = Vm::new()
         .map_err(Error::Vm)

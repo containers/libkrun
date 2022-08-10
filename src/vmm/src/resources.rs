@@ -4,6 +4,9 @@
 //#![deny(warnings)]
 
 #[cfg(feature = "amd-sev")]
+use std::path::PathBuf;
+
+#[cfg(feature = "amd-sev")]
 use crate::vmm_config::block::{BlockBuilder, BlockConfigError, BlockDeviceConfig};
 use crate::vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
 #[cfg(not(feature = "amd-sev"))]
@@ -57,9 +60,9 @@ pub struct VmResources {
     /// The virtio-blk device.
     #[cfg(feature = "amd-sev")]
     pub block: BlockBuilder,
-    /// Base URL for the attestation server.
+    /// Path to the TEE config file.
     #[cfg(feature = "amd-sev")]
-    pub attestation_url: Option<String>,
+    pub tee_config_file: Option<PathBuf>,
 }
 
 impl VmResources {
@@ -194,13 +197,13 @@ impl VmResources {
     }
 
     #[cfg(feature = "amd-sev")]
-    pub fn attestation_url(&self) -> Option<String> {
-        self.attestation_url.clone()
+    pub fn tee_config_file(&self) -> Option<PathBuf> {
+        self.tee_config_file.clone()
     }
 
     #[cfg(feature = "amd-sev")]
-    pub fn set_attestation_url(&mut self, url: String) {
-        self.attestation_url = Some(url);
+    pub fn set_tee_config_file(&mut self, filepath: PathBuf) {
+        self.tee_config_file = Some(filepath);
     }
 }
 
