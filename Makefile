@@ -68,7 +68,7 @@ install: $(LIBRARY_RELEASE_$(OS))
 	install -d $(DESTDIR)$(PREFIX)/include
 	install -m 644 $(LIBRARY_HEADER) $(DESTDIR)$(PREFIX)/include
 	install -m 755 $(LIBRARY_RELEASE_$(OS)) $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/
-	cd $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/ ; ln -s $(KRUN_BINARY_$(OS)) $(KRUN_SONAME_$(OS)) ; ln -s $(KRUN_SONAME_$(OS)) $(KRUN_BASE_$(OS))
+	cd $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/ ; ln -sf $(KRUN_BINARY_$(OS)) $(KRUN_SONAME_$(OS)) ; ln -sf $(KRUN_SONAME_$(OS)) $(KRUN_BASE_$(OS))
 
 clean:
 	rm -f $(INIT_BINARY)
