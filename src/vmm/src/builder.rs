@@ -359,6 +359,8 @@ pub fn build_microvm(
         vm.secure_virt_prepare(&guest_memory)
             .map_err(StartMicrovmError::SecureVirtPrepare)?;
 
+        println!("Injecting and measuring memory regions. This may take a while.");
+
         vec![
             MeasuredRegion {
                 host_addr: guest_memory
@@ -574,9 +576,13 @@ pub fn build_microvm(
         .map_err(StartMicrovmError::Internal)?;
 
     #[cfg(feature = "amd-sev")]
-    vmm.kvm_vm()
-        .secure_virt_attest(vmm.guest_memory(), measured_regions)
-        .map_err(StartMicrovmError::SecureVirtAttest)?;
+    {
+        vmm.kvm_vm()
+            .secure_virt_attest(vmm.guest_memory(), measured_regions)
+            .map_err(StartMicrovmError::SecureVirtAttest)?;
+
+        println!("Starting TEE/microVM.");
+    }
 
     vmm.start_vcpus(vcpus)
         .map_err(StartMicrovmError::Internal)?;
