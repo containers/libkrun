@@ -1,12 +1,12 @@
 use std::fmt;
 use std::fs::File;
-use std::io::BufReader;
 use std::mem::{size_of_val, MaybeUninit};
 use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::super::resources::TeeConfig;
 use super::vstate::MeasuredRegion;
 
 use codicon::{Decoder, Encoder};
@@ -32,12 +32,12 @@ pub enum Error {
     EncodeChain,
     FetchIdentifier,
     InvalidCpuData,
+    OpenChainFile(std::io::Error),
     OpenFirmware(std::io::Error),
-    OpenTeeConfig(std::io::Error),
     OpenTmpFile,
     ParseAttestationSecret(serde_json::Error),
+    ParseSevCertConfig(serde_json::Error),
     ParseSessionResponse(serde_json::Error),
-    ParseTeeConfig(serde_json::Error),
     PlatformStatus,
     MemoryEncryptRegion,
     ReadingCpuData(procfs::ProcError),
@@ -133,8 +133,19 @@ fn fetch_chain(fw: &mut Firmware) -> Result<certs::Chain, Error> {
     })
 }
 
-fn get_and_store_chain(fw: &mut Firmware) -> Result<certs::Chain, Error> {
-    if let Ok(mut file) = File::open("/tmp/libkrun-sev.chain") {
+#[derive(Serialize, Deserialize)]
+struct SevCertConfig {
+    pub vendor_chain: String,
+    pub attestation_server_pubkey: String,
+}
+
+fn get_and_store_chain(fw: &mut Firmware, tee_config: &TeeConfig) -> Result<certs::Chain, Error> {
+    let cert_config: SevCertConfig =
+        serde_json::from_str(&tee_config.tee_data).map_err(Error::ParseSevCertConfig)?;
+
+    if !cert_config.vendor_chain.is_empty() {
+        let filepath = Path::new(&cert_config.vendor_chain);
+        let mut file = File::open(filepath).map_err(Error::OpenChainFile)?;
         Ok(certs::Chain::decode(&mut file, ()).map_err(|_| Error::DecodeChain)?)
     } else {
         let chain = fetch_chain(fw)?;
@@ -160,13 +171,6 @@ struct SessionResponse {
     start: Start,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct TeeConfig {
-    pub workload_id: String,
-    pub tee: kbs_types::Tee,
-    pub attestation_url: String,
-}
-
 pub struct AmdSev {
     tee_config: TeeConfig,
     fw: Firmware,
@@ -177,15 +181,10 @@ pub struct AmdSev {
 }
 
 impl AmdSev {
-    pub fn new(tee_config_file: PathBuf) -> Result<Self, Error> {
+    pub fn new(tee_config: &TeeConfig) -> Result<Self, Error> {
         let mut fw = Firmware::open().map_err(Error::OpenFirmware)?;
-        let chain = get_and_store_chain(&mut fw)?;
+        let chain = get_and_store_chain(&mut fw, tee_config)?;
         let mut sev_es = false;
-
-        let file = File::open(tee_config_file.as_path()).map_err(Error::OpenTeeConfig)?;
-        let reader = BufReader::new(file);
-        let tee_config: TeeConfig =
-            serde_json::from_reader(reader).map_err(Error::ParseTeeConfig)?;
 
         let (start, session_id, ureq_agent) = if !tee_config.attestation_url.is_empty() {
             let build = fw
@@ -243,7 +242,7 @@ impl AmdSev {
         };
 
         Ok(AmdSev {
-            tee_config,
+            tee_config: tee_config.clone(),
             fw,
             start,
             session_id,
