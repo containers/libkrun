@@ -1,5 +1,8 @@
 {
     "workload_id": "sevtest",
+    "cpus": 2,
+    "ram_mib": 2048,
     "tee": "sev",
-    "attestation_url": "http://127.0.0.1:8080"
+    "tee_data": "{\"vendor_chain\": \"\", \"attestation_server_pubkey\": \"\"}",
+    "attestation_url": "http://127.0.0.1:8000"
 }

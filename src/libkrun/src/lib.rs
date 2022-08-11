@@ -641,7 +641,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     let mut event_manager = match EventManager::new() {
         Ok(em) => em,
         Err(e) => {
-            warn!("Unable to create EventManager: {:?}", e);
+            error!("Unable to create EventManager: {:?}", e);
             return -libc::EINVAL;
         }
     };
@@ -654,6 +654,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(not(feature = "amd-sev"))]
     if let Some(fs_cfg) = ctx_cfg.get_fs_cfg() {
         if ctx_cfg.vmr.set_fs_device(fs_cfg).is_err() {
+            error!("Error configuring virtio-fs");
             return -libc::EINVAL;
         }
     }
@@ -661,13 +662,17 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(feature = "amd-sev")]
     if let Some(block_cfg) = ctx_cfg.get_block_cfg() {
         if ctx_cfg.vmr.set_block_device(block_cfg).is_err() {
+            error!("Error configuring virtio-blk");
             return -libc::EINVAL;
         }
     }
 
     #[cfg(feature = "amd-sev")]
     if let Some(filepath) = ctx_cfg.get_tee_config_file() {
-        ctx_cfg.vmr.set_tee_config_file(filepath);
+        if ctx_cfg.vmr.set_tee_config(filepath).is_err() {
+            error!("Error parsing TEE config file");
+            return -libc::EINVAL;
+        }
     }
 
     let boot_source = BootSourceConfig {

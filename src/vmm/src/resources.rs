@@ -4,7 +4,14 @@
 //#![deny(warnings)]
 
 #[cfg(feature = "amd-sev")]
+use std::fs::File;
+#[cfg(feature = "amd-sev")]
+use std::io::BufReader;
+#[cfg(feature = "amd-sev")]
 use std::path::PathBuf;
+
+#[cfg(feature = "amd-sev")]
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "amd-sev")]
 use crate::vmm_config::block::{BlockBuilder, BlockConfigError, BlockDeviceConfig};
@@ -27,13 +34,30 @@ pub enum Error {
     InvalidJson,
     /// Boot source configuration error.
     BootSource(BootSourceConfigError),
+    /// Error opening TEE config file.
+    #[cfg(feature = "amd-sev")]
+    OpenTeeConfig(std::io::Error),
     /// Fs device configuration error.
     #[cfg(not(feature = "amd-sev"))]
     FsDevice(FsConfigError),
+    /// Error parsing TEE config file.
+    #[cfg(feature = "amd-sev")]
+    ParseTeeConfig(serde_json::Error),
     /// microVM vCpus or memory configuration error.
     VmConfig(VmConfigError),
     /// Vsock device configuration error.
     VsockDevice(VsockConfigError),
+}
+
+#[cfg(feature = "amd-sev")]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct TeeConfig {
+    pub workload_id: String,
+    pub cpus: u8,
+    pub ram_mib: usize,
+    pub tee: kbs_types::Tee,
+    pub tee_data: String,
+    pub attestation_url: String,
 }
 
 /// A data structure that encapsulates the device configurations
@@ -60,9 +84,9 @@ pub struct VmResources {
     /// The virtio-blk device.
     #[cfg(feature = "amd-sev")]
     pub block: BlockBuilder,
-    /// Path to the TEE config file.
+    /// TEE configuration
     #[cfg(feature = "amd-sev")]
-    pub tee_config_file: Option<PathBuf>,
+    pub tee_config: Option<TeeConfig>,
 }
 
 impl VmResources {
@@ -197,13 +221,29 @@ impl VmResources {
     }
 
     #[cfg(feature = "amd-sev")]
-    pub fn tee_config_file(&self) -> Option<PathBuf> {
-        self.tee_config_file.clone()
+    pub fn tee_config(&self) -> &Option<TeeConfig> {
+        &self.tee_config
     }
 
     #[cfg(feature = "amd-sev")]
-    pub fn set_tee_config_file(&mut self, filepath: PathBuf) {
-        self.tee_config_file = Some(filepath);
+    pub fn set_tee_config(&mut self, filepath: PathBuf) -> Result<Error> {
+        let file = File::open(filepath.as_path()).map_err(Error::OpenTeeConfig)?;
+        let reader = BufReader::new(file);
+        let tee_config: TeeConfig =
+            serde_json::from_reader(reader).map_err(Error::ParseTeeConfig)?;
+
+        // Override VmConfig with TeeConfig values
+        self.set_vm_config(&VmConfig {
+            vcpu_count: Some(tee_config.cpus),
+            mem_size_mib: Some(tee_config.ram_mib),
+            ht_enabled: Some(false),
+            cpu_template: None,
+        })
+        .map_err(Error::VmConfig)?;
+
+        self.tee_config = Some(tee_config);
+
+        Ok(())
     }
 }
 

@@ -9,7 +9,6 @@ use libc::{c_int, c_void, siginfo_t};
 use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::io;
-use std::path::PathBuf;
 use std::result;
 use std::sync::atomic::{fence, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
@@ -23,6 +22,8 @@ use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 #[cfg(feature = "amd-sev")]
 use super::amdsev::{AmdSev, Error as SevError};
 
+#[cfg(feature = "amd-sev")]
+use crate::resources::TeeConfig;
 use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 use arch;
 #[cfg(target_arch = "aarch64")]
@@ -436,7 +437,8 @@ pub struct Vm {
 
 impl Vm {
     /// Constructs a new `Vm` using the given `Kvm` instance.
-    pub fn new(kvm: &Kvm, _tee_config_file: Option<PathBuf>) -> Result<Self> {
+    #[cfg(not(feature = "amd-sev"))]
+    pub fn new(kvm: &Kvm) -> Result<Self> {
         //create fd for interacting with kvm-vm specific functions
         let vm_fd = kvm.create_vm().map_err(Error::VmFd)?;
 
@@ -448,15 +450,6 @@ impl Vm {
         let supported_msrs =
             arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
 
-        #[cfg(feature = "amd-sev")]
-        let sev = {
-            if let Some(config_file) = _tee_config_file {
-                AmdSev::new(config_file).map_err(Error::SecVirtInit)?
-            } else {
-                return Err(Error::MissingTeeConfig);
-            }
-        };
-
         Ok(Vm {
             fd: vm_fd,
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -465,7 +458,34 @@ impl Vm {
             supported_msrs,
             #[cfg(target_arch = "aarch64")]
             irqchip_handle: None,
-            #[cfg(feature = "amd-sev")]
+        })
+    }
+    #[cfg(feature = "amd-sev")]
+    pub fn new(kvm: &Kvm, tee_config: &Option<TeeConfig>) -> Result<Self> {
+        //create fd for interacting with kvm-vm specific functions
+        let vm_fd = kvm.create_vm().map_err(Error::VmFd)?;
+
+        let supported_cpuid = kvm
+            .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
+            .map_err(Error::VmFd)?;
+
+        let supported_msrs =
+            arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
+
+        let sev = {
+            if let Some(config) = tee_config {
+                AmdSev::new(config).map_err(Error::SecVirtInit)?
+            } else {
+                return Err(Error::MissingTeeConfig);
+            }
+        };
+
+        Ok(Vm {
+            fd: vm_fd,
+            supported_cpuid,
+            supported_msrs,
+            #[cfg(target_arch = "aarch64")]
+            irqchip_handle: None,
             sev,
         })
     }
@@ -1425,7 +1445,7 @@ mod tests {
     fn setup_vcpu(mem_size: usize) -> (Vm, Vcpu, GuestMemoryMmap) {
         let kvm = KvmContext::new().unwrap();
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), mem_size)]).unwrap();
-        let mut vm = Vm::new(kvm.fd(), None).expect("Cannot create new vm");
+        let mut vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
         assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
 
         let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
@@ -1473,7 +1493,7 @@ mod tests {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn test_get_supported_cpuid() {
         let kvm = KvmContext::new().unwrap();
-        let vm = Vm::new(kvm.fd(), None).expect("Cannot create new vm");
+        let vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
         let cpuid = kvm
             .kvm
             .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
@@ -1484,7 +1504,7 @@ mod tests {
     #[test]
     fn test_vm_memory_init() {
         let mut kvm_context = KvmContext::new().unwrap();
-        let mut vm = Vm::new(kvm_context.fd(), None).expect("Cannot create new vm");
+        let mut vm = Vm::new(kvm_context.fd()).expect("Cannot create new vm");
 
         // Create valid memory region and test that the initialization is successful.
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x1000)]).unwrap();
@@ -1505,7 +1525,7 @@ mod tests {
     #[test]
     fn test_setup_irqchip() {
         let kvm_context = KvmContext::new().unwrap();
-        let vm = Vm::new(kvm_context.fd(), None).expect("Cannot create new vm");
+        let vm = Vm::new(kvm_context.fd()).expect("Cannot create new vm");
 
         vm.setup_irqchip().expect("Cannot setup irqchip");
         // Trying to setup two irqchips will result in EEXIST error. At the moment
@@ -1532,7 +1552,7 @@ mod tests {
     fn test_setup_irqchip() {
         let kvm = KvmContext::new().unwrap();
 
-        let mut vm = Vm::new(kvm.fd(), None).expect("Cannot create new vm");
+        let mut vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
         let vcpu_count = 1;
         let _vcpu = Vcpu::new_aarch64(
             1,
@@ -1580,7 +1600,7 @@ mod tests {
     fn test_configure_vcpu() {
         let kvm = KvmContext::new().unwrap();
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
-        let mut vm = Vm::new(kvm.fd(), None).expect("new vm failed");
+        let mut vm = Vm::new(kvm.fd()).expect("new vm failed");
         assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
 
         // Try it for when vcpu id is 0.

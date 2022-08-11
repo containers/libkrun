@@ -6,7 +6,6 @@
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
@@ -22,6 +21,8 @@ use devices::legacy::Serial;
 use devices::virtio::VirtioShmRegion;
 use devices::virtio::{MmioTransport, Vsock};
 
+#[cfg(feature = "amd-sev")]
+use crate::resources::TeeConfig;
 #[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigwinch_handler;
 #[cfg(feature = "amd-sev")]
@@ -348,15 +349,17 @@ pub fn build_microvm(
     };
 
     #[cfg(not(feature = "amd-sev"))]
-    let mut vm = setup_vm(&guest_memory, None)?;
+    let mut vm = setup_vm(&guest_memory)?;
 
     #[cfg(feature = "amd-sev")]
-    let mut vm = setup_vm(&guest_memory, vm_resources.tee_config_file())?;
+    let mut vm = setup_vm(&guest_memory, vm_resources.tee_config())?;
 
     #[cfg(feature = "amd-sev")]
     let measured_regions = {
         vm.secure_virt_prepare(&guest_memory)
             .map_err(StartMicrovmError::SecureVirtPrepare)?;
+
+        println!("Injecting and measuring memory regions. This may take a while.");
 
         vec![
             MeasuredRegion {
@@ -573,9 +576,13 @@ pub fn build_microvm(
         .map_err(StartMicrovmError::Internal)?;
 
     #[cfg(feature = "amd-sev")]
-    vmm.kvm_vm()
-        .secure_virt_attest(vmm.guest_memory(), measured_regions)
-        .map_err(StartMicrovmError::SecureVirtAttest)?;
+    {
+        vmm.kvm_vm()
+            .secure_virt_attest(vmm.guest_memory(), measured_regions)
+            .map_err(StartMicrovmError::SecureVirtAttest)?;
+
+        println!("Starting TEE/microVM.");
+    }
 
     vmm.start_vcpus(vcpus)
         .map_err(StartMicrovmError::Internal)?;
@@ -687,15 +694,30 @@ fn load_cmdline(vmm: &Vmm) -> std::result::Result<(), StartMicrovmError> {
     .map_err(StartMicrovmError::LoadCommandline)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(feature = "amd-sev")))]
 pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
-    tee_config_file: Option<PathBuf>,
 ) -> std::result::Result<Vm, StartMicrovmError> {
     let kvm = KvmContext::new()
         .map_err(Error::KvmContext)
         .map_err(StartMicrovmError::Internal)?;
-    let mut vm = Vm::new(kvm.fd(), tee_config_file)
+    let mut vm = Vm::new(kvm.fd())
+        .map_err(Error::Vm)
+        .map_err(StartMicrovmError::Internal)?;
+    vm.memory_init(guest_memory, kvm.max_memslots())
+        .map_err(Error::Vm)
+        .map_err(StartMicrovmError::Internal)?;
+    Ok(vm)
+}
+#[cfg(all(target_os = "linux", feature = "amd-sev"))]
+pub(crate) fn setup_vm(
+    guest_memory: &GuestMemoryMmap,
+    tee_config: &Option<TeeConfig>,
+) -> std::result::Result<Vm, StartMicrovmError> {
+    let kvm = KvmContext::new()
+        .map_err(Error::KvmContext)
+        .map_err(StartMicrovmError::Internal)?;
+    let mut vm = Vm::new(kvm.fd(), tee_config)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     vm.memory_init(guest_memory, kvm.max_memslots())
@@ -706,7 +728,6 @@ pub(crate) fn setup_vm(
 #[cfg(target_os = "macos")]
 pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
-    __tee_config_file: Option<PathBuf>,
 ) -> std::result::Result<Vm, StartMicrovmError> {
     let mut vm = Vm::new()
         .map_err(Error::Vm)
@@ -1192,7 +1213,7 @@ pub mod tests {
         let vcpu_count = 2;
 
         let (guest_memory, _arch_memory_info) = default_guest_memory(128).unwrap();
-        let mut vm = setup_vm(&guest_memory, None).unwrap();
+        let mut vm = setup_vm(&guest_memory).unwrap();
         setup_interrupt_controller(&mut vm).unwrap();
         let vcpu_config = VcpuConfig {
             vcpu_count,
@@ -1220,7 +1241,7 @@ pub mod tests {
     #[cfg(target_arch = "aarch64")]
     fn test_create_vcpus_aarch64() {
         let guest_memory = create_guest_memory(128).unwrap();
-        let vm = setup_vm(&guest_memory, None).unwrap();
+        let vm = setup_vm(&guest_memory).unwrap();
         let vcpu_count = 2;
 
         let vcpu_config = VcpuConfig {
