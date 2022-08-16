@@ -29,7 +29,7 @@ type Result<T> = std::result::Result<T, VsockConfigError>;
 
 /// This struct represents the strongly typed equivalent of the json body
 /// from vsock related requests.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VsockDeviceConfig {
     /// ID of the vsock device.
     pub vsock_id: String,

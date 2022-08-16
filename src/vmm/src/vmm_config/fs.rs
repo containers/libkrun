@@ -22,7 +22,7 @@ impl fmt::Display for FsConfigError {
 
 type Result<T> = std::result::Result<T, FsConfigError>;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FsDeviceConfig {
     pub fs_id: String,
     pub shared_dir: String,

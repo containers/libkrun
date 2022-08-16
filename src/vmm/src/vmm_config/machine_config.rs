@@ -8,7 +8,7 @@ use std::fmt;
 pub const MAX_SUPPORTED_VCPUS: u8 = 32;
 
 /// Errors associated with configuring the microVM.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum VmConfigError {
     /// The vcpu count is invalid. When hyperthreading is enabled, the `cpu_count` must be either
     /// 1 or an even number.
@@ -33,7 +33,7 @@ impl fmt::Display for VmConfigError {
 
 /// Strongly typed structure that represents the configuration of the
 /// microvm.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VmConfig {
     /// The number of vCPUs.
     pub vcpu_count: Option<u8>,
@@ -72,7 +72,7 @@ impl fmt::Display for VmConfig {
 
 /// Template types available for configuring the CPU features that map
 /// to EC2 instances.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CpuFeaturesTemplate {
     /// C3 Template.
     C3,

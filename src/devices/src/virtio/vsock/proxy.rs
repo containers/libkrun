@@ -20,7 +20,7 @@ pub enum ProxyError {
     SettingReusePort(nix::errno::Errno),
 }
 
-#[derive(PartialEq, Clone, Copy, Debug)]
+#[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub enum ProxyStatus {
     Idle,
     Connecting,

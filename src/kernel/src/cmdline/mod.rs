@@ -12,7 +12,7 @@ use std::fmt;
 use std::result;
 
 /// The error type for command line building operations.
-#[derive(PartialEq, Debug)]
+#[derive(Eq, PartialEq, Debug)]
 pub enum Error {
     /// Failed to copy to guest memory.
     CommandLineCopy,

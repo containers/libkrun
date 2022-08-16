@@ -31,7 +31,7 @@ use crate::virtio::VIRTIO_MMIO_INT_CONFIG;
 use crate::Error as DeviceError;
 
 /// Configuration options for disk caching.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CacheType {
     /// Flushing mechanic will be advertised to the guest driver, but
     /// the operation will be a noop.
