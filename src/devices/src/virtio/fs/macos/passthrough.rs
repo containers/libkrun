@@ -183,10 +183,11 @@ fn is_valid_owner(owner: Option<(u32, u32)>) -> bool {
     false
 }
 
+// We won't need this once expressions like "if let ... &&" are allowed.
+#[allow(clippy::unnecessary_unwrap)]
 fn set_xattr_stat(file: StatFile, owner: Option<(u32, u32)>, mode: Option<u32>) -> i32 {
-    let buf = if is_valid_owner(owner) && mode.is_some() {
-        let owner = owner.unwrap();
-        format!("{}:{}:0{:o}", owner.0, owner.1, mode.unwrap())
+    let (new_owner, new_mode) = if is_valid_owner(owner) && mode.is_some() {
+        (owner.unwrap(), mode.unwrap())
     } else {
         let (orig_owner, orig_mode) =
             if let Some((xuid, xgid, xmode)) = get_xattr_stat(file.clone()) {
@@ -204,17 +205,19 @@ fn set_xattr_stat(file: StatFile, owner: Option<(u32, u32)>, mode: Option<u32>) 
             None => orig_owner,
         };
 
-        format!(
-            "{}:{}:0{:o}",
-            new_owner.0,
-            new_owner.1,
-            mode.unwrap_or(orig_mode)
-        )
+        (new_owner, mode.unwrap_or(orig_mode))
     };
+
+    let buf = format!("{}:{}:0{:o}", new_owner.0, new_owner.1, new_mode);
 
     match file {
         StatFile::Path(path) => {
             let cpath = CString::new(path).unwrap();
+            let options = if (new_mode as u16 & libc::S_IFMT) == libc::S_IFLNK {
+                libc::XATTR_NOFOLLOW
+            } else {
+                0
+            };
             unsafe {
                 libc::setxattr(
                     cpath.as_ptr(),
@@ -222,7 +225,7 @@ fn set_xattr_stat(file: StatFile, owner: Option<(u32, u32)>, mode: Option<u32>) 
                     buf.as_ptr() as *mut libc::c_void,
                     buf.len() as libc::size_t,
                     0,
-                    0,
+                    options,
                 )
             }
         }
@@ -1609,12 +1612,16 @@ impl FileSystem for PassthroughFs {
         // Safe because this doesn't modify any memory and we check the return value.
         let res = unsafe { libc::symlinkat(linkname.as_ptr(), file.as_raw_fd(), name.as_ptr()) };
         if res == 0 {
-            let entry = self.do_lookup(parent, name)?;
+            let mut entry = self.do_lookup(parent, name)?;
+            let mode = libc::S_IFLNK | 0o777;
             set_xattr_stat(
                 StatFile::Path(self.get_path(entry.inode)?),
                 Some((ctx.uid, ctx.gid)),
-                None,
+                Some(mode as u32),
             );
+            entry.attr.st_uid = ctx.uid;
+            entry.attr.st_gid = ctx.gid;
+            entry.attr.st_mode = mode;
             Ok(entry)
         } else {
             Err(linux_error(io::Error::last_os_error()))
