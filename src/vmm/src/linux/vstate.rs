@@ -667,7 +667,7 @@ pub struct VmState {
 }
 
 /// Encapsulates configuration parameters for the guest vCPUS.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct VcpuConfig {
     /// Number of guest VCPUs.
     pub vcpu_count: u8,
@@ -1359,7 +1359,7 @@ pub enum VcpuEvent {
     // Serialize and Deserialize to follow after we get the support from kvm-ioctls.
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 /// List of responses that the Vcpu reports.
 pub enum VcpuResponse {
     /// Vcpu is paused.

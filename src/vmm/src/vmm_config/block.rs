@@ -21,7 +21,7 @@ impl fmt::Display for BlockConfigError {
 
 type Result<T> = std::result::Result<T, BlockConfigError>;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BlockDeviceConfig {
     pub block_id: String,
     pub cache_type: CacheType,

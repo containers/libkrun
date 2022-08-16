@@ -37,7 +37,7 @@ struct BootParamsWrapper(boot_params);
 unsafe impl ByteValued for BootParamsWrapper {}
 
 /// Errors thrown while configuring x86_64 system.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Error {
     /// Invalid e820 setup params.
     E820Configuration,

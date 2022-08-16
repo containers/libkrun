@@ -14,7 +14,7 @@ use std::fmt;
 use super::cmdline::Error as CmdlineError;
 use vm_memory::{Address, Bytes, GuestAddress, GuestMemory, GuestMemoryMmap};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Error {
     BigEndianElfOnLittle,
     InvalidElfMagicNumber,
