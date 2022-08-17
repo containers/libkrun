@@ -301,7 +301,6 @@ checksum = "b71991ff56294aa922b450139ee08b3bfc70982c6b2c7562771375cf73542dd4"
 [[package]]
 name = "kbs-types"
 version = "0.0.0"
-source = "git+https://github.com/virtee/kbs-types#ec22a2d9a1d0a04ee585be994a8977367a8b9b88"
 dependencies = [
  "serde",
  "serde_json",
@@ -518,9 +517,9 @@ dependencies = [
 
 [[package]]
 name = "procfs"
-version = "0.10.1"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95e344cafeaeefe487300c361654bcfc85db3ac53619eeccced29f5ea18c4c70"
+checksum = "0941606b9934e2d98a3677759a971756eb821f75764d0e0d26946d08e74d9104"
 dependencies = [
  "bitflags",
  "byteorder",
@@ -632,15 +631,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde-big-array"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3323f09a748af288c3dc2474ea6803ee81f118321775bffa3ac8f7e65c5e90e7"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "serde_bytes"
 version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -673,9 +663,9 @@ dependencies = [
 
 [[package]]
 name = "sev"
-version = "0.3.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2919b04dac9b0fb31814196863cfa6e749db09706af24071e96ebbac80649172"
+checksum = "c07fba5645febfaab8958c9a5812d737911a29f353462288937df138a241f9d4"
 dependencies = [
  "bitfield",
  "bitflags",
@@ -684,7 +674,6 @@ dependencies = [
  "iocuddle",
  "openssl",
  "serde",
- "serde-big-array",
  "serde_bytes",
 ]
 
