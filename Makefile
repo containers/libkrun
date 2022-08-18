@@ -63,7 +63,7 @@ else
 	cp target/debug/$(KRUN_BASE_$(OS)) $(LIBRARY_DEBUG_$(OS))
 endif
 
-install: $(LIBRARY_RELEASE_$(OS))
+install:
 	install -d $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/
 	install -d $(DESTDIR)$(PREFIX)/include
 	install -m 644 $(LIBRARY_HEADER) $(DESTDIR)$(PREFIX)/include
