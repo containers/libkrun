@@ -452,6 +452,7 @@ int main(int argc, char **argv)
 {
 	struct ifreq ifr;
 	int sockfd;
+	char localhost[] = "localhost\0";
 	char *hostname;
 	char *krun_init;
 	char *config_workdir, *env_workdir;
@@ -495,6 +496,8 @@ int main(int argc, char **argv)
 	hostname = getenv("HOSTNAME");
 	if (hostname) {
 		sethostname(hostname, strlen(hostname));
+	} else {
+		sethostname(&localhost[0], strlen(localhost));
 	}
 
 	rlimits = getenv("KRUN_RLIMITS");
