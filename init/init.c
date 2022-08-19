@@ -257,7 +257,12 @@ static void config_parse_env(char *data, jsmntok_t *token)
 		*env_val = '\0';
 		env_val++;
 
-		setenv(env, env_val, 0);
+		if ((strcmp(env, "HOME") == 0) ||
+		    (strcmp(env, "TERM") == 0)) {
+			setenv(env, env_val, 1);
+		} else {
+			setenv(env, env_val, 0);
+		}
 	}
 }
 
@@ -451,6 +456,8 @@ int main(int argc, char **argv)
 	int sockfd;
 	char localhost[] = "localhost\0";
 	char *hostname;
+	char *krun_home;
+	char *krun_term;
 	char *krun_init;
 	char *config_workdir, *env_workdir;
 	char *rlimits;
@@ -483,6 +490,16 @@ int main(int argc, char **argv)
 	config_workdir = NULL;
 
 	config_parse_file(&config_argv, &config_workdir);
+
+	krun_home = getenv("KRUN_HOME");
+	if (krun_home) {
+		setenv("HOME", krun_home, 1);
+	}
+
+	krun_term = getenv("KRUN_TERM");
+	if (krun_term) {
+		setenv("TERM", krun_term, 1);
+	}
 
 	hostname = getenv("HOSTNAME");
 	if (hostname) {
