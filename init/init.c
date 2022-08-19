@@ -173,35 +173,25 @@ static int chroot_luks()
 }
 #endif
 
-static int create_dirs()
-{
-	char *const DIRS[] = {"/proc", "/sys", "/sys/fs", "/sys/fs/cgroup", "/dev/pts", "/dev/shm"};
-	int i;
-
-	if (access("/dev", F_OK) != 0) {
-		if (mkdir("/dev", 0755) < 0 && errno != EEXIST) {
-			printf("Error creating directory /dev\n");
-			return -1;
-		}
-		if (mount("devtmpfs", "/dev", "devtmpfs",
-			  MS_RELATIME, NULL) < 0) {
-			perror("mount(/dev)");
-			return -1;
-		}
-	}
-
-	for (i = 0; i < 6; ++i) {
-		if (mkdir(DIRS[i], 0755) < 0 && errno != EEXIST) {
-			printf("Error creating directory (%s)\n", DIRS[i]);
-			return -1;
-		}
-	}
-
-	return 0;
-}
-
 static int mount_filesystems()
 {
+	char *const DIRS_LEVEL1[] = {"/dev", "/proc", "/sys"};
+	char *const DIRS_LEVEL2[] = {"/dev/pts", "/dev/shm"};
+	int i;
+
+	for (i = 0; i < 3; ++i) {
+		if (mkdir(DIRS_LEVEL1[i], 0755) < 0 && errno != EEXIST) {
+			printf("Error creating directory (%s)\n", DIRS_LEVEL1[i]);
+			return -1;
+		}
+	}
+
+	if (mount("devtmpfs", "/dev", "devtmpfs",
+		  MS_RELATIME, NULL) < 0 && errno != EBUSY ) {
+		perror("mount(/dev)");
+		return -1;
+	}
+
 	if (mount("proc", "/proc", "proc",
 		  MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
 		perror("mount(/proc)");
@@ -218,6 +208,13 @@ static int mount_filesystems()
 		  MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
 		perror("mount(/sys/fs/cgroup)");
 		return -1;
+	}
+
+	for (i = 0; i < 2; ++i) {
+		if (mkdir(DIRS_LEVEL2[i], 0755) < 0 && errno != EEXIST) {
+			printf("Error creating directory (%s)\n", DIRS_LEVEL2[i]);
+			return -1;
+		}
 	}
 
 	if (mount("devpts", "/dev/pts", "devpts",
@@ -465,15 +462,9 @@ int main(int argc, char **argv)
 		exit(-1);
 	}
 #endif
-
-	if (create_dirs() < 0) {
-		printf("Couldn't create support directories, bailing out\n");
-		exit(-2);
-	}
-
 	if (mount_filesystems() < 0) {
 		printf("Couldn't mount filesystems, bailing out\n");
-		exit(-3);
+		exit(-2);
 	}
 
 	setsid();
