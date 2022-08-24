@@ -16,10 +16,12 @@ use kvm_bindings::{kvm_enc_region, kvm_sev_cmd};
 use kvm_ioctls::VmFd;
 use procfs::CpuInfo;
 use serde::{Deserialize, Serialize};
+
 use sev::certs;
 use sev::firmware::Firmware;
-use sev::launch::sev::{Measurement, Policy, PolicyFlags, Secret, Start};
+use sev::launch::sev::*;
 use sev::session::Session;
+
 use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
 
 #[derive(Debug)]
@@ -326,21 +328,8 @@ impl AmdSev {
             session_id,
             sev_es,
             curl_agent: Arc::new(Mutex::new(curl_agent)),
+            launcher: None,
         })
-    }
-
-    fn sev_init(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
-        let id = if self.sev_es { 1 } else { 0 };
-
-        let mut cmd = kvm_sev_cmd {
-            id,
-            data: 0,
-            error: 0,
-            sev_fd: self.fw.as_raw_fd() as u32,
-        };
-
-        vm_fd.encrypt_op_sev(&mut cmd)?;
-        Ok(())
     }
 
     fn sev_launch_start(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
@@ -483,7 +472,7 @@ impl AmdSev {
     }
 
     pub fn vm_prepare(&self, vm_fd: &VmFd, guest_mem: &GuestMemoryMmap) -> Result<(), Error> {
-        self.sev_init(vm_fd).map_err(Error::SevInit)?;
+        let launcher = Launcher::new(vm_fd.as_raw_fd(), self.fw.as_raw_fd()).unwrap();
 
         for region in guest_mem.iter() {
             // It's safe to unwrap because the guest address is valid.
