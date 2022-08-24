@@ -333,33 +333,6 @@ impl AmdSev {
         })
     }
 
-    fn sev_launch_update_data(
-        &self,
-        vm_fd: &VmFd,
-        data_uaddr: u64,
-        data_size: usize,
-    ) -> Result<(), kvm_ioctls::Error> {
-        #[repr(C)]
-        struct Data {
-            addr: u64,
-            size: u32,
-        }
-
-        let mut data = Data {
-            addr: data_uaddr as u64,
-            size: data_size as u32,
-        };
-
-        let mut cmd = kvm_sev_cmd {
-            id: 3, // SEV_LAUNCH_UPDATE_DATA
-            data: &mut data as *mut _ as u64,
-            error: 0,
-            sev_fd: self.fw.as_raw_fd() as u32,
-        };
-
-        vm_fd.encrypt_op_sev(&mut cmd)
-    }
-
     fn sev_launch_measure(&self, vm_fd: &VmFd) -> Result<Measurement, kvm_ioctls::Error> {
         #[repr(C)]
         struct Data {
@@ -470,9 +443,25 @@ impl AmdSev {
         guest_mem: &GuestMemoryMmap,
         measured_regions: Vec<MeasuredRegion>,
     ) -> Result<(), Error> {
+        // At this point, self.launcher is Some(x) (rather than None), therefore it is safe to
+        // unwrap().
+        let mut launcher = self.launcher.unwrap();
         for region in measured_regions {
-            self.sev_launch_update_data(vm_fd, region.host_addr, region.size)
-                .map_err(Error::SevLaunchUpdateData)?;
+            let guest_region = guest_mem
+                .find_region(vm_memory::GuestAddress(region.host_addr))
+                .unwrap()
+                .as_slice()
+                .unwrap();
+
+            /*
+             * TODO: The below slice should be use a slice range to delimit the
+             * chunk:
+             *
+             * (region[offset_of_measured_chunk..offset_of_measured_chunk+size])
+             */
+            let slice = guest_region;
+
+            launcher.update_data(slice).unwrap();
         }
 
         if self.sev_es {
