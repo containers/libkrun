@@ -344,52 +344,6 @@ impl AmdSev {
         vm_fd.encrypt_op_sev(&mut cmd)
     }
 
-    fn sev_inject_secret(
-        &self,
-        vm_fd: &VmFd,
-        mut secret: Secret,
-        secret_host_addr: u64,
-    ) -> Result<(), kvm_ioctls::Error> {
-        #[repr(C)]
-        struct Data {
-            headr_addr: u64,
-            headr_size: u32,
-            guest_addr: u64,
-            guest_size: u32,
-            trans_addr: u64,
-            trans_size: u32,
-        }
-
-        let mut data = Data {
-            headr_addr: &mut secret.header as *mut _ as u64,
-            headr_size: size_of_val(&secret.header) as u32,
-            guest_addr: secret_host_addr,
-            guest_size: secret.ciphertext.len() as u32,
-            trans_addr: secret.ciphertext.as_mut_ptr() as u64,
-            trans_size: secret.ciphertext.len() as u32,
-        };
-
-        let mut cmd = kvm_sev_cmd {
-            id: 5, // SEV_LAUNCH_SECRET
-            data: &mut data as *mut _ as u64,
-            error: 0,
-            sev_fd: vm_fd.as_raw_fd() as u32,
-        };
-
-        vm_fd.encrypt_op_sev(&mut cmd)
-    }
-
-    fn sev_launch_update_vmsa(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
-        let mut cmd = kvm_sev_cmd {
-            id: 4, // SEV_LAUNCH_UPDATE_VMSA
-            data: 0,
-            error: 0,
-            sev_fd: vm_fd.as_raw_fd() as u32,
-        };
-
-        vm_fd.encrypt_op_sev(&mut cmd)
-    }
-
     pub fn vm_prepare(&self, vm_fd: &VmFd, guest_mem: &GuestMemoryMmap) -> Result<(), Error> {
         let launcher = Launcher::new(vm_fd.as_raw_fd(), self.fw.as_raw_fd()).unwrap();
 
@@ -481,8 +435,8 @@ impl AmdSev {
             let secret_host_addr = guest_mem
                 .get_host_address(GuestAddress(arch::x86_64::layout::CMDLINE_START))
                 .unwrap() as u64;
-            self.sev_inject_secret(vm_fd, secret, secret_host_addr)
-                .map_err(Error::SevInjectSecret)?;
+
+            launcher.inject(secret, secret_host_addr).unwrap();
         }
 
         self.sev_launch_finish(vm_fd)
