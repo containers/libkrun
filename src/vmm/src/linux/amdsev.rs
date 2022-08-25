@@ -465,8 +465,7 @@ impl AmdSev {
         }
 
         if self.sev_es {
-            self.sev_launch_update_vmsa(vm_fd)
-                .map_err(Error::SevLaunchUpdateVmsa)?;
+            self.launcher.update_vmsa(vm_fd).unwrap();
         }
 
         let measurement = self
