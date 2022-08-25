@@ -1,7 +1,6 @@
 use std::fmt;
 use std::fs::File;
 use std::io::Read;
-use std::mem::{size_of_val, MaybeUninit};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -12,7 +11,7 @@ use super::vstate::MeasuredRegion;
 use codicon::{Decoder, Encoder};
 use curl::easy::{Easy, List};
 use kbs_types::{Attestation, Challenge, Request, SevChallenge, SevRequest, Tee, TeePubKey};
-use kvm_bindings::{kvm_enc_region, kvm_sev_cmd};
+use kvm_bindings::kvm_enc_region;
 use kvm_ioctls::VmFd;
 use procfs::CpuInfo;
 use serde::{Deserialize, Serialize};
