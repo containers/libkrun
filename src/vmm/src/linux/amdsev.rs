@@ -333,31 +333,6 @@ impl AmdSev {
         })
     }
 
-    fn sev_launch_measure(&self, vm_fd: &VmFd) -> Result<Measurement, kvm_ioctls::Error> {
-        #[repr(C)]
-        struct Data {
-            addr: u64,
-            size: u32,
-        }
-
-        let mut measurement: MaybeUninit<Measurement> = MaybeUninit::uninit();
-        let mut data = Data {
-            addr: &mut measurement as *mut _ as u64,
-            size: size_of_val(&measurement) as u32,
-        };
-
-        let mut cmd = kvm_sev_cmd {
-            id: 6, // SEV_LAUNCH_MEASURE
-            data: &mut data as *mut _ as u64,
-            error: 0,
-            sev_fd: self.fw.as_raw_fd() as u32,
-        };
-
-        vm_fd.encrypt_op_sev(&mut cmd)?;
-
-        Ok(unsafe { measurement.assume_init() })
-    }
-
     fn sev_launch_finish(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
         let mut cmd = kvm_sev_cmd {
             id: 7, // SEV_LAUNCH_FINISH
@@ -468,9 +443,8 @@ impl AmdSev {
             self.launcher.update_vmsa(vm_fd).unwrap();
         }
 
-        let measurement = self
-            .sev_launch_measure(vm_fd)
-            .map_err(Error::SevLaunchMeasure)?;
+        let mut launcher = self.launcher.measure().unwrap();
+        let measurement = launcher.measurement();
 
         if !self.tee_config.attestation_url.is_empty() {
             let tee_pubkey = TeePubKey {
