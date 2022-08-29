@@ -9,7 +9,6 @@ use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::result;
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 #[cfg(not(test))]
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -21,6 +20,7 @@ use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 
 use arch;
 use arch::aarch64::gic::GICDevice;
+use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use devices::legacy::Gic;
 use hvf::{HvfVcpu, HvfVm, VcpuExit};
 use utils::eventfd::EventFd;
@@ -267,8 +267,8 @@ impl Vcpu {
         _create_ts: TimestampUs,
         intc: Arc<Mutex<Gic>>,
     ) -> Result<Self> {
-        let (event_sender, event_receiver) = channel();
-        let (response_sender, response_receiver) = channel();
+        let (event_sender, event_receiver) = unbounded();
+        let (response_sender, response_receiver) = unbounded();
 
         Ok(Vcpu {
             id,
@@ -325,7 +325,7 @@ impl Vcpu {
     pub fn start_threaded(mut self) -> Result<VcpuHandle> {
         let event_sender = self.event_sender.take().unwrap();
         let response_receiver = self.response_receiver.take().unwrap();
-        let (init_tls_sender, init_tls_receiver) = channel();
+        let (init_tls_sender, init_tls_receiver) = unbounded();
 
         let vcpu_thread = thread::Builder::new()
             .name(format!("fc_vcpu {}", self.cpu_index()))
@@ -441,7 +441,7 @@ impl Vcpu {
         let mut hvf_vcpu = HvfVcpu::new().expect("Can't create HVF vCPU");
         let hvf_vcpuid = hvf_vcpu.id();
 
-        let (wfe_sender, wfe_receiver) = channel();
+        let (wfe_sender, wfe_receiver) = unbounded();
         self.intc
             .lock()
             .unwrap()
@@ -599,11 +599,11 @@ enum VcpuEmulation {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_arch = "x86_64")]
+    use crossbeam_channel::{unbounded, RecvTimeoutError};
     use std::fs::File;
     #[cfg(target_arch = "x86_64")]
     use std::os::unix::io::AsRawFd;
-    #[cfg(target_arch = "x86_64")]
-    use std::sync::mpsc;
     use std::sync::{Arc, Barrier};
     #[cfg(target_arch = "x86_64")]
     use std::time::Duration;
@@ -619,7 +619,7 @@ mod tests {
             // Make sure the Vcpu is out of KVM_RUN.
             self.send_event(VcpuEvent::Pause).unwrap();
             // Close the original channel so that the Vcpu thread errors and goes to exit state.
-            let (event_sender, _event_receiver) = channel();
+            let (event_sender, _event_receiver) = unbounded();
             self.event_sender = event_sender;
             // Wait for the Vcpu thread to finish execution
             self.vcpu_thread.take().unwrap().join().unwrap();
@@ -933,7 +933,7 @@ mod tests {
             handle
                 .response_receiver()
                 .recv_timeout(Duration::from_millis(100)),
-            Err(mpsc::RecvTimeoutError::Timeout)
+            Err(RecvTimeoutError::Timeout)
         );
     }
 

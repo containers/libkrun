@@ -3,11 +3,11 @@
 
 //! Enables pre-boot setup, instantiation and booting of a Firecracker VMM.
 
+#[cfg(target_os = "macos")]
+use crossbeam_channel::unbounded;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
-#[cfg(target_os = "macos")]
-use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 
 use super::{Error, Vmm};
@@ -930,7 +930,7 @@ fn create_vcpus_aarch64(
 
     for cpu_index in 0..vcpu_config.vcpu_count {
         let boot_receiver = if cpu_index != 0 {
-            let (boot_sender, boot_receiver) = channel();
+            let (boot_sender, boot_receiver) = unbounded();
             boot_senders.push(boot_sender);
             Some(boot_receiver)
         } else {

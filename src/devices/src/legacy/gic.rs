@@ -1,10 +1,10 @@
 // Copyright 2021 Red Hat, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crossbeam_channel::Sender;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, VecDeque};
 use std::convert::TryInto;
-use std::sync::mpsc::Sender;
 
 use arch::aarch64::gicv2::GICv2;
 use arch::aarch64::layout::GTIMER_VIRT;

@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::os::unix::io::RawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex, RwLock};
 
 use super::super::super::legacy::Gic;
@@ -17,6 +16,7 @@ use super::reaper::ReaperThread;
 use super::tcp::TcpProxy;
 use super::udp::UdpProxy;
 use super::VsockError;
+use crossbeam_channel::{unbounded, Sender};
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 use vm_memory::GuestMemoryMmap;
@@ -146,7 +146,7 @@ impl VsockMuxer {
         self.intc = intc.clone();
         self.irq_line = irq_line;
 
-        let (sender, receiver) = channel();
+        let (sender, receiver) = unbounded();
 
         let thread = MuxerThread::new(
             self.cid,
