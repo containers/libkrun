@@ -93,6 +93,89 @@ fn get_filepath(fd: RawFd) -> io::Result<String> {
     Ok(std::str::from_utf8(&filepath).unwrap().to_string())
 }
 
+fn get_path(path_cache: &mut BTreeMap<Inode, Vec<String>>, inode: Inode) -> io::Result<String> {
+    match path_cache.get_mut(&inode) {
+        None => Err(linux_error(io::Error::from_raw_os_error(libc::EBADF))),
+        Some(path_list) => {
+            let mut st = MaybeUninit::<bindings::stat64>::zeroed();
+            if path_list.is_empty() {
+                return Err(linux_error(io::Error::from_raw_os_error(libc::ENOENT)));
+            }
+            loop {
+                let cpath = CString::new(path_list[0].clone()).unwrap();
+                let res = unsafe { libc::lstat(cpath.as_ptr(), st.as_mut_ptr()) };
+                if res >= 0 {
+                    return Ok(path_list[0].clone());
+                } else if path_list.len() > 1 {
+                    path_list.remove(0);
+                } else {
+                    return Err(linux_error(io::Error::from_raw_os_error(libc::ENOENT)));
+                }
+            }
+        }
+    }
+}
+
+fn open_path(
+    file_cache: &mut LruCache<Inode, Arc<File>>,
+    inode: Inode,
+    filepath: &str,
+) -> io::Result<Arc<File>> {
+    let c_filepath = CString::new(filepath).unwrap();
+    let fd = unsafe { libc::open(c_filepath.as_ptr(), libc::O_SYMLINK | libc::O_CLOEXEC) };
+    if fd < 0 {
+        return Err(linux_error(io::Error::last_os_error()));
+    }
+    let file = Arc::new(unsafe { File::from_raw_fd(fd) });
+    file_cache.put(inode, file.clone());
+    Ok(file)
+}
+
+fn add_path(path_cache: &mut BTreeMap<Inode, Vec<String>>, inode: Inode, filepath: String) {
+    debug!("add_path: inode={} filepath={}", inode, filepath);
+
+    let path_list = path_cache.entry(inode).or_insert_with(Vec::new);
+    if !path_list.contains(&filepath) {
+        path_list.push(filepath);
+    }
+}
+
+fn remove_path(path_cache: &mut BTreeMap<Inode, Vec<String>>, inode: Inode, filepath: String) {
+    debug!("remove_path: inode={} filepath={}", inode, filepath);
+
+    if let Some(path_list) = path_cache.get_mut(&inode) {
+        if let Some(pos) = path_list.iter().position(|p| *p == filepath) {
+            path_list.remove(pos);
+        }
+    }
+}
+
+fn path_cache_rename_dir(
+    path_cache: &mut BTreeMap<Inode, Vec<String>>,
+    olddir: Inode,
+    oldname: &str,
+    newdir: Inode,
+    newname: &str,
+) {
+    let oldpath = format!("{}/{}", get_path(path_cache, olddir).unwrap(), oldname);
+    let newpath = format!("{}/{}", get_path(path_cache, newdir).unwrap(), newname);
+
+    for (_, path_list) in path_cache.iter_mut() {
+        let mut path_replacements = Vec::new();
+        for (index, path) in path_list.iter().enumerate() {
+            if path.starts_with(&oldpath) {
+                let mut fixedpath = String::new();
+                fixedpath.push_str(&newpath);
+                fixedpath.push_str(&path[oldpath.len()..]);
+                path_replacements.push((index, fixedpath));
+            }
+        }
+        for (n, r) in path_replacements {
+            path_list[n] = r;
+        }
+    }
+}
+
 #[derive(Clone)]
 enum StatFile {
     Path(String),
@@ -396,6 +479,7 @@ pub struct PassthroughFs {
     init_inode: u64,
     path_cache: Mutex<BTreeMap<Inode, Vec<String>>>,
     file_cache: Mutex<LruCache<Inode, Arc<File>>>,
+    pinned_files: Mutex<BTreeMap<Inode, Arc<File>>>,
 
     handles: RwLock<BTreeMap<Handle, Arc<HandleData>>>,
     next_handle: AtomicU64,
@@ -418,6 +502,7 @@ impl PassthroughFs {
             init_inode: fuse::ROOT_ID + 1,
             path_cache: Mutex::new(BTreeMap::new()),
             file_cache: Mutex::new(LruCache::new(256)),
+            pinned_files: Mutex::new(BTreeMap::new()),
 
             handles: RwLock::new(BTreeMap::new()),
             next_handle: AtomicU64::new(1),
@@ -429,85 +514,32 @@ impl PassthroughFs {
         })
     }
 
-    fn add_path(&self, inode: Inode, filepath: String) {
-        debug!("add_path: inode={} filepath={}", inode, filepath);
-
-        let mut path_cache = self.path_cache.lock().unwrap();
-        let path_list = path_cache.entry(inode).or_insert_with(Vec::new);
-        if !path_list.contains(&filepath) {
-            path_list.push(filepath);
-        }
-    }
-
-    fn remove_path(&self, inode: Inode, filepath: String) {
-        debug!("remove_path: inode={} filepath={}", inode, filepath);
-
-        let mut path_cache = self.path_cache.lock().unwrap();
-        if let Some(path_list) = path_cache.get_mut(&inode) {
-            if let Some(pos) = path_list.iter().position(|p| *p == filepath) {
-                path_list.remove(pos);
-            }
-        }
-    }
-
-    fn get_path(&self, inode: Inode) -> io::Result<String> {
-        match self.path_cache.lock().unwrap().get_mut(&inode) {
-            None => Err(linux_error(io::Error::from_raw_os_error(libc::EBADF))),
-            Some(path_list) => {
-                let mut st = MaybeUninit::<bindings::stat64>::zeroed();
-                if path_list.is_empty() {
-                    return Err(linux_error(io::Error::from_raw_os_error(libc::ENOENT)));
-                }
-                loop {
-                    let cpath = CString::new(path_list[0].clone()).unwrap();
-                    let res = unsafe { libc::lstat(cpath.as_ptr(), st.as_mut_ptr()) };
-                    if res >= 0 {
-                        return Ok(path_list[0].clone());
-                    } else if path_list.len() > 1 {
-                        path_list.remove(0);
-                    } else {
-                        return Err(linux_error(io::Error::from_raw_os_error(libc::ENOENT)));
-                    }
-                }
-            }
-        }
-    }
-
-    fn path_cache_rename_dir(&self, olddir: &str, oldname: &str, newdir: &str, newname: &str) {
-        let mut path_cache = self.path_cache.lock().unwrap();
-        let oldpath = format!("{}/{}", olddir, oldname);
-        let newpath = format!("{}/{}", newdir, newname);
-
-        for (_, path_list) in path_cache.iter_mut() {
-            let mut path_replacements = Vec::new();
-            for (index, path) in path_list.iter().enumerate() {
-                if path.starts_with(&oldpath) {
-                    let mut fixedpath = String::new();
-                    fixedpath.push_str(&newpath);
-                    fixedpath.push_str(&path[oldpath.len()..]);
-                    path_replacements.push((index, fixedpath));
-                }
-            }
-            for (n, r) in path_replacements {
-                path_list[n] = r;
-            }
+    fn cached_or_pinned(
+        &self,
+        inode: &Inode,
+        file_cache: &mut LruCache<Inode, Arc<File>>,
+    ) -> Option<Arc<File>> {
+        if let Some(file) = file_cache.get(inode) {
+            Some(file.clone())
+        } else {
+            self.pinned_files
+                .lock()
+                .unwrap()
+                .get(&inode)
+                .map(Arc::clone)
         }
     }
 
     fn get_file(&self, inode: Inode) -> io::Result<Arc<File>> {
         let mut file_cache = self.file_cache.lock().unwrap();
-        if let Some(file) = file_cache.get(&inode) {
+        if let Some(file) = self.cached_or_pinned(&inode, &mut file_cache) {
             Ok(file.clone())
         } else {
-            let filepath = CString::new(self.get_path(inode)?).unwrap();
-            let fd = unsafe { libc::open(filepath.as_ptr(), libc::O_SYMLINK | libc::O_CLOEXEC) };
-            if fd < 0 {
-                return Err(linux_error(io::Error::last_os_error()));
-            }
-
-            let file = Arc::new(unsafe { File::from_raw_fd(fd) });
-            file_cache.put(inode, file.clone());
-            Ok(file)
+            open_path(
+                &mut file_cache,
+                inode,
+                &get_path(&mut self.path_cache.lock().unwrap(), inode)?,
+            )
         }
     }
 
@@ -531,7 +563,7 @@ impl PassthroughFs {
             flags &= !libc::O_APPEND;
         }
 
-        let filepath = match self.get_path(inode) {
+        let filepath = match get_path(&mut self.path_cache.lock().unwrap(), inode) {
             Ok(fp) => CString::new(fp).unwrap(),
             Err(_) => CString::new(get_filepath(self.get_file(inode)?.as_raw_fd())?).unwrap(),
         };
@@ -659,7 +691,11 @@ impl PassthroughFs {
             inode
         );
 
-        self.add_path(inode, get_filepath(fd)?);
+        add_path(
+            &mut self.path_cache.lock().unwrap(),
+            inode,
+            get_filepath(fd)?,
+        );
 
         Ok(Entry {
             inode,
@@ -822,22 +858,47 @@ impl PassthroughFs {
 
     fn do_unlink(
         &self,
-        ctx: Context,
+        _ctx: Context,
         parent: Inode,
         name: &CStr,
         flags: libc::c_int,
     ) -> io::Result<()> {
         let file = self.get_file(parent)?;
-        let entry = self.do_lookup(parent, name).ok();
+        let entry = match self.do_lookup(parent, name) {
+            Ok(entry) => {
+                let mut inodes = self.inodes.write().unwrap();
+                let mut file_cache = self.file_cache.lock().unwrap();
+                let mut path_cache = self.path_cache.lock().unwrap();
+                let mut pinned_files = self.pinned_files.lock().unwrap();
+
+                forget_one(
+                    &mut inodes,
+                    &mut file_cache,
+                    &mut path_cache,
+                    &mut pinned_files,
+                    entry.inode,
+                    1,
+                    true,
+                );
+
+                Some(entry)
+            }
+            Err(_) => None,
+        };
 
         // Safe because this doesn't modify any memory and we check the return value.
         let res = unsafe { libc::unlinkat(file.as_raw_fd(), name.as_ptr(), flags) };
         if res == 0 {
             if let Some(entry) = entry {
-                let filepath = format!("{}/{}", self.get_path(parent)?, name.to_str().unwrap(),);
+                let mut path_cache = self.path_cache.lock().unwrap();
+                let filepath = format!(
+                    "{}/{}",
+                    get_path(&mut path_cache, parent)?,
+                    name.to_str().unwrap(),
+                );
 
-                self.remove_path(entry.inode, filepath);
-                self.forget(ctx, entry.inode, 1);
+                remove_path(&mut path_cache, entry.inode, filepath);
+                drop(path_cache);
             }
             Ok(())
         } else {
@@ -878,8 +939,10 @@ fn forget_one(
     inodes: &mut MultikeyBTreeMap<Inode, InodeAltKey, Arc<InodeData>>,
     file_cache: &mut LruCache<Inode, Arc<File>>,
     path_cache: &mut BTreeMap<Inode, Vec<String>>,
+    pinned_files: &mut BTreeMap<Inode, Arc<File>>,
     inode: Inode,
     count: u64,
+    unlinked: bool,
 ) {
     if let Some(data) = inodes.get(&inode) {
         // Acquiring the write lock on the inode map prevents new lookups from incrementing the
@@ -909,6 +972,17 @@ fn forget_one(
                     inodes.remove(&inode);
                     file_cache.pop(&inode);
                     path_cache.remove(&inode);
+                    pinned_files.remove(&inode);
+                } else if unlinked && !pinned_files.contains_key(&inode) {
+                    if let Some(file) = file_cache.get(&inode) {
+                        pinned_files.insert(inode, file.clone());
+                    } else {
+                        get_path(path_cache, inode)
+                            .ok()
+                            .map(|filepath| open_path(file_cache, inode, &filepath).ok())
+                            .flatten()
+                            .map(|file| pinned_files.insert(inode, file));
+                    }
                 }
                 break;
             }
@@ -961,7 +1035,8 @@ impl FileSystem for PassthroughFs {
             }),
         );
 
-        self.add_path(fuse::ROOT_ID, self.cfg.root_dir.clone());
+        let mut path_cache = self.path_cache.lock().unwrap();
+        add_path(&mut path_cache, fuse::ROOT_ID, self.cfg.root_dir.clone());
 
         if let Some(mapped_volumes) = &self.cfg.mapped_volumes {
             for (host_vol, guest_vol) in mapped_volumes.iter() {
@@ -1005,7 +1080,7 @@ impl FileSystem for PassthroughFs {
                         refcount: AtomicU64::new(1),
                     }),
                 );
-                self.add_path(inode, host_vol_str.to_string());
+                add_path(&mut path_cache, inode, host_vol_str.to_string());
                 self.host_volumes
                     .write()
                     .unwrap()
@@ -1066,17 +1141,35 @@ impl FileSystem for PassthroughFs {
         let mut inodes = self.inodes.write().unwrap();
         let mut file_cache = self.file_cache.lock().unwrap();
         let mut path_cache = self.path_cache.lock().unwrap();
+        let mut pinned_files = self.pinned_files.lock().unwrap();
 
-        forget_one(&mut inodes, &mut file_cache, &mut path_cache, inode, count)
+        forget_one(
+            &mut inodes,
+            &mut file_cache,
+            &mut path_cache,
+            &mut pinned_files,
+            inode,
+            count,
+            false,
+        )
     }
 
     fn batch_forget(&self, _ctx: Context, requests: Vec<(Inode, u64)>) {
         let mut inodes = self.inodes.write().unwrap();
         let mut file_cache = self.file_cache.lock().unwrap();
         let mut path_cache = self.path_cache.lock().unwrap();
+        let mut pinned_files = self.pinned_files.lock().unwrap();
 
         for (inode, count) in requests {
-            forget_one(&mut inodes, &mut file_cache, &mut path_cache, inode, count)
+            forget_one(
+                &mut inodes,
+                &mut file_cache,
+                &mut path_cache,
+                &mut pinned_files,
+                inode,
+                count,
+                false,
+            )
         }
     }
 
@@ -1125,7 +1218,11 @@ impl FileSystem for PassthroughFs {
         // Safe because this doesn't modify any memory and we check the return value.
         let res = unsafe { libc::mkdirat(file.as_raw_fd(), name.as_ptr(), 0o700) };
         if res == 0 {
-            let filepath = format!("{}/{}", self.get_path(parent)?, name.to_str().unwrap(),);
+            let filepath = format!(
+                "{}/{}",
+                get_path(&mut self.path_cache.lock().unwrap(), parent)?,
+                name.to_str().unwrap(),
+            );
             set_xattr_stat(
                 StatFile::Path(filepath),
                 Some((ctx.uid, ctx.gid)),
@@ -1383,7 +1480,7 @@ impl FileSystem for PassthroughFs {
                     set_xattr_stat(StatFile::Fd(fd), None, Some(attr.st_mode as u32))
                 }
                 Data::FilePath => {
-                    let filepath = self.get_path(inode)?;
+                    let filepath = get_path(&mut self.path_cache.lock().unwrap(), inode)?;
                     set_xattr_stat(StatFile::Path(filepath), None, Some(attr.st_mode as u32))
                 }
             };
@@ -1521,20 +1618,25 @@ impl FileSystem for PassthroughFs {
             }
 
             let entry = self.do_lookup(newdir, newname)?;
-            self.remove_path(
-                entry.inode,
-                format!("{}/{}", self.get_path(olddir)?, oldname.to_str().unwrap(),),
+            let mut path_cache = self.path_cache.lock().unwrap();
+            let filepath = format!(
+                "{}/{}",
+                get_path(&mut path_cache, olddir)?,
+                oldname.to_str().unwrap()
             );
+            remove_path(&mut path_cache, entry.inode, filepath);
             if (entry.attr.st_mode & libc::S_IFMT) == libc::S_IFDIR {
                 // The renaming a directory may invalidate a number of entries in
                 // our path cache. This is costly, but we have no other option.
-                self.path_cache_rename_dir(
-                    &self.get_path(olddir).unwrap(),
+                path_cache_rename_dir(
+                    &mut path_cache,
+                    olddir,
                     oldname.to_str().unwrap(),
-                    &self.get_path(newdir).unwrap(),
+                    newdir,
                     newname.to_str().unwrap(),
                 );
             }
+            drop(path_cache);
 
             self.forget(ctx, entry.inode, 1);
 
@@ -1583,14 +1685,16 @@ impl FileSystem for PassthroughFs {
         newparent: Inode,
         newname: &CStr,
     ) -> io::Result<Entry> {
+        let mut path_cache = self.path_cache.lock().unwrap();
         let newfullpath = CString::new(format!(
             "{}/{}",
-            self.get_path(newparent)?,
+            get_path(&mut path_cache, newparent)?,
             newname.to_str().unwrap(),
         ))
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        let filepath = CString::new(self.get_path(inode)?).unwrap();
+        let filepath = CString::new(get_path(&mut path_cache, inode)?).unwrap();
+        drop(path_cache);
 
         // Safe because this doesn't modify any memory and we check the return value.
         let res = unsafe { libc::link(filepath.as_ptr(), newfullpath.as_ptr()) };
@@ -1615,7 +1719,7 @@ impl FileSystem for PassthroughFs {
             let mut entry = self.do_lookup(parent, name)?;
             let mode = libc::S_IFLNK | 0o777;
             set_xattr_stat(
-                StatFile::Path(self.get_path(entry.inode)?),
+                StatFile::Path(get_path(&mut self.path_cache.lock().unwrap(), entry.inode)?),
                 Some((ctx.uid, ctx.gid)),
                 Some(mode as u32),
             );
