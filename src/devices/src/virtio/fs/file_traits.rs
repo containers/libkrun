@@ -123,14 +123,14 @@ impl<'a, T: FileReadWriteVolatile + ?Sized> FileReadWriteVolatile for &'a mut T 
 pub trait FileReadWriteAtVolatile {
     /// Reads bytes from this file at `offset` into the given slice, returning the number of bytes
     /// read on success.
-    fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize>;
+    fn read_at_volatile(&self, slice: VolatileSlice, offset: u64) -> Result<usize>;
 
     /// Like `read_at_volatile`, except it reads to a slice of buffers. Data is copied to fill each
     /// buffer in order, with the final buffer written to possibly being only partially filled. This
     /// method must behave as a single call to `read_at_volatile` with the buffers concatenated
     /// would. The default implementation calls `read_at_volatile` with either the first nonempty
     /// buffer provided, or returns `Ok(0)` if none exists.
-    fn read_vectored_at_volatile(&mut self, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
+    fn read_vectored_at_volatile(&self, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
         if let Some(&slice) = bufs.first() {
             self.read_at_volatile(slice, offset)
         } else {
@@ -140,7 +140,7 @@ pub trait FileReadWriteAtVolatile {
 
     /// Reads bytes from this file at `offset` into the given slice until all bytes in the slice are
     /// read, or an error is returned.
-    fn read_exact_at_volatile(&mut self, mut slice: VolatileSlice, mut offset: u64) -> Result<()> {
+    fn read_exact_at_volatile(&self, mut slice: VolatileSlice, mut offset: u64) -> Result<()> {
         while !slice.is_empty() {
             match self.read_at_volatile(slice, offset) {
                 Ok(0) => return Err(Error::from(ErrorKind::UnexpectedEof)),
@@ -157,14 +157,14 @@ pub trait FileReadWriteAtVolatile {
 
     /// Writes bytes from this file at `offset` into the given slice, returning the number of bytes
     /// written on success.
-    fn write_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize>;
+    fn write_at_volatile(&self, slice: VolatileSlice, offset: u64) -> Result<usize>;
 
     /// Like `write_at_at_volatile`, except that it writes from a slice of buffers. Data is copied
     /// from each buffer in order, with the final buffer read from possibly being only partially
     /// consumed. This method must behave as a call to `write_at_volatile` with the buffers
     /// concatenated would. The default implementation calls `write_at_volatile` with either the
     /// first nonempty buffer provided, or returns `Ok(0)` if none exists.
-    fn write_vectored_at_volatile(&mut self, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
+    fn write_vectored_at_volatile(&self, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
         if let Some(&slice) = bufs.first() {
             self.write_at_volatile(slice, offset)
         } else {
@@ -174,7 +174,7 @@ pub trait FileReadWriteAtVolatile {
 
     /// Writes bytes from this file at `offset` into the given slice until all bytes in the slice
     /// are written, or an error is returned.
-    fn write_all_at_volatile(&mut self, mut slice: VolatileSlice, mut offset: u64) -> Result<()> {
+    fn write_all_at_volatile(&self, mut slice: VolatileSlice, mut offset: u64) -> Result<()> {
         while !slice.is_empty() {
             match self.write_at_volatile(slice, offset) {
                 Ok(0) => return Err(Error::from(ErrorKind::WriteZero)),
@@ -190,28 +190,28 @@ pub trait FileReadWriteAtVolatile {
     }
 }
 
-impl<'a, T: FileReadWriteAtVolatile + ?Sized> FileReadWriteAtVolatile for &'a mut T {
-    fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize> {
+impl<'a, T: FileReadWriteAtVolatile + ?Sized> FileReadWriteAtVolatile for &'a T {
+    fn read_at_volatile(&self, slice: VolatileSlice, offset: u64) -> Result<usize> {
         (**self).read_at_volatile(slice, offset)
     }
 
-    fn read_vectored_at_volatile(&mut self, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
+    fn read_vectored_at_volatile(&self, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
         (**self).read_vectored_at_volatile(bufs, offset)
     }
 
-    fn read_exact_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<()> {
+    fn read_exact_at_volatile(&self, slice: VolatileSlice, offset: u64) -> Result<()> {
         (**self).read_exact_at_volatile(slice, offset)
     }
 
-    fn write_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize> {
+    fn write_at_volatile(&self, slice: VolatileSlice, offset: u64) -> Result<usize> {
         (**self).write_at_volatile(slice, offset)
     }
 
-    fn write_vectored_at_volatile(&mut self, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
+    fn write_vectored_at_volatile(&self, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
         (**self).write_vectored_at_volatile(bufs, offset)
     }
 
-    fn write_all_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<()> {
+    fn write_all_at_volatile(&self, slice: VolatileSlice, offset: u64) -> Result<()> {
         (**self).write_all_at_volatile(slice, offset)
     }
 }
@@ -296,7 +296,7 @@ macro_rules! volatile_impl {
         }
 
         impl FileReadWriteAtVolatile for $ty {
-            fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize> {
+            fn read_at_volatile(&self, slice: VolatileSlice, offset: u64) -> Result<usize> {
                 // Safe because only bytes inside the slice are accessed and the kernel is expected
                 // to handle arbitrary memory for I/O.
                 let ret = unsafe {
@@ -316,7 +316,7 @@ macro_rules! volatile_impl {
             }
 
             fn read_vectored_at_volatile(
-                &mut self,
+                &self,
                 bufs: &[VolatileSlice],
                 offset: u64,
             ) -> Result<usize> {
@@ -349,7 +349,7 @@ macro_rules! volatile_impl {
                 }
             }
 
-            fn write_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize> {
+            fn write_at_volatile(&self, slice: VolatileSlice, offset: u64) -> Result<usize> {
                 // Safe because only bytes inside the slice are accessed and the kernel is expected
                 // to handle arbitrary memory for I/O.
                 let ret = unsafe {
@@ -369,7 +369,7 @@ macro_rules! volatile_impl {
             }
 
             fn write_vectored_at_volatile(
-                &mut self,
+                &self,
                 bufs: &[VolatileSlice],
                 offset: u64,
             ) -> Result<usize> {

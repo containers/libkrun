@@ -127,7 +127,7 @@ pub trait ZeroCopyReader {
     /// If any error is returned then the implementation must guarantee that no bytes were copied
     /// from `self`. If the underlying write to `f` returns `0` then the implementation must return
     /// an error of the kind `io::ErrorKind::WriteZero`.
-    fn read_to(&mut self, f: &mut File, count: usize, off: u64) -> io::Result<usize>;
+    fn read_to(&mut self, f: &File, count: usize, off: u64) -> io::Result<usize>;
 
     /// Copies exactly `count` bytes of data from `self` into `f` at offset `off`. `off + count`
     /// must be less than `u64::MAX`.
@@ -190,7 +190,7 @@ pub trait ZeroCopyReader {
 }
 
 impl<'a, R: ZeroCopyReader> ZeroCopyReader for &'a mut R {
-    fn read_to(&mut self, f: &mut File, count: usize, off: u64) -> io::Result<usize> {
+    fn read_to(&mut self, f: &File, count: usize, off: u64) -> io::Result<usize> {
         (**self).read_to(f, count, off)
     }
     fn read_exact_to(&mut self, f: &mut File, count: usize, off: u64) -> io::Result<()> {
@@ -217,7 +217,7 @@ pub trait ZeroCopyWriter {
     /// If any error is returned then the implementation must guarantee that no bytes were copied
     /// from `f`. If the underlying read from `f` returns `0` then the implementation must return an
     /// error of the kind `io::ErrorKind::UnexpectedEof`.
-    fn write_from(&mut self, f: &mut File, count: usize, off: u64) -> io::Result<usize>;
+    fn write_from(&mut self, f: &File, count: usize, off: u64) -> io::Result<usize>;
 
     /// Copies exactly `count` bytes of data from `f` at offset `off` into `self`. `off + count`
     /// must be less than `u64::MAX`.
@@ -283,7 +283,7 @@ pub trait ZeroCopyWriter {
 }
 
 impl<'a, W: ZeroCopyWriter> ZeroCopyWriter for &'a mut W {
-    fn write_from(&mut self, f: &mut File, count: usize, off: u64) -> io::Result<usize> {
+    fn write_from(&mut self, f: &File, count: usize, off: u64) -> io::Result<usize> {
         (**self).write_from(f, count, off)
     }
     fn write_all_from(&mut self, f: &mut File, count: usize, off: u64) -> io::Result<()> {
