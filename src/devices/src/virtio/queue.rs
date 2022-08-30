@@ -337,6 +337,9 @@ impl Queue {
         // 2-byte items, so the offset will be:
         let index_offset = 4 + 2 * (self.next_avail.0 % self.actual_size());
 
+        // Make sure we catch all updates on the queue
+        fence(Ordering::Acquire);
+
         // `self.is_valid()` already performed all the bound checks on the descriptor table
         // and virtq rings, so it's safe to unwrap guest memory reads and to use unchecked
         // offsets.
