@@ -1401,8 +1401,8 @@ impl FileSystem for PassthroughFs {
 
         // This is safe because write_from uses preadv64, so the underlying file descriptor
         // offset is not affected by this operation.
-        let mut f = data.file.read().unwrap().try_clone().unwrap();
-        w.write_from(&mut f, size as usize, offset)
+        let mut f = data.file.read().unwrap();
+        w.write_from(&f, size as usize, offset)
     }
 
     fn write<R: io::Read + ZeroCopyReader>(
@@ -1429,8 +1429,8 @@ impl FileSystem for PassthroughFs {
 
         // This is safe because read_to uses pwritev64, so the underlying file descriptor
         // offset is not affected by this operation.
-        let mut f = data.file.read().unwrap().try_clone().unwrap();
-        r.read_to(&mut f, size as usize, offset)
+        let mut f = data.file.read().unwrap();
+        r.read_to(&f, size as usize, offset)
     }
 
     fn getattr(

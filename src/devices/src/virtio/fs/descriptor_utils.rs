@@ -257,7 +257,7 @@ impl<'a> Reader<'a> {
     /// enough data in the descriptor chain buffer.
     pub fn read_to_at<F: FileReadWriteAtVolatile>(
         &mut self,
-        mut dst: F,
+        dst: F,
         count: usize,
         off: u64,
     ) -> io::Result<usize> {
@@ -404,7 +404,7 @@ impl<'a> Writer<'a> {
     /// there isn't enough data in the descriptor chain buffer.
     pub fn write_from_at<F: FileReadWriteAtVolatile>(
         &mut self,
-        mut src: F,
+        src: F,
         count: usize,
         off: u64,
     ) -> io::Result<usize> {
