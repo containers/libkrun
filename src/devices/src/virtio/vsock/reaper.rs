@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use super::proxy::Proxy;
+use crossbeam_channel::Receiver;
 
 pub type ProxyMap = Arc<RwLock<HashMap<u64, Mutex<Box<dyn Proxy>>>>>;
 const TIMEOUT: Duration = Duration::new(5, 0);

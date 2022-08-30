@@ -1,6 +1,5 @@
 use std::os::unix::io::RawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -12,6 +11,7 @@ use super::muxer_rxq::MuxerRxQ;
 use super::proxy::{ProxyRemoval, ProxyUpdate};
 use super::tcp::TcpProxy;
 
+use crossbeam_channel::Sender;
 use rand::{rngs::ThreadRng, thread_rng, Rng};
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 use utils::eventfd::EventFd;

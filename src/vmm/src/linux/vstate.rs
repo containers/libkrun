@@ -5,13 +5,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
+use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use libc::{c_int, c_void, siginfo_t};
 use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::result;
 use std::sync::atomic::{fence, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 #[cfg(not(test))]
 use std::sync::Barrier;
 use std::thread;
@@ -815,8 +815,8 @@ impl Vcpu {
         create_ts: TimestampUs,
     ) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
-        let (event_sender, event_receiver) = channel();
-        let (response_sender, response_receiver) = channel();
+        let (event_sender, event_receiver) = unbounded();
+        let (response_sender, response_receiver) = unbounded();
 
         // Initially the cpuid per vCPU is the one supported by this VM.
         Ok(Vcpu {
@@ -851,8 +851,8 @@ impl Vcpu {
         create_ts: TimestampUs,
     ) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
-        let (event_sender, event_receiver) = channel();
-        let (response_sender, response_receiver) = channel();
+        let (event_sender, event_receiver) = unbounded();
+        let (response_sender, response_receiver) = unbounded();
 
         Ok(Vcpu {
             fd: kvm_vcpu,
@@ -973,7 +973,7 @@ impl Vcpu {
     pub fn start_threaded(mut self) -> Result<VcpuHandle> {
         let event_sender = self.event_sender.take().unwrap();
         let response_receiver = self.response_receiver.take().unwrap();
-        let (init_tls_sender, init_tls_receiver) = channel();
+        let (init_tls_sender, init_tls_receiver) = unbounded();
         let vcpu_thread = thread::Builder::new()
             .name(format!("fc_vcpu {}", self.cpu_index()))
             .spawn(move || {
@@ -1420,6 +1420,7 @@ enum VcpuEmulation {
 
 #[cfg(test)]
 mod tests {
+    use crossbeam_channel::unbounded;
     use std::fs::File;
     use std::sync::{Arc, Barrier};
 
@@ -1434,7 +1435,7 @@ mod tests {
             // Make sure the Vcpu is out of KVM_RUN.
             self.send_event(VcpuEvent::Pause).unwrap();
             // Close the original channel so that the Vcpu thread errors and goes to exit state.
-            let (event_sender, _event_receiver) = channel();
+            let (event_sender, _event_receiver) = unbounded();
             self.event_sender = event_sender;
             // Wait for the Vcpu thread to finish execution
             self.vcpu_thread.take().unwrap().join().unwrap();
