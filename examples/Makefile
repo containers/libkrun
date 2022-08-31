@@ -36,4 +36,4 @@ rootfs:
 	podman rm libkrun_chroot_vm
 
 clean:
-	rm -rf chroot_vm $(ROOTFS_DIR)
+	rm -rf chroot_vm $(ROOTFS_DIR) launch-tee
