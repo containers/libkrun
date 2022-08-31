@@ -7,7 +7,6 @@ use super::proxy::Proxy;
 use crossbeam_channel::Receiver;
 
 pub type ProxyMap = Arc<RwLock<HashMap<u64, Mutex<Box<dyn Proxy>>>>>;
-const TIMEOUT: Duration = Duration::new(5, 0);
 
 pub struct ReaperThread {
     receiver: Receiver<u64>,
@@ -29,9 +28,11 @@ impl ReaperThread {
         let mut expired: Vec<u64> = Vec::new();
         let now = Instant::now();
 
+        let timeout = Duration::new(5, 0);
+
         for (id, exptime) in self.released_map.iter() {
             let elapsed = now.duration_since(*exptime);
-            if elapsed > TIMEOUT {
+            if elapsed > timeout {
                 expired.push(*id);
             } else if elapsed < lowest_elapsed {
                 lowest_elapsed = elapsed;
