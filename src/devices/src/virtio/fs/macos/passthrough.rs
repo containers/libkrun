@@ -1407,7 +1407,7 @@ impl FileSystem for PassthroughFs {
 
         // This is safe because write_from uses preadv64, so the underlying file descriptor
         // offset is not affected by this operation.
-        let mut f = data.file.read().unwrap();
+        let f = data.file.read().unwrap();
         w.write_from(&f, size as usize, offset)
     }
 
@@ -1435,7 +1435,7 @@ impl FileSystem for PassthroughFs {
 
         // This is safe because read_to uses pwritev64, so the underlying file descriptor
         // offset is not affected by this operation.
-        let mut f = data.file.read().unwrap();
+        let f = data.file.read().unwrap();
         r.read_to(&f, size as usize, offset)
     }
 
