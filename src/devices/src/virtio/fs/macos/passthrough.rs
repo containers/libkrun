@@ -158,16 +158,21 @@ fn path_cache_rename_dir(
     newname: &str,
 ) {
     let oldpath = format!("{}/{}", get_path(path_cache, olddir).unwrap(), oldname);
+    let oldparts: Vec<&str> = oldpath.split('/').collect();
     let newpath = format!("{}/{}", get_path(path_cache, newdir).unwrap(), newname);
 
     for (_, path_list) in path_cache.iter_mut() {
         let mut path_replacements = Vec::new();
         for (index, path) in path_list.iter().enumerate() {
             if path.starts_with(&oldpath) {
-                let mut fixedpath = String::new();
-                fixedpath.push_str(&newpath);
-                fixedpath.push_str(&path[oldpath.len()..]);
-                path_replacements.push((index, fixedpath));
+                let parts: Vec<&str> = path.split('/').collect();
+                if parts.len() > oldparts.len() {
+                    let mut fixedpath = String::new();
+                    fixedpath.push_str(&newpath);
+                    fixedpath.push_str("/");
+                    fixedpath.push_str(&parts[oldparts.len()..].join("/"));
+                    path_replacements.push((index, fixedpath));
+                }
             }
         }
         for (n, r) in path_replacements {
