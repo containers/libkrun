@@ -568,7 +568,8 @@ impl PassthroughFs {
             flags &= !libc::O_APPEND;
         }
 
-        let filepath = match get_path(&mut self.path_cache.lock().unwrap(), inode) {
+        let fp = get_path(&mut self.path_cache.lock().unwrap(), inode);
+        let filepath = match fp {
             Ok(fp) => CString::new(fp).unwrap(),
             Err(_) => CString::new(get_filepath(self.get_file(inode)?.as_raw_fd())?).unwrap(),
         };
