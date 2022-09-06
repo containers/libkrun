@@ -26,7 +26,7 @@ kbs-types = { path = "../kbs-types", features = ["tee-sev"], optional = true }
 procfs = { version = "0.12", optional = true }
 serde = { version = "1.0.125", optional = true }
 serde_json = { version = "1.0.64", optional = true }
-sev = { version = "0.2", features = ["openssl"], optional = true }
+sev = { git = "https://github.com/virtee/sev.git", branch = "main", features = ["openssl"], optional = true }
 curl = { version = "0.4", optional = true }
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
