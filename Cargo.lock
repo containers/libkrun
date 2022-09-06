@@ -63,9 +63,9 @@ checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 
 [[package]]
 name = "bitfield"
-version = "0.13.2"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46afbd2983a5d5a7bd740ccb198caf5b82f45c40c09c0eed36052d91cb92e719"
+checksum = "2d7e60934ceec538daadb9d8432424ed043a904d8e0243f3c6446bce549a46ac"
 
 [[package]]
 name = "bitflags"
@@ -652,6 +652,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-big-array"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3323f09a748af288c3dc2474ea6803ee81f118321775bffa3ac8f7e65c5e90e7"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_bytes"
 version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -684,17 +693,18 @@ dependencies = [
 
 [[package]]
 name = "sev"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c07fba5645febfaab8958c9a5812d737911a29f353462288937df138a241f9d4"
+version = "0.3.0"
+source = "git+https://github.com/tylerfanelli/sev.git?branch=vmsa_update#b43459a6bd29c24c3504e85c35254bb7882b56ba"
 dependencies = [
  "bitfield",
  "bitflags",
  "codicon",
  "dirs",
  "iocuddle",
+ "kvm-ioctls",
  "openssl",
  "serde",
+ "serde-big-array",
  "serde_bytes",
 ]
 
