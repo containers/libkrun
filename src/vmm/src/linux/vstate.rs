@@ -561,9 +561,10 @@ impl Vm {
         &self,
         guest_mem: &GuestMemoryMmap,
         measured_regions: Vec<MeasuredRegion>,
+        launcher: Launcher<Started, RawFd, RawFd>,
     ) -> Result<()> {
         self.sev
-            .vm_attest(&self.fd, guest_mem, measured_regions)
+            .vm_attest(&self.fd, guest_mem, measured_regions, launcher)
             .map_err(Error::SecVirtAttest)
     }
 

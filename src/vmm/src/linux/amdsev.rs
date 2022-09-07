@@ -427,17 +427,6 @@ impl AmdSev {
         vm_fd.encrypt_op_sev(&mut cmd)
     }
 
-    fn sev_launch_update_vmsa(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
-        let mut cmd = kvm_sev_cmd {
-            id: 4, // SEV_LAUNCH_UPDATE_VMSA
-            data: 0,
-            error: 0,
-            sev_fd: vm_fd.as_raw_fd() as u32,
-        };
-
-        vm_fd.encrypt_op_sev(&mut cmd)
-    }
-
     pub fn vm_prepare(
         &self,
         vm_fd: &VmFd,
@@ -474,6 +463,7 @@ impl AmdSev {
         vm_fd: &VmFd,
         guest_mem: &GuestMemoryMmap,
         measured_regions: Vec<MeasuredRegion>,
+        mut launcher: Launcher<Started, RawFd, RawFd>,
     ) -> Result<(), Error> {
         for region in measured_regions {
             self.sev_launch_update_data(vm_fd, region.host_addr, region.size)
@@ -481,8 +471,7 @@ impl AmdSev {
         }
 
         if self.sev_es {
-            self.sev_launch_update_vmsa(vm_fd)
-                .map_err(Error::SevLaunchUpdateVmsa)?;
+            launcher.update_vmsa().unwrap()
         }
 
         let measurement = self

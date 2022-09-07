@@ -355,7 +355,7 @@ pub fn build_microvm(
     let mut vm = setup_vm(&guest_memory, vm_resources.tee_config())?;
 
     #[cfg(feature = "amd-sev")]
-    let (_launcher, measured_regions) = {
+    let (launcher, measured_regions) = {
         let launcher = vm
             .secure_virt_prepare(&guest_memory)
             .map_err(StartMicrovmError::SecureVirtPrepare)?;
@@ -581,7 +581,7 @@ pub fn build_microvm(
     #[cfg(feature = "amd-sev")]
     {
         vmm.kvm_vm()
-            .secure_virt_attest(vmm.guest_memory(), measured_regions)
+            .secure_virt_attest(vmm.guest_memory(), measured_regions, launcher)
             .map_err(StartMicrovmError::SecureVirtAttest)?;
 
         println!("Starting TEE/microVM.");
