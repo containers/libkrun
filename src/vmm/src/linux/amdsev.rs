@@ -355,17 +355,6 @@ impl AmdSev {
         vm_fd.encrypt_op_sev(&mut cmd)
     }
 
-    fn sev_launch_finish(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
-        let mut cmd = kvm_sev_cmd {
-            id: 7, // SEV_LAUNCH_FINISH
-            data: 0,
-            error: 0,
-            sev_fd: self.fw.as_raw_fd() as u32,
-        };
-
-        vm_fd.encrypt_op_sev(&mut cmd)
-    }
-
     pub fn vm_prepare(
         &self,
         vm_fd: &VmFd,
@@ -457,8 +446,7 @@ impl AmdSev {
                 .unwrap();
         }
 
-        self.sev_launch_finish(vm_fd)
-            .map_err(Error::SevLaunchFinish)?;
+        let _handle = launcher.finish();
 
         Ok(())
     }
