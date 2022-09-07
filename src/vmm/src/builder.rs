@@ -355,13 +355,14 @@ pub fn build_microvm(
     let mut vm = setup_vm(&guest_memory, vm_resources.tee_config())?;
 
     #[cfg(feature = "amd-sev")]
-    let measured_regions = {
-        vm.secure_virt_prepare(&guest_memory)
+    let (launcher, measured_regions) = {
+        let launcher = vm
+            .secure_virt_prepare(&guest_memory)
             .map_err(StartMicrovmError::SecureVirtPrepare)?;
 
         println!("Injecting and measuring memory regions. This may take a while.");
 
-        vec![
+        let m = vec![
             MeasuredRegion {
                 host_addr: guest_memory
                     .get_host_address(GuestAddress(arch::BIOS_START))
@@ -386,7 +387,9 @@ pub fn build_microvm(
                     .unwrap() as u64,
                 size: 4096,
             },
-        ]
+        ];
+
+        (launcher, m)
     };
 
     // On x86_64 always create a serial device,
@@ -578,7 +581,7 @@ pub fn build_microvm(
     #[cfg(feature = "amd-sev")]
     {
         vmm.kvm_vm()
-            .secure_virt_attest(vmm.guest_memory(), measured_regions)
+            .secure_virt_attest(vmm.guest_memory(), measured_regions, launcher)
             .map_err(StartMicrovmError::SecureVirtAttest)?;
 
         println!("Starting TEE/microVM.");

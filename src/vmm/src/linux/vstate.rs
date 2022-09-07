@@ -10,6 +10,7 @@ use libc::{c_int, c_void, siginfo_t};
 use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::io;
+use std::os::unix::io::RawFd;
 use std::result;
 use std::sync::atomic::{fence, Ordering};
 #[cfg(not(test))]
@@ -45,6 +46,8 @@ use utils::sm::StateMachine;
 use vm_memory::{
     Address, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion,
 };
+
+use sev::launch::sev::*;
 
 #[cfg(target_arch = "x86_64")]
 const MAGIC_IOPORT_SIGNAL_GUEST_BOOT_COMPLETE: u64 = 0x03f0;
@@ -540,7 +543,10 @@ impl Vm {
     }
 
     #[cfg(feature = "amd-sev")]
-    pub fn secure_virt_prepare(&mut self, guest_mem: &GuestMemoryMmap) -> Result<()> {
+    pub fn secure_virt_prepare(
+        &mut self,
+        guest_mem: &GuestMemoryMmap,
+    ) -> Result<Launcher<Started, RawFd, RawFd>> {
         self.sev
             .vm_prepare(&self.fd, guest_mem)
             .map_err(Error::SecVirtPrepare)
@@ -551,9 +557,10 @@ impl Vm {
         &self,
         guest_mem: &GuestMemoryMmap,
         measured_regions: Vec<MeasuredRegion>,
+        launcher: Launcher<Started, RawFd, RawFd>,
     ) -> Result<()> {
         self.sev
-            .vm_attest(&self.fd, guest_mem, measured_regions)
+            .vm_attest(&self.fd, guest_mem, measured_regions, launcher)
             .map_err(Error::SecVirtAttest)
     }
 
