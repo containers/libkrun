@@ -1,7 +1,6 @@
 use std::fmt;
 use std::fs::File;
 use std::io::Read;
-use std::mem::size_of_val;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -367,41 +366,6 @@ impl AmdSev {
         vm_fd.encrypt_op_sev(&mut cmd)
     }
 
-    fn sev_inject_secret(
-        &self,
-        vm_fd: &VmFd,
-        mut secret: Secret,
-        secret_host_addr: u64,
-    ) -> Result<(), kvm_ioctls::Error> {
-        #[repr(C)]
-        struct Data {
-            headr_addr: u64,
-            headr_size: u32,
-            guest_addr: u64,
-            guest_size: u32,
-            trans_addr: u64,
-            trans_size: u32,
-        }
-
-        let mut data = Data {
-            headr_addr: &mut secret.header as *mut _ as u64,
-            headr_size: size_of_val(&secret.header) as u32,
-            guest_addr: secret_host_addr,
-            guest_size: secret.ciphertext.len() as u32,
-            trans_addr: secret.ciphertext.as_mut_ptr() as u64,
-            trans_size: secret.ciphertext.len() as u32,
-        };
-
-        let mut cmd = kvm_sev_cmd {
-            id: 5, // SEV_LAUNCH_SECRET
-            data: &mut data as *mut _ as u64,
-            error: 0,
-            sev_fd: vm_fd.as_raw_fd() as u32,
-        };
-
-        vm_fd.encrypt_op_sev(&mut cmd)
-    }
-
     pub fn vm_prepare(
         &self,
         vm_fd: &VmFd,
@@ -449,7 +413,7 @@ impl AmdSev {
             launcher.update_vmsa().unwrap()
         }
 
-        let launcher = launcher.measure().unwrap();
+        let mut launcher = launcher.measure().unwrap();
         let measurement = launcher.measurement();
 
         if !self.tee_config.attestation_url.is_empty() {
@@ -487,8 +451,10 @@ impl AmdSev {
             let secret_host_addr = guest_mem
                 .get_host_address(GuestAddress(arch::x86_64::layout::CMDLINE_START))
                 .unwrap() as u64;
-            self.sev_inject_secret(vm_fd, secret, secret_host_addr)
-                .map_err(Error::SevInjectSecret)?;
+
+            launcher
+                .inject(&secret, secret_host_addr.try_into().unwrap())
+                .unwrap();
         }
 
         self.sev_launch_finish(vm_fd)
