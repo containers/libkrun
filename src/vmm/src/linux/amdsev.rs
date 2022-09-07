@@ -2,7 +2,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::Read;
 use std::mem::{size_of_val, MaybeUninit};
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -18,7 +18,7 @@ use procfs::CpuInfo;
 use serde::{Deserialize, Serialize};
 use sev::certs;
 use sev::firmware::Firmware;
-use sev::launch::sev::{Measurement, Policy, PolicyFlags, Secret, Start};
+use sev::launch::sev::*;
 use sev::session::Session;
 use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
 
@@ -329,50 +329,6 @@ impl AmdSev {
         })
     }
 
-    fn sev_init(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
-        let id = if self.sev_es { 1 } else { 0 };
-
-        let mut cmd = kvm_sev_cmd {
-            id,
-            data: 0,
-            error: 0,
-            sev_fd: self.fw.as_raw_fd() as u32,
-        };
-
-        vm_fd.encrypt_op_sev(&mut cmd)?;
-        Ok(())
-    }
-
-    fn sev_launch_start(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
-        #[repr(C)]
-        struct Data {
-            handle: u32,
-            policy: Policy,
-            dh_addr: u64,
-            dh_size: u32,
-            session_addr: u64,
-            session_size: u32,
-        }
-
-        let mut data = Data {
-            handle: 0,
-            policy: self.start.policy,
-            dh_addr: &self.start.cert as *const _ as u64,
-            dh_size: size_of_val(&self.start.cert) as u32,
-            session_addr: &self.start.session as *const _ as u64,
-            session_size: size_of_val(&self.start.session) as u32,
-        };
-
-        let mut cmd = kvm_sev_cmd {
-            id: 2, // SEV_LAUNCH_START
-            data: &mut data as *mut _ as u64,
-            error: 0,
-            sev_fd: self.fw.as_raw_fd() as u32,
-        };
-
-        vm_fd.encrypt_op_sev(&mut cmd)
-    }
-
     fn sev_launch_update_data(
         &self,
         vm_fd: &VmFd,
@@ -482,8 +438,19 @@ impl AmdSev {
         vm_fd.encrypt_op_sev(&mut cmd)
     }
 
-    pub fn vm_prepare(&self, vm_fd: &VmFd, guest_mem: &GuestMemoryMmap) -> Result<(), Error> {
-        self.sev_init(vm_fd).map_err(Error::SevInit)?;
+    pub fn vm_prepare(
+        &self,
+        vm_fd: &VmFd,
+        guest_mem: &GuestMemoryMmap,
+    ) -> Result<Launcher<Started, RawFd, RawFd>, Error> {
+        let vm_rfd = vm_fd.as_raw_fd();
+        let fw_rfd = self.fw.as_raw_fd();
+
+        let launcher = if self.sev_es {
+            Launcher::new_es(vm_rfd, fw_rfd).unwrap()
+        } else {
+            Launcher::new(vm_rfd, fw_rfd).unwrap()
+        };
 
         for region in guest_mem.iter() {
             // It's safe to unwrap because the guest address is valid.
@@ -497,10 +464,9 @@ impl AmdSev {
                 .map_err(|_| Error::MemoryEncryptRegion)?;
         }
 
-        self.sev_launch_start(vm_fd)
-            .map_err(Error::SevLaunchStart)?;
+        let launcher = launcher.start(self.start).unwrap();
 
-        Ok(())
+        Ok(launcher)
     }
 
     pub fn vm_attest(

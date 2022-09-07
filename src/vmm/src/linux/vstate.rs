@@ -10,6 +10,10 @@ use libc::{c_int, c_void, siginfo_t};
 use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::io;
+
+#[cfg(feature = "amd-sev")]
+use std::os::unix::io::RawFd;
+
 use std::result;
 use std::sync::atomic::{fence, Ordering};
 #[cfg(not(test))]
@@ -21,6 +25,9 @@ use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 
 #[cfg(feature = "amd-sev")]
 use super::amdsev::{AmdSev, Error as SevError};
+
+#[cfg(feature = "amd-sev")]
+use sev::launch::sev::*;
 
 #[cfg(feature = "amd-sev")]
 use crate::resources::TeeConfig;
@@ -540,7 +547,10 @@ impl Vm {
     }
 
     #[cfg(feature = "amd-sev")]
-    pub fn secure_virt_prepare(&mut self, guest_mem: &GuestMemoryMmap) -> Result<()> {
+    pub fn secure_virt_prepare(
+        &mut self,
+        guest_mem: &GuestMemoryMmap,
+    ) -> Result<Launcher<Started, RawFd, RawFd>> {
         self.sev
             .vm_prepare(&self.fd, guest_mem)
             .map_err(Error::SecVirtPrepare)
