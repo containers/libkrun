@@ -44,13 +44,13 @@ pub enum Error {
     ReadingCoreData,
     SessionFromPolicy(std::io::Error),
     SessionRequest(curl::Error),
-    SevInit(kvm_ioctls::Error),
-    SevInjectSecret(kvm_ioctls::Error),
-    SevLaunchFinish(kvm_ioctls::Error),
-    SevLaunchMeasure(kvm_ioctls::Error),
-    SevLaunchStart(kvm_ioctls::Error),
+    SevInit(std::io::Error),
+    SevInjectSecret(std::io::Error),
+    SevLaunchFinish(std::io::Error),
+    SevLaunchMeasure(std::io::Error),
+    SevLaunchStart(std::io::Error),
     SevLaunchUpdateData(kvm_ioctls::Error),
-    SevLaunchUpdateVmsa(kvm_ioctls::Error),
+    SevLaunchUpdateVmsa(std::io::Error),
     StartFromSession(std::io::Error),
     UnknownCpuModel,
 }
@@ -364,9 +364,9 @@ impl AmdSev {
         let fw_rfd = self.fw.as_raw_fd();
 
         let launcher = if self.sev_es {
-            Launcher::new_es(vm_rfd, fw_rfd).unwrap()
+            Launcher::new_es(vm_rfd, fw_rfd).map_err(Error::SevInit)?
         } else {
-            Launcher::new(vm_rfd, fw_rfd).unwrap()
+            Launcher::new(vm_rfd, fw_rfd).map_err(Error::SevInit)?
         };
 
         for region in guest_mem.iter() {
@@ -381,7 +381,7 @@ impl AmdSev {
                 .map_err(|_| Error::MemoryEncryptRegion)?;
         }
 
-        let launcher = launcher.start(self.start).unwrap();
+        let launcher = launcher.start(self.start).map_err(Error::SevLaunchStart)?;
 
         Ok(launcher)
     }
@@ -399,10 +399,10 @@ impl AmdSev {
         }
 
         if self.sev_es {
-            launcher.update_vmsa().unwrap()
+            launcher.update_vmsa().map_err(Error::SevLaunchUpdateVmsa)?;
         }
 
-        let mut launcher = launcher.measure().unwrap();
+        let mut launcher = launcher.measure().map_err(Error::SevLaunchMeasure)?;
         let measurement = launcher.measurement();
 
         if !self.tee_config.attestation_url.is_empty() {
@@ -443,10 +443,10 @@ impl AmdSev {
 
             launcher
                 .inject(&secret, secret_host_addr.try_into().unwrap())
-                .unwrap();
+                .map_err(Error::SevLaunchMeasure)?;
         }
 
-        let _handle = launcher.finish();
+        let _handle = launcher.finish().map_err(Error::SevLaunchFinish)?;
 
         Ok(())
     }
