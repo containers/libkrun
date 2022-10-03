@@ -3,22 +3,22 @@
 
 //#![deny(warnings)]
 
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 use std::fs::File;
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 use std::io::BufReader;
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 use std::path::PathBuf;
 
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 use crate::vmm_config::block::{BlockBuilder, BlockConfigError, BlockDeviceConfig};
 use crate::vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
-#[cfg(not(feature = "amd-sev"))]
+#[cfg(not(feature = "tee"))]
 use crate::vmm_config::fs::*;
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 use crate::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle, QbootBundleError};
 use crate::vmm_config::kernel_bundle::{KernelBundle, KernelBundleError};
 use crate::vmm_config::machine_config::{VmConfig, VmConfigError};
@@ -35,13 +35,13 @@ pub enum Error {
     /// Boot source configuration error.
     BootSource(BootSourceConfigError),
     /// Error opening TEE config file.
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     OpenTeeConfig(std::io::Error),
     /// Fs device configuration error.
-    #[cfg(not(feature = "amd-sev"))]
+    #[cfg(not(feature = "tee"))]
     FsDevice(FsConfigError),
     /// Error parsing TEE config file.
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     ParseTeeConfig(serde_json::Error),
     /// microVM vCpus or memory configuration error.
     VmConfig(VmConfigError),
@@ -49,7 +49,7 @@ pub enum Error {
     VsockDevice(VsockConfigError),
 }
 
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TeeConfig {
     pub workload_id: String,
@@ -71,21 +71,21 @@ pub struct VmResources {
     /// The parameters for the kernel bundle to be loaded in this microVM.
     pub kernel_bundle: Option<KernelBundle>,
     /// The parameters for the qboot bundle to be loaded in this microVM.
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     pub qboot_bundle: Option<QbootBundle>,
     /// The parameters for the initrd bundle to be loaded in this microVM.
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     pub initrd_bundle: Option<InitrdBundle>,
     /// The fs device.
-    #[cfg(not(feature = "amd-sev"))]
+    #[cfg(not(feature = "tee"))]
     pub fs: FsBuilder,
     /// The vsock device.
     pub vsock: VsockBuilder,
     /// The virtio-blk device.
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     pub block: BlockBuilder,
     /// TEE configuration
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     pub tee_config: Option<TeeConfig>,
 }
 
@@ -179,12 +179,12 @@ impl VmResources {
         Ok(())
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     pub fn qboot_bundle(&self) -> Option<&QbootBundle> {
         self.qboot_bundle.as_ref()
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     pub fn set_qboot_bundle(&mut self, qboot_bundle: QbootBundle) -> Result<QbootBundleError> {
         if qboot_bundle.size != 0x10000 {
             return Err(QbootBundleError::InvalidSize);
@@ -194,23 +194,23 @@ impl VmResources {
         Ok(())
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     pub fn initrd_bundle(&self) -> Option<&InitrdBundle> {
         self.initrd_bundle.as_ref()
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     pub fn set_initrd_bundle(&mut self, initrd_bundle: InitrdBundle) -> Result<KernelBundleError> {
         self.initrd_bundle = Some(initrd_bundle);
         Ok(())
     }
 
-    #[cfg(not(feature = "amd-sev"))]
+    #[cfg(not(feature = "tee"))]
     pub fn set_fs_device(&mut self, config: FsDeviceConfig) -> Result<FsConfigError> {
         self.fs.insert(config)
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     pub fn set_block_device(&mut self, config: BlockDeviceConfig) -> Result<BlockConfigError> {
         self.block.insert(config)
     }
@@ -220,12 +220,12 @@ impl VmResources {
         self.vsock.insert(config)
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     pub fn tee_config(&self) -> &Option<TeeConfig> {
         &self.tee_config
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     pub fn set_tee_config(&mut self, filepath: PathBuf) -> Result<Error> {
         let file = File::open(filepath.as_path()).map_err(Error::OpenTeeConfig)?;
         let reader = BufReader::new(file);

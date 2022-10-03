@@ -5,8 +5,8 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use super::super::resources::TeeConfig;
-use super::vstate::MeasuredRegion;
+use super::super::super::resources::TeeConfig;
+use super::super::vstate::MeasuredRegion;
 
 use codicon::{Decoder, Encoder};
 use curl::easy::{Easy, List};

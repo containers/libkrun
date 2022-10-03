@@ -63,7 +63,7 @@ pub fn setup_fpu(vcpu: &VcpuFd) -> Result<()> {
 /// * `vcpu` - Structure for the VCPU that holds the VCPU's fd.
 /// * `boot_ip` - Starting instruction pointer.
 pub fn setup_regs(vcpu: &VcpuFd, boot_ip: u64, id: u8) -> Result<()> {
-    let regs: kvm_regs = if id == 0 || cfg!(not(feature = "amd-sev")) {
+    let regs: kvm_regs = if id == 0 || cfg!(not(feature = "tee")) {
         kvm_regs {
             rflags: 0x0000_0000_0000_0002u64,
             rip: boot_ip,
@@ -97,7 +97,7 @@ pub fn setup_regs(vcpu: &VcpuFd, boot_ip: u64, id: u8) -> Result<()> {
 pub fn setup_sregs(mem: &GuestMemoryMmap, vcpu: &VcpuFd, id: u8) -> Result<()> {
     let mut sregs: kvm_sregs = vcpu.get_sregs().map_err(Error::GetStatusRegisters)?;
 
-    if cfg!(not(feature = "amd-sev")) {
+    if cfg!(not(feature = "tee")) {
         configure_segments_and_sregs(mem, &mut sregs)?;
         setup_page_tables(mem, &mut sregs)?; // TODO(dgreid) - Can this be done once per system instead
     } else if id != 0 {

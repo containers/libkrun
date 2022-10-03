@@ -10,33 +10,33 @@ use std;
 use std::any::Any;
 use std::io::Error as IOError;
 
-#[cfg(not(feature = "amd-sev"))]
+#[cfg(not(feature = "tee"))]
 pub mod balloon;
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 pub mod block;
 pub mod console;
 pub mod device;
-#[cfg(not(feature = "amd-sev"))]
+#[cfg(not(feature = "tee"))]
 pub mod fs;
 #[cfg(target_os = "macos")]
 pub mod linux_errno;
 mod mmio;
 mod queue;
-#[cfg(not(feature = "amd-sev"))]
+#[cfg(not(feature = "tee"))]
 pub mod rng;
 pub mod vsock;
 
-#[cfg(not(feature = "amd-sev"))]
+#[cfg(not(feature = "tee"))]
 pub use self::balloon::*;
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 pub use self::block::*;
 pub use self::console::*;
 pub use self::device::*;
-#[cfg(not(feature = "amd-sev"))]
+#[cfg(not(feature = "tee"))]
 pub use self::fs::*;
 pub use self::mmio::*;
 pub use self::queue::*;
-#[cfg(not(feature = "amd-sev"))]
+#[cfg(not(feature = "tee"))]
 pub use self::rng::*;
 pub use self::vsock::*;
 

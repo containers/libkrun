@@ -5,7 +5,9 @@ authors = ["Amazon Firecracker team <firecracker-devel@amazon.com>"]
 edition = "2021"
 
 [features]
-amd-sev = [ "codicon", "kbs-types", "procfs", "serde", "serde_json", "sev", "curl" ]
+tee = []
+amd-sev = [ "tee", "codicon", "kbs-types", "procfs", "serde", "serde_json", "sev", "curl" ]
+amd-snp = [ "tee" ]
 
 [dependencies]
 crossbeam-channel = "0.5"

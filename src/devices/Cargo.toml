@@ -5,7 +5,9 @@ authors = ["The Chromium OS Authors"]
 edition = "2021"
 
 [features]
-amd-sev = []
+tee = []
+amd-sev = [ "tee" ]
+amd-snp = [ "tee" ]
 
 [dependencies]
 bitflags = "1.2.0"

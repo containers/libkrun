@@ -10,7 +10,10 @@ use libc::{c_int, c_void, siginfo_t};
 use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::io;
+
+#[cfg(feature = "tee")]
 use std::os::unix::io::RawFd;
+
 use std::result;
 use std::sync::atomic::{fence, Ordering};
 #[cfg(not(test))]
@@ -21,9 +24,9 @@ use super::super::TimestampUs;
 use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 
 #[cfg(feature = "amd-sev")]
-use super::amdsev::{AmdSev, Error as SevError};
+use super::tee::amdsev::{AmdSev, Error as SevError};
 
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 use crate::resources::TeeConfig;
 use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 use arch;
@@ -83,7 +86,7 @@ pub enum Error {
     #[cfg(target_arch = "x86_64")]
     /// Cannot set the local interruption due to bad configuration.
     LocalIntConfiguration(arch::x86_64::interrupts::Error),
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     /// Missing TEE config
     MissingTeeConfig,
     #[cfg(target_arch = "x86_64")]
@@ -250,7 +253,7 @@ impl Display for Error {
                 e
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {}", e),
-            #[cfg(feature = "amd-sev")]
+            #[cfg(feature = "tee")]
             SecVirtInit(e) => {
                 write!(
                     f,
@@ -258,16 +261,16 @@ impl Display for Error {
                     e
                 )
             }
-            #[cfg(feature = "amd-sev")]
+            #[cfg(feature = "tee")]
             SecVirtPrepare(e) => write!(
                 f,
                 "Error preparing the VM for Secure Virtualization: {:?}",
                 e
             ),
-            #[cfg(feature = "amd-sev")]
+            #[cfg(feature = "tee")]
             SecVirtAttest(e) => write!(f, "Error attesting the Secure VM: {:?}", e),
             SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {}", e),
-            #[cfg(feature = "amd-sev")]
+            #[cfg(feature = "tee")]
             MissingTeeConfig => write!(f, "Missing TEE configuration"),
             #[cfg(target_arch = "x86_64")]
             MSRSConfiguration(e) => write!(f, "Error configuring the MSR registers: {:?}", e),
@@ -364,7 +367,7 @@ impl Display for Error {
 
 pub type Result<T> = result::Result<T, Error>;
 
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 pub struct MeasuredRegion {
     pub host_addr: u64,
     pub size: usize,
@@ -440,7 +443,7 @@ pub struct Vm {
 
 impl Vm {
     /// Constructs a new `Vm` using the given `Kvm` instance.
-    #[cfg(not(feature = "amd-sev"))]
+    #[cfg(not(feature = "tee"))]
     pub fn new(kvm: &Kvm) -> Result<Self> {
         //create fd for interacting with kvm-vm specific functions
         let vm_fd = kvm.create_vm().map_err(Error::VmFd)?;
@@ -542,7 +545,7 @@ impl Vm {
         Ok(())
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     pub fn secure_virt_prepare(
         &mut self,
         guest_mem: &GuestMemoryMmap,
@@ -552,7 +555,7 @@ impl Vm {
             .map_err(Error::SecVirtPrepare)
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     pub fn secure_virt_attest(
         &self,
         guest_mem: &GuestMemoryMmap,

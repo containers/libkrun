@@ -16,14 +16,13 @@ use std::fmt::{Display, Formatter, Result};
 //pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=1 pci=off nomodules 8250.nr_uarts=0 \
 //                                          i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd";
 
-#[cfg(all(target_os = "linux", not(feature = "amd-sev")))]
-pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 nomodules console=hvc0 \
-                                          rootfstype=virtiofs rw quiet no-kvmapf tsi_hijack";
+#[cfg(all(target_os = "linux", not(feature = "tee")))]
+pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 nomodules console= \
+                                          rootfstype=virtiofs rw no-kvmapf tsi_hijack";
 
 #[cfg(feature = "amd-sev")]
 pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 nomodules console=hvc0 \
                                           root=/dev/vda rw quiet no-kvmapf tsi_hijack";
-
 #[cfg(target_os = "macos")]
 pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 nomodules console=hvc0 \
                                           rootfstype=virtiofs rw quiet no-kvmapf tsi_hijack";
