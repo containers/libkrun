@@ -364,24 +364,28 @@ pub fn build_microvm(
 
         let m = vec![
             MeasuredRegion {
+                guest_addr: arch::BIOS_START,
                 host_addr: guest_memory
                     .get_host_address(GuestAddress(arch::BIOS_START))
                     .unwrap() as u64,
                 size: qboot_bundle.size,
             },
             MeasuredRegion {
+                guest_addr: kernel_bundle.guest_addr,
                 host_addr: guest_memory
                     .get_host_address(GuestAddress(kernel_bundle.guest_addr))
                     .unwrap() as u64,
                 size: kernel_bundle.size,
             },
             MeasuredRegion {
+                guest_addr: arch::x86_64::layout::INITRD_SEV_START,
                 host_addr: guest_memory
                     .get_host_address(GuestAddress(arch::x86_64::layout::INITRD_SEV_START))
                     .unwrap() as u64,
                 size: initrd_bundle.size,
             },
             MeasuredRegion {
+                guest_addr: arch::x86_64::layout::ZERO_PAGE_START,
                 host_addr: guest_memory
                     .get_host_address(GuestAddress(arch::x86_64::layout::ZERO_PAGE_START))
                     .unwrap() as u64,
