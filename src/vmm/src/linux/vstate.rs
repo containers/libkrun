@@ -512,8 +512,6 @@ impl Vm {
             fd: vm_fd,
             supported_cpuid,
             supported_msrs,
-            #[cfg(target_arch = "aarch64")]
-            irqchip_handle: None,
             sev,
         })
     }
