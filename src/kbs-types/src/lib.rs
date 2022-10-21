@@ -16,49 +16,40 @@ pub enum Tee {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Request {
     pub version: String,
-    pub workload_id: String,
     pub tee: Tee,
+    #[serde(rename = "extra-params")]
     pub extra_params: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Challenge {
     pub nonce: String,
+    #[serde(rename = "extra-params")]
     pub extra_params: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TeePubKey {
-    pub algorithm: String,
-    #[serde(rename = "pubkey-length")]
-    pub pubkey_length: String,
-    pub pubkey: String,
+    pub kty: String,
+    pub alg: String,
+    pub k: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Attestation {
-    pub nonce: String,
-    pub tee: Tee,
     #[serde(rename = "tee-pubkey")]
     pub tee_pubkey: TeePubKey,
     #[serde(rename = "tee-evidence")]
     pub tee_evidence: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct CryptoAnnotation {
-    pub algorithm: String,
-    #[serde(rename = "initialization-vector")]
-    pub initialization_vector: String,
-    #[serde(rename = "enc-symkey")]
-    pub enc_symkey: String,
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Response {
-    pub output: String,
-    #[serde(rename = "crypto-annotation")]
-    pub crypto_annotation: CryptoAnnotation,
+    pub protected: String,
+    pub encrypted_key: String,
+    pub iv: String,
+    pub ciphertext: String,
+    pub tag: String,
 }
 
 #[cfg(test)]
@@ -70,9 +61,8 @@ mod tests {
         let data = r#"
         {
             "version": "0.0.0",
-            "workload_id": "fakeid",
             "tee": "sev",
-            "extra_params": ""
+            "extra-params": ""
         }"#;
 
         let request: Request = serde_json::from_str(data).unwrap();
@@ -87,7 +77,7 @@ mod tests {
         let data = r#"
         {
             "nonce": "42",
-            "extra_params": ""
+            "extra-params": ""
         }"#;
 
         let challenge: Challenge = serde_json::from_str(data).unwrap();
@@ -100,46 +90,39 @@ mod tests {
     fn parse_response() {
         let data = r#"
         {
-            "output": "fakeoutput",
-            "crypto-annotation": {
-                "algorithm": "fake-4096",
-                "initialization-vector": "randomdata",
-                "enc-symkey": "fakesymkey"
-            }
+            "protected": "fakejoseheader",
+            "encrypted_key": "fakekey",
+            "iv": "randomdata",
+            "ciphertext": "fakeencoutput",
+            "tag": "faketag"
         }"#;
 
         let response: Response = serde_json::from_str(data).unwrap();
 
-        assert_eq!(response.output, "fakeoutput");
-        assert_eq!(response.crypto_annotation.algorithm, "fake-4096");
-        assert_eq!(
-            response.crypto_annotation.initialization_vector,
-            "randomdata"
-        );
-        assert_eq!(response.crypto_annotation.enc_symkey, "fakesymkey");
+        assert_eq!(response.protected, "fakejoseheader");
+        assert_eq!(response.encrypted_key, "fakekey");
+        assert_eq!(response.iv, "randomdata");
+        assert_eq!(response.ciphertext, "fakeencoutput");
+        assert_eq!(response.tag, "faketag");
     }
 
     #[test]
     fn parse_attesation() {
         let data = r#"
         {
-            "nonce": "42",
-            "tee": "sev",
             "tee-pubkey": {
-                "algorithm": "fake-4096",
-                "pubkey-length": "4096",
-                "pubkey": "fakepubkey"
+                "kty": "fakekeytype",
+                "alg": "fakealgorithm",
+                "k": "fakepubkey"
             },
             "tee-evidence": "fakeevidence"
         }"#;
 
         let attestation: Attestation = serde_json::from_str(data).unwrap();
 
-        assert_eq!(attestation.nonce, "42");
-        assert_eq!(attestation.tee, Tee::Sev);
-        assert_eq!(attestation.tee_pubkey.algorithm, "fake-4096");
-        assert_eq!(attestation.tee_pubkey.pubkey_length, "4096");
-        assert_eq!(attestation.tee_pubkey.pubkey, "fakepubkey");
+        assert_eq!(attestation.tee_pubkey.kty, "fakekeytype");
+        assert_eq!(attestation.tee_pubkey.alg, "fakealgorithm");
+        assert_eq!(attestation.tee_pubkey.k, "fakepubkey");
         assert_eq!(attestation.tee_evidence, "fakeevidence");
     }
 }

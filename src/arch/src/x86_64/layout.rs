@@ -18,8 +18,6 @@ pub const CMDLINE_MAX_SIZE: usize = 0x10000;
 pub const CMDLINE_SEV_SIZE: usize = 0x200;
 /// Initrd start address on SEV.
 pub const INITRD_SEV_START: u64 = 0xa00000;
-/// Initrd size on SEV.
-pub const INITRD_SEV_SIZE: usize = 0x19e000;
 
 /// Start of the high memory.
 pub const HIMEM_START: u64 = 0x0010_0000; //1 MB.

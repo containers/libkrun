@@ -7,6 +7,7 @@ use sev::Build;
 pub struct SevRequest {
     pub build: Build,
     pub chain: Chain,
+    pub workload_id: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -127,7 +128,11 @@ mod tests {
         let chain = fetch_chain(&mut fw).unwrap();
         let build = fw.platform_status().unwrap().build;
 
-        let sev_request = SevRequest { build, chain };
+        let sev_request = SevRequest {
+            build,
+            chain,
+            workload_id: "fakeid".to_string(),
+        };
 
         let sev_request_json = serde_json::to_string(&sev_request).unwrap();
 
@@ -135,7 +140,6 @@ mod tests {
 
         let request = Request {
             version: "0.0.0".to_string(),
-            workload_id: "fakeid".to_string(),
             tee: Tee::Sev,
             extra_params: sev_request_json,
         };

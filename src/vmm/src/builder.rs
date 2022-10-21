@@ -566,7 +566,7 @@ pub fn build_microvm(
     #[cfg(feature = "amd-sev")]
     let initrd_config = Some(InitrdConfig {
         address: GuestAddress(arch::x86_64::layout::INITRD_SEV_START as u64),
-        size: arch::x86_64::layout::INITRD_SEV_SIZE,
+        size: initrd_bundle.size,
     });
 
     #[cfg(not(feature = "amd-sev"))]

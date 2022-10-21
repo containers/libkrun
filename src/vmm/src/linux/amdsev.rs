@@ -11,7 +11,7 @@ use super::vstate::MeasuredRegion;
 
 use codicon::{Decoder, Encoder};
 use curl::easy::{Easy, List};
-use kbs_types::{Attestation, Challenge, Request, SevChallenge, SevRequest, Tee, TeePubKey};
+use kbs_types::{Attestation, Challenge, Request, SevChallenge, SevRequest, TeePubKey};
 use kvm_bindings::{kvm_enc_region, kvm_sev_cmd};
 use kvm_ioctls::VmFd;
 use procfs::CpuInfo;
@@ -265,7 +265,6 @@ pub struct AmdSev {
     tee_config: TeeConfig,
     fw: Firmware,
     start: Start,
-    session_id: Option<String>,
     sev_es: bool,
     curl_agent: Arc<Mutex<CurlAgent>>,
 }
@@ -277,16 +276,19 @@ impl AmdSev {
         let chain = get_and_store_chain(&mut fw, tee_config, &mut curl_agent)?;
         let mut sev_es = false;
 
-        let (start, session_id) = if !tee_config.attestation_url.is_empty() {
+        let start = if !tee_config.attestation_url.is_empty() {
             let build = fw
                 .platform_status()
                 .map_err(|_| Error::PlatformStatus)?
                 .build;
 
-            let sev_request = SevRequest { build, chain };
+            let sev_request = SevRequest {
+                build,
+                chain,
+                workload_id: tee_config.workload_id.clone(),
+            };
             let request = Request {
                 version: "0.0.0".to_string(),
-                workload_id: tee_config.workload_id.clone(),
                 tee: tee_config.tee.clone(),
                 extra_params: serde_json::json!(sev_request).to_string(),
             };
@@ -312,18 +314,17 @@ impl AmdSev {
                 sev_es = true;
             }
 
-            (sev_challenge.start, Some(sev_challenge.id))
+            sev_challenge.start
         } else {
             let policy = Policy::default();
             let session = Session::try_from(policy).map_err(Error::SessionFromPolicy)?;
-            (session.start(chain).map_err(Error::StartFromSession)?, None)
+            session.start(chain).map_err(Error::StartFromSession)?
         };
 
         Ok(AmdSev {
             tee_config: tee_config.clone(),
             fw,
             start,
-            session_id,
             sev_es,
             curl_agent: Arc::new(Mutex::new(curl_agent)),
         })
@@ -525,14 +526,12 @@ impl AmdSev {
 
         if !self.tee_config.attestation_url.is_empty() {
             let tee_pubkey = TeePubKey {
-                algorithm: "".to_string(),
-                pubkey_length: "".to_string(),
-                pubkey: "".to_string(),
+                kty: "".to_string(),
+                alg: "".to_string(),
+                k: "".to_string(),
             };
 
             let attestation = Attestation {
-                nonce: self.session_id.as_ref().unwrap().clone(),
-                tee: Tee::Sev,
                 tee_pubkey,
                 tee_evidence: serde_json::json!(measurement).to_string(),
             };
