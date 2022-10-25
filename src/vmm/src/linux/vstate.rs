@@ -489,7 +489,7 @@ impl Vm {
     }
 
     #[cfg(feature = "amd-sev")]
-    pub fn new(kvm: &Kvm, tee_config: &Option<TeeConfig>) -> Result<Self> {
+    pub fn new(kvm: &Kvm, tee_config: &TeeConfig) -> Result<Self> {
         //create fd for interacting with kvm-vm specific functions
         let vm_fd = kvm.create_vm().map_err(Error::VmFd)?;
 
@@ -500,13 +500,7 @@ impl Vm {
         let supported_msrs =
             arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
 
-        let sev = {
-            if let Some(config) = tee_config {
-                AmdSev::new(config).map_err(Error::SecVirtInit)?
-            } else {
-                return Err(Error::MissingTeeConfig);
-            }
-        };
+        let sev = AmdSev::new(tee_config).map_err(Error::SecVirtInit)?;
 
         Ok(Vm {
             fd: vm_fd,
@@ -517,7 +511,7 @@ impl Vm {
     }
 
     #[cfg(feature = "amd-snp")]
-    pub fn new(kvm: &Kvm, tee_config: &Option<TeeConfig>) -> Result<Self> {
+    pub fn new(kvm: &Kvm, tee_config: &TeeConfig) -> Result<Self> {
         let vm_fd = kvm.create_vm().map_err(Error::VmFd)?;
 
         let supported_cpuid = kvm
@@ -526,11 +520,7 @@ impl Vm {
         let supported_msrs =
             arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
 
-        let snp = if let Some(config) = tee_config {
-            AmdSnp::new(config).map_err(Error::SecVirtInit)?
-        } else {
-            return Err(Error::MissingTeeConfig);
-        };
+        let snp = AmdSnp::new(tee_config).map_err(Error::SecVirtInit)?;
 
         Ok(Vm {
             fd: vm_fd,

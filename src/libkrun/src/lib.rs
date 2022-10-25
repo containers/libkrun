@@ -667,12 +667,21 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         }
     }
 
+    /*
+     * Before krun_start_enter() is called in an encrypted context, the TEE
+     * config must have been set via krun_set_tee_config_file(). If the TEE
+     * config is not set by this point, print the relevant error message and
+     * fail.
+     */
     #[cfg(feature = "tee")]
-    if let Some(filepath) = ctx_cfg.get_tee_config_file() {
-        if ctx_cfg.vmr.set_tee_config(filepath).is_err() {
-            error!("Error parsing TEE config file");
+    if let Some(tee_config) = ctx_cfg.get_tee_config_file() {
+        if let Err(e) = ctx_cfg.vmr.set_tee_config(tee_config) {
+            error!("Error setting up TEE config: {:?}", e);
             return -libc::EINVAL;
         }
+    } else {
+        error!("Missing TEE config file");
+        return -libc::EINVAL;
     }
 
     let boot_source = BootSourceConfig {

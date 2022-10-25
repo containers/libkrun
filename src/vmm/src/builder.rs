@@ -719,7 +719,7 @@ pub(crate) fn setup_vm(
 #[cfg(all(target_os = "linux", feature = "tee"))]
 pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
-    tee_config: &Option<TeeConfig>,
+    tee_config: &TeeConfig,
 ) -> std::result::Result<Vm, StartMicrovmError> {
     let kvm = KvmContext::new()
         .map_err(Error::KvmContext)

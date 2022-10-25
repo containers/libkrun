@@ -50,7 +50,7 @@ pub enum Error {
 }
 
 #[cfg(feature = "tee")]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeeConfig {
     pub workload_id: String,
     pub cpus: u8,
@@ -58,6 +58,20 @@ pub struct TeeConfig {
     pub tee: kbs_types::Tee,
     pub tee_data: String,
     pub attestation_url: String,
+}
+
+#[cfg(feature = "tee")]
+impl Default for TeeConfig {
+    fn default() -> Self {
+        Self {
+            workload_id: "".to_string(),
+            cpus: 0,
+            ram_mib: 0,
+            tee: kbs_types::Tee::Sev,
+            tee_data: "".to_string(),
+            attestation_url: "".to_string(),
+        }
+    }
 }
 
 /// A data structure that encapsulates the device configurations
@@ -84,9 +98,10 @@ pub struct VmResources {
     /// The virtio-blk device.
     #[cfg(feature = "tee")]
     pub block: BlockBuilder,
+
     /// TEE configuration
     #[cfg(feature = "tee")]
-    pub tee_config: Option<TeeConfig>,
+    pub tee_config: TeeConfig,
 }
 
 impl VmResources {
@@ -221,7 +236,7 @@ impl VmResources {
     }
 
     #[cfg(feature = "tee")]
-    pub fn tee_config(&self) -> &Option<TeeConfig> {
+    pub fn tee_config(&self) -> &TeeConfig {
         &self.tee_config
     }
 
@@ -241,7 +256,7 @@ impl VmResources {
         })
         .map_err(Error::VmConfig)?;
 
-        self.tee_config = Some(tee_config);
+        self.tee_config = tee_config;
 
         Ok(())
     }
