@@ -400,7 +400,7 @@ impl<'a> HvfVcpu<'a> {
                     }
                     EC_SYSTEMREGISTERTRAP => {
                         let isread: bool = (syndrome & 1) != 0;
-                        let _rt: u32 = ((syndrome >> 5) & 0x1f) as u32;
+                        let rt: u32 = ((syndrome >> 5) & 0x1f) as u32;
                         let reg: u64 = syndrome & SYSREG_MASK;
 
                         debug!("sysreg operation reg={} (op0={} op1={} op2={} crn={} crm={}) isread={:?}",
@@ -408,6 +408,10 @@ impl<'a> HvfVcpu<'a> {
                                (reg >> 14) & 0x7, (reg >> 17) & 0x7,
                                (reg >> 10) & 0xf, (reg >> 1) & 0xf,
                                isread);
+
+                        if isread && rt < 31 {
+                            self.write_reg(rt, 0)?;
+                        }
 
                         self.pending_advance_pc = true;
                         Ok(VcpuExit::SystemRegister)
