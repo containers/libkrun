@@ -169,7 +169,7 @@ fn path_cache_rename_dir(
                 if parts.len() > oldparts.len() {
                     let mut fixedpath = String::new();
                     fixedpath.push_str(&newpath);
-                    fixedpath.push_str("/");
+                    fixedpath.push('/');
                     fixedpath.push_str(&parts[oldparts.len()..].join("/"));
                     path_replacements.push((index, fixedpath));
                 }
@@ -527,18 +527,14 @@ impl PassthroughFs {
         if let Some(file) = file_cache.get(inode) {
             Some(file.clone())
         } else {
-            self.pinned_files
-                .lock()
-                .unwrap()
-                .get(&inode)
-                .map(Arc::clone)
+            self.pinned_files.lock().unwrap().get(inode).map(Arc::clone)
         }
     }
 
     fn get_file(&self, inode: Inode) -> io::Result<Arc<File>> {
         let mut file_cache = self.file_cache.lock().unwrap();
         if let Some(file) = self.cached_or_pinned(&inode, &mut file_cache) {
-            Ok(file.clone())
+            Ok(file)
         } else {
             open_path(
                 &mut file_cache,
@@ -985,8 +981,7 @@ fn forget_one(
                     } else {
                         get_path(path_cache, inode)
                             .ok()
-                            .map(|filepath| open_path(file_cache, inode, &filepath).ok())
-                            .flatten()
+                            .and_then(|filepath| open_path(file_cache, inode, &filepath).ok())
                             .map(|file| pinned_files.insert(inode, file));
                     }
                 }
