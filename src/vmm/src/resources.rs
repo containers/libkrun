@@ -14,6 +14,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "tee")]
+use kbs_types::Tee;
+
+#[cfg(feature = "tee")]
 use crate::vmm_config::block::{BlockBuilder, BlockConfigError, BlockDeviceConfig};
 use crate::vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
 #[cfg(not(feature = "tee"))]
@@ -55,7 +58,7 @@ pub struct TeeConfig {
     pub workload_id: String,
     pub cpus: u8,
     pub ram_mib: usize,
-    pub tee: kbs_types::Tee,
+    pub tee: Tee,
     pub tee_data: String,
     pub attestation_url: String,
 }
@@ -67,7 +70,7 @@ impl Default for TeeConfig {
             workload_id: "".to_string(),
             cpus: 0,
             ram_mib: 0,
-            tee: kbs_types::Tee::Sev,
+            tee: Tee::Sev,
             tee_data: "".to_string(),
             attestation_url: "".to_string(),
         }
