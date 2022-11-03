@@ -22,6 +22,9 @@ use devices::virtio::VirtioShmRegion;
 use devices::virtio::{MmioTransport, Vsock};
 
 #[cfg(feature = "tee")]
+use kbs_types::Tee;
+
+#[cfg(feature = "tee")]
 use crate::resources::TeeConfig;
 #[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigwinch_handler;
@@ -103,6 +106,9 @@ pub enum StartMicrovmError {
     SecureVirtAttest(VstateError),
     /// Cannot initialize the Secure Virtualization backend.
     SecureVirtPrepare(VstateError),
+
+    /// The TEE specified is not supported.
+    InvalidTee,
 }
 
 /// It's convenient to automatically convert `kernel::cmdline::Error`s
@@ -243,6 +249,9 @@ impl Display for StartMicrovmError {
                     err_msg
                 )
             }
+            InvalidTee => {
+                write!(f, "TEE selected is not currently supported")
+            }
         }
     }
 }
@@ -355,11 +364,28 @@ pub fn build_microvm(
     let mut vm = setup_vm(&guest_memory, vm_resources.tee_config())?;
 
     #[cfg(feature = "tee")]
-    let (launcher, measured_regions) = {
-        let launcher = vm
-            .secure_virt_prepare(&guest_memory)
-            .map_err(StartMicrovmError::SecureVirtPrepare)?;
+    let tee = vm_resources.tee_config().tee.clone();
 
+    #[cfg(feature = "tee")]
+    let sev_launcher = match tee {
+        Tee::Sev => Some(
+            vm.sev_secure_virt_prepare(&guest_memory)
+                .map_err(StartMicrovmError::SecureVirtPrepare)?,
+        ),
+        _ => None,
+    };
+
+    #[cfg(feature = "tee")]
+    let snp_launcher = match tee {
+        Tee::Snp => Some(
+            vm.snp_secure_virt_prepare(&guest_memory)
+                .map_err(StartMicrovmError::SecureVirtPrepare)?,
+        ),
+        _ => None,
+    };
+
+    #[cfg(feature = "tee")]
+    let measured_regions = {
         println!("Injecting and measuring memory regions. This may take a while.");
 
         let m = vec![
@@ -393,7 +419,7 @@ pub fn build_microvm(
             },
         ];
 
-        (launcher, m)
+        m
     };
 
     // On x86_64 always create a serial device,
@@ -584,9 +610,19 @@ pub fn build_microvm(
 
     #[cfg(feature = "tee")]
     {
-        vmm.kvm_vm()
-            .secure_virt_attest(vmm.guest_memory(), measured_regions, launcher)
-            .map_err(StartMicrovmError::SecureVirtAttest)?;
+        match tee {
+            Tee::Sev => vmm
+                .kvm_vm()
+                .sev_secure_virt_attest(vmm.guest_memory(), measured_regions, sev_launcher.unwrap())
+                .map_err(StartMicrovmError::SecureVirtAttest)?,
+
+            Tee::Snp => vmm
+                .kvm_vm()
+                .snp_secure_virt_attest(vmm.guest_memory(), measured_regions, snp_launcher.unwrap())
+                .map_err(StartMicrovmError::SecureVirtAttest)?,
+
+            _ => return Err(StartMicrovmError::InvalidTee),
+        }
 
         println!("Starting TEE/microVM.");
     }

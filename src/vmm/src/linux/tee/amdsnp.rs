@@ -1,9 +1,8 @@
 use std::os::unix::io::{AsRawFd, RawFd};
 
-use crate::resources::TeeConfig;
 use crate::vstate::MeasuredRegion;
 
-use sev::firmware::Firmware;
+use sev::firmware::uapi::host::Firmware;
 use sev::launch::snp::*;
 
 use kvm_bindings::kvm_enc_region;
@@ -18,21 +17,18 @@ pub enum Error {
     LaunchStart(std::io::Error),
     LaunchUpdate(std::io::Error),
     LaunchFinish(std::io::Error),
+    CpuIdWrite,
 }
 
 pub struct AmdSnp {
-    tee_config: TeeConfig,
     fw: Firmware,
 }
 
 impl AmdSnp {
-    pub fn new(tee_config: &TeeConfig) -> Result<Self, Error> {
+    pub fn new() -> Result<Self, Error> {
         let fw = Firmware::open().map_err(Error::OpenFirmware)?;
 
-        Ok(AmdSnp {
-            tee_config: tee_config.clone(),
-            fw,
-        })
+        Ok(AmdSnp { fw })
     }
 
     pub fn vm_prepare(
