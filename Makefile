@@ -10,6 +10,10 @@ ifeq ($(SEV),1)
     INIT_DEFS := -DSEV=1
 endif
 
+ifeq ($(ROSETTA),1)
+    INIT_DEFS := -D__ROSETTA__
+endif
+
 OS = $(shell uname -s)
 
 KRUN_BINARY_Linux = libkrun$(VARIANT).so.$(FULL_VERSION)
