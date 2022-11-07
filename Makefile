@@ -2,12 +2,16 @@ LIBRARY_HEADER = include/libkrun.h
 INIT_BINARY = init/init
 
 ABI_VERSION=1
-FULL_VERSION=1.4.6
+FULL_VERSION=1.4.7
 
 ifeq ($(SEV),1)
     VARIANT = -sev
     FEATURE_FLAGS := --features amd-sev
     INIT_DEFS := -DSEV=1
+endif
+
+ifeq ($(ROSETTA),1)
+    INIT_DEFS := -D__ROSETTA__
 endif
 
 OS = $(shell uname -s)

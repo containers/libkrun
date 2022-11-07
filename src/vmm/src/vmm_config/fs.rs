@@ -1,9 +1,11 @@
 use std::collections::VecDeque;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use devices::virtio::{Fs, FsError};
+
+const ROSETTA_DIR: &str = "/Library/Apple/usr/libexec/oah/RosettaLinux";
 
 #[derive(Debug)]
 pub enum FsConfigError {
@@ -48,7 +50,25 @@ impl FsBuilder {
     }
 
     pub fn create_fs(config: FsDeviceConfig) -> Result<Fs> {
-        devices::virtio::Fs::new(config.fs_id, config.shared_dir, config.mapped_volumes)
+        let mapped_volumes = if cfg!(target_os = "macos") && std::fs::metadata(ROSETTA_DIR).is_ok()
+        {
+            if let Some(config_mapped_volumes) = config.mapped_volumes {
+                let mut mapped_volumes = config_mapped_volumes.to_vec();
+                mapped_volumes.push((
+                    Path::new(ROSETTA_DIR).to_path_buf(),
+                    Path::new("/.rosetta").to_path_buf(),
+                ));
+                Some(mapped_volumes)
+            } else {
+                Some(vec![(
+                    Path::new(ROSETTA_DIR).to_path_buf(),
+                    Path::new("/.rosetta").to_path_buf(),
+                )])
+            }
+        } else {
+            config.mapped_volumes
+        };
+        devices::virtio::Fs::new(config.fs_id, config.shared_dir, mapped_volumes)
             .map_err(FsConfigError::CreateFsDevice)
     }
 }
