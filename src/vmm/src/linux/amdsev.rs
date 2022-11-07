@@ -331,10 +331,8 @@ impl AmdSev {
     }
 
     fn sev_init(&self, vm_fd: &VmFd) -> Result<(), kvm_ioctls::Error> {
-        let id = if self.sev_es { 1 } else { 0 };
-
         let mut cmd = kvm_sev_cmd {
-            id,
+            id: u32::from(self.sev_es),
             data: 0,
             error: 0,
             sev_fd: self.fw.as_raw_fd() as u32,
