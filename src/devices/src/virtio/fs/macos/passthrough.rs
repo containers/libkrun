@@ -1090,6 +1090,9 @@ impl FileSystem for PassthroughFs {
                     continue;
                 }
 
+                // Safe because we just opened this fd above.
+                let f = unsafe { File::from_raw_fd(fd) };
+
                 let st = fstat(&f)?;
                 let inode = self.next_inode.fetch_add(1, Ordering::Relaxed);
 
