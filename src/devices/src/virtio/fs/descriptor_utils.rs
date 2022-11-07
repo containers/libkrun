@@ -107,7 +107,7 @@ impl<'a> DescriptorChainConsumer<'a> {
             return Ok(0);
         }
 
-        let bytes_consumed = f(&*bufs)?;
+        let bytes_consumed = f(&bufs)?;
 
         // This can happen if a driver tricks a device into reading/writing more data than
         // fits in a `usize`.
