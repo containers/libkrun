@@ -1,3 +1,4 @@
-#[cfg(feature = "amd-sev")]
-mod amdsev;
+#[cfg(feature = "tee")]
+pub mod tee;
+
 pub mod vstate;

@@ -261,7 +261,7 @@ impl Vmm {
     pub fn configure_system(&self, vcpus: &[Vcpu], initrd: &Option<InitrdConfig>) -> Result<()> {
         #[cfg(target_arch = "x86_64")]
         {
-            let cmdline_len = if cfg!(feature = "amd-sev") {
+            let cmdline_len = if cfg!(feature = "tee") {
                 arch::x86_64::layout::CMDLINE_SEV_SIZE
             } else {
                 self.kernel_cmdline.len() + 1

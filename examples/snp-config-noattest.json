@@ -1,0 +1,8 @@
+{
+    "workload_id": "snptest",
+    "cpus": 2,
+    "ram_mib": 2048,
+    "tee": "snp",
+    "tee_data": "{\"vendor_chain\": \"\", \"attestation_server_pubkey\": \"\"}",
+    "attestation_url": ""
+}

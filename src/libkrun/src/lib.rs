@@ -8,28 +8,28 @@ use std::env;
 use std::ffi::CStr;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
-#[cfg(not(feature = "amd-sev"))]
+#[cfg(not(feature = "tee"))]
 use std::path::Path;
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Mutex;
 
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 use devices::virtio::CacheType;
 use env_logger::Env;
 use libc::{c_char, size_t};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
 use vmm::resources::VmResources;
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 use vmm::vmm_config::block::BlockDeviceConfig;
 use vmm::vmm_config::boot_source::{BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
-#[cfg(not(feature = "amd-sev"))]
+#[cfg(not(feature = "tee"))]
 use vmm::vmm_config::fs::FsDeviceConfig;
 use vmm::vmm_config::kernel_bundle::KernelBundle;
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 use vmm::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
 use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
@@ -52,12 +52,12 @@ struct ContextConfig {
     env: Option<String>,
     args: Option<String>,
     rlimits: Option<String>,
-    #[cfg(not(feature = "amd-sev"))]
+    #[cfg(not(feature = "tee"))]
     fs_cfg: Option<FsDeviceConfig>,
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     block_cfg: Option<BlockDeviceConfig>,
     port_map: Option<HashMap<u16, u16>>,
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     tee_config_file: Option<PathBuf>,
 }
 
@@ -117,22 +117,22 @@ impl ContextConfig {
         }
     }
 
-    #[cfg(not(feature = "amd-sev"))]
+    #[cfg(not(feature = "tee"))]
     fn set_fs_cfg(&mut self, fs_cfg: FsDeviceConfig) {
         self.fs_cfg = Some(fs_cfg);
     }
 
-    #[cfg(not(feature = "amd-sev"))]
+    #[cfg(not(feature = "tee"))]
     fn get_fs_cfg(&self) -> Option<FsDeviceConfig> {
         self.fs_cfg.clone()
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     fn set_block_cfg(&mut self, block_cfg: BlockDeviceConfig) {
         self.block_cfg = Some(block_cfg);
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     fn get_block_cfg(&self) -> Option<BlockDeviceConfig> {
         self.block_cfg.clone()
     }
@@ -145,12 +145,12 @@ impl ContextConfig {
         self.port_map.clone()
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     fn set_tee_config_file(&mut self, filepath: PathBuf) {
         self.tee_config_file = Some(filepath);
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     fn get_tee_config_file(&self) -> Option<PathBuf> {
         self.tee_config_file.clone()
     }
@@ -159,14 +159,14 @@ impl ContextConfig {
 static CTX_MAP: Lazy<Mutex<HashMap<u32, ContextConfig>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static CTX_IDS: AtomicI32 = AtomicI32::new(0);
 
-#[cfg(not(feature = "amd-sev"))]
+#[cfg(not(feature = "tee"))]
 #[link(name = "krunfw")]
 extern "C" {
     fn krunfw_get_kernel(load_addr: *mut u64, size: *mut size_t) -> *mut c_char;
     fn krunfw_get_version() -> u32;
 }
 
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 #[link(name = "krunfw-sev")]
 extern "C" {
     fn krunfw_get_qboot(size: *mut size_t) -> *mut c_char;
@@ -215,7 +215,7 @@ pub extern "C" fn krun_create_ctx() -> i32 {
     };
     ctx_cfg.vmr.set_kernel_bundle(kernel_bundle).unwrap();
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     {
         let mut qboot_size: usize = 0;
         let qboot_host_addr = unsafe { krunfw_get_qboot(&mut qboot_size as *mut usize) };
@@ -283,7 +283,7 @@ pub extern "C" fn krun_set_vm_config(ctx_id: u32, num_vcpus: u32, ram_mib: u32) 
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-#[cfg(not(feature = "amd-sev"))]
+#[cfg(not(feature = "tee"))]
 pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) -> i32 {
     let root_path = match CStr::from_ptr(c_root_path).to_str() {
         Ok(root) => root,
@@ -318,7 +318,7 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-#[cfg(not(feature = "amd-sev"))]
+#[cfg(not(feature = "tee"))]
 pub unsafe extern "C" fn krun_set_mapped_volumes(
     ctx_id: u32,
     c_mapped_volumes: *const *const c_char,
@@ -377,7 +377,7 @@ pub unsafe extern "C" fn krun_set_mapped_volumes(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 pub unsafe extern "C" fn krun_set_root_disk(ctx_id: u32, c_disk_path: *const c_char) -> i32 {
     let disk_path = match CStr::from_ptr(c_disk_path).to_str() {
         Ok(disk) => disk,
@@ -609,7 +609,7 @@ pub unsafe extern "C" fn krun_set_env(ctx_id: u32, c_envp: *const *const c_char)
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
 pub unsafe extern "C" fn krun_set_tee_config_file(ctx_id: u32, c_filepath: *const c_char) -> i32 {
     let filepath = match CStr::from_ptr(c_filepath).to_str() {
         Ok(f) => f,
@@ -651,7 +651,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         None => return -libc::ENOENT,
     };
 
-    #[cfg(not(feature = "amd-sev"))]
+    #[cfg(not(feature = "tee"))]
     if let Some(fs_cfg) = ctx_cfg.get_fs_cfg() {
         if ctx_cfg.vmr.set_fs_device(fs_cfg).is_err() {
             error!("Error configuring virtio-fs");
@@ -659,7 +659,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         }
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     if let Some(block_cfg) = ctx_cfg.get_block_cfg() {
         if ctx_cfg.vmr.set_block_device(block_cfg).is_err() {
             error!("Error configuring virtio-blk");
@@ -667,12 +667,21 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         }
     }
 
-    #[cfg(feature = "amd-sev")]
-    if let Some(filepath) = ctx_cfg.get_tee_config_file() {
-        if ctx_cfg.vmr.set_tee_config(filepath).is_err() {
-            error!("Error parsing TEE config file");
+    /*
+     * Before krun_start_enter() is called in an encrypted context, the TEE
+     * config must have been set via krun_set_tee_config_file(). If the TEE
+     * config is not set by this point, print the relevant error message and
+     * fail.
+     */
+    #[cfg(feature = "tee")]
+    if let Some(tee_config) = ctx_cfg.get_tee_config_file() {
+        if let Err(e) = ctx_cfg.vmr.set_tee_config(tee_config) {
+            error!("Error setting up TEE config: {:?}", e);
             return -libc::EINVAL;
         }
+    } else {
+        error!("Missing TEE config file");
+        return -libc::EINVAL;
     }
 
     let boot_source = BootSourceConfig {

@@ -10,6 +10,10 @@ use libc::{c_int, c_void, siginfo_t};
 use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::io;
+
+#[cfg(feature = "tee")]
+use std::os::unix::io::RawFd;
+
 use std::result;
 use std::sync::atomic::{fence, Ordering};
 #[cfg(not(test))]
@@ -20,9 +24,15 @@ use super::super::TimestampUs;
 use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 
 #[cfg(feature = "amd-sev")]
-use super::amdsev::{AmdSev, Error as SevError};
+use super::tee::amdsev::{AmdSev, Error as SevError};
 
 #[cfg(feature = "amd-sev")]
+use super::tee::amdsnp::{AmdSnp, Error as SnpError};
+
+#[cfg(feature = "tee")]
+use kbs_types::Tee;
+
+#[cfg(feature = "tee")]
 use crate::resources::TeeConfig;
 use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 use arch;
@@ -45,6 +55,12 @@ use utils::sm::StateMachine;
 use vm_memory::{
     Address, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion,
 };
+
+#[cfg(feature = "amd-sev")]
+use sev::launch::sev as sev_launch;
+
+#[cfg(feature = "amd-sev")]
+use sev::launch::snp;
 
 #[cfg(target_arch = "x86_64")]
 const MAGIC_IOPORT_SIGNAL_GUEST_BOOT_COMPLETE: u64 = 0x03f0;
@@ -80,7 +96,7 @@ pub enum Error {
     #[cfg(target_arch = "x86_64")]
     /// Cannot set the local interruption due to bad configuration.
     LocalIntConfiguration(arch::x86_64::interrupts::Error),
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     /// Missing TEE config
     MissingTeeConfig,
     #[cfg(target_arch = "x86_64")]
@@ -100,14 +116,26 @@ pub enum Error {
     /// Cannot set the memory regions.
     SetUserMemoryRegion(kvm_ioctls::Error),
     #[cfg(feature = "amd-sev")]
-    /// Error initializing the Secure Virtualization Backend.
-    SecVirtInit(SevError),
+    /// Error initializing the Secure Virtualization Backend (SEV).
+    SevSecVirtInit(SevError),
     #[cfg(feature = "amd-sev")]
-    /// Error preparing the VM for Secure Virtualization.
-    SecVirtPrepare(SevError),
+    /// Error preparing the VM for Secure Virtualization (SEV).
+    SevSecVirtPrepare(SevError),
     #[cfg(feature = "amd-sev")]
-    /// Error attesting the Secure VM.
-    SecVirtAttest(SevError),
+    /// Error attesting the Secure VM (SEV).
+    SevSecVirtAttest(SevError),
+    #[cfg(feature = "amd-sev")]
+    /// Error initializing the Secure Virtualization Backend (SNP).
+    SnpSecVirtInit(SnpError),
+    #[cfg(feature = "amd-sev")]
+    /// Error preparing the VM for Secure Virtualization (SNP).
+    SnpSecVirtPrepare(SnpError),
+    #[cfg(feature = "amd-sev")]
+    /// Error attesting the Secure VM (SNP).
+    SnpSecVirtAttest(SnpError),
+    #[cfg(feature = "tee")]
+    /// The TEE specified is not supported.
+    InvalidTee,
     /// Failed to signal Vcpu.
     SignalVcpu(utils::errno::Error),
     #[cfg(target_arch = "x86_64")]
@@ -247,24 +275,42 @@ impl Display for Error {
                 e
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {}", e),
-            #[cfg(feature = "amd-sev")]
-            SecVirtInit(e) => {
+            #[cfg(feature = "tee")]
+            SevSecVirtInit(e) => {
                 write!(
                     f,
-                    "Error initializing the Secure Virtualization Backend: {:?}",
+                    "Error initializing the Secure Virtualization Backend (SEV): {:?}",
                     e
                 )
             }
-            #[cfg(feature = "amd-sev")]
-            SecVirtPrepare(e) => write!(
+            #[cfg(feature = "tee")]
+            SevSecVirtPrepare(e) => write!(
                 f,
-                "Error preparing the VM for Secure Virtualization: {:?}",
+                "Error preparing the VM for Secure Virtualization (SEV): {:?}",
                 e
             ),
-            #[cfg(feature = "amd-sev")]
-            SecVirtAttest(e) => write!(f, "Error attesting the Secure VM: {:?}", e),
+            #[cfg(feature = "tee")]
+            SevSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SEV): {:?}", e),
+
+            #[cfg(feature = "tee")]
+            SnpSecVirtInit(e) => write!(
+                f,
+                "Error initializing the Secure Virtualization Backend (SEV): {:?}",
+                e
+            ),
+
+            #[cfg(feature = "tee")]
+            SnpSecVirtPrepare(e) => write!(
+                f,
+                "Error preparing the VM for Secure Virtualization (SNP): {:?}",
+                e
+            ),
+
+            #[cfg(feature = "tee")]
+            SnpSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SNP): {:?}", e),
+
             SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {}", e),
-            #[cfg(feature = "amd-sev")]
+            #[cfg(feature = "tee")]
             MissingTeeConfig => write!(f, "Missing TEE configuration"),
             #[cfg(target_arch = "x86_64")]
             MSRSConfiguration(e) => write!(f, "Error configuring the MSR registers: {:?}", e),
@@ -355,14 +401,19 @@ impl Display for Error {
             }
             #[cfg(target_arch = "aarch64")]
             VcpuArmInit(e) => write!(f, "Error doing Vcpu Init on Arm: {}", e),
+
+            #[cfg(feature = "tee")]
+            InvalidTee => write!(f, "TEE selected is not currently supported"),
         }
     }
 }
 
 pub type Result<T> = result::Result<T, Error>;
 
-#[cfg(feature = "amd-sev")]
+#[cfg(feature = "tee")]
+#[derive(Debug)]
 pub struct MeasuredRegion {
+    pub guest_addr: u64,
     pub host_addr: u64,
     pub size: usize,
 }
@@ -432,12 +483,18 @@ pub struct Vm {
     irqchip_handle: Option<Box<dyn GICDevice>>,
 
     #[cfg(feature = "amd-sev")]
-    sev: AmdSev,
+    sev: Option<AmdSev>,
+
+    #[cfg(feature = "amd-sev")]
+    snp: Option<AmdSnp>,
+
+    #[cfg(feature = "amd-sev")]
+    pub tee: Tee,
 }
 
 impl Vm {
     /// Constructs a new `Vm` using the given `Kvm` instance.
-    #[cfg(not(feature = "amd-sev"))]
+    #[cfg(not(feature = "tee"))]
     pub fn new(kvm: &Kvm) -> Result<Self> {
         //create fd for interacting with kvm-vm specific functions
         let vm_fd = kvm.create_vm().map_err(Error::VmFd)?;
@@ -460,8 +517,9 @@ impl Vm {
             irqchip_handle: None,
         })
     }
+
     #[cfg(feature = "amd-sev")]
-    pub fn new(kvm: &Kvm, tee_config: &Option<TeeConfig>) -> Result<Self> {
+    pub fn new(kvm: &Kvm, tee_config: &TeeConfig) -> Result<Self> {
         //create fd for interacting with kvm-vm specific functions
         let vm_fd = kvm.create_vm().map_err(Error::VmFd)?;
 
@@ -472,21 +530,22 @@ impl Vm {
         let supported_msrs =
             arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
 
-        let sev = {
-            if let Some(config) = tee_config {
-                AmdSev::new(config).map_err(Error::SecVirtInit)?
-            } else {
-                return Err(Error::MissingTeeConfig);
-            }
+        let (sev, snp) = match tee_config.tee {
+            Tee::Sev => (
+                Some(AmdSev::new(tee_config).map_err(Error::SevSecVirtInit)?),
+                None,
+            ),
+            Tee::Snp => (None, Some(AmdSnp::new().map_err(Error::SnpSecVirtInit)?)),
+            _ => return Err(Error::InvalidTee),
         };
 
         Ok(Vm {
             fd: vm_fd,
             supported_cpuid,
             supported_msrs,
-            #[cfg(target_arch = "aarch64")]
-            irqchip_handle: None,
             sev,
+            snp,
+            tee: tee_config.tee.clone(),
         })
     }
 
@@ -540,21 +599,59 @@ impl Vm {
     }
 
     #[cfg(feature = "amd-sev")]
-    pub fn secure_virt_prepare(&mut self, guest_mem: &GuestMemoryMmap) -> Result<()> {
-        self.sev
-            .vm_prepare(&self.fd, guest_mem)
-            .map_err(Error::SecVirtPrepare)
+    pub fn sev_secure_virt_prepare(
+        &mut self,
+        guest_mem: &GuestMemoryMmap,
+    ) -> Result<sev_launch::Launcher<sev_launch::Started, RawFd, RawFd>> {
+        match &self.sev {
+            Some(s) => s
+                .vm_prepare(&self.fd, guest_mem)
+                .map_err(Error::SevSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
     }
 
     #[cfg(feature = "amd-sev")]
-    pub fn secure_virt_attest(
+    pub fn sev_secure_virt_attest(
         &self,
         guest_mem: &GuestMemoryMmap,
         measured_regions: Vec<MeasuredRegion>,
+        launcher: sev_launch::Launcher<sev_launch::Started, RawFd, RawFd>,
     ) -> Result<()> {
-        self.sev
-            .vm_attest(&self.fd, guest_mem, measured_regions)
-            .map_err(Error::SecVirtAttest)
+        match &self.sev {
+            Some(s) => s
+                .vm_attest(&self.fd, guest_mem, measured_regions, launcher)
+                .map_err(Error::SevSecVirtAttest),
+            None => Err(Error::InvalidTee),
+        }
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn snp_secure_virt_prepare(
+        &self,
+        guest_mem: &GuestMemoryMmap,
+    ) -> Result<snp::Launcher<snp::Started, RawFd, RawFd>> {
+        match &self.snp {
+            Some(s) => s
+                .vm_prepare(&self.fd, guest_mem)
+                .map_err(Error::SnpSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
+    }
+
+    #[cfg(feature = "amd-sev")]
+    pub fn snp_secure_virt_attest(
+        &self,
+        guest_mem: &GuestMemoryMmap,
+        measured_regions: Vec<MeasuredRegion>,
+        launcher: snp::Launcher<snp::Started, RawFd, RawFd>,
+    ) -> Result<()> {
+        match &self.snp {
+            Some(s) => s
+                .vm_measure(guest_mem, measured_regions, launcher)
+                .map_err(Error::SnpSecVirtAttest),
+            None => Err(Error::InvalidTee),
+        }
     }
 
     /// Creates the irq chip and an in-kernel device model for the PIT.
