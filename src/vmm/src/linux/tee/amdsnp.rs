@@ -2,7 +2,7 @@ use std::os::unix::io::{AsRawFd, RawFd};
 
 use crate::vstate::MeasuredRegion;
 
-use sev::firmware::uapi::host::Firmware;
+use sev::firmware::host::Firmware;
 use sev::launch::snp::*;
 
 use kvm_bindings::kvm_enc_region;
