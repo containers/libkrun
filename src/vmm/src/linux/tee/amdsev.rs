@@ -16,7 +16,7 @@ use kvm_ioctls::VmFd;
 use procfs::CpuInfo;
 use serde::{Deserialize, Serialize};
 use sev::certs;
-use sev::firmware::uapi::host::Firmware;
+use sev::firmware::host::Firmware;
 use sev::launch::sev::*;
 use sev::session::Session;
 use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion};

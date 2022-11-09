@@ -15,4 +15,4 @@ tee-snp = [ "sev", "tee" ]
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sev = { git = "https://github.com/virtee/sev.git", branch = "main", features = ["openssl"], optional = true }
+sev = { version = "1.0.0", features = ["openssl"], optional = true }
