@@ -33,3 +33,13 @@ pub const KVM_TSS_ADDRESS: u64 = 0xfffb_d000;
 
 /// The 'zero page', a.k.a linux kernel bootparams.
 pub const ZERO_PAGE_START: u64 = 0x7000;
+
+/// SNP: space for the initial LIDT
+pub const SNP_LIDT_START: u64 = 0x0;
+/// SNP: Secrets page.
+pub const SNP_SECRETS_START: u64 = 0x5000;
+/// SNP: CPUID page
+pub const SNP_CPUID_START: u64 = 0x6000;
+/// SNP: FW stack and initial page tables
+pub const SNP_FWDATA_START: u64 = 0x8000;
+pub const SNP_FWDATA_SIZE: usize = 0x7000;

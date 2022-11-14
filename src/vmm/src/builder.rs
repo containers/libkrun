@@ -44,6 +44,8 @@ use crate::{device_manager, VmmEventsObserver};
 use arch::ArchMemoryInfo;
 #[cfg(feature = "tee")]
 use arch::InitrdConfig;
+#[cfg(feature = "tee")]
+use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
 use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
 use utils::terminal::Terminal;
@@ -361,7 +363,13 @@ pub fn build_microvm(
     let mut vm = setup_vm(&guest_memory)?;
 
     #[cfg(feature = "tee")]
-    let mut vm = setup_vm(&guest_memory, vm_resources.tee_config())?;
+    let (kvm, mut vm) = {
+        let kvm = KvmContext::new()
+            .map_err(Error::KvmContext)
+            .map_err(StartMicrovmError::Internal)?;
+        let vm = setup_vm(&kvm, &guest_memory, vm_resources.tee_config())?;
+        (kvm, vm)
+    };
 
     #[cfg(feature = "tee")]
     let tee = vm_resources.tee_config().tee.clone();
@@ -616,11 +624,21 @@ pub fn build_microvm(
                 .sev_secure_virt_attest(vmm.guest_memory(), measured_regions, sev_launcher.unwrap())
                 .map_err(StartMicrovmError::SecureVirtAttest)?,
 
-            Tee::Snp => vmm
-                .kvm_vm()
-                .snp_secure_virt_attest(vmm.guest_memory(), measured_regions, snp_launcher.unwrap())
-                .map_err(StartMicrovmError::SecureVirtAttest)?,
-
+            Tee::Snp => {
+                let cpuid = kvm
+                    .fd()
+                    .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
+                    .map_err(VstateError::KvmCpuId)
+                    .map_err(StartMicrovmError::SecureVirtAttest)?;
+                vmm.kvm_vm()
+                    .snp_secure_virt_attest(
+                        cpuid,
+                        vmm.guest_memory(),
+                        measured_regions,
+                        snp_launcher.unwrap(),
+                    )
+                    .map_err(StartMicrovmError::SecureVirtAttest)?;
+            }
             _ => return Err(StartMicrovmError::InvalidTee),
         }
 
@@ -754,12 +772,10 @@ pub(crate) fn setup_vm(
 }
 #[cfg(all(target_os = "linux", feature = "tee"))]
 pub(crate) fn setup_vm(
+    kvm: &KvmContext,
     guest_memory: &GuestMemoryMmap,
     tee_config: &TeeConfig,
 ) -> std::result::Result<Vm, StartMicrovmError> {
-    let kvm = KvmContext::new()
-        .map_err(Error::KvmContext)
-        .map_err(StartMicrovmError::Internal)?;
     let mut vm = Vm::new(kvm.fd(), tee_config)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
