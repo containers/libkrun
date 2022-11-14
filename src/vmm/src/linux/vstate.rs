@@ -93,6 +93,9 @@ pub enum Error {
     KvmApiVersion(i32),
     /// Cannot initialize the KVM context due to missing capabilities.
     KvmCap(kvm_ioctls::Cap),
+    #[cfg(feature = "amd-sev")]
+    /// Cannot read the CPUID entries from KVM.
+    KvmCpuId(kvm_ioctls::Error),
     #[cfg(target_arch = "x86_64")]
     /// Cannot set the local interruption due to bad configuration.
     LocalIntConfiguration(arch::x86_64::interrupts::Error),
@@ -259,6 +262,8 @@ impl Display for Error {
                 v
             ),
             KvmCap(cap) => write!(f, "Missing KVM capabilities: {:?}", cap),
+            #[cfg(feature = "amd-sev")]
+            KvmCpuId(e) => write!(f, "Cannot read CPUID entries from KVM: {}", e),
             VcpuCountNotInitialized => write!(f, "vCPU count is not initialized"),
             VmFd(e) => write!(f, "Cannot open the VM file descriptor: {}", e),
             VcpuFd(e) => write!(f, "Cannot open the VCPU file descriptor: {}", e),
@@ -642,13 +647,14 @@ impl Vm {
     #[cfg(feature = "amd-sev")]
     pub fn snp_secure_virt_attest(
         &self,
+        cpuid: CpuId,
         guest_mem: &GuestMemoryMmap,
         measured_regions: Vec<MeasuredRegion>,
         launcher: snp::Launcher<snp::Started, RawFd, RawFd>,
     ) -> Result<()> {
         match &self.snp {
             Some(s) => s
-                .vm_measure(guest_mem, measured_regions, launcher)
+                .vm_measure(cpuid, guest_mem, measured_regions, launcher)
                 .map_err(Error::SnpSecVirtAttest),
             None => Err(Error::InvalidTee),
         }
