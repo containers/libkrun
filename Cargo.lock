@@ -381,7 +381,7 @@ checksum = "349d5a591cd28b49e1d1037471617a32ddcda5731b99419008085f72d5a53836"
 
 [[package]]
 name = "libkrun"
-version = "1.4.10"
+version = "1.5.0"
 dependencies = [
  "devices",
  "env_logger",

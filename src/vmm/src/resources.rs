@@ -229,7 +229,7 @@ impl VmResources {
     }
 
     #[cfg(feature = "tee")]
-    pub fn set_block_device(&mut self, config: BlockDeviceConfig) -> Result<BlockConfigError> {
+    pub fn add_block_device(&mut self, config: BlockDeviceConfig) -> Result<BlockConfigError> {
         self.block.insert(config)
     }
 

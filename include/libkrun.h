@@ -76,6 +76,20 @@ int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
 int32_t krun_set_root_disk(uint32_t ctx_id, const char *disk_path);
 
 /*
+ * Sets the path to the disk image that contains the file-system to be used as a data partition for the microVM.
+ * The only supported image format is "raw". Only available in libkrun-SEV.
+ *
+ * Arguments:
+ *  "ctx_id"    - the configuration context ID.
+ *  "disk_path" - a null-terminated string representing the path leading to the disk image that
+ *                contains the root file-system.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_data_disk(uint32_t ctx_id, const char *disk_path);
+
+/*
  * Configures the mapped volumes for the microVM. Only supported on macOS, on Linux use
  * user_namespaces and bind-mounts instead. Not available in libkrun-SEV.
  *
