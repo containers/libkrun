@@ -55,7 +55,9 @@ struct ContextConfig {
     #[cfg(not(feature = "tee"))]
     fs_cfg: Option<FsDeviceConfig>,
     #[cfg(feature = "tee")]
-    block_cfg: Option<BlockDeviceConfig>,
+    root_block_cfg: Option<BlockDeviceConfig>,
+    #[cfg(feature = "tee")]
+    data_block_cfg: Option<BlockDeviceConfig>,
     port_map: Option<HashMap<u16, u16>>,
     #[cfg(feature = "tee")]
     tee_config_file: Option<PathBuf>,
@@ -128,13 +130,23 @@ impl ContextConfig {
     }
 
     #[cfg(feature = "tee")]
-    fn set_block_cfg(&mut self, block_cfg: BlockDeviceConfig) {
-        self.block_cfg = Some(block_cfg);
+    fn set_root_block_cfg(&mut self, block_cfg: BlockDeviceConfig) {
+        self.root_block_cfg = Some(block_cfg);
     }
 
     #[cfg(feature = "tee")]
-    fn get_block_cfg(&self) -> Option<BlockDeviceConfig> {
-        self.block_cfg.clone()
+    fn get_root_block_cfg(&self) -> Option<BlockDeviceConfig> {
+        self.root_block_cfg.clone()
+    }
+
+    #[cfg(feature = "tee")]
+    fn set_data_block_cfg(&mut self, block_cfg: BlockDeviceConfig) {
+        self.data_block_cfg = Some(block_cfg);
+    }
+
+    #[cfg(feature = "tee")]
+    fn get_data_block_cfg(&self) -> Option<BlockDeviceConfig> {
+        self.data_block_cfg.clone()
     }
 
     fn set_port_map(&mut self, port_map: HashMap<u16, u16>) {
@@ -397,7 +409,37 @@ pub unsafe extern "C" fn krun_set_root_disk(ctx_id: u32, c_disk_path: *const c_c
                 is_disk_read_only: false,
                 is_disk_root: true,
             };
-            cfg.set_block_cfg(block_device_config);
+            cfg.set_root_block_cfg(block_device_config);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(feature = "tee")]
+pub unsafe extern "C" fn krun_set_data_disk(ctx_id: u32, c_disk_path: *const c_char) -> i32 {
+    let disk_path = match CStr::from_ptr(c_disk_path).to_str() {
+        Ok(disk) => disk,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    //let fs_id = "/dev/root".to_string();
+    //let shared_dir = root_path.to_string();
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            let block_device_config = BlockDeviceConfig {
+                block_id: "data".to_string(),
+                cache_type: CacheType::Writeback,
+                disk_image_path: disk_path.to_string(),
+                is_disk_read_only: false,
+                is_disk_root: false,
+            };
+            cfg.set_data_block_cfg(block_device_config);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -660,8 +702,16 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     }
 
     #[cfg(feature = "tee")]
-    if let Some(block_cfg) = ctx_cfg.get_block_cfg() {
-        if ctx_cfg.vmr.set_block_device(block_cfg).is_err() {
+    if let Some(block_cfg) = ctx_cfg.get_root_block_cfg() {
+        if ctx_cfg.vmr.add_block_device(block_cfg).is_err() {
+            error!("Error configuring virtio-blk");
+            return -libc::EINVAL;
+        }
+    }
+
+    #[cfg(feature = "tee")]
+    if let Some(block_cfg) = ctx_cfg.get_data_block_cfg() {
+        if ctx_cfg.vmr.add_block_device(block_cfg).is_err() {
             error!("Error configuring virtio-blk");
             return -libc::EINVAL;
         }

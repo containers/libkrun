@@ -38,9 +38,9 @@ int main(int argc, char *const argv[])
     int err;
     int i;
 
-    if (argc != 3) {
+    if (argc < 3 || argc > 4) {
         printf("Invalid arguments\n");
-        printf("Usage: %s DISK_IMAGE TEE_CONFIG_FILE\n", argv[0]);
+        printf("Usage: %s ROOT_DISK_IMAGE TEE_CONFIG_FILE [DATA_DISK_IMAGE]\n", argv[0]);
         return -1;
     }
 
@@ -72,6 +72,15 @@ int main(int argc, char *const argv[])
         errno = -err;
         perror("Error configuring root disk image");
         return -1;
+    }
+
+    // Use the third (optional) command line argument as the disk image containing a data disk.
+    if (argc > 3) {
+        if (err = krun_set_data_disk(ctx_id, argv[3])) {
+            errno = -err;
+            perror("Error configuring data disk image");
+            return -1;
+        }
     }
 
     if (getcwd(&current_path[0], MAX_PATH) == NULL) {
