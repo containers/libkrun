@@ -63,9 +63,9 @@ checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 
 [[package]]
 name = "bitfield"
-version = "0.14.0"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d7e60934ceec538daadb9d8432424ed043a904d8e0243f3c6446bce549a46ac"
+checksum = "46afbd2983a5d5a7bd740ccb198caf5b82f45c40c09c0eed36052d91cb92e719"
 
 [[package]]
 name = "bitflags"
@@ -370,7 +370,7 @@ checksum = "349d5a591cd28b49e1d1037471617a32ddcda5731b99419008085f72d5a53836"
 
 [[package]]
 name = "libkrun"
-version = "1.4.8"
+version = "1.4.9"
 dependencies = [
  "devices",
  "env_logger",
@@ -693,8 +693,9 @@ dependencies = [
 
 [[package]]
 name = "sev"
-version = "0.3.0"
-source = "git+https://github.com/virtee/sev.git?branch=main#0896f64e880fe9d043fda5862c29edfacbf5a8e0"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "343ca80f0f064f0f293a6066e81c2977e819e909b348634701ab8fe4304e7749"
 dependencies = [
  "bitfield",
  "bitflags",
@@ -706,7 +707,7 @@ dependencies = [
  "serde",
  "serde-big-array",
  "serde_bytes",
- "static_assert_macro",
+ "static_assertions",
 ]
 
 [[package]]
@@ -720,10 +721,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "static_assert_macro"
+name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8aa19fe1f820914e252c747ee699215bba50c0f7b38af8828e4a85f79142fedb"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "syn"
