@@ -249,11 +249,11 @@ impl BusDevice for MmioTransport {
                     0xb0..=0xbc => {
                         // For no SHM region or invalid region the kernel looks for length of -1
                         let (shm_base, shm_len) = if self.shm_region_select != 0 {
-                            (0, !0 as u64)
+                            (0, !0)
                         } else {
                             match self.locked_device().shm_region() {
                                 Some(region) => (region.guest_addr, region.size as u64),
-                                None => (0, !0 as u64),
+                                None => (0, !0),
                             }
                         };
                         match offset {

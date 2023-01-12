@@ -581,8 +581,8 @@ impl Vm {
             info!("Guest memory starts at {:x?}", host_addr);
             let memory_region = kvm_userspace_memory_region {
                 slot: index as u32,
-                guest_phys_addr: region.start_addr().raw_value() as u64,
-                memory_size: region.len() as u64,
+                guest_phys_addr: region.start_addr().raw_value(),
+                memory_size: region.len(),
                 userspace_addr: host_addr as u64,
                 flags: 0,
             };
@@ -1026,7 +1026,7 @@ impl Vcpu {
             .map_err(Error::VcpuSetCpuid)?;
 
         arch::x86_64::msr::setup_msrs(&self.fd).map_err(Error::MSRSConfiguration)?;
-        arch::x86_64::regs::setup_regs(&self.fd, kernel_start_addr.raw_value() as u64, self.id)
+        arch::x86_64::regs::setup_regs(&self.fd, kernel_start_addr.raw_value(), self.id)
             .map_err(Error::REGSConfiguration)?;
         arch::x86_64::regs::setup_fpu(&self.fd).map_err(Error::FPUConfiguration)?;
         arch::x86_64::regs::setup_sregs(guest_mem, &self.fd, self.id)

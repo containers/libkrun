@@ -108,7 +108,7 @@ fn update_extended_cache_topology_entry(
                 .write_bits_in_range(&eax::APICID_BITRANGE, LEAFBH_INDEX1_APICID);
             entry
                 .ecx
-                .write_bits_in_range(&ecx::LEVEL_NUMBER_BITRANGE, entry.index as u32);
+                .write_bits_in_range(&ecx::LEVEL_NUMBER_BITRANGE, entry.index);
             if vm_spec.cpu_count == 1 {
                 // For 1 vCPU, this level is invalid
                 entry

@@ -342,7 +342,7 @@ impl AmdSev {
         }
 
         let mut data = Data {
-            addr: data_uaddr as u64,
+            addr: data_uaddr,
             size: data_size as u32,
         };
 
@@ -375,7 +375,7 @@ impl AmdSev {
             let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
             let enc_region = kvm_enc_region {
                 addr: host_addr as u64,
-                size: region.len() as u64,
+                size: region.len(),
             };
             vm_fd
                 .register_enc_memory_region(&enc_region)

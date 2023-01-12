@@ -332,7 +332,7 @@ impl<'a> HvfVcpu<'a> {
                     1 => u8::from_le_bytes(self.mmio_buf[0..1].try_into().unwrap()) as u64,
                     2 => u16::from_le_bytes(self.mmio_buf[0..2].try_into().unwrap()) as u64,
                     4 => u32::from_le_bytes(self.mmio_buf[0..4].try_into().unwrap()) as u64,
-                    8 => u64::from_le_bytes(self.mmio_buf[0..8].try_into().unwrap()) as u64,
+                    8 => u64::from_le_bytes(self.mmio_buf[0..8].try_into().unwrap()),
                     _ => panic!(
                         "unsupported mmio pa={} len={}",
                         mmio_read.addr, mmio_read.len
@@ -446,9 +446,7 @@ impl<'a> HvfVcpu<'a> {
                                 4 => {
                                     self.mmio_buf[0..4].copy_from_slice(&(val as u32).to_le_bytes())
                                 }
-                                8 => {
-                                    self.mmio_buf[0..8].copy_from_slice(&(val as u64).to_le_bytes())
-                                }
+                                8 => self.mmio_buf[0..8].copy_from_slice(&(val).to_le_bytes()),
                                 _ => panic!("unsupported mmio len={}", len),
                             };
 

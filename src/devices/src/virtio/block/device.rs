@@ -66,7 +66,7 @@ impl DiskProperties {
             .read(true)
             .write(!is_disk_read_only)
             .open(PathBuf::from(&disk_image_path))?;
-        let disk_size = disk_image.seek(SeekFrom::End(0))? as u64;
+        let disk_size = disk_image.seek(SeekFrom::End(0))?;
 
         // We only support disk size, which uses the first two words of the configuration space.
         // If the image is not a multiple of the sector size, the tail bits are not exposed.

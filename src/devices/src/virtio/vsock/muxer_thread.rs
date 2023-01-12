@@ -88,11 +88,9 @@ impl MuxerThread {
             .epoll
             .ctl(ControlOperation::Delete, fd, &EpollEvent::default());
         if !evset.is_empty() {
-            let _ = self.epoll.ctl(
-                ControlOperation::Add,
-                fd,
-                &EpollEvent::new(evset, id as u64),
-            );
+            let _ = self
+                .epoll
+                .ctl(ControlOperation::Add, fd, &EpollEvent::new(evset, id));
         }
     }
 

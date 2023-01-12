@@ -93,7 +93,7 @@ impl AmdSnp {
             let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
             let enc_region = kvm_enc_region {
                 addr: host_addr as u64,
-                size: region.len() as u64,
+                size: region.len(),
             };
 
             vm_fd

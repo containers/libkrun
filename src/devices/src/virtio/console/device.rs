@@ -206,7 +206,7 @@ impl Console {
         let queue = &mut self.queues[RXQ_INDEX];
         let mut used_any = false;
         while let Some(head) = queue.pop(mem) {
-            let len = cmp::min(head.len as u32, self.in_buffer.len() as u32);
+            let len = cmp::min(head.len, self.in_buffer.len() as u32);
             let source_slice = self.in_buffer.drain(..len as usize).collect::<Vec<u8>>();
             if let Err(e) = mem.write_slice(&source_slice[..], head.addr) {
                 error!("Failed to write slice: {:?}", e);

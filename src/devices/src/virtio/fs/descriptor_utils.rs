@@ -66,7 +66,7 @@ impl<'a> DescriptorChainConsumer<'a> {
         // `Reader::new()` and `Writer::new()`).
         self.buffers
             .iter()
-            .fold(0usize, |count, vs| count + vs.len() as usize)
+            .fold(0usize, |count, vs| count + vs.len())
     }
 
     fn bytes_consumed(&self) -> usize {
@@ -99,7 +99,7 @@ impl<'a> DescriptorChainConsumer<'a> {
             if rem < vs.len() {
                 buflen += rem;
             } else {
-                buflen += vs.len() as usize;
+                buflen += vs.len();
             }
         }
 

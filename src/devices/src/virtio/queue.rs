@@ -377,15 +377,14 @@ impl Queue {
 
         // These writes can't fail as we are guaranteed to be within the descriptor ring.
         mem.write_obj(u32::from(desc_index), used_elem).unwrap();
-        mem.write_obj(len as u32, used_elem.unchecked_add(4))
-            .unwrap();
+        mem.write_obj(len, used_elem.unchecked_add(4)).unwrap();
 
         self.next_used += Wrapping(1);
 
         // This fence ensures all descriptor writes are visible before the index update is.
         fence(Ordering::Release);
 
-        mem.write_obj(self.next_used.0 as u16, used_ring.unchecked_add(2))
+        mem.write_obj(self.next_used.0, used_ring.unchecked_add(2))
             .unwrap();
     }
 
