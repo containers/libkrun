@@ -426,7 +426,7 @@ impl<F: FileSystem + Sync> Server<F> {
         let Rename2In { newdir, flags, .. } = r.read_obj().map_err(Error::DecodeMessage)?;
 
         #[cfg(target_os = "linux")]
-        let flags = flags & (libc::RENAME_EXCHANGE | libc::RENAME_NOREPLACE) as u32;
+        let flags = flags & (libc::RENAME_EXCHANGE | libc::RENAME_NOREPLACE);
 
         self.do_rename(in_header, size_of::<Rename2In>(), newdir, flags, r, w)
     }

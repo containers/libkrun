@@ -1796,7 +1796,7 @@ impl FileSystem for PassthroughFs {
             return Ok(());
         }
 
-        let file = self.open_inode(inode, open_flags as i32)?;
+        let file = self.open_inode(inode, open_flags)?;
         let fd = file.as_raw_fd();
 
         let ret = unsafe {

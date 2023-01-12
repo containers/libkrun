@@ -470,7 +470,7 @@ pub fn build_microvm(
     // and is architectural specific.
     #[allow(unused_mut)]
     let mut mmio_device_manager = MMIODeviceManager::new(
-        &mut (arch::MMIO_MEM_START as u64),
+        &mut (arch::MMIO_MEM_START.clone()),
         (arch::IRQ_BASE, arch::IRQ_MAX),
     );
 
@@ -606,7 +606,7 @@ pub fn build_microvm(
 
     #[cfg(feature = "tee")]
     let initrd_config = Some(InitrdConfig {
-        address: GuestAddress(arch::x86_64::layout::INITRD_SEV_START as u64),
+        address: GuestAddress(arch::x86_64::layout::INITRD_SEV_START),
         size: initrd_bundle.size,
     });
 
@@ -673,7 +673,7 @@ pub fn create_guest_memory(
             .and_then(|memory| {
                 memory.insert_region(Arc::new(GuestRegionMmap::new(
                     kernel_region,
-                    GuestAddress(kernel_load_addr as u64),
+                    GuestAddress(kernel_load_addr),
                 )?))
             })
             .map_err(StartMicrovmError::GuestMemoryMmap)?,
@@ -700,13 +700,13 @@ pub fn create_guest_memory(
 
     let kernel_data = unsafe { std::slice::from_raw_parts(kernel_region.as_ptr(), kernel_size) };
     guest_mem
-        .write(kernel_data, GuestAddress(kernel_load_addr as u64))
+        .write(kernel_data, GuestAddress(kernel_load_addr))
         .unwrap();
 
     let qboot_data =
         unsafe { std::slice::from_raw_parts(qboot_bundle.host_addr as *mut u8, qboot_bundle.size) };
     guest_mem
-        .write(qboot_data, GuestAddress(arch::BIOS_START as u64))
+        .write(qboot_data, GuestAddress(arch::BIOS_START))
         .unwrap();
 
     let initrd_data = unsafe {
@@ -715,7 +715,7 @@ pub fn create_guest_memory(
     guest_mem
         .write(
             initrd_data,
-            GuestAddress(arch::x86_64::layout::INITRD_SEV_START as u64),
+            GuestAddress(arch::x86_64::layout::INITRD_SEV_START),
         )
         .unwrap();
 

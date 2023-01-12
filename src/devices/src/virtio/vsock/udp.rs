@@ -124,7 +124,7 @@ impl UdpProxy {
     }
 
     fn peer_avail_credit(&self) -> usize {
-        (Wrapping(self.peer_buf_alloc as u32) - (self.rx_cnt - self.peer_fwd_cnt)).0 as usize
+        (Wrapping(self.peer_buf_alloc) - (self.rx_cnt - self.peer_fwd_cnt)).0 as usize
     }
 
     fn send_credit_request(&self) {

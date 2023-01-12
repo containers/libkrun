@@ -92,7 +92,7 @@ impl Cmdline {
     }
 
     fn has_capacity(&self, more: usize) -> Result<()> {
-        let needs_space = if self.line.is_empty() { 0 } else { 1 };
+        let needs_space = usize::from(!self.line.is_empty());
         if self.line.len() + more + needs_space < self.capacity {
             Ok(())
         } else {

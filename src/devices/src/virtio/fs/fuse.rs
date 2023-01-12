@@ -478,6 +478,9 @@ impl From<bindings::stat64> for Attr {
             atimensec: st.st_atime_nsec as u32,
             mtimensec: st.st_mtime_nsec as u32,
             ctimensec: st.st_ctime_nsec as u32,
+            #[cfg(target_os = "linux")]
+            mode: st.st_mode,
+            #[cfg(target_os = "macos")]
             mode: st.st_mode as u32,
             nlink: st.st_nlink as u32,
             uid: st.st_uid,
@@ -505,6 +508,23 @@ pub struct Kstatfs {
 }
 unsafe impl ByteValued for Kstatfs {}
 
+#[cfg(target_os = "linux")]
+impl From<bindings::statvfs64> for Kstatfs {
+    fn from(st: bindings::statvfs64) -> Self {
+        Kstatfs {
+            blocks: st.f_blocks,
+            bfree: st.f_bfree,
+            bavail: st.f_bavail,
+            files: st.f_files,
+            ffree: st.f_ffree,
+            bsize: st.f_bsize as u32,
+            namelen: st.f_namemax as u32,
+            frsize: st.f_frsize as u32,
+            ..Default::default()
+        }
+    }
+}
+#[cfg(target_os = "macos")]
 impl From<bindings::statvfs64> for Kstatfs {
     fn from(st: bindings::statvfs64) -> Self {
         Kstatfs {
