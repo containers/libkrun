@@ -5,7 +5,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
-use std::{mem, result};
+use std::{mem, num::TryFromIntError, result};
 
 use super::super::get_fdt_addr;
 use kvm_bindings::{
@@ -26,6 +26,8 @@ pub enum Error {
     SetCoreRegister(kvm_ioctls::Error),
     /// Failed to get a system register.
     GetSysRegister(kvm_ioctls::Error),
+    /// The value returned for the MPIDR register is bigger than 64 bits.
+    MpidrTooBig(TryFromIntError),
 }
 type Result<T> = result::Result<T, Error>;
 
@@ -125,14 +127,14 @@ arm64_sys_reg!(MPIDR_EL1, 3, 0, 0, 0, 5);
 pub fn setup_regs(vcpu: &VcpuFd, cpu_id: u8, boot_ip: u64, mem: &GuestMemoryMmap) -> Result<()> {
     // Get the register index of the PSTATE (Processor State) register.
     #[allow(deref_nullptr)]
-    vcpu.set_one_reg(arm64_core_reg!(pstate), PSTATE_FAULT_BITS_64)
+    vcpu.set_one_reg(arm64_core_reg!(pstate), PSTATE_FAULT_BITS_64.into())
         .map_err(Error::SetCoreRegister)?;
 
     // Other vCPUs are powered off initially awaiting PSCI wakeup.
     if cpu_id == 0 {
         // Setting the PC (Processor Counter) to the current program address (kernel address).
         #[allow(deref_nullptr)]
-        vcpu.set_one_reg(arm64_core_reg!(pc), boot_ip)
+        vcpu.set_one_reg(arm64_core_reg!(pc), boot_ip.into())
             .map_err(Error::SetCoreRegister)?;
 
         // Last mandatory thing to set -> the address pointing to the FDT (also called DTB).
@@ -140,7 +142,7 @@ pub fn setup_regs(vcpu: &VcpuFd, cpu_id: u8, boot_ip: u64, mem: &GuestMemoryMmap
         // not exceed 2 megabytes in size." -> https://www.kernel.org/doc/Documentation/arm64/booting.txt.
         // We are choosing to place it the end of DRAM. See `get_fdt_addr`.
         #[allow(deref_nullptr)]
-        vcpu.set_one_reg(arm64_core_reg!(regs), get_fdt_addr(mem) as u64)
+        vcpu.set_one_reg(arm64_core_reg!(regs), get_fdt_addr(mem).into())
             .map_err(Error::SetCoreRegister)?;
     }
     Ok(())
@@ -152,7 +154,8 @@ pub fn setup_regs(vcpu: &VcpuFd, cpu_id: u8, boot_ip: u64, mem: &GuestMemoryMmap
 ///
 /// * `vcpu` - Structure for the VCPU that holds the VCPU's fd.
 pub fn read_mpidr(vcpu: &VcpuFd) -> Result<u64> {
-    vcpu.get_one_reg(MPIDR_EL1).map_err(Error::GetSysRegister)
+    u64::try_from(vcpu.get_one_reg(MPIDR_EL1).map_err(Error::GetSysRegister)?)
+        .map_err(Error::MpidrTooBig)
 }
 
 #[cfg(test)]
