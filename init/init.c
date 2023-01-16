@@ -411,22 +411,26 @@ static int config_parse_file(char ***argv, char **workdir)
 	parsed_env = parsed_workdir = parsed_args = parsed_entrypoint = 0;
 
 	for (i = 1; i < num_tokens && (!parsed_env || !parsed_args || !parsed_workdir); i++) {
-		if (!parsed_env && jsoneq(data, &tokens[i], "Env") == 0) {
+		if (!parsed_env && jsoneq(data, &tokens[i], "Env") == 0 &&
+			(i + 1) < num_tokens && tokens[i + 1].type == JSMN_ARRAY) {
 			config_parse_env(data, &tokens[i + 1]);
 			parsed_env = 1;
 		}
 
-		if (!parsed_args && jsoneq(data, &tokens[i], "Cmd") == 0) {
+		if (!parsed_args && jsoneq(data, &tokens[i], "Cmd") == 0 &&
+			(i + 1) < num_tokens) {
 			config_argv = config_parse_args(data, &tokens[i + 1]);
 			parsed_args = 1;
 		}
 
-		if (!parsed_workdir && jsoneq(data, &tokens[i], "WorkingDir") == 0) {
+		if (!parsed_workdir && jsoneq(data, &tokens[i], "WorkingDir") == 0 &&
+			(i + 1) < num_tokens) {
 			*workdir = config_parse_string(data, &tokens[i + 1]);
 			parsed_workdir = 1;
 		}
 
-		if (!parsed_entrypoint && jsoneq(data, &tokens[i], "Entrypoint") == 0) {
+		if (!parsed_entrypoint && jsoneq(data, &tokens[i], "Entrypoint") == 0 &&
+			(i + 1) < num_tokens) {
 			entrypoint = config_parse_args(data, &tokens[i + 1]);
 			parsed_workdir = 1;
 		}
