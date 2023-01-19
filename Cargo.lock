@@ -10,11 +10,11 @@ checksum = "f26201604c87b1e01bd3d98f8d5d9a8fcbb815e8cedb41ffccbeb4bf593a35fe"
 
 [[package]]
 name = "ahash"
-version = "0.7.4"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43bb833f0bf979d8475d38fbf09ed3b8a55e1885fe93ad3f93239fc6a4f17b98"
+checksum = "bf6ccdb167abbf410dcb915cabd428929d7f6a04980b54a11f26a39f1c7f7107"
 dependencies = [
- "getrandom",
+ "cfg-if",
  "once_cell",
  "version_check",
 ]
@@ -33,7 +33,7 @@ name = "arch"
 version = "0.1.0"
 dependencies = [
  "arch_gen",
- "kvm-bindings 0.6.0",
+ "kvm-bindings",
  "kvm-ioctls 0.12.0",
  "libc",
  "utils",
@@ -114,9 +114,9 @@ checksum = "12170080f3533d6f09a19f81596f836854d0fa4867dc32c8172b8474b4e9de61"
 name = "cpuid"
 version = "0.1.0"
 dependencies = [
- "kvm-bindings 0.6.0",
+ "kvm-bindings",
  "kvm-ioctls 0.12.0",
- "vmm-sys-util 0.11.0",
+ "vmm-sys-util",
 ]
 
 [[package]]
@@ -271,9 +271,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.11.2"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab5ef0d4909ef3724cc8cce6ccc8572c5c817592e9285f5464f8e86f8bd3726e"
+checksum = "43a3c133739dddd0d2990f9a4bdf8eb4b21ef50e4851ca85ab661199821d510e"
 dependencies = [
  "ahash",
 ]
@@ -338,20 +338,11 @@ dependencies = [
 
 [[package]]
 name = "kvm-bindings"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a78c049190826fff959994b7c1d8a2930d0a348f1b8f3aa4f9bb34cd5d7f2952"
-dependencies = [
- "vmm-sys-util 0.8.0",
-]
-
-[[package]]
-name = "kvm-bindings"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "efe70e65a5b092161d17f5005b66e5eefe7a94a70c332e755036fc4af78c4e79"
 dependencies = [
- "vmm-sys-util 0.11.0",
+ "vmm-sys-util",
 ]
 
 [[package]]
@@ -360,9 +351,9 @@ version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97422ba48d7ffb66fd4d18130f72ab66f9bbbf791fb7a87b9291cdcfec437593"
 dependencies = [
- "kvm-bindings 0.5.0",
+ "kvm-bindings",
  "libc",
- "vmm-sys-util 0.8.0",
+ "vmm-sys-util",
 ]
 
 [[package]]
@@ -371,9 +362,9 @@ version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3a321cabd827642499c77e27314f388dd83a717a5ca716b86476fb947f73ae4"
 dependencies = [
- "kvm-bindings 0.6.0",
+ "kvm-bindings",
  "libc",
- "vmm-sys-util 0.11.0",
+ "vmm-sys-util",
 ]
 
 [[package]]
@@ -425,9 +416,9 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.6.6"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ea2d928b485416e8908cff2d97d621db22b27f7b3b6729e438bcf42c671ba91"
+checksum = "71e7d46de488603ffdd5f30afbc64fbba2378214a2c3a2fb83abf3d33126df17"
 dependencies = [
  "hashbrown",
 ]
@@ -490,9 +481,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.8.0"
+version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "692fcb63b64b1758029e0a96ee63e049ce8c5948587f2f7208df04625e5f6b56"
+checksum = "6f61fba1741ea2b3d6a1e3178721804bb716a68a6aeba1149b5d52e3d464ea66"
 
 [[package]]
 name = "openssl"
@@ -790,7 +781,7 @@ dependencies = [
  "env_logger",
  "libc",
  "log",
- "vmm-sys-util 0.11.0",
+ "vmm-sys-util",
 ]
 
 [[package]]
@@ -801,9 +792,9 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version_check"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fecdca9a5291cc2b8dcf7dc02453fee791a280f3743cb0905f8822ae463b3fe"
+checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
 
 [[package]]
 name = "virtio_gen"
@@ -833,7 +824,7 @@ dependencies = [
  "hvf",
  "kbs-types",
  "kernel",
- "kvm-bindings 0.6.0",
+ "kvm-bindings",
  "kvm-ioctls 0.12.0",
  "libc",
  "log",
@@ -844,17 +835,7 @@ dependencies = [
  "sev",
  "utils",
  "vm-memory",
- "vmm-sys-util 0.11.0",
-]
-
-[[package]]
-name = "vmm-sys-util"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01cf11afbc4ebc0d5c7a7748a77d19e2042677fc15faa2f4ccccb27c18a60605"
-dependencies = [
- "bitflags",
- "libc",
+ "vmm-sys-util",
 ]
 
 [[package]]
