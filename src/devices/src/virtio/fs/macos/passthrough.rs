@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::mem::{self, MaybeUninit};
+use std::num::NonZeroUsize;
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -528,7 +529,7 @@ impl PassthroughFs {
             next_inode: AtomicU64::new(fuse::ROOT_ID + 2),
             init_inode: fuse::ROOT_ID + 1,
             path_cache: Mutex::new(BTreeMap::new()),
-            file_cache: Mutex::new(LruCache::new(256)),
+            file_cache: Mutex::new(LruCache::new(NonZeroUsize::new(256).unwrap())),
             pinned_files: Mutex::new(BTreeMap::new()),
 
             handles: RwLock::new(BTreeMap::new()),
