@@ -704,7 +704,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(feature = "tee")]
     if let Some(block_cfg) = ctx_cfg.get_root_block_cfg() {
         if ctx_cfg.vmr.add_block_device(block_cfg).is_err() {
-            error!("Error configuring virtio-blk");
+            error!("Error configuring virtio-blk for root block");
             return -libc::EINVAL;
         }
     }
@@ -712,7 +712,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(feature = "tee")]
     if let Some(block_cfg) = ctx_cfg.get_data_block_cfg() {
         if ctx_cfg.vmr.add_block_device(block_cfg).is_err() {
-            error!("Error configuring virtio-blk");
+            error!("Error configuring virtio-blk for data block");
             return -libc::EINVAL;
         }
     }
