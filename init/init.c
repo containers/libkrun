@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <dirent.h>
+
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
@@ -26,6 +28,8 @@
 #define MAX_ARGS 32
 #define MAX_PASS_SIZE 512
 #define MAX_TOKENS 16384
+
+static int jsoneq(const char *, jsmntok_t *, const char *);
 
 char DEFAULT_KRUN_INIT[] = "/bin/sh";
 
@@ -64,55 +68,170 @@ static void set_rlimits(const char *rlimits)
 }
 
 #ifdef SEV
-static char * get_luks_passphrase(int *pass_len)
+/*
+ * The LUKS passphrase is obtained from a KBS attestation server, complete an
+ * SNP attestation to get the passphrase.
+ */
+static char *get_luks_passphrase(int *pass_len)
 {
-	char *pass = NULL;
-	int len;
-	int fd;
+        int fd, num_tokens, wid_found, url_found;
+        struct stat tc_stat;
+        char *pass, wid[256], url[256], tc_json[1024], *tok_start, *tok_end;
+        char full_path[512], *return_str;
+        jsmn_parser parser;
+        jsmntok_t *tokens;
+        size_t tok_size;
+        DIR *teeconfig;
+        struct dirent *tc_de;
 
-	pass = getenv("KRUN_PASS");
-	if (pass) {
-		*pass_len = strnlen(pass, MAX_PASS_SIZE);
-		return pass;
-	}
+        return_str = NULL;
 
-	if (mkdir("/sfs", 0755) < 0 && errno != EEXIST) {
-		perror("mkdir(/sfs)");
-		return NULL;
-	}
+        /*
+         * If a user registered the TEE config data disk with
+         * krun_set_data_disk(), it would appear as /dev/vdb in the guest.
+         * Mount this device and read the config.
+         */
+        if (mkdir("/dev", 0755) < 0 && errno != EEXIST) {
+                perror("mkdir(/dev)");
+                goto finish;
+        }
 
-	if (mount("securityfs", "/sfs", "securityfs",
-		  MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
-		perror("mount(/sfs)");
-		goto cleanup_dir;
-	}
+        if (mount("devtmpfs", "/dev", "devtmpfs", MS_RELATIME, NULL) < 0 &&
+                        errno != EBUSY) {
+                perror("mount(devtmpfs)");
 
-	fd = open(CMDLINE_SECRET_PATH, O_RDONLY);
-	if (fd < 0) {
-		goto cleanup_sfs;
-	}
+                goto rmdir_dev;
+        }
 
-	pass = malloc(MAX_PASS_SIZE);
-	if (!pass) {
-		goto cleanup_fd;
-	}
+        if (mkdir("/teeconfig", 0755) < 0 && errno != EEXIST) {
+                perror("mkdir(/teeconfig)");
 
-	if ((len = read(fd, pass, MAX_PASS_SIZE)) < 0) {
-		free(pass);
-		pass = NULL;
-	} else {
-		*pass_len = len;
-		unlink(CMDLINE_SECRET_PATH);
-	}
+                goto umount_dev;
+        }
 
-cleanup_fd:
-	close(fd);
-cleanup_sfs:
-	umount("/sfs");
-cleanup_dir:
-	rmdir("/sfs");
+        if (mount("/dev/vdb", "/teeconfig", "ext4",
+                MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
+                perror("mount(/dev/vdb)");
 
-	return pass;
+                goto rmdir_teeconfig;
+        }
+
+        fd = open("/teeconfig/krun-sev.json", O_RDONLY);
+        if (fd < 0) {
+                perror("open(krun-sev.json)");
+
+                goto umount_teeconfig;
+        }
+
+        if (read(fd, (void *) tc_json, 1024) < 0) {
+                perror("read(krun-sev.json)");
+                close(fd);
+
+                goto umount_teeconfig;
+        }
+        close(fd);
+
+        /*
+         * Unmount and remove the mounted directory.
+         */
+        if (umount("/teeconfig") < 0)
+                printf("Unable to unmount /teeconfig");
+
+        teeconfig = opendir("/teeconfig");
+        if (teeconfig == NULL) {
+                printf("Unable to open /teeconfig directory\n");
+
+                goto umount_teeconfig;
+        }
+
+        while ((tc_de = readdir(teeconfig)) != NULL) {
+                stat(tc_de->d_name, &tc_stat);
+                if (!strcmp(".", tc_de->d_name) || !strcmp("..", tc_de->d_name))
+                        continue;
+
+                sprintf(full_path, "/teeconfig/%s", tc_de->d_name);
+                if (remove(full_path) < 0)
+                        printf("Unable to remove file %s\n", full_path);
+        }
+        if (rmdir("/teeconfig") < 0)
+                printf("Unable to remove directory /teeconfig\n");
+
+        /*
+         * Parse the TEE config's workload_id and attestation_url field.
+         */
+        jsmn_init(&parser);
+
+        tokens = (jsmntok_t *) malloc(sizeof(jsmntok_t) * MAX_TOKENS);\
+        if (tokens == NULL) {
+                perror("malloc(jsmntok_t)");
+
+                goto umount_teeconfig;
+        }
+
+        num_tokens = jsmn_parse(&parser, tc_json, strlen(tc_json), tokens,
+                MAX_TOKENS);
+        if (num_tokens < 0) {
+                printf("Unable to allocate JSON tokens\n");
+
+                goto umount_teeconfig;
+        } else if (num_tokens < 1 || tokens[0].type != JSMN_OBJECT) {
+                printf("Unable to find object in TEE configuration file\n");
+
+                goto umount_teeconfig;
+        }
+
+        wid_found = url_found = 0;
+
+        for (int i = 1; i < num_tokens - 1; ++i) {
+                tok_start = tc_json + tokens[i + 1].start;
+                tok_end = tc_json + tokens[i + 1].end;
+                tok_size = tok_end - tok_start;
+                if (!jsoneq(tc_json, &tokens[i], "workload_id")) {
+                        strncpy(wid, tok_start, tok_size);
+                        wid_found = 1;
+                } else if (!jsoneq(tc_json, &tokens[i], "attestation_url")) {
+                        strncpy(url, tok_start, tok_size);
+                        url_found = 1;
+                }
+        }
+
+        if (!wid_found) {
+                printf("Unable to find attestation workload ID\n");
+
+                goto umount_teeconfig;
+        } else if (!url_found) {
+                printf("Unable to find attestation server URL\n");
+
+                goto umount_teeconfig;
+        }
+
+        /*
+         * Allocate the passphrase and attempt to attest the workload.
+         */
+        pass = (char *) malloc(MAX_PASS_SIZE);
+        if (pass == NULL)
+                goto umount_teeconfig;
+        *pass_len = 0;
+
+        goto free_pass;
+
+free_pass:
+        free(pass);
+
+umount_teeconfig:
+        umount("/teeconfig");
+
+rmdir_teeconfig:
+        rmdir("/teeconfig");
+
+umount_dev:
+        umount("/dev");
+
+rmdir_dev:
+        rmdir("/dev");
+
+finish:
+        return return_str;
 }
 
 static int chroot_luks()
