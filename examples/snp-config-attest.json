@@ -1,0 +1,8 @@
+{
+    "workload_id": "test",
+    "cpus": 2,
+    "ram_mib": 2048,
+    "tee": "snp",
+    "tee_data": "{\"vendor_chain\": \"\", \"attestation_server_pubkey\": \"\"}",
+    "attestation_url": "http://127.0.0.1:8000"
+}
