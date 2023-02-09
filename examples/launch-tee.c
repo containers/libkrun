@@ -38,9 +38,9 @@ int main(int argc, char *const argv[])
     int err;
     int i;
 
-    if (argc < 3 || argc > 4) {
+    if (argc != 4) {
         printf("Invalid arguments\n");
-        printf("Usage: %s ROOT_DISK_IMAGE TEE_CONFIG_FILE [DATA_DISK_IMAGE]\n", argv[0]);
+        printf("Usage: %s ROOT_DISK_IMAGE TEE_CONFIG_FILE DATA_DISK_IMAGE\n", argv[0]);
         return -1;
     }
 
@@ -72,15 +72,6 @@ int main(int argc, char *const argv[])
         errno = -err;
         perror("Error configuring root disk image");
         return -1;
-    }
-
-    // Use the third (optional) command line argument as the disk image containing a data disk.
-    if (argc > 3) {
-        if (err = krun_set_data_disk(ctx_id, argv[3])) {
-            errno = -err;
-            perror("Error configuring data disk image");
-            return -1;
-        }
     }
 
     if (getcwd(&current_path[0], MAX_PATH) == NULL) {
@@ -119,7 +110,13 @@ int main(int argc, char *const argv[])
 
     if (err = krun_set_tee_config_file(ctx_id, argv[2])) {
         errno = -err;
-        perror("Error configuring the attestation server");
+        perror("Error setting the TEE config file");
+        return -1;
+    }
+
+    if (err = krun_set_data_disk(ctx_id, argv[3])) {
+        errno = -err;
+        perror("Error configuring the TEE config data disk");
         return -1;
     }
 
