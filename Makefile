@@ -11,6 +11,7 @@ SNP_INIT_SRC =	init/tee/snp_attest.c		\
 		init/tee/kbs/kbs_util.c		\
 		init/tee/kbs/kbs_types.c	\
 		init/tee/kbs/kbs_curl.c		\
+		init/tee/kbs/kbs_crypto.c	\
 
 SEV_LD_FLAGS =	-lcurl -lidn2 -lssl -lcrypto -lzstd -lz -lbrotlidec-static \
 		-lbrotlicommon-static
