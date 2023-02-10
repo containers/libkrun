@@ -9,6 +9,7 @@
 #include <openssl/core_names.h>
 #include <openssl/bio.h>
 #include <openssl/buffer.h>
+#include <openssl/evp.h>
 
 #include "kbs.h"
 
@@ -16,7 +17,7 @@
  * Create an OpenSSL TEE public/private key pair.
  */
 int
-kbs_tee_pubkey_create(EVP_PKEY **pkey, BIGNUM *n, BIGNUM *e)
+kbs_tee_pubkey_create(EVP_PKEY **pkey, BIGNUM **n, BIGNUM **e)
 {
         int ret, rc;
         EVP_PKEY_CTX *ctx;
@@ -63,14 +64,14 @@ kbs_tee_pubkey_create(EVP_PKEY **pkey, BIGNUM *n, BIGNUM *e)
         /*
          * Get the modulus and exponents of the key pair.
          */
-        ret = EVP_PKEY_get_bn_param(*pkey, OSSL_PKEY_PARAM_RSA_N, &n);
+        ret = EVP_PKEY_get_bn_param(*pkey, OSSL_PKEY_PARAM_RSA_N, n);
         if (ret < 0 || n == NULL) {
                 printf("ERROR: getting public key modulus\n");
 
                 goto ctx_free;
         }
 
-        ret = EVP_PKEY_get_bn_param(*pkey, OSSL_PKEY_PARAM_RSA_E, &e);
+        ret = EVP_PKEY_get_bn_param(*pkey, OSSL_PKEY_PARAM_RSA_E, e);
         if (ret < 0 || e == NULL) {
                 printf("ERROR: getting public key exponent\n");
 
@@ -86,7 +87,7 @@ ctx_free:
 }
 
 /*
- * Create a SHA256 hash of the nonce and TEE public key to send to the
+ * Create a SHA512 hash of the nonce and TEE public key to send to the
  * attestation server.
  */
 int
@@ -95,23 +96,24 @@ kbs_nonce_pubkey_hash(char *nonce, EVP_PKEY *pkey, unsigned char **hash,
 {
         int rc;
         EVP_MD_CTX *md_ctx;
-        BIO *bio;
-        BUF_MEM *bm;
+        BIO *n_bio, *n_bio64, *e_bio, *e_bio64;
+        BIGNUM *n, *e;
+        char *n_b64, *e_b64;
 
         rc = -1;
 
         /*
-         * Initialize an MD context and initialize the SHA256 digest.
+         * Initialize an MD context and initialize the SHA512 digest.
          */
         md_ctx = EVP_MD_CTX_new();
         if (md_ctx == NULL) {
-                printf("ERROR: generating SHA256 context\n");
+                printf("ERROR: generating SHA512 context\n");
 
                 return rc;
         }
 
-        if (EVP_DigestInit_ex(md_ctx, EVP_sha256(), NULL) < 1) {
-                printf("ERROR: initializing SHA256 hash\n");
+        if (EVP_DigestInit_ex(md_ctx, EVP_sha512(), NULL) < 1) {
+                printf("ERROR: initializing SHA512 hash\n");
 
                 goto md_ctx_free;
         }
@@ -120,7 +122,7 @@ kbs_nonce_pubkey_hash(char *nonce, EVP_PKEY *pkey, unsigned char **hash,
          * Update the digest with the data from the nonce.
          */
         if (EVP_DigestUpdate(md_ctx, (void *) nonce, strlen(nonce)) < 1) {
-                printf("ERROR: updating SHA256 digest with nonce\n");
+                printf("ERROR: updating SHA512 digest with nonce\n");
 
                 goto md_ctx_free;
         }
@@ -128,45 +130,66 @@ kbs_nonce_pubkey_hash(char *nonce, EVP_PKEY *pkey, unsigned char **hash,
         /*
          * Update the digest with the data from the TEE public key.
          *
-         * To do this, we must create a OpenSSL BIO object containing the data
-         * of the TEE public key. Once that BIO object is created, print the
-         * TEE public key data to the object, and update the SHA256 digest with
-         * the data from the public key.
+         * To do this, we will write the base64 encoding of the TEE public
+         * key's modulus and exponent.
          */
-        bio = BIO_new(BIO_s_mem());
-        if (bio == NULL) {
-                printf("ERROR: initializing pkey BIO\n");
+        n = e = NULL;
+        if (EVP_PKEY_get_bn_param(pkey, OSSL_PKEY_PARAM_RSA_N, &n) == 0) {
+                printf("ERROR: unable to retrieve public key modulus\n");
 
                 goto md_ctx_free;
         }
 
-        if (EVP_PKEY_print_public(bio, pkey, 0, NULL) != 1) {
-                printf("ERROR: printing public key to BIO\n");
+        if (EVP_PKEY_get_bn_param(pkey, OSSL_PKEY_PARAM_RSA_E, &e) == 0) {
+                printf("ERROR: unable to retrieve public key exponent\n");
+
+                goto bn_n_free;
+        }
+
+        n_b64 = (char *) malloc(1024 * sizeof(char));
+        if (n_b64 == NULL)
+                goto bn_e_free;
+
+        e_b64 = (char *) malloc(1024 * sizeof(char));
+        if (e_b64 == NULL) {
+                free((void *) n_b64);
+                goto bn_e_free;
+        }
+
+        n_bio = BIO_new(BIO_s_mem());
+        e_bio = BIO_new(BIO_s_mem());
+
+        n_bio64 = BIO_new(BIO_f_base64());
+        e_bio64 = BIO_new(BIO_f_base64());
+
+        ossl_bn_b64(n, &n_b64, n_bio, n_bio64);
+        ossl_bn_b64(e, &e_b64, e_bio, e_bio64);
+
+        if (EVP_DigestUpdate(md_ctx, (void *) n_b64, strlen(n_b64)) < 1) {
+                printf("ERROR: updating SHA512 digest with public key N\n");
 
                 goto bio_free;
         }
 
-        BIO_get_mem_ptr(bio, &bm);
-
-        if (EVP_DigestUpdate(md_ctx, (void *) bm->data, bm->length) < 1) {
-                printf("ERROR: updating SHA256 hash with TEE public key\n");
+        if (EVP_DigestUpdate(md_ctx, (void *) e_b64, strlen(e_b64)) < 1) {
+                printf("ERROR: updating SHA512 digest with public key E\n");
 
                 goto bio_free;
         }
 
         /*
-         * Allocate the memory to hold the SHA256 hash, and write the SHA256
+         * Allocate the memory to hold the SHA512 hash, and write the SHA512
          * hash to the "hash" byte array.
          */
-        *hash = (unsigned char *) OPENSSL_malloc(EVP_MD_size(EVP_sha256()));
+        *hash = (unsigned char *) OPENSSL_malloc(EVP_MD_size(EVP_sha512()));
         if (*hash == NULL) {
-                printf("ERROR: allocating memory for SHA256 hash\n");
+                printf("ERROR: allocating memory for SHA512 hash\n");
 
                 goto bio_free;
         }
 
         if (EVP_DigestFinal_ex(md_ctx, *hash, size) < 1) {
-                printf("ERROR: finalizing the SHA256 hash\n");
+                printf("ERROR: finalizing the SHA512 hash\n");
 
                 goto hash_free;
         }
@@ -179,10 +202,45 @@ hash_free:
         OPENSSL_free((void *) *hash);
 
 bio_free:
-        BIO_free(bio);
+        BIO_free(n_bio);
+        BIO_free(n_bio64);
+        BIO_free(e_bio);
+        BIO_free(e_bio64);
+
+bn_e_free:
+        BN_free(e);
+
+bn_n_free:
+        BN_free(n);
 
 md_ctx_free:
         EVP_MD_CTX_free(md_ctx);
 
         return rc;
+}
+
+/*
+ * Base-64 encode an OpenSSL BIGNUM.
+ */
+void
+ossl_bn_b64(BIGNUM *bn, char **bn_b64, BIO *bio, BIO *b64)
+{
+        unsigned char *bn_bin;
+        int bn_binlen;
+        int bn_b64len;
+
+        bn_binlen = BN_num_bytes(bn);
+        bn_bin = malloc(bn_binlen);
+        BN_bn2bin(bn, bn_bin);
+
+        BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+
+        BIO_push(b64, bio);
+
+        BIO_write(b64, bn_bin, bn_binlen);
+
+        bn_b64len = BIO_get_mem_data(b64, bn_b64);
+        (*bn_b64)[bn_b64len] = '\0';
+
+        free(bn_bin);
 }
