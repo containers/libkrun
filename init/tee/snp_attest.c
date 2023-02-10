@@ -14,6 +14,8 @@
 #include <linux/sev-guest.h>
 
 #include <curl/curl.h>
+#include <openssl/evp.h>
+#include <openssl/bn.h>
 
 #include "snp_attest.h"
 #include "kbs/kbs.h"
@@ -33,6 +35,10 @@ snp_attest(char *pass, char *url, char *wid)
         struct snp_report report;
         uint8_t *certs;
         size_t certs_size;
+        EVP_PKEY *pkey;
+        BIGNUM *n, *e;
+        unsigned int hash_size;
+        uint8_t *hash;
 
         if (kbs_request_marshal(json, TEE_SNP, wid) < 0)
                 return SNP_ATTEST_ERR("Unable to marshal KBS REQUEST");
@@ -44,9 +50,21 @@ snp_attest(char *pass, char *url, char *wid)
         if (kbs_challenge(curl, url, json, nonce) < 0)
                 return SNP_ATTEST_ERR("Unable to retrieve nonce from server");
 
+        n = e = NULL;
+        if (kbs_tee_pubkey_create(&pkey, n, e) < 0)
+                return SNP_ATTEST_ERR("Unable to create TEE public key");
+
+        if (kbs_nonce_pubkey_hash(nonce, pkey, &hash, &hash_size) < 0)
+                return SNP_ATTEST_ERR("Unable to hash nonce and public key");
+
+        certs = NULL;
+        certs_size = 0;
         if (snp_get_ext_report((uint8_t *) nonce, strlen(nonce) + 1, &report,
                         &certs, &certs_size) != EXIT_SUCCESS)
                 return SNP_ATTEST_ERR("Unable to retrieve attestation report");
+
+        if (kbs_attest(curl, url, &report, certs, certs_size) < 0)
+                return SNP_ATTEST_ERR("Unable to complete KBS ATTESTATION");
 
         return 0;
 }
