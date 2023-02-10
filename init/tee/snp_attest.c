@@ -51,7 +51,7 @@ snp_attest(char *pass, char *url, char *wid)
                 return SNP_ATTEST_ERR("Unable to retrieve nonce from server");
 
         n = e = NULL;
-        if (kbs_tee_pubkey_create(&pkey, n, e) < 0)
+        if (kbs_tee_pubkey_create(&pkey, &n, &e) < 0)
                 return SNP_ATTEST_ERR("Unable to create TEE public key");
 
         if (kbs_nonce_pubkey_hash(nonce, pkey, &hash, &hash_size) < 0)
@@ -59,11 +59,11 @@ snp_attest(char *pass, char *url, char *wid)
 
         certs = NULL;
         certs_size = 0;
-        if (snp_get_ext_report((uint8_t *) nonce, strlen(nonce) + 1, &report,
+        if (snp_get_ext_report(hash, hash_size, &report,
                         &certs, &certs_size) != EXIT_SUCCESS)
                 return SNP_ATTEST_ERR("Unable to retrieve attestation report");
 
-        if (kbs_attest(curl, url, &report, certs, certs_size) < 0)
+        if (kbs_attest(curl, url, &report, certs, certs_size, n, e) < 0)
                 return SNP_ATTEST_ERR("Unable to complete KBS ATTESTATION");
 
         return 0;
