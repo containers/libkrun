@@ -23,6 +23,8 @@
 
 #include "jsmn.h"
 
+#include "tee/snp_attest.h"
+
 #define CMDLINE_SECRET_PATH "/sfs/secrets/coco/cmdline"
 #define CONFIG_FILE_PATH "/.krun_config.json"
 #define MAX_ARGS 32
@@ -211,11 +213,14 @@ static char *get_luks_passphrase(int *pass_len)
         pass = (char *) malloc(MAX_PASS_SIZE);
         if (pass == NULL)
                 goto umount_teeconfig;
-        *pass_len = 0;
 
-        goto free_pass;
+        if (snp_attest(pass, url, wid) == 0) {
+                return_str = pass;
+                *pass_len = strlen(pass);
 
-free_pass:
+                goto umount_teeconfig;
+        }
+
         free(pass);
 
 umount_teeconfig:
