@@ -25,16 +25,16 @@ impl ReaperThread {
     }
 
     fn check_expiration(&mut self) -> Duration {
-        let mut lowest_elapsed = Duration::MAX;
+        let mut highest_elapsed = Duration::ZERO;
         let mut expired: Vec<u64> = Vec::new();
         let now = Instant::now();
 
         for (id, exptime) in self.released_map.iter() {
             let elapsed = now.duration_since(*exptime);
-            if elapsed > TIMEOUT {
+            if elapsed >= TIMEOUT {
                 expired.push(*id);
-            } else if elapsed < lowest_elapsed {
-                lowest_elapsed = elapsed;
+            } else if elapsed > highest_elapsed {
+                highest_elapsed = elapsed;
             }
         }
 
@@ -48,7 +48,12 @@ impl ReaperThread {
             debug!("remainig proxies: {}", pmap.len());
         }
 
-        lowest_elapsed
+        let mut timeout = Duration::MAX;
+        if highest_elapsed > Duration::ZERO {
+            timeout = TIMEOUT - highest_elapsed;
+            assert!(timeout > Duration::ZERO);
+        }
+        timeout
     }
 
     fn work(&mut self) {
