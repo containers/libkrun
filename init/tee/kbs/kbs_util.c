@@ -6,6 +6,8 @@
 #include "kbs.h"
 #include "../../jsmn.h"
 
+#define MAX_TOKENS 16384
+
 /*
  * Return the string identifier of the inputted TEE architecture.
  */

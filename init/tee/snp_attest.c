@@ -66,6 +66,11 @@ snp_attest(char *pass, char *url, char *wid)
         if (kbs_attest(curl, url, &report, certs, certs_size, n, e) < 0)
                 return SNP_ATTEST_ERR("Unable to complete KBS ATTESTATION");
 
+        curl_easy_reset(curl);
+
+        if (kbs_get_key(curl, url, wid, pkey, pass) < 0)
+                return SNP_ATTEST_ERR("Unable to retrieve passphrase");
+
         return 0;
 }
 
