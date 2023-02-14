@@ -152,6 +152,44 @@ out:
 }
 
 /*
+ * Retrieve the secret from the KBS attestation server.
+ */
+int
+kbs_get_key(CURL *curl, char *url, char *wid, EVP_PKEY *pkey, char *pass)
+{
+        int end_idx;
+        char json[4096];
+        char encrypted[4096], *plain;
+
+        /*
+         * The key is represented as a JSON byte list, copy this JSON list
+         * string to "json".
+         */
+        if (kbs_curl_get(curl, url, wid, json, KBS_CURL_GET_KEY) < 0) {
+                printf("ERROR: could not complete KBS passphrase retrieval\n");
+
+                return -1;
+        }
+
+        end_idx = strlen(json) - 2;
+
+        memcpy(encrypted, json + 1, end_idx);
+        encrypted[end_idx] = '\0';
+
+        if (rsa_pkey_decrypt(pkey, encrypted, &plain) < 0) {
+                printf("ERROR: could not decrypt passphrase from KBS server\n");
+
+                return -1;
+        }
+
+        strcpy(pass, plain);
+
+        OPENSSL_free(plain);
+
+        return 0;
+}
+
+/*
  * Marshal a JSON string of the kbs_types Attestation struct from the given
  * attestation report and certificate data.
  */
@@ -400,32 +438,14 @@ kbs_attestation_marshal_certs(char *json, uint8_t *certs, size_t size)
 static void
 kbs_attestation_marshal_tee_pubkey(char *json, BIGNUM *mod, BIGNUM *exp)
 {
-        char *mod_b64, *exp_b64;
+        char mod_b64[512], exp_b64[512];
         char buf[1024];
-        BIO *mod_bio, *mod_bio64, *exp_bio, *exp_bio64;
 
         if (mod == NULL || exp == NULL)
                 return;
 
-        mod_b64 = (char *) malloc(1024 * sizeof(char));
-        if (mod_b64 == NULL) {
-                return;
-        }
-
-        exp_b64 = (char *) malloc(1024 * sizeof(char));
-        if (exp_b64 == NULL) {
-                free(mod_b64);
-                return;
-        }
-
-        mod_bio = BIO_new(BIO_s_mem());
-        mod_bio64 = BIO_new(BIO_f_base64());
-
-        exp_bio = BIO_new(BIO_s_mem());
-        exp_bio64 = BIO_new(BIO_f_base64());
-
-        ossl_bn_b64(mod, &mod_b64, mod_bio, mod_bio64);
-        ossl_bn_b64(exp, &exp_b64, exp_bio, exp_bio64);
+        BN_b64(mod, mod_b64);
+        BN_b64(exp, exp_b64);
 
         sprintf(buf, "\"tee-pubkey\":{");
         strcat(json, buf);
@@ -435,11 +455,7 @@ kbs_attestation_marshal_tee_pubkey(char *json, BIGNUM *mod, BIGNUM *exp)
 
         sprintf(buf, "\"k-mod\":\"%s\",", mod_b64);
         strcat(json, buf);
+
         sprintf(buf, "\"k-exp\":\"%s\"},", exp_b64);
         strcat(json, buf);
-
-        BIO_free(mod_bio);
-        BIO_free(mod_bio64);
-        BIO_free(exp_bio);
-        BIO_free(exp_bio64);
 }

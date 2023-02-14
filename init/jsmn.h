@@ -30,11 +30,7 @@
 extern "C" {
 #endif
 
-#ifdef JSMN_STATIC
 #define JSMN_API static
-#else
-#define JSMN_API extern
-#endif
 
 /**
  * JSON type identifier. Basic types are:

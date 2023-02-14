@@ -108,6 +108,68 @@ kbs_curl_post(CURL *curl, char *url, char *in, char *out, int type)
 }
 
 /*
+ * A cURL GET request. No input is given, and we are simply retrieving data
+ * from the KBS attestation server.
+ */
+int
+kbs_curl_get(CURL *curl, char *url, char *wid, char *out, int type)
+{
+        CURLcode code;
+        char full_url[100], *session_id_label, session_id[100];
+        struct curl_slist *cookies;
+
+        if (type != KBS_CURL_GET_KEY)
+                return KBS_CURL_ERR("Invalid KBS operation");
+
+        code = curl_easy_getinfo(curl, CURLINFO_COOKIELIST, &cookies);
+        if (code != CURLE_OK)
+                return KBS_CURL_ERR("Cannot retrieve cURL cookies");
+
+        /*
+         * This API is used by kbs_get_key(), therefore we are expected to have
+         * a valid session ID by this point. Parse the cURL cookies data to find
+         * this session ID.
+         */
+        while (cookies != NULL) {
+                session_id_label = find_cookie(cookies->data, "session_id");
+                if (session_id_label)
+                        break;
+
+                cookies = cookies->next;
+        }
+
+        if (session_id_label == NULL)
+                return KBS_CURL_ERR("Couldn't find cookie labeled\n");
+
+        /*
+         * Read the session ID and include it in the cURL headers.
+         */
+        if (read_cookie_val(session_id_label, session_id) < 0)
+                return KBS_CURL_ERR("Couldn't read cookie value\n");
+
+        if (kbs_curl_set_headers(curl, (char *) session_id) != CURLE_OK)
+                return KBS_CURL_ERR("CURLOPT_HTTPHEADER");
+
+        /*
+         * The location of the KBS key is located at
+         * $ATTESTATION_URL/kbs/v0/key/$WORKLOAD_ID.
+         */
+        sprintf(full_url, "%s/kbs/v0/key/%s", url, wid);
+
+        if (curl_easy_setopt(curl, CURLOPT_URL, full_url) != CURLE_OK)
+                return KBS_CURL_ERR("CURLOPT_URL");
+
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_wr);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, out);
+
+        code = curl_easy_perform(curl);
+        if (code != CURLE_OK && code != CURLE_WRITE_ERROR)
+                return KBS_CURL_ERR("CURL_EASY_PERFORM");
+
+        return 0;
+}
+
+/*
  * Set the cURL headers. If the session args is not NULL, that indicates that
  * the session ID has been retrieved from attestation server before, and that
  * session ID should be included in the headers.

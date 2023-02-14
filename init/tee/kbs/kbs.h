@@ -25,6 +25,7 @@ enum tee {
 enum curl_post_type {
         KBS_CURL_REQ,
         KBS_CURL_ATTEST,
+        KBS_CURL_GET_KEY,
 };
 
 // kbs_util.c
@@ -38,13 +39,16 @@ int kbs_request_marshal(char *, int, char *);
 int kbs_challenge(CURL *, char *, char *, char *);
 int kbs_attest(CURL *, char *, struct snp_report *, uint8_t *, size_t, BIGNUM *,
                 BIGNUM *);
+int kbs_get_key(CURL *, char *, char *, EVP_PKEY *, char *);
 
 // kbs_curl.c
 int kbs_curl_post(CURL *, char *, char *, char *, int);
+int kbs_curl_get(CURL *, char *, char *, char *, int);
 
 // kbs_crypto.c
 int kbs_tee_pubkey_create(EVP_PKEY **, BIGNUM **, BIGNUM **);
 int kbs_nonce_pubkey_hash(char *, EVP_PKEY *, unsigned char **, unsigned int *);
-void ossl_bn_b64(BIGNUM *, char **, BIO *, BIO *);
+void BN_b64(BIGNUM *, char *);
+int rsa_pkey_decrypt(EVP_PKEY *, char *, char **);
 
 #endif /* _KBS */

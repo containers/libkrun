@@ -96,9 +96,8 @@ kbs_nonce_pubkey_hash(char *nonce, EVP_PKEY *pkey, unsigned char **hash,
 {
         int rc;
         EVP_MD_CTX *md_ctx;
-        BIO *n_bio, *n_bio64, *e_bio, *e_bio64;
         BIGNUM *n, *e;
-        char *n_b64, *e_b64;
+        char n_b64[512], e_b64[512];
 
         rc = -1;
 
@@ -143,38 +142,26 @@ kbs_nonce_pubkey_hash(char *nonce, EVP_PKEY *pkey, unsigned char **hash,
         if (EVP_PKEY_get_bn_param(pkey, OSSL_PKEY_PARAM_RSA_E, &e) == 0) {
                 printf("ERROR: unable to retrieve public key exponent\n");
 
-                goto bn_n_free;
+                goto md_ctx_free;
         }
 
-        n_b64 = (char *) malloc(1024 * sizeof(char));
-        if (n_b64 == NULL)
-                goto bn_e_free;
-
-        e_b64 = (char *) malloc(1024 * sizeof(char));
-        if (e_b64 == NULL) {
-                free((void *) n_b64);
-                goto bn_e_free;
-        }
-
-        n_bio = BIO_new(BIO_s_mem());
-        e_bio = BIO_new(BIO_s_mem());
-
-        n_bio64 = BIO_new(BIO_f_base64());
-        e_bio64 = BIO_new(BIO_f_base64());
-
-        ossl_bn_b64(n, &n_b64, n_bio, n_bio64);
-        ossl_bn_b64(e, &e_b64, e_bio, e_bio64);
+        /*
+         * base64-encode the modulus and exponents, and hash the base64 strings
+         * into the SHA512 digest.
+         */
+        BN_b64(n, n_b64);
+        BN_b64(e, e_b64);
 
         if (EVP_DigestUpdate(md_ctx, (void *) n_b64, strlen(n_b64)) < 1) {
                 printf("ERROR: updating SHA512 digest with public key N\n");
 
-                goto bio_free;
+                goto md_ctx_free;
         }
 
         if (EVP_DigestUpdate(md_ctx, (void *) e_b64, strlen(e_b64)) < 1) {
                 printf("ERROR: updating SHA512 digest with public key E\n");
 
-                goto bio_free;
+                goto md_ctx_free;
         }
 
         /*
@@ -185,7 +172,7 @@ kbs_nonce_pubkey_hash(char *nonce, EVP_PKEY *pkey, unsigned char **hash,
         if (*hash == NULL) {
                 printf("ERROR: allocating memory for SHA512 hash\n");
 
-                goto bio_free;
+                goto md_ctx_free;
         }
 
         if (EVP_DigestFinal_ex(md_ctx, *hash, size) < 1) {
@@ -196,22 +183,10 @@ kbs_nonce_pubkey_hash(char *nonce, EVP_PKEY *pkey, unsigned char **hash,
 
         rc = 0;
 
-        goto bio_free;
+        goto md_ctx_free;
 
 hash_free:
         OPENSSL_free((void *) *hash);
-
-bio_free:
-        BIO_free(n_bio);
-        BIO_free(n_bio64);
-        BIO_free(e_bio);
-        BIO_free(e_bio64);
-
-bn_e_free:
-        BN_free(e);
-
-bn_n_free:
-        BN_free(n);
 
 md_ctx_free:
         EVP_MD_CTX_free(md_ctx);
@@ -220,27 +195,144 @@ md_ctx_free:
 }
 
 /*
- * Base-64 encode an OpenSSL BIGNUM.
+ * Using a given RSA public/private key pair, decrypt an encrypted and hex
+ * encoded string of text. Store the plaintext of the encrypted text into a
+ * buffer and point "plain_ptr" to said buffer.
+ */
+int
+rsa_pkey_decrypt(EVP_PKEY *pkey, char *enc, char **plain_ptr)
+{
+        int rc;
+        EVP_PKEY_CTX *ctx;
+        char enc_bin[4096], *plain;
+        size_t enc_bin_len, secret_plain_len = 4096;
+
+        rc = -1;
+
+        /*
+         * Decode the hex-encoded string to its byte format.
+         */
+        if (OPENSSL_hexstr2buf_ex((unsigned char *) enc_bin, 4096, &enc_bin_len,
+                        enc, '\0') != 1) {
+		printf("Error converting hex to buf\n");
+
+		return rc;
+	}
+
+        /*
+         * Initialize the public key decryption context.
+         */
+        ctx = EVP_PKEY_CTX_new(pkey, NULL);
+        if (ctx == NULL) {
+                printf("ERROR: creation of pkey context for decryption\n");
+
+                return rc;
+        }
+
+        if (EVP_PKEY_decrypt_init(ctx) <= 0) {
+                printf("ERROR: creation of decryption context for pkey\n");
+
+                goto ctx_free;
+        }
+
+        if (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING) <= 0) {
+	        printf("Error setting RSA padding\n");
+
+		goto ctx_free;
+	}
+
+        /*
+         * To first get the length that the plain secret buffer should be, call
+         * EVP_PKEY_decrypt() with a NULL output buffer argument. Then,
+         * "secret_plain_len" will contain the proper amount of bytes to
+         * allocate for the output buffer.
+         */
+        rc = EVP_PKEY_decrypt(ctx, NULL,
+                        &secret_plain_len, (unsigned char *) enc_bin,
+                        enc_bin_len);
+        if (rc <= 0) {
+                printf("ERROR: finding plaintext passphrase length: %d\n", rc);
+
+                goto ctx_free;
+        }
+
+        /*
+         * Allocate the output buffer using "secret_plain_len".
+         */
+        plain = OPENSSL_malloc(secret_plain_len);
+        if (plain == NULL)
+                goto ctx_free;
+
+        /*
+         * Decrypt the string using the OpenSSL RSA public key.
+         */
+        rc = EVP_PKEY_decrypt(ctx, (unsigned char *) plain, &secret_plain_len,
+                        (unsigned char *) enc_bin, enc_bin_len);
+        if (rc <= 0) {
+                printf("ERROR: decrypting RSA-encrypted passphrase: %d\n", rc);
+                OPENSSL_free(plain);
+
+                goto ctx_free;
+        }
+        plain[secret_plain_len] = '\0';
+
+        /*
+         * Set the "plain_ptr" arg to the plaintext passphrase".
+         */
+        *plain_ptr = plain;
+
+        rc = 0;
+
+ctx_free:
+        EVP_PKEY_CTX_free(ctx);
+
+        return rc;
+}
+
+/*
+ * base64-encode the contents of an OpenSSL BIGNUM.
  */
 void
-ossl_bn_b64(BIGNUM *bn, char **bn_b64, BIO *bio, BIO *b64)
+BN_b64(BIGNUM *bn, char *str)
 {
-        unsigned char *bn_bin;
-        int bn_binlen;
-        int bn_b64len;
+        BIO *bio;
+	BIO *b64;
+	char *bn_bin;
+	char *bn_b64;
+	int bn_binlen;
+	int bn_b64len;
 
-        bn_binlen = BN_num_bytes(bn);
-        bn_bin = malloc(bn_binlen);
-        BN_bn2bin(bn, bn_bin);
+        /*
+         * Encode the BIGNUM contents to binary.
+         */
+	bn_binlen = BN_num_bytes(bn);
+	bn_bin = malloc(bn_binlen);
+	BN_bn2bin(bn, (unsigned char *) bn_bin);
 
-        BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+        /*
+         * Write the binary-encoded string to to a base64-configured OpenSSL
+         * BIO.
+         */
+	b64 = BIO_new(BIO_f_base64());
+	BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+	bio = BIO_new(BIO_s_mem());
+	BIO_push(b64, bio);
+	BIO_write(b64, bn_bin, bn_binlen);
+	BIO_flush(b64);
 
-        BIO_push(b64, bio);
+        /*
+         * Retrieve the base64-encoded contents of the BIO, null-terminate the
+         * string, and copy those contents to the output string.
+         */
+	bn_b64len = BIO_get_mem_data(b64, &bn_b64);
+	bn_b64[bn_b64len] = '\0';
 
-        BIO_write(b64, bn_bin, bn_binlen);
+        strcpy(str, bn_b64);
 
-        bn_b64len = BIO_get_mem_data(b64, bn_b64);
-        (*bn_b64)[bn_b64len] = '\0';
-
-        free(bn_bin);
+        /*
+         * Cleanup OpenSSL data structures.
+         */
+	BIO_free(b64);
+	BIO_free(bio);
+	free(bn_bin);
 }
