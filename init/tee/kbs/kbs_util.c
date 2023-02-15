@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "kbs.h"
+#include "../../jsmn.h"
 
 /*
  * Return the string identifier of the inputted TEE architecture.
@@ -75,4 +76,76 @@ read_cookie_val(char *label, char *buf)
         }
 
         return -1;
+}
+
+/*
+ * Given a JSON string and a "label", parse the string associated with that
+ * label and write the contents to "out".
+ */
+int
+json_parse_str(char *out, char *label, char *json)
+{
+        int ntokens, eq, rc;
+        jsmn_parser parser;
+        jsmntok_t *tokens, *curr, *next;
+        char *val;
+        int len;
+
+        rc = -1;
+
+        tokens = (jsmntok_t *) malloc (MAX_TOKENS * sizeof(jsmntok_t));
+        if (tokens == NULL) {
+                printf("ERROR: unable to allocate JSON string\n");
+
+                return rc;
+        }
+
+        jsmn_init(&parser);
+
+        ntokens = jsmn_parse(&parser, json, strlen(json), tokens, MAX_TOKENS);
+        if (ntokens <= 0) {
+                printf("ERROR: unable to find any tokens in KBS challenge\n");
+
+                goto out;
+        }
+
+        /*
+         * Traverse each token of the JSON string.
+         */
+        for (int i = 0; i < ntokens - 2; i++) {
+                curr = &tokens[i];
+                next = &tokens[i + 2];
+
+                /*
+                 * Only interested in reading a string.
+                 */
+                if (curr->type != JSMN_STRING)
+                        continue;
+
+                /*
+                 * Compare the current token with the label being searched for.
+                 */
+                eq = strncasecmp(json + curr->start, label,
+                        curr->end - curr->start);
+                if (eq == 0 && next->type == JSMN_STRING) {
+                        /*
+                         * Found the string associated with the label, calculate
+                         * its beginning and ending indexes within the JSON
+                         * string and copy the contents over to "out".
+                         */
+                        val = json + next->start;
+                        len = next->end - next->start;
+
+                        memcpy((void *) out, (void *) val, len);
+                        rc = 0;
+
+                        goto out;
+                }
+
+        }
+
+out:
+        free((void *) tokens);
+
+        return rc;
 }

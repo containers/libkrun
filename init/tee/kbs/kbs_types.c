@@ -57,15 +57,40 @@ kbs_request_marshal(char *json_request, int tee, char *workload_id)
 int
 kbs_challenge(CURL *curl, char *url, char *json_request, char *nonce)
 {
-        int ret;
+        int ret, rc;
+        char *nonce_json;
 
-        ret = kbs_curl_post(curl, url, (void *) json_request, (void *) nonce, KBS_CURL_REQ);
-        if (ret < 0) {
-                printf("ERROR: could not complete KBS challenge\n");
-                return -1;
+        rc = -1;
+
+        nonce_json = (char *) malloc(0x1000);
+        if (nonce_json == NULL) {
+                printf("ERROR: unable to allocate JSON nonce buffer\n");
+
+                return rc;
         }
 
-        return 0;
+        ret = kbs_curl_post(curl, url, (void *) json_request, (void *) nonce_json, KBS_CURL_REQ);
+        if (ret < 0) {
+                printf("ERROR: could not complete KBS challenge\n");
+
+                goto out;
+        }
+
+        /*
+         * Parse the JSON response from the KBS server to retrieve the nonce.
+         */
+        if (json_parse_str(nonce, "nonce", nonce_json) < 0) {
+                printf("ERROR: unable to parse nonce from server response\n");
+
+                goto out;
+        }
+
+        rc = 0;
+
+out:
+        free(nonce_json);
+
+        return rc;
 }
 
 /*

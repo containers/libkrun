@@ -31,6 +31,7 @@ enum curl_post_type {
 char *tee_str(int);
 char *find_cookie(char *, char *);
 int read_cookie_val(char *, char *);
+int json_parse_str(char *, char *, char *);
 
 // kbs_types.c
 int kbs_request_marshal(char *, int, char *);
