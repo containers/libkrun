@@ -593,6 +593,24 @@ impl VsockMuxer {
         }
     }
 
+    fn process_stream_rst(&self, pkt: &VsockPacket) {
+        debug!("vsock: OP_RST");
+        let id: u64 = (pkt.src_port() as u64) << 32 | pkt.dst_port() as u64;
+        if let Some(proxy_lock) = self.proxy_map.read().unwrap().get(&id) {
+            debug!(
+                "vsock: allowing OP_RST: id={} src={} dst={}",
+                id,
+                pkt.src_port(),
+                pkt.dst_port()
+            );
+            let mut proxy = proxy_lock.lock().unwrap();
+            let update = proxy.release();
+            self.process_proxy_update(id, update);
+        } else {
+            debug!("vsock: invalid OP_RST for {}", pkt.src_port());
+        }
+    }
+
     pub(crate) fn send_stream_pkt(&mut self, pkt: &VsockPacket) -> super::Result<()> {
         debug!(
             "vsock: send_pkt: src_port={} dst_port={}, op={}",
@@ -615,6 +633,7 @@ impl VsockMuxer {
             uapi::VSOCK_OP_SHUTDOWN => self.process_op_shutdown(pkt),
             uapi::VSOCK_OP_CREDIT_UPDATE => self.process_op_credit_update(pkt),
             uapi::VSOCK_OP_RW => self.process_stream_rw(pkt),
+            uapi::VSOCK_OP_RST => self.process_stream_rst(pkt),
             _ => warn!("stream: unhandled op={}", pkt.op()),
         }
         Ok(())
