@@ -447,7 +447,7 @@ impl<'a> HvfVcpu<'a> {
                                     self.mmio_buf[0..4].copy_from_slice(&(val as u32).to_le_bytes())
                                 }
                                 8 => self.mmio_buf[0..8].copy_from_slice(&(val).to_le_bytes()),
-                                _ => panic!("unsupported mmio len={}", len),
+                                _ => panic!("unsupported mmio len={len}"),
                             };
 
                             Ok(VcpuExit::MmioWrite(pa, &self.mmio_buf[0..len]))
@@ -481,7 +481,7 @@ impl<'a> HvfVcpu<'a> {
                             }
                         }
                     }
-                    _ => panic!("unexpected exception: 0x{:x}", ec),
+                    _ => panic!("unexpected exception: 0x{ec:x}"),
                 }
             }
             HV_EXIT_REASON_VTIMER_ACTIVATED => Ok(VcpuExit::VtimerActivated),

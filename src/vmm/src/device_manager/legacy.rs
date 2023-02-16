@@ -26,8 +26,8 @@ impl fmt::Display for Error {
         use self::Error::*;
 
         match *self {
-            BusError(ref err) => write!(f, "Failed to add legacy device to Bus: {}", err),
-            EventFd(ref err) => write!(f, "Failed to create EventFd: {}", err),
+            BusError(ref err) => write!(f, "Failed to add legacy device to Bus: {err}"),
+            EventFd(ref err) => write!(f, "Failed to create EventFd: {err}"),
         }
     }
 }

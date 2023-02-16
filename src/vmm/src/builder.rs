@@ -126,36 +126,35 @@ impl Display for StartMicrovmError {
         use self::StartMicrovmError::*;
         match *self {
             AttachBlockDevice(ref err) => {
-                write!(f, "Unable to attach block device to Vmm. Error: {}", err)
+                write!(f, "Unable to attach block device to Vmm. Error: {err}")
             }
-            CreateRateLimiter(ref err) => write!(f, "Cannot create RateLimiter: {}", err),
+            CreateRateLimiter(ref err) => write!(f, "Cannot create RateLimiter: {err}"),
             GuestMemoryMmap(ref err) => {
                 // Remove imbricated quotes from error message.
-                let mut err_msg = format!("{:?}", err);
+                let mut err_msg = format!("{err:?}");
                 err_msg = err_msg.replace('\"', "");
-                write!(f, "Invalid Memory Configuration: {}", err_msg)
+                write!(f, "Invalid Memory Configuration: {err_msg}")
             }
             InitrdLoad => write!(
                 f,
                 "Cannot load initrd due to an invalid memory configuration."
             ),
-            InitrdRead(ref err) => write!(f, "Cannot load initrd due to an invalid image: {}", err),
-            Internal(ref err) => write!(f, "Internal error while starting microVM: {:?}", err),
-            KernelCmdline(ref err) => write!(f, "Invalid kernel command line: {}", err),
+            InitrdRead(ref err) => write!(f, "Cannot load initrd due to an invalid image: {err}"),
+            Internal(ref err) => write!(f, "Internal error while starting microVM: {err:?}"),
+            KernelCmdline(ref err) => write!(f, "Invalid kernel command line: {err}"),
             KernelBundle(ref err) => {
-                let mut err_msg = format!("{}", err);
+                let mut err_msg = format!("{err}");
                 err_msg = err_msg.replace('\"', "");
                 write!(
                     f,
                     "Cannot inject the kernel into the guest memory due to a problem with the \
-                     bundle. {}",
-                    err_msg
+                     bundle. {err_msg}"
                 )
             }
             LoadCommandline(ref err) => {
-                let mut err_msg = format!("{}", err);
+                let mut err_msg = format!("{err}");
                 err_msg = err_msg.replace('\"', "");
-                write!(f, "Cannot load command line string. {}", err_msg)
+                write!(f, "Cannot load command line string. {err_msg}")
             }
             MicroVMAlreadyRunning => write!(f, "Microvm already running."),
             MissingKernelConfig => write!(f, "Cannot start microvm without kernel configuration."),
@@ -166,89 +165,81 @@ impl Display for StartMicrovmError {
                 write!(f, "The net device configuration is missing the tap device.")
             }
             OpenBlockDevice(ref err) => {
-                let mut err_msg = format!("{:?}", err);
+                let mut err_msg = format!("{err:?}");
                 err_msg = err_msg.replace('\"', "");
 
-                write!(f, "Cannot open the block device backing file. {}", err_msg)
+                write!(f, "Cannot open the block device backing file. {err_msg}")
             }
             RegisterBalloonDevice(ref err) => {
-                let mut err_msg = format!("{}", err);
+                let mut err_msg = format!("{err}");
                 err_msg = err_msg.replace('\"', "");
                 write!(
                     f,
-                    "Cannot initialize a MMIO Balloon Device or add a device to the MMIO Bus. {}",
-                    err_msg
+                    "Cannot initialize a MMIO Balloon Device or add a device to the MMIO Bus. {err_msg}"
                 )
             }
             RegisterBlockDevice(ref err) => {
-                let mut err_msg = format!("{}", err);
+                let mut err_msg = format!("{err}");
                 err_msg = err_msg.replace('\"', "");
                 write!(
                     f,
-                    "Cannot initialize a MMIO Block Device or add a device to the MMIO Bus. {}",
-                    err_msg
+                    "Cannot initialize a MMIO Block Device or add a device to the MMIO Bus. {err_msg}"
                 )
             }
-            RegisterEvent(ref err) => write!(f, "Cannot register EventHandler. {:?}", err),
+            RegisterEvent(ref err) => write!(f, "Cannot register EventHandler. {err:?}"),
             RegisterFsDevice(ref err) => {
-                let mut err_msg = format!("{}", err);
+                let mut err_msg = format!("{err}");
                 err_msg = err_msg.replace('\"', "");
 
                 write!(
                     f,
-                    "Cannot initialize a MMIO Fs Device or add a device to the MMIO Bus. {}",
-                    err_msg
+                    "Cannot initialize a MMIO Fs Device or add a device to the MMIO Bus. {err_msg}"
                 )
             }
             #[cfg(target_os = "linux")]
             RegisterFsSigwinch(ref err) => {
-                let mut err_msg = format!("{}", err);
+                let mut err_msg = format!("{err}");
                 err_msg = err_msg.replace('\"', "");
 
                 write!(
                     f,
-                    "Cannot register SIGWINCH file descriptor for Fs Device. {}",
-                    err_msg
+                    "Cannot register SIGWINCH file descriptor for Fs Device. {err_msg}"
                 )
             }
             RegisterNetDevice(ref err) => {
-                let mut err_msg = format!("{}", err);
+                let mut err_msg = format!("{err}");
                 err_msg = err_msg.replace('\"', "");
 
                 write!(
                     f,
-                    "Cannot initialize a MMIO Network Device or add a device to the MMIO Bus. {}",
-                    err_msg
+                    "Cannot initialize a MMIO Network Device or add a device to the MMIO Bus. {err_msg}"
                 )
             }
             RegisterVsockDevice(ref err) => {
-                let mut err_msg = format!("{}", err);
+                let mut err_msg = format!("{err}");
                 err_msg = err_msg.replace('\"', "");
 
                 write!(
                     f,
-                    "Cannot initialize a MMIO Vsock Device or add a device to the MMIO Bus. {}",
-                    err_msg
+                    "Cannot initialize a MMIO Vsock Device or add a device to the MMIO Bus. {err_msg}"
                 )
             }
             SecureVirtAttest(ref err) => {
-                let mut err_msg = format!("{}", err);
+                let mut err_msg = format!("{err}");
                 err_msg = err_msg.replace('\"', "");
 
                 write!(
                     f,
-                    "Cannot attest the VM in the Secure Virtualization context. {}",
-                    err_msg
+                    "Cannot attest the VM in the Secure Virtualization context. {err_msg}"
                 )
             }
             SecureVirtPrepare(ref err) => {
-                let mut err_msg = format!("{}", err);
+                let mut err_msg = format!("{err}");
                 err_msg = err_msg.replace('\"', "");
 
                 write!(
                     f,
-                    "Cannot initialize the Secure Virtualization backend. {}",
-                    err_msg
+                    "Cannot initialize the Secure Virtualization backend. {err_msg}"
                 )
             }
             InvalidTee => {

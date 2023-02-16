@@ -130,33 +130,32 @@ impl Display for Error {
         use self::Error::*;
 
         match self {
-            ConfigureSystem(e) => write!(f, "System configuration error: {:?}", e),
+            ConfigureSystem(e) => write!(f, "System configuration error: {e:?}"),
             #[cfg(target_arch = "x86_64")]
-            CreateLegacyDevice(e) => write!(f, "Error creating legacy device: {:?}", e),
-            EventFd(e) => write!(f, "Event fd error: {}", e),
-            EventManager(e) => write!(f, "Event manager error: {:?}", e),
-            I8042Error(e) => write!(f, "I8042 error: {}", e),
-            KernelFile(e) => write!(f, "Cannot access kernel file: {}", e),
-            KvmContext(e) => write!(f, "Failed to validate KVM support: {:?}", e),
+            CreateLegacyDevice(e) => write!(f, "Error creating legacy device: {e:?}"),
+            EventFd(e) => write!(f, "Event fd error: {e}"),
+            EventManager(e) => write!(f, "Event manager error: {e:?}"),
+            I8042Error(e) => write!(f, "I8042 error: {e}"),
+            KernelFile(e) => write!(f, "Cannot access kernel file: {e}"),
+            KvmContext(e) => write!(f, "Failed to validate KVM support: {e:?}"),
             #[cfg(target_arch = "x86_64")]
-            LegacyIOBus(e) => write!(f, "Cannot add devices to the legacy I/O Bus. {}", e),
-            LoadCommandline(e) => write!(f, "Cannot load command line: {}", e),
-            RegisterMMIODevice(e) => write!(f, "Cannot add a device to the MMIO Bus. {}", e),
-            Serial(e) => write!(f, "Error writing to the serial console: {:?}", e),
-            TimerFd(e) => write!(f, "Error creating timer fd: {}", e),
-            Vcpu(e) => write!(f, "Vcpu error: {}", e),
-            VcpuEvent(e) => write!(f, "Cannot send event to vCPU. {:?}", e),
-            VcpuHandle(e) => write!(f, "Cannot create a vCPU handle. {}", e),
+            LegacyIOBus(e) => write!(f, "Cannot add devices to the legacy I/O Bus. {e}"),
+            LoadCommandline(e) => write!(f, "Cannot load command line: {e}"),
+            RegisterMMIODevice(e) => write!(f, "Cannot add a device to the MMIO Bus. {e}"),
+            Serial(e) => write!(f, "Error writing to the serial console: {e:?}"),
+            TimerFd(e) => write!(f, "Error creating timer fd: {e}"),
+            Vcpu(e) => write!(f, "Vcpu error: {e}"),
+            VcpuEvent(e) => write!(f, "Cannot send event to vCPU. {e:?}"),
+            VcpuHandle(e) => write!(f, "Cannot create a vCPU handle. {e}"),
             VcpuResume => write!(f, "vCPUs resume failed."),
-            VcpuSpawn(e) => write!(f, "Cannot spawn Vcpu thread: {}", e),
-            Vm(e) => write!(f, "Vm error: {}", e),
+            VcpuSpawn(e) => write!(f, "Cannot spawn Vcpu thread: {e}"),
+            Vm(e) => write!(f, "Vm error: {e}"),
             VmmObserverInit(e) => write!(
                 f,
-                "Error thrown by observer object on Vmm initialization: {}",
-                e
+                "Error thrown by observer object on Vmm initialization: {e}"
             ),
             VmmObserverTeardown(e) => {
-                write!(f, "Error thrown by observer object on Vmm teardown: {}", e)
+                write!(f, "Error thrown by observer object on Vmm teardown: {e}")
             }
         }
     }
