@@ -38,9 +38,9 @@ endif
 
 .PHONY: install clean
 
-all: $(LIBRARY_RELEASE_$(OS))
+all: $(LIBRARY_RELEASE_$(OS)) libkrun.pc
 
-debug: $(LIBRARY_DEBUG_$(OS))
+debug: $(LIBRARY_DEBUG_$(OS)) libkrun.pc
 
 $(INIT_BINARY): init/init.c
 	gcc -O2 -static -Wall $(INIT_DEFS) -o $@ init/init.c
@@ -67,10 +67,22 @@ else
 	cp target/debug/$(KRUN_BASE_$(OS)) $(LIBRARY_DEBUG_$(OS))
 endif
 
+libkrun.pc: libkrun.pc.in Makefile
+	rm -f $@ $@-t
+	sed -e 's|@prefix@|$(PREFIX)|' \
+	    -e 's|@libdir@|$(PREFIX)/$(LIBDIR_$(OS))|' \
+	    -e 's|@includedir@|$(PREFIX)/include|' \
+	    -e 's|@PACKAGE_NAME@|libkrun|' \
+	    -e 's|@PACKAGE_VERSION@|$(FULL_VERSION)|' \
+	    libkrun.pc.in > $@-t
+	mv $@-t $@
+
 install:
 	install -d $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/
+	install -d $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/pkgconfig
 	install -d $(DESTDIR)$(PREFIX)/include
 	install -m 644 $(LIBRARY_HEADER) $(DESTDIR)$(PREFIX)/include
+	install -m 644 libkrun.pc $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/pkgconfig
 	install -m 755 $(LIBRARY_RELEASE_$(OS)) $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/
 	cd $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/ ; ln -sf $(KRUN_BINARY_$(OS)) $(KRUN_SONAME_$(OS)) ; ln -sf $(KRUN_SONAME_$(OS)) $(KRUN_BASE_$(OS))
 

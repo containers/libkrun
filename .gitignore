@@ -6,5 +6,6 @@ target
 __pycache__
 *.pyc
 *~
+/libkrun.pc
 init/init
 examples/chroot_vm
