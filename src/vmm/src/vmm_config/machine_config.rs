@@ -65,8 +65,7 @@ impl fmt::Display for VmConfig {
             .cpu_template
             .map_or("Uninitialized".to_string(), |c| c.to_string());
 
-        write!(f, "{{ \"vcpu_count\": {:?}, \"mem_size_mib\": {:?},  \"ht_enabled\": {:?},  \"cpu_template\": {:?} }}",
-               vcpu_count, mem_size, ht_enabled, cpu_template)
+        write!(f, "{{ \"vcpu_count\": {vcpu_count:?}, \"mem_size_mib\": {mem_size:?},  \"ht_enabled\": {ht_enabled:?},  \"cpu_template\": {cpu_template:?} }}")
     }
 }
 

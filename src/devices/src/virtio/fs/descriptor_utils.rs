@@ -40,11 +40,11 @@ impl Display for Error {
                 "the combined length of all the buffers in a `DescriptorChain` would overflow"
             ),
             FindMemoryRegion => write!(f, "no memory region for this address range"),
-            GuestMemoryError(e) => write!(f, "descriptor guest memory error: {}", e),
+            GuestMemoryError(e) => write!(f, "descriptor guest memory error: {e}"),
             InvalidChain => write!(f, "invalid descriptor chain"),
-            IoError(e) => write!(f, "descriptor I/O error: {}", e),
-            SplitOutOfBounds(off) => write!(f, "`DescriptorChain` split is out of bounds: {}", off),
-            VolatileMemoryError(e) => write!(f, "volatile memory error: {}", e),
+            IoError(e) => write!(f, "descriptor I/O error: {e}"),
+            SplitOutOfBounds(off) => write!(f, "`DescriptorChain` split is out of bounds: {off}"),
+            VolatileMemoryError(e) => write!(f, "volatile memory error: {e}"),
         }
     }
 }

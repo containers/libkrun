@@ -70,7 +70,7 @@ impl ContextConfig {
 
     fn get_workdir(&self) -> String {
         match &self.workdir {
-            Some(workdir) => format!("KRUN_WORKDIR={}", workdir),
+            Some(workdir) => format!("KRUN_WORKDIR={workdir}"),
             None => "".to_string(),
         }
     }
@@ -81,7 +81,7 @@ impl ContextConfig {
 
     fn get_exec_path(&self) -> String {
         match &self.exec_path {
-            Some(exec_path) => format!("KRUN_INIT={}", exec_path),
+            Some(exec_path) => format!("KRUN_INIT={exec_path}"),
             None => "".to_string(),
         }
     }
@@ -114,7 +114,7 @@ impl ContextConfig {
 
     fn get_rlimits(&self) -> String {
         match &self.rlimits {
-            Some(rlimits) => format!("KRUN_RLIMITS={}", rlimits),
+            Some(rlimits) => format!("KRUN_RLIMITS={rlimits}"),
             None => "".to_string(),
         }
     }
@@ -205,7 +205,7 @@ pub extern "C" fn krun_set_log_level(level: u32) -> i32 {
 pub extern "C" fn krun_create_ctx() -> i32 {
     let krunfw_version = unsafe { krunfw_get_version() };
     if krunfw_version < KRUNFW_MIN_VERSION {
-        eprintln!("Unsupported libkrunfw version: {}", krunfw_version);
+        eprintln!("Unsupported libkrunfw version: {krunfw_version}");
         return -libc::EINVAL;
     }
 
@@ -269,7 +269,7 @@ pub extern "C" fn krun_set_vm_config(ctx_id: u32, num_vcpus: u32, ram_mib: u32) 
     let mem_size_mib: usize = match ram_mib.try_into() {
         Ok(size) => size,
         Err(e) => {
-            warn!("Error parsing the amount of RAM: {:?}", e);
+            warn!("Error parsing the amount of RAM: {e:?}");
             return -libc::EINVAL;
         }
     };
@@ -556,7 +556,7 @@ unsafe fn collapse_str_array(array: &[*const c_char]) -> Result<String, std::str
             break;
         } else {
             let s = CStr::from_ptr(*item).to_str()?;
-            strvec.push(format!("\"{}\"", s));
+            strvec.push(format!("\"{s}\""));
         }
     }
 
@@ -603,7 +603,7 @@ pub unsafe extern "C" fn krun_set_exec(
         }
     } else {
         env::vars()
-            .map(|(key, value)| format!(" {}=\"{}\"", key, value))
+            .map(|(key, value)| format!(" {key}=\"{value}\""))
             .collect()
     };
 
@@ -634,7 +634,7 @@ pub unsafe extern "C" fn krun_set_env(ctx_id: u32, c_envp: *const *const c_char)
         }
     } else {
         env::vars()
-            .map(|(key, value)| format!(" {}=\"{}\"", key, value))
+            .map(|(key, value)| format!(" {key}=\"{value}\""))
             .collect()
     };
 
@@ -674,7 +674,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "linux")]
     {
         let prname = match env::var("HOSTNAME") {
-            Ok(val) => CString::new(format!("VM:{}", val)).unwrap(),
+            Ok(val) => CString::new(format!("VM:{val}")).unwrap(),
             Err(_) => CString::new("libkrun VM").unwrap(),
         };
         unsafe { libc::prctl(libc::PR_SET_NAME, prname.as_ptr()) };

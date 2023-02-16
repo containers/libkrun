@@ -29,17 +29,15 @@ impl std::fmt::Debug for Error {
         use self::Error::*;
 
         match self {
-            EpollCreate(err) => write!(f, "Unable to create epoll fd: {}", err),
-            Poll(err) => write!(f, "Error during epoll call: {}", err),
+            EpollCreate(err) => write!(f, "Unable to create epoll fd: {err}"),
+            Poll(err) => write!(f, "Error during epoll call: {err}"),
             AlreadyExists(pollable) => write!(
                 f,
-                "A handler for the specified pollable {} already exists.",
-                pollable
+                "A handler for the specified pollable {pollable} already exists."
             ),
             NotFound(pollable) => write!(
                 f,
-                "A handler for the specified pollable {} was not found.",
-                pollable
+                "A handler for the specified pollable {pollable} was not found."
             ),
         }
     }

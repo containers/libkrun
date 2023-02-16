@@ -56,7 +56,7 @@ pub struct ProxyUpdate {
 
 impl fmt::Display for ProxyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 

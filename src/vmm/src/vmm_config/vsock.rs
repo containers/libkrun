@@ -20,7 +20,7 @@ impl fmt::Display for VsockConfigError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::VsockConfigError::*;
         match *self {
-            CreateVsockDevice(ref e) => write!(f, "Cannot create vsock device: {:?}", e),
+            CreateVsockDevice(ref e) => write!(f, "Cannot create vsock device: {e:?}"),
         }
     }
 }

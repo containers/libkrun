@@ -251,24 +251,22 @@ impl Display for Error {
 
         match self {
             #[cfg(target_arch = "x86_64")]
-            CpuId(e) => write!(f, "Cpuid error: {:?}", e),
-            GuestMemoryMmap(e) => write!(f, "Guest memory error: {:?}", e),
+            CpuId(e) => write!(f, "Cpuid error: {e:?}"),
+            GuestMemoryMmap(e) => write!(f, "Guest memory error: {e:?}"),
             #[cfg(target_arch = "x86_64")]
-            GuestMSRs(e) => write!(f, "Retrieving supported guest MSRs fails: {:?}", e),
+            GuestMSRs(e) => write!(f, "Retrieving supported guest MSRs fails: {e:?}"),
             HTNotInitialized => write!(f, "Hyperthreading flag is not initialized"),
-            KvmApiVersion(v) => write!(
-                f,
-                "The host kernel reports an invalid KVM API version: {}",
-                v
-            ),
-            KvmCap(cap) => write!(f, "Missing KVM capabilities: {:?}", cap),
+            KvmApiVersion(v) => {
+                write!(f, "The host kernel reports an invalid KVM API version: {v}")
+            }
+            KvmCap(cap) => write!(f, "Missing KVM capabilities: {cap:?}"),
             #[cfg(feature = "amd-sev")]
-            KvmCpuId(e) => write!(f, "Cannot read CPUID entries from KVM: {}", e),
+            KvmCpuId(e) => write!(f, "Cannot read CPUID entries from KVM: {e}"),
             VcpuCountNotInitialized => write!(f, "vCPU count is not initialized"),
-            VmFd(e) => write!(f, "Cannot open the VM file descriptor: {}", e),
-            VcpuFd(e) => write!(f, "Cannot open the VCPU file descriptor: {}", e),
-            VmSetup(e) => write!(f, "Cannot configure the microvm: {}", e),
-            VcpuRun(e) => write!(f, "Cannot run the VCPUs: {}", e),
+            VmFd(e) => write!(f, "Cannot open the VM file descriptor: {e}"),
+            VcpuFd(e) => write!(f, "Cannot open the VCPU file descriptor: {e}"),
+            VmSetup(e) => write!(f, "Cannot configure the microvm: {e}"),
+            VcpuRun(e) => write!(f, "Cannot run the VCPUs: {e}"),
             NotEnoughMemorySlots => write!(
                 f,
                 "The number of configured slots is bigger than the maximum reported by KVM"
@@ -276,136 +274,123 @@ impl Display for Error {
             #[cfg(target_arch = "x86_64")]
             LocalIntConfiguration(e) => write!(
                 f,
-                "Cannot set the local interruption due to bad configuration: {:?}",
-                e
+                "Cannot set the local interruption due to bad configuration: {e:?}"
             ),
-            SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {}", e),
+            SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
             #[cfg(feature = "tee")]
             SevSecVirtInit(e) => {
                 write!(
                     f,
-                    "Error initializing the Secure Virtualization Backend (SEV): {:?}",
-                    e
+                    "Error initializing the Secure Virtualization Backend (SEV): {e:?}"
                 )
             }
             #[cfg(feature = "tee")]
             SevSecVirtPrepare(e) => write!(
                 f,
-                "Error preparing the VM for Secure Virtualization (SEV): {:?}",
-                e
+                "Error preparing the VM for Secure Virtualization (SEV): {e:?}"
             ),
             #[cfg(feature = "tee")]
-            SevSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SEV): {:?}", e),
+            SevSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SEV): {e:?}"),
 
             #[cfg(feature = "tee")]
             SnpSecVirtInit(e) => write!(
                 f,
-                "Error initializing the Secure Virtualization Backend (SEV): {:?}",
-                e
+                "Error initializing the Secure Virtualization Backend (SEV): {e:?}"
             ),
 
             #[cfg(feature = "tee")]
             SnpSecVirtPrepare(e) => write!(
                 f,
-                "Error preparing the VM for Secure Virtualization (SNP): {:?}",
-                e
+                "Error preparing the VM for Secure Virtualization (SNP): {e:?}"
             ),
 
             #[cfg(feature = "tee")]
-            SnpSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SNP): {:?}", e),
+            SnpSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SNP): {e:?}"),
 
-            SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {}", e),
+            SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {e}"),
             #[cfg(feature = "tee")]
             MissingTeeConfig => write!(f, "Missing TEE configuration"),
             #[cfg(target_arch = "x86_64")]
-            MSRSConfiguration(e) => write!(f, "Error configuring the MSR registers: {:?}", e),
+            MSRSConfiguration(e) => write!(f, "Error configuring the MSR registers: {e:?}"),
             #[cfg(target_arch = "aarch64")]
             REGSConfiguration(e) => write!(
                 f,
-                "Error configuring the general purpose aarch64 registers: {:?}",
-                e
+                "Error configuring the general purpose aarch64 registers: {e:?}"
             ),
             #[cfg(target_arch = "x86_64")]
-            REGSConfiguration(e) => write!(
-                f,
-                "Error configuring the general purpose registers: {:?}",
-                e
-            ),
+            REGSConfiguration(e) => {
+                write!(f, "Error configuring the general purpose registers: {e:?}")
+            }
             #[cfg(target_arch = "x86_64")]
-            SREGSConfiguration(e) => write!(f, "Error configuring the special registers: {:?}", e),
+            SREGSConfiguration(e) => write!(f, "Error configuring the special registers: {e:?}"),
             #[cfg(target_arch = "x86_64")]
             FPUConfiguration(e) => write!(
                 f,
-                "Error configuring the floating point related registers: {:?}",
-                e
+                "Error configuring the floating point related registers: {e:?}"
             ),
-            Irq(e) => write!(f, "Cannot configure the IRQ: {}", e),
+            Irq(e) => write!(f, "Cannot configure the IRQ: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuGetDebugRegs(e) => write!(f, "Failed to get KVM vcpu debug regs: {}", e),
+            VcpuGetDebugRegs(e) => write!(f, "Failed to get KVM vcpu debug regs: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuGetLapic(e) => write!(f, "Failed to get KVM vcpu lapic: {}", e),
+            VcpuGetLapic(e) => write!(f, "Failed to get KVM vcpu lapic: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuGetMpState(e) => write!(f, "Failed to get KVM vcpu mp state: {}", e),
+            VcpuGetMpState(e) => write!(f, "Failed to get KVM vcpu mp state: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuGetMsrs(e) => write!(f, "Failed to get KVM vcpu msrs: {}", e),
+            VcpuGetMsrs(e) => write!(f, "Failed to get KVM vcpu msrs: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuGetRegs(e) => write!(f, "Failed to get KVM vcpu regs: {}", e),
+            VcpuGetRegs(e) => write!(f, "Failed to get KVM vcpu regs: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuGetSregs(e) => write!(f, "Failed to get KVM vcpu sregs: {}", e),
+            VcpuGetSregs(e) => write!(f, "Failed to get KVM vcpu sregs: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuGetVcpuEvents(e) => write!(f, "Failed to get KVM vcpu event: {}", e),
+            VcpuGetVcpuEvents(e) => write!(f, "Failed to get KVM vcpu event: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuGetXcrs(e) => write!(f, "Failed to get KVM vcpu xcrs: {}", e),
+            VcpuGetXcrs(e) => write!(f, "Failed to get KVM vcpu xcrs: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuGetXsave(e) => write!(f, "Failed to get KVM vcpu xsave: {}", e),
+            VcpuGetXsave(e) => write!(f, "Failed to get KVM vcpu xsave: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuSetCpuid(e) => write!(f, "Failed to set KVM vcpu cpuid: {}", e),
+            VcpuSetCpuid(e) => write!(f, "Failed to set KVM vcpu cpuid: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuSetDebugRegs(e) => write!(f, "Failed to set KVM vcpu debug regs: {}", e),
+            VcpuSetDebugRegs(e) => write!(f, "Failed to set KVM vcpu debug regs: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuSetLapic(e) => write!(f, "Failed to set KVM vcpu lapic: {}", e),
+            VcpuSetLapic(e) => write!(f, "Failed to set KVM vcpu lapic: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuSetMpState(e) => write!(f, "Failed to set KVM vcpu mp state: {}", e),
+            VcpuSetMpState(e) => write!(f, "Failed to set KVM vcpu mp state: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuSetMsrs(e) => write!(f, "Failed to set KVM vcpu msrs: {}", e),
+            VcpuSetMsrs(e) => write!(f, "Failed to set KVM vcpu msrs: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuSetRegs(e) => write!(f, "Failed to set KVM vcpu regs: {}", e),
+            VcpuSetRegs(e) => write!(f, "Failed to set KVM vcpu regs: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuSetSregs(e) => write!(f, "Failed to set KVM vcpu sregs: {}", e),
+            VcpuSetSregs(e) => write!(f, "Failed to set KVM vcpu sregs: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuSetVcpuEvents(e) => write!(f, "Failed to set KVM vcpu event: {}", e),
+            VcpuSetVcpuEvents(e) => write!(f, "Failed to set KVM vcpu event: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuSetXcrs(e) => write!(f, "Failed to set KVM vcpu xcrs: {}", e),
+            VcpuSetXcrs(e) => write!(f, "Failed to set KVM vcpu xcrs: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VcpuSetXsave(e) => write!(f, "Failed to set KVM vcpu xsave: {}", e),
-            VcpuSpawn(e) => write!(f, "Cannot spawn a new vCPU thread: {}", e),
+            VcpuSetXsave(e) => write!(f, "Failed to set KVM vcpu xsave: {e}"),
+            VcpuSpawn(e) => write!(f, "Cannot spawn a new vCPU thread: {e}"),
             VcpuTlsInit => write!(f, "Cannot clean init vcpu TLS"),
             VcpuTlsNotPresent => write!(f, "Vcpu not present in TLS"),
             VcpuUnhandledKvmExit => write!(f, "Unexpected KVM_RUN exit reason"),
             #[cfg(target_arch = "x86_64")]
-            VmGetPit2(e) => write!(f, "Failed to get KVM vm pit state: {}", e),
+            VmGetPit2(e) => write!(f, "Failed to get KVM vm pit state: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VmGetClock(e) => write!(f, "Failed to get KVM vm clock: {}", e),
+            VmGetClock(e) => write!(f, "Failed to get KVM vm clock: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VmGetIrqChip(e) => write!(f, "Failed to get KVM vm irqchip: {}", e),
+            VmGetIrqChip(e) => write!(f, "Failed to get KVM vm irqchip: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VmSetPit2(e) => write!(f, "Failed to set KVM vm pit state: {}", e),
+            VmSetPit2(e) => write!(f, "Failed to set KVM vm pit state: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VmSetClock(e) => write!(f, "Failed to set KVM vm clock: {}", e),
+            VmSetClock(e) => write!(f, "Failed to set KVM vm clock: {e}"),
             #[cfg(target_arch = "x86_64")]
-            VmSetIrqChip(e) => write!(f, "Failed to set KVM vm irqchip: {}", e),
+            VmSetIrqChip(e) => write!(f, "Failed to set KVM vm irqchip: {e}"),
             #[cfg(target_arch = "aarch64")]
-            SetupGIC(e) => write!(
-                f,
-                "Error setting up the global interrupt controller: {:?}",
-                e
-            ),
+            SetupGIC(e) => write!(f, "Error setting up the global interrupt controller: {e:?}"),
             #[cfg(target_arch = "aarch64")]
             VcpuArmPreferredTarget(e) => {
-                write!(f, "Error getting the Vcpu preferred target on Arm: {}", e)
+                write!(f, "Error getting the Vcpu preferred target on Arm: {e}")
             }
             #[cfg(target_arch = "aarch64")]
-            VcpuArmInit(e) => write!(f, "Error doing Vcpu Init on Arm: {}", e),
+            VcpuArmInit(e) => write!(f, "Error doing Vcpu Init on Arm: {e}"),
 
             #[cfg(feature = "tee")]
             InvalidTee => write!(f, "TEE selected is not currently supported"),
