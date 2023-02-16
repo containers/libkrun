@@ -55,7 +55,7 @@ int main(int argc, char *const argv[])
     // Create the configuration context.
     ctx_id = krun_create_ctx();
     if (ctx_id < 0) {
-        errno = -err;
+        errno = -ctx_id;
         perror("Error creating configuration context");
         return -1;
     }
