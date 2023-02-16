@@ -307,7 +307,7 @@ impl Queue {
     }
 
     /// Pop the first available descriptor chain from the avail ring.
-    pub fn pop<'a, 'b>(&'a mut self, mem: &'b GuestMemoryMmap) -> Option<DescriptorChain<'b>> {
+    pub fn pop<'b>(&mut self, mem: &'b GuestMemoryMmap) -> Option<DescriptorChain<'b>> {
         if self.len(mem) == 0 {
             return None;
         }
