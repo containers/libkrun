@@ -45,7 +45,7 @@ Each variant generates a dynamic library with a different name (and ```soname```
 
 * virtio-fs
 * virtio-balloon (only free-page reporting)
-* virtior-rng
+* virtio-rng
 
 ### libkrun-sev
 
