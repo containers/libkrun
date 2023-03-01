@@ -15,6 +15,8 @@ mod packet;
 mod proxy;
 mod reaper;
 mod tcp;
+#[cfg(target_os = "macos")]
+mod timesync;
 mod udp;
 
 pub use self::defs::uapi::VIRTIO_ID_VSOCK as TYPE_VSOCK;

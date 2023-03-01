@@ -10,8 +10,12 @@ ifeq ($(SEV),1)
     INIT_DEFS := -DSEV=1
 endif
 
+INIT_DEFS =
 ifeq ($(ROSETTA),1)
-    INIT_DEFS := -D__ROSETTA__
+    INIT_DEFS += -D__ROSETTA__
+endif
+ifeq ($(TIMESYNC),1)
+    INIT_DEFS += -D__TIMESYNC__
 endif
 
 OS = $(shell uname -s)

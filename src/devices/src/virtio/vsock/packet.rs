@@ -610,4 +610,12 @@ impl VsockPacket {
             None
         }
     }
+
+    pub fn write_time_sync(&mut self, time: u64) {
+        if self.buf_size >= 8 {
+            if let Some(buf) = self.buf_mut() {
+                byte_order::write_le_u64(&mut buf[0..], time);
+            }
+        }
+    }
 }
