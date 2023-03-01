@@ -3,8 +3,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
@@ -15,6 +17,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <linux/vm_sockets.h>
 
 #include "jsmn.h"
 
@@ -480,6 +483,67 @@ static void enable_rosetta()
 }
 #endif
 
+#ifdef __TIMESYNC__
+
+#define TSYNC_PORT 123
+#define BUFSIZE 8
+#define NANOS_IN_SECOND 1000000000
+/* Set clock if delta is bigger than 100ms */
+#define DELTA_SYNC 100000000
+
+void clock_worker()
+{
+	int sockfd, n;
+	struct sockaddr_vm serveraddr;
+	char buf[BUFSIZE];
+	struct timespec gtime;
+	struct timespec htime;
+	uint64_t gtime_ns;
+	uint64_t htime_ns;
+
+	sockfd = socket(AF_VSOCK, SOCK_DGRAM, 0);
+	if (sockfd < 0) {
+		perror("Couldn't create timesync socket\n");
+		return;
+	}
+
+	bzero((char *) &serveraddr, sizeof(serveraddr));
+	serveraddr.svm_family = AF_VSOCK;
+	serveraddr.svm_port = TSYNC_PORT;
+	serveraddr.svm_cid = 3;
+
+	bzero(buf, BUFSIZE);
+
+	n = bind(sockfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr));
+	if (n < 0) {
+		printf("Couldn't bind timesync socket\n");
+		return;
+	}
+
+	while (1) {
+		n = recv(sockfd, buf, BUFSIZE, 0);
+		if (n < 0) {
+			perror("Error in timesync recv\n");
+			return;
+		} else if (n != 8) {
+			printf("Ignoring bogus timesync packet\n");
+			continue;
+		}
+
+		htime_ns = *(uint64_t *) &buf[0];
+		clock_gettime(CLOCK_REALTIME, &gtime);
+		gtime_ns = gtime.tv_sec * NANOS_IN_SECOND;
+		gtime_ns += gtime.tv_nsec;
+
+		if (llabs(htime_ns - gtime_ns) > DELTA_SYNC) {
+			htime.tv_sec = htime_ns / NANOS_IN_SECOND;
+			htime.tv_nsec = htime_ns % NANOS_IN_SECOND;
+			clock_settime(CLOCK_REALTIME, &htime);
+		}
+	}
+}
+#endif
+
 int main(int argc, char **argv)
 {
 	struct ifreq ifr;
@@ -565,6 +629,12 @@ int main(int argc, char **argv)
 	} else {
 		exec_argv[0] = &DEFAULT_KRUN_INIT[0];
 	}
+
+#ifdef __TIMESYNC__
+	if (fork() == 0) {
+		clock_worker();
+	}
+#endif
 
 	execvp(exec_argv[0], exec_argv);
 

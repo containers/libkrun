@@ -14,6 +14,8 @@ use super::packet::{TsiGetnameRsp, VsockPacket};
 use super::proxy::{Proxy, ProxyRemoval, ProxyUpdate};
 use super::reaper::ReaperThread;
 use super::tcp::TcpProxy;
+#[cfg(target_os = "macos")]
+use super::timesync::TimesyncThread;
 use super::udp::UdpProxy;
 use super::VsockError;
 use crossbeam_channel::{unbounded, Sender};
@@ -145,6 +147,20 @@ impl VsockMuxer {
         self.mem = Some(mem.clone());
         self.intc = intc.clone();
         self.irq_line = irq_line;
+
+        #[cfg(target_os = "macos")]
+        {
+            let timesync = TimesyncThread::new(
+                self.cid,
+                mem.clone(),
+                queue_dgram.clone(),
+                self.interrupt_evt.try_clone().unwrap(),
+                self.interrupt_status.clone(),
+                intc.clone(),
+                irq_line,
+            );
+            timesync.run();
+        }
 
         let (sender, receiver) = unbounded();
 
