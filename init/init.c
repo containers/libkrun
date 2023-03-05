@@ -32,6 +32,8 @@
 #define MAX_TOKENS 16384
 
 static int jsoneq(const char *, jsmntok_t *, const char *);
+static char *sev_get_luks_passphrase(int *);
+static char *snp_get_luks_passphrase(char *, char *, char *, char *, int *);
 
 char DEFAULT_KRUN_INIT[] = "/bin/sh";
 
@@ -74,12 +76,13 @@ static void set_rlimits(const char *rlimits)
  * The LUKS passphrase is obtained from a KBS attestation server, complete an
  * SNP attestation to get the passphrase.
  */
-static char *get_luks_passphrase(int *pass_len)
+static char *
+get_luks_passphrase(int *pass_len)
 {
-        int fd, num_tokens, wid_found, url_found;
+        int fd, num_tokens, wid_found, url_found, tee_found, tee_data_found;
         struct stat tc_stat;
-        char *pass, wid[256], url[256], tc_json[1024], *tok_start, *tok_end;
-        char full_path[512], *return_str;
+        char wid[256], url[256], tc_json[1024], *tok_start, *tok_end;
+        char full_path[512], tee[256], tee_data[256], *return_str;
         jsmn_parser parser;
         jsmntok_t *tokens;
         size_t tok_size;
@@ -182,7 +185,7 @@ static char *get_luks_passphrase(int *pass_len)
                 goto umount_teeconfig;
         }
 
-        wid_found = url_found = 0;
+        wid_found = url_found = tee_found = tee_data_found = 0;
 
         for (int i = 1; i < num_tokens - 1; ++i) {
                 tok_start = tc_json + tokens[i + 1].start;
@@ -194,6 +197,12 @@ static char *get_luks_passphrase(int *pass_len)
                 } else if (!jsoneq(tc_json, &tokens[i], "attestation_url")) {
                         strncpy(url, tok_start, tok_size);
                         url_found = 1;
+                } else if (!jsoneq(tc_json, &tokens[i], "tee")) {
+                        strncpy(tee, tok_start, tok_size);
+                        tee_found = 1;
+                } else if (!jsoneq(tc_json, &tokens[i], "tee_data")) {
+                        strncpy(tee_data, tok_start, tok_size);
+                        tee_data_found = 1;
                 }
         }
 
@@ -205,23 +214,22 @@ static char *get_luks_passphrase(int *pass_len)
                 printf("Unable to find attestation server URL\n");
 
                 goto umount_teeconfig;
-        }
-
-        /*
-         * Allocate the passphrase and attempt to attest the workload.
-         */
-        pass = (char *) malloc(MAX_PASS_SIZE);
-        if (pass == NULL)
-                goto umount_teeconfig;
-
-        if (snp_attest(pass, url, wid) == 0) {
-                return_str = pass;
-                *pass_len = strlen(pass);
+        } else if (!tee_found) {
+                printf("Unable to find TEE generation server URL\n");
 
                 goto umount_teeconfig;
         }
 
-        free(pass);
+        if (strcmp(tee, "snp") == 0) {
+                if (tee_data_found == 0) {
+                        printf("Unable to find SNP generation\n");
+                        goto umount_teeconfig;
+                }
+
+                return_str = snp_get_luks_passphrase(url, wid, tee, tee_data, pass_len);
+        } else if (strcmp(tee, "sev") == 0) {
+                return_str = sev_get_luks_passphrase(pass_len);
+        }
 
 umount_teeconfig:
         umount("/teeconfig");
@@ -237,6 +245,78 @@ rmdir_dev:
 
 finish:
         return return_str;
+}
+
+static char *
+snp_get_luks_passphrase(char *url, char *wid, char *tee, char *tee_data,
+                int *pass_len)
+{
+        char *pass;
+
+        pass = (char *) malloc(MAX_PASS_SIZE);
+        if (pass == NULL) {
+                return NULL;
+        }
+
+        if (snp_attest(pass, url, wid, tee) == 0) {
+                *pass_len = strlen(pass);
+                return pass;
+        }
+
+        free(pass);
+
+        return NULL;
+}
+
+static char *
+sev_get_luks_passphrase(int *pass_len)
+{
+	char *pass = NULL;
+	int len;
+	int fd;
+
+	pass = getenv("KRUN_PASS");
+	if (pass) {
+		*pass_len = strnlen(pass, MAX_PASS_SIZE);
+		return pass;
+	}
+	if (mkdir("/sfs", 0755) < 0 && errno != EEXIST) {
+		perror("mkdir(/sfs)");
+		return NULL;
+	}
+
+	if (mount("securityfs", "/sfs", "securityfs",
+		MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
+		perror("mount(/sfs)");
+		goto cleanup_dir;
+	}
+
+        fd = open(CMDLINE_SECRET_PATH, O_RDONLY);
+	if (fd < 0) {
+		goto cleanup_sfs;
+	}
+
+	pass = malloc(MAX_PASS_SIZE);
+	if (!pass) {
+		goto cleanup_fd;
+	}
+
+	if ((len = read(fd, pass, MAX_PASS_SIZE)) < 0) {
+		free(pass);
+		pass = NULL;
+	} else {
+		*pass_len = len;
+		unlink(CMDLINE_SECRET_PATH);
+	}
+
+cleanup_fd:
+	close(fd);
+cleanup_sfs:
+	umount("/sfs");
+cleanup_dir:
+	rmdir("/sfs");
+
+        return pass;
 }
 
 static int chroot_luks()
