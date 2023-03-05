@@ -101,6 +101,6 @@ struct msg_report_resp {
 };
 
 // snp_attest.c
-int snp_attest(char *, char *, char *);
+int snp_attest(char *, char *, char *, char *);
 
 #endif /* _SNP_ATTEST */

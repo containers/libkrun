@@ -28,7 +28,7 @@ static int snp_get_ext_report(const uint8_t *, size_t, struct snp_report *,
 static int SNP_ATTEST_ERR(char *);
 
 int
-snp_attest(char *pass, char *url, char *wid)
+snp_attest(char *pass, char *url, char *wid, char *gen)
 {
         CURL *curl;
         char nonce[NONCE_MAX], json[JSON_MAX];
