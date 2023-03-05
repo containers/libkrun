@@ -6,9 +6,11 @@
 
 #include "kbs.h"
 
+#define KBS_CURL_ERR(x) printf("%s: %s\n", __func__, x); \
+                        return -1;                       \
+
 static CURLcode kbs_curl_set_headers(CURL *, char *);
-static int KBS_CURL_ERR(char *);
-size_t curl_wr(void *, size_t, size_t, void *);
+size_t cwrite(void *, size_t, size_t, void *);
 
 /*
  * Complete a cURL POST request. POST the "in" string and retrieve the contents
@@ -29,17 +31,21 @@ kbs_curl_post(CURL *curl, char *url, char *in, char *out, int type)
         /*
          * Neither the input or output strings should be invalid/NULL.
          */
-        if (!in)
-                return KBS_CURL_ERR("Input argument NULL");
+        if (!in) {
+                KBS_CURL_ERR("Input argument NULL");
+        }
 
-        if (!out)
-                return KBS_CURL_ERR("Output argument NULL");
+        if (!out) {
+                KBS_CURL_ERR("Output argument NULL");
+        }
 
-        if (curl_easy_setopt(curl, CURLOPT_POST, 1L) != CURLE_OK)
-                return KBS_CURL_ERR("CURLOPT_POST");
+        if (curl_easy_setopt(curl, CURLOPT_POST, 1L) != CURLE_OK) {
+                KBS_CURL_ERR("CURLOPT_POST");
+        }
 
-        if (curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_wr) != CURLE_OK)
-                return KBS_CURL_ERR("CURLOPT_WRITEFUNCTION");
+        if (curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, cwrite) != CURLE_OK) {
+                KBS_CURL_ERR("CURLOPT_WRITEFUNCTION");
+        }
 
         /*
          * If the operation being completed is a KBS REQUEST, then this is the
@@ -51,17 +57,20 @@ kbs_curl_post(CURL *curl, char *url, char *in, char *out, int type)
         if (type == KBS_CURL_REQ) {
                 sprintf(full_url, "%s/kbs/v0/auth", url);
 
-                if (curl_easy_setopt(curl, CURLOPT_COOKIEFILE, "") != CURLE_OK)
-                        return KBS_CURL_ERR("CURLOPT_COOKIEFILE");
+                if (curl_easy_setopt(curl, CURLOPT_COOKIEFILE, "") != CURLE_OK) {
+                        KBS_CURL_ERR("CURLOPT_COOKIEFILE");
+                }
 
-                if (kbs_curl_set_headers(curl, NULL) != CURLE_OK)
-                        return KBS_CURL_ERR("CURLOPT_HTTPHEADER");
+                if (kbs_curl_set_headers(curl, NULL) != CURLE_OK) {
+                        KBS_CURL_ERR("CURLOPT_HTTPHEADER");
+                }
         } else {
                 sprintf(full_url, "%s/kbs/v0/attest", url);
 
                 if (curl_easy_getinfo(curl, CURLINFO_COOKIELIST, &cks)
-                                != CURLE_OK)
-                        return KBS_CURL_ERR("CURLOPT_COOKIELIST");
+                                != CURLE_OK) {
+                        KBS_CURL_ERR("CURLOPT_COOKIELIST");
+                }
 
                 session_id_label = NULL;
                 while (cks) {
@@ -72,18 +81,22 @@ kbs_curl_post(CURL *curl, char *url, char *in, char *out, int type)
                         cks = cks->next;
                 }
 
-                if (session_id_label == NULL)
-                        return KBS_CURL_ERR("No session_id cookie found");
+                if (session_id_label == NULL) {
+                        KBS_CURL_ERR("No session_id cookie found");
+                }
 
-                if (read_cookie_val(session_id_label, session_id) < 0)
-                        return KBS_CURL_ERR("No session_id value for cookie");
+                if (read_cookie_val(session_id_label, session_id) < 0) {
+                        KBS_CURL_ERR("No session_id value for cookie");
+                }
 
-                if (kbs_curl_set_headers(curl, (char *) session_id) != CURLE_OK)
-                        return KBS_CURL_ERR("CURLOPT_HTTPHEADER");
+                if (kbs_curl_set_headers(curl, (char *) session_id) != CURLE_OK) {
+                        KBS_CURL_ERR("CURLOPT_HTTPHEADER");
+                }
         }
 
-        if (curl_easy_setopt(curl, CURLOPT_URL, full_url) != CURLE_OK)
-                return KBS_CURL_ERR("CURLOPT_URL");
+        if (curl_easy_setopt(curl, CURLOPT_URL, full_url) != CURLE_OK) {
+                KBS_CURL_ERR("CURLOPT_URL");
+        }
 
         /*
          * This is a cURL POST request that will write data to the "out"
@@ -91,18 +104,22 @@ kbs_curl_post(CURL *curl, char *url, char *in, char *out, int type)
          * able to hold the full response from the attestation server.
          */
         if (curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long) strlen(in))
-                        != CURLE_OK)
-                return KBS_CURL_ERR("CURLOPT_POSTFIELDSIZE");
+                        != CURLE_OK) {
+                KBS_CURL_ERR("CURLOPT_POSTFIELDSIZE");
+        }
 
-        if (curl_easy_setopt(curl, CURLOPT_POSTFIELDS, in) != CURLE_OK)
-                return KBS_CURL_ERR("CURLOPT_POSTFIELDS");
+        if (curl_easy_setopt(curl, CURLOPT_POSTFIELDS, in) != CURLE_OK) {
+                KBS_CURL_ERR("CURLOPT_POSTFIELDS");
+        }
 
-        if (curl_easy_setopt(curl, CURLOPT_WRITEDATA, out) != CURLE_OK)
-                return KBS_CURL_ERR("CURLOPT_WRITEDATA");
+        if (curl_easy_setopt(curl, CURLOPT_WRITEDATA, out) != CURLE_OK) {
+                KBS_CURL_ERR("CURLOPT_WRITEDATA");
+        }
 
         code = curl_easy_perform(curl);
-        if (code != CURLE_OK && code != CURLE_WRITE_ERROR)
-                return KBS_CURL_ERR("CURL_EASY_PERFORM");
+        if (code != CURLE_OK && code != CURLE_WRITE_ERROR) {
+                KBS_CURL_ERR("CURL_EASY_PERFORM");
+        }
 
         return 0;
 }
@@ -118,12 +135,14 @@ kbs_curl_get(CURL *curl, char *url, char *wid, char *out, int type)
         char full_url[100], *session_id_label, session_id[100];
         struct curl_slist *cookies;
 
-        if (type != KBS_CURL_GET_KEY)
-                return KBS_CURL_ERR("Invalid KBS operation");
+        if (type != KBS_CURL_GET_KEY) {
+                KBS_CURL_ERR("Invalid KBS operation");
+        }
 
         code = curl_easy_getinfo(curl, CURLINFO_COOKIELIST, &cookies);
-        if (code != CURLE_OK)
-                return KBS_CURL_ERR("Cannot retrieve cURL cookies");
+        if (code != CURLE_OK) {
+                KBS_CURL_ERR("Cannot retrieve cURL cookies");
+        }
 
         /*
          * This API is used by kbs_get_key(), therefore we are expected to have
@@ -138,17 +157,20 @@ kbs_curl_get(CURL *curl, char *url, char *wid, char *out, int type)
                 cookies = cookies->next;
         }
 
-        if (session_id_label == NULL)
-                return KBS_CURL_ERR("Couldn't find cookie labeled\n");
+        if (session_id_label == NULL) {
+                KBS_CURL_ERR("Couldn't find cookie labeled\n");
+        }
 
         /*
          * Read the session ID and include it in the cURL headers.
          */
-        if (read_cookie_val(session_id_label, session_id) < 0)
-                return KBS_CURL_ERR("Couldn't read cookie value\n");
+        if (read_cookie_val(session_id_label, session_id) < 0) {
+                KBS_CURL_ERR("Couldn't read cookie value\n");
+        }
 
-        if (kbs_curl_set_headers(curl, (char *) session_id) != CURLE_OK)
-                return KBS_CURL_ERR("CURLOPT_HTTPHEADER");
+        if (kbs_curl_set_headers(curl, (char *) session_id) != CURLE_OK) {
+                KBS_CURL_ERR("CURLOPT_HTTPHEADER");
+        }
 
         /*
          * The location of the KBS key is located at
@@ -156,15 +178,17 @@ kbs_curl_get(CURL *curl, char *url, char *wid, char *out, int type)
          */
         sprintf(full_url, "%s/kbs/v0/key/%s", url, wid);
 
-        if (curl_easy_setopt(curl, CURLOPT_URL, full_url) != CURLE_OK)
-                return KBS_CURL_ERR("CURLOPT_URL");
+        if (curl_easy_setopt(curl, CURLOPT_URL, full_url) != CURLE_OK) {
+                KBS_CURL_ERR("CURLOPT_URL");
+        }
 
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_wr);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, cwrite);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, out);
 
         code = curl_easy_perform(curl);
-        if (code != CURLE_OK && code != CURLE_WRITE_ERROR)
-                return KBS_CURL_ERR("CURL_EASY_PERFORM");
+        if (code != CURLE_OK && code != CURLE_WRITE_ERROR) {
+                KBS_CURL_ERR("CURL_EASY_PERFORM");
+        }
 
         return 0;
 }
@@ -200,23 +224,11 @@ kbs_curl_set_headers(CURL *curl, char *session)
 }
 
 /*
- * Based on the given cURL error, print the KBS error and return an error
- * indicator.
- */
-static int
-KBS_CURL_ERR(char *errmsg)
-{
-        printf("ERROR (kbs_curl_post): %s\n", errmsg);
-
-        return -1;
-}
-
-/*
  * Simple strcpy() for attestation server responses. Required by a cURL
  * operation that writes data.
  */
 size_t
-curl_wr(void *data, size_t size, size_t nmemb, void *userp)
+cwrite(void *data, size_t size, size_t nmemb, void *userp)
 {
         strcpy((char *) userp, (char *) data);
 
