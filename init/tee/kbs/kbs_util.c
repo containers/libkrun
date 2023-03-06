@@ -8,6 +8,8 @@
 
 #define MAX_TOKENS 16384
 
+static int label_find(char *, char *);
+
 /*
  * Return the string identifier of the inputted TEE architecture.
  */
@@ -114,9 +116,9 @@ json_parse_str(char *out, char *label, char *json)
         /*
          * Traverse each token of the JSON string.
          */
-        for (int i = 0; i < ntokens - 2; i++) {
+        for (int i = 0; i < ntokens - 1; i++) {
                 curr = &tokens[i];
-                next = &tokens[i + 2];
+                next = &tokens[i + 1];
 
                 /*
                  * Only interested in reading a string.
@@ -127,9 +129,8 @@ json_parse_str(char *out, char *label, char *json)
                 /*
                  * Compare the current token with the label being searched for.
                  */
-                eq = strncasecmp(json + curr->start, label,
-                        curr->end - curr->start);
-                if (eq == 0 && next->type == JSMN_STRING) {
+                eq = label_find(label, json + curr->start);
+                if (eq && next->type == JSMN_STRING) {
                         /*
                          * Found the string associated with the label, calculate
                          * its beginning and ending indexes within the JSON
@@ -150,4 +151,22 @@ out:
         free((void *) tokens);
 
         return rc;
+}
+
+static int
+label_find(char *label, char *str)
+{
+        size_t label_sz;
+
+        label_sz = strlen(label);
+
+        for (int i = 0; i < label_sz; i++) {
+                if (label[i] != str[i])
+                        return 0;
+                if (label[i] != '\0')
+                        continue;
+
+        }
+
+        return 1;
 }

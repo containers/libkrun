@@ -14,7 +14,7 @@
 #include "../snp_attest.h"
 
 static void kbs_attestation_marshal(struct snp_report *, uint8_t *, size_t,
-                                        char *, BIGNUM *, BIGNUM *);
+                                        char *, BIGNUM *, BIGNUM *, char *);
 static void kbs_attestation_marshal_tcb(char *, char *, union tcb_version *);
 static void kbs_attestation_marshal_signature(char *, struct signature *);
 static void kbs_attestation_marshal_bytes(char *, char *, uint8_t *, size_t);
@@ -99,7 +99,7 @@ out:
  */
 int
 kbs_attest(CURL *curl, char *url, struct snp_report *report, uint8_t *certs,
-                size_t certs_size, BIGNUM *mod, BIGNUM *exp)
+                size_t certs_sz, BIGNUM *mod, BIGNUM *exp, char *gen)
 {
         int rc;
         char *json, errmsg[200];
@@ -116,7 +116,7 @@ kbs_attest(CURL *curl, char *url, struct snp_report *report, uint8_t *certs,
          * Marshal the kbs_types Attestation JSON struct with the given
          * attestation report and certificate chain.
          */
-        kbs_attestation_marshal(report, certs, certs_size, json, mod, exp);
+        kbs_attestation_marshal(report, certs, certs_sz, json, mod, exp, gen);
 
         /*
          * Ensure the error messaging string is empty, because we will
@@ -195,7 +195,7 @@ kbs_get_key(CURL *curl, char *url, char *wid, EVP_PKEY *pkey, char *pass)
  */
 static void
 kbs_attestation_marshal(struct snp_report *report, uint8_t *certs,
-        size_t certs_size, char *json, BIGNUM *mod, BIGNUM *exp)
+        size_t certs_sz, char *json, BIGNUM *mod, BIGNUM *exp, char *gen)
 {
         char buf[4096];
 
@@ -204,7 +204,7 @@ kbs_attestation_marshal(struct snp_report *report, uint8_t *certs,
 
         kbs_attestation_marshal_tee_pubkey(json, mod, exp);
 
-        sprintf(buf, "\"tee-evidence\":\"{\\\"report\\\":\\\"{");
+        sprintf(buf, "\"tee-evidence\":\"{\\\"gen\\\":\\\"%s\\\",\\\"report\\\":\\\"{", gen);
         strcat(json, buf);
 
         sprintf(buf, "\\\\\\\"version\\\\\\\":%u,", report->version);
@@ -328,7 +328,7 @@ kbs_attestation_marshal(struct snp_report *report, uint8_t *certs,
 
         strcat(json, "}\\\",");
 
-        kbs_attestation_marshal_certs(json, certs, certs_size);
+        kbs_attestation_marshal_certs(json, certs, certs_sz);
         strcat(json, "\"}");
 }
 
