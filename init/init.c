@@ -33,7 +33,7 @@
 
 static int jsoneq(const char *, jsmntok_t *, const char *);
 static char *sev_get_luks_passphrase(int *);
-static char *snp_get_luks_passphrase(char *, char *, char *, char *, int *);
+static char *snp_get_luks_passphrase(char *, char *, char *, int *);
 
 char DEFAULT_KRUN_INIT[] = "/bin/sh";
 
@@ -226,7 +226,7 @@ get_luks_passphrase(int *pass_len)
                         goto umount_teeconfig;
                 }
 
-                return_str = snp_get_luks_passphrase(url, wid, tee, tee_data, pass_len);
+                return_str = snp_get_luks_passphrase(url, wid, tee_data, pass_len);
         } else if (strcmp(tee, "sev") == 0) {
                 return_str = sev_get_luks_passphrase(pass_len);
         }
@@ -248,8 +248,7 @@ finish:
 }
 
 static char *
-snp_get_luks_passphrase(char *url, char *wid, char *tee, char *tee_data,
-                int *pass_len)
+snp_get_luks_passphrase(char *url, char *wid, char *tee_data, int *pass_len)
 {
         char *pass;
 
@@ -258,7 +257,7 @@ snp_get_luks_passphrase(char *url, char *wid, char *tee, char *tee_data,
                 return NULL;
         }
 
-        if (snp_attest(pass, url, wid, tee) == 0) {
+        if (snp_attest(pass, url, wid, tee_data) == 0) {
                 *pass_len = strlen(pass);
                 return pass;
         }

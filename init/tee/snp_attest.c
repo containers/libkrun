@@ -22,16 +22,18 @@
 
 #define NONCE_MAX       1024
 #define JSON_MAX        1024
+#define GEN_MAX         32
 
 static int snp_get_ext_report(const uint8_t *, size_t, struct snp_report *,
         uint8_t **, size_t *);
 static int SNP_ATTEST_ERR(char *);
+static void json_fmt(char *);
 
 int
-snp_attest(char *pass, char *url, char *wid, char *gen)
+snp_attest(char *pass, char *url, char *wid, char *tee_data)
 {
         CURL *curl;
-        char nonce[NONCE_MAX], json[JSON_MAX];
+        char nonce[NONCE_MAX], json[JSON_MAX], gen[GEN_MAX];
         struct snp_report report;
         uint8_t *certs;
         size_t certs_size;
@@ -50,6 +52,10 @@ snp_attest(char *pass, char *url, char *wid, char *gen)
         if (kbs_challenge(curl, url, json, nonce) < 0)
                 return SNP_ATTEST_ERR("Unable to retrieve nonce from server");
 
+        json_fmt(tee_data);
+        if (json_parse_str(gen, "gen", tee_data) < 0)
+                return SNP_ATTEST_ERR("Unable to retrieve SNP generation");
+
         n = e = NULL;
         if (kbs_tee_pubkey_create(&pkey, &n, &e) < 0)
                 return SNP_ATTEST_ERR("Unable to create TEE public key");
@@ -63,7 +69,7 @@ snp_attest(char *pass, char *url, char *wid, char *gen)
                         &certs, &certs_size) != EXIT_SUCCESS)
                 return SNP_ATTEST_ERR("Unable to retrieve attestation report");
 
-        if (kbs_attest(curl, url, &report, certs, certs_size, n, e) < 0)
+        if (kbs_attest(curl, url, &report, certs, certs_size, n, e, gen) < 0)
                 return SNP_ATTEST_ERR("Unable to complete KBS ATTESTATION");
 
         curl_easy_reset(curl);
@@ -266,4 +272,31 @@ SNP_ATTEST_ERR(char *errmsg)
         printf("SNP ATTEST ERROR: %s\n", errmsg);
 
         return -1;
+}
+
+/*
+ * String format an unformatted JSON string:
+ *
+ * For example, this string:
+ *      "{\"test\":\"123\"}"
+ *
+ * Would become:
+ *      "{"test":"123"}"
+ */
+static void
+json_fmt(char *str)
+{
+        char cpy[strlen(str)];
+        size_t sz, cpy_idx;
+
+        sz = strlen(str);
+        cpy_idx = 0;
+
+        for (int i = 0; i < sz; i++) {
+                if (str[i] != '\\')
+                        cpy[cpy_idx++] = str[i];
+        }
+        cpy[cpy_idx] = '\0';
+
+        strcpy(str, cpy);
 }
