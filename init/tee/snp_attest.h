@@ -47,7 +47,7 @@ struct cert_table {
 
 /*
  * SNP attestation report structure. Based off of the attestation report
- * structure described in firmware version 1.51.
+ * structure described in firmware version 1.52.
  */
 struct snp_report {
         uint32_t                version;
@@ -66,6 +66,7 @@ struct snp_report {
 
         uint32_t                author_key_en : 1;
         uint32_t                _reserved_0 : 31;
+        uint32_t                _reserved_1;
         uint8_t                 report_data[64];
         uint8_t                 measurement[48];
         uint8_t                 host_data[32];
@@ -74,19 +75,19 @@ struct snp_report {
         uint8_t                 report_id[32];
         uint8_t                 report_id_ma[32];
         union tcb_version       reported_tcb;
-        uint8_t                 _reserved_1[24];
+        uint8_t                 _reserved_2[24];
         uint8_t                 chip_id[64];
         union tcb_version      committed_tcb;
         uint8_t                 current_build;
         uint8_t                 current_minor;
         uint8_t                 current_major;
-        uint8_t                 _reserved_2;
+        uint8_t                 _reserved_3;
         uint8_t                 committed_build;
         uint8_t                 committed_minor;
         uint8_t                 committed_major;
-        uint8_t                 _reserved_3;
+        uint8_t                 _reserved_4;
         union tcb_version      launch_tcb;
-        uint8_t                 _reserved_4[168];
+        uint8_t                 _reserved_5[168];
         struct signature        signature;
 };
 
