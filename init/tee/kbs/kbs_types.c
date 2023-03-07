@@ -13,12 +13,8 @@
 
 #include "../snp_attest.h"
 
-static void kbs_attestation_marshal(struct snp_report *, uint8_t *, size_t,
-                                        char *, BIGNUM *, BIGNUM *, char *);
-static void kbs_attestation_marshal_tcb(char *, char *, union tcb_version *);
-static void kbs_attestation_marshal_signature(char *, struct signature *);
-static void kbs_attestation_marshal_bytes(char *, char *, uint8_t *, size_t);
-static void kbs_attestation_marshal_certs(char *, uint8_t *, size_t);
+static void kbs_attestation_marshal(struct snp_report *, char *, BIGNUM *,
+        BIGNUM *, char *);
 static void kbs_attestation_marshal_tee_pubkey(char *, BIGNUM *, BIGNUM *);
 
 /*
@@ -62,7 +58,7 @@ kbs_challenge(CURL *curl, char *url, char *json_request, char *nonce)
 
         rc = -1;
 
-        nonce_json = (char *) malloc(0x1000);
+        nonce_json = (char *) malloc(0x2000);
         if (nonce_json == NULL) {
                 printf("ERROR: unable to allocate JSON nonce buffer\n");
 
@@ -98,14 +94,14 @@ out:
  * to the attestation server for attestation.
  */
 int
-kbs_attest(CURL *curl, char *url, struct snp_report *report, uint8_t *certs,
-                size_t certs_sz, BIGNUM *mod, BIGNUM *exp, char *gen)
+kbs_attest(CURL *curl, char *url, struct snp_report *report, BIGNUM *mod,
+                BIGNUM *exp, char *gen)
 {
         int rc;
         char *json, errmsg[200];
 
         rc = -1;
-        json = (char *) malloc(0x7000);
+        json = (char *) malloc(0x1000);
         if (json == NULL) {
                 printf("ERROR: unable to allocate JSON buffer\n");
 
@@ -116,7 +112,7 @@ kbs_attest(CURL *curl, char *url, struct snp_report *report, uint8_t *certs,
          * Marshal the kbs_types Attestation JSON struct with the given
          * attestation report and certificate chain.
          */
-        kbs_attestation_marshal(report, certs, certs_sz, json, mod, exp, gen);
+        kbs_attestation_marshal(report, json, mod, exp, gen);
 
         /*
          * Ensure the error messaging string is empty, because we will
@@ -194,242 +190,36 @@ kbs_get_key(CURL *curl, char *url, char *wid, EVP_PKEY *pkey, char *pass)
  * attestation report and certificate data.
  */
 static void
-kbs_attestation_marshal(struct snp_report *report, uint8_t *certs,
-        size_t certs_sz, char *json, BIGNUM *mod, BIGNUM *exp, char *gen)
+kbs_attestation_marshal(struct snp_report *report, char *json, BIGNUM *mod,
+                BIGNUM *exp, char *gen)
 {
-        char buf[4096];
+        char buf[4096], *report_hexstr;
+        size_t report_hexstr_len;
+
+        report_hexstr = (char *) malloc(0x1000);
+        if (report_hexstr == NULL)
+                return;
 
         sprintf(buf, "{");
         strcpy(json, buf);
 
         kbs_attestation_marshal_tee_pubkey(json, mod, exp);
 
-        sprintf(buf, "\"tee-evidence\":\"{\\\"gen\\\":\\\"%s\\\",\\\"report\\\":\\\"{", gen);
+        sprintf(buf, "\"tee-evidence\":\"{");
         strcat(json, buf);
 
-        sprintf(buf, "\\\\\\\"version\\\\\\\":%u,", report->version);
+        sprintf(buf, "\\\"gen\\\":\\\"%s\\\",", gen);
         strcat(json, buf);
 
-        sprintf(buf, "\\\\\\\"guest_svn\\\\\\\":%u,", report->guest_svn);
+        OPENSSL_buf2hexstr_ex(report_hexstr, 0x1000, &report_hexstr_len,
+                (unsigned char *) report, sizeof(*report), '\0');
+        report_hexstr[report_hexstr_len] = '\0';
+        sprintf(buf, "\\\"report\\\":\\\"%s\\\",", report_hexstr);
         strcat(json, buf);
 
-        sprintf(buf, "\\\\\\\"policy\\\\\\\":%lu,", report->policy);
-        strcat(json, buf);
+        strcat(json, "\\\"cert_chain\\\":\\\"[]\\\"}");
 
-        kbs_attestation_marshal_bytes(json, "family_id",
-                (uint8_t *) report->family_id, 16);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_bytes(json, "image_id",
-                (uint8_t *) report->image_id, 16);
-        strcat(json, ",");
-
-        sprintf(buf, "\\\\\\\"vmpl\\\\\\\":%u,", report->vmpl),
-        strcat(json, buf);
-
-        sprintf(buf, "\\\\\\\"sig_algo\\\\\\\":%u,", report->signature_algo);
-        strcat(json, buf);
-
-        kbs_attestation_marshal_tcb(json, "current_tcb", &report->current_tcb);
-        strcat(json, ",");
-
-        sprintf(buf, "\\\\\\\"plat_info\\\\\\\":%lu,", report->platform_info);
-        strcat(json, buf);
-
-        sprintf(buf, "\\\\\\\"_author_key_en\\\\\\\":%u,",
-                report->author_key_en);
-        strcat(json, buf);
-
-        sprintf(buf, "\\\\\\\"_reserved_0\\\\\\\":%u,", report->_reserved_0);
-        strcat(json, buf);
-
-        kbs_attestation_marshal_bytes(json, "report_data",
-                (uint8_t *) report->report_data, 64);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_bytes(json, "measurement",
-                (uint8_t *) report->measurement, 48);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_bytes(json, "host_data",
-                (uint8_t *) report->host_data, 32);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_bytes(json, "id_key_digest",
-                (uint8_t *) report->id_key_digest, 48);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_bytes(json, "author_key_digest",
-                (uint8_t *) report->author_key_digest, 48);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_bytes(json, "report_id",
-                (uint8_t *) report->report_id, 32);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_bytes(json, "report_id_ma",
-                (uint8_t *) report->report_id_ma, 32);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_tcb(json, "reported_tcb",
-                &report->reported_tcb);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_bytes(json, "_reserved_1",
-                (uint8_t *) report->_reserved_1, 24);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_bytes(json, "chip_id",
-                (uint8_t *) report->chip_id, 64);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_tcb(json, "committed_tcb",
-                &report->committed_tcb);
-        strcat(json, ",");
-
-        sprintf(buf, "\\\\\\\"current_build\\\\\\\":%u,",
-                report->current_build);
-        strcat(json, buf);
-
-        sprintf(buf, "\\\\\\\"current_minor\\\\\\\":%u,",
-                report->current_minor);
-        strcat(json, buf);
-
-        sprintf(buf, "\\\\\\\"current_major\\\\\\\":%u,",
-                report->current_major);
-        strcat(json, buf);
-
-        sprintf(buf, "\\\\\\\"_reserved_2\\\\\\\":%u,", report->_reserved_2);
-        strcat(json, buf);
-
-        sprintf(buf, "\\\\\\\"committed_build\\\\\\\":%u,",
-                report->committed_build);
-        strcat(json, buf);
-
-        sprintf(buf, "\\\\\\\"committed_minor\\\\\\\":%u,",
-                report->committed_minor);
-        strcat(json, buf);
-
-        sprintf(buf, "\\\\\\\"committed_major\\\\\\\":%u,",
-                report->committed_major);
-        strcat(json, buf);
-
-        sprintf(buf, "\\\\\\\"_reserved_3\\\\\\\":%u,", report->_reserved_3);
-        strcat(json, buf);
-
-        kbs_attestation_marshal_tcb(json, "launch_tcb", &report->launch_tcb);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_bytes(json, "_reserved_4",
-                (uint8_t *) report->_reserved_4, 168);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_signature(json, &report->signature);
-
-        strcat(json, "}\\\",");
-
-        kbs_attestation_marshal_certs(json, certs, certs_sz);
         strcat(json, "\"}");
-}
-
-/*
- * Marshal a JSON string of a SNP TCB Version struct.
- */
-static void
-kbs_attestation_marshal_tcb(char *json, char *name, union tcb_version *tcb)
-{
-        char buf[4096];
-
-        sprintf(buf, "\\\\\\\"%s\\\\\\\":{", name);
-        strcat(json, buf);
-
-        sprintf(buf, "\\\\\\\"boot_loader\\\\\\\":%u,", tcb->boot_loader);
-        strcat(json, buf);
-
-        sprintf(buf, "\\\\\\\"tee\\\\\\\":%u,", tcb->tee);
-        strcat(json, buf);
-
-        kbs_attestation_marshal_bytes(json, "reserved", tcb->reserved, 4);
-        strcat(json, ",");
-
-        sprintf(buf, "\\\\\\\"snp\\\\\\\":%u,", tcb->snp);
-        strcat(json, buf);
-
-        sprintf(buf, "\\\\\\\"microcode\\\\\\\":%u}", tcb->microcode);
-        strcat(json, buf);
-
-        return;
-}
-
-/*
- * Marshal a JSON list of an array of bytes.
- */
-static void
-kbs_attestation_marshal_bytes(char *json, char *label, uint8_t *data, size_t sz)
-{
-        uint8_t byte;
-        char buf[4096];
-
-        sprintf(buf, "\\\\\\\"%s\\\\\\\":[", label);
-        strcat(json, buf);
-
-        for (int i = 0; i < sz; i++) {
-                byte = data[i];
-
-                sprintf(buf, "%u", byte);
-                if (i < (sz - 1))
-                        strcat(buf, ",");
-
-                strcat(json, buf);
-        }
-
-        strcat(json, "]");
-}
-
-/*
- * Marshal a JSON string of an SNP signature.
- */
-static void
-kbs_attestation_marshal_signature(char *json, struct signature *sig)
-{
-        char buf[4096];
-
-        sprintf(buf, "\\\\\\\"signature\\\\\\\":{");
-        strcat(json, buf);
-
-        kbs_attestation_marshal_bytes(json, "r", sig->r, 72);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_bytes(json, "s", sig->s, 72);
-        strcat(json, ",");
-
-        kbs_attestation_marshal_bytes(json, "_reserved", sig->reserved, 368);
-
-        strcat(json, "}");
-}
-
-/*
- * Marshal a JSON string of an SNP certificate chain. This function is almost
- * identical to kbs_attestation_marshal_bytes() with some slight tweaks to the
- * format of the "cert_chain" label and such.
- */
-static void
-kbs_attestation_marshal_certs(char *json, uint8_t *certs, size_t size)
-{
-        size_t i;
-        char buf[128];
-
-        strcat(json, "\\\"cert_chain\\\":\\\"[");
-
-        for (i = 0; i < size; i++) {
-                sprintf(buf, "%u", certs[i]);
-                if (i < (size - 1))
-                        strcat(buf, ", ");
-
-                strcat(json, buf);
-        }
-
-        strcat(json, "]\\\"}");
 }
 
 /*
