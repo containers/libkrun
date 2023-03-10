@@ -408,9 +408,9 @@ impl AmdSev {
 
         if !self.tee_config.attestation_url.is_empty() {
             let tee_pubkey = TeePubKey {
-                kty: "".to_string(),
                 alg: "".to_string(),
-                k: "".to_string(),
+                k_mod: "".to_string(),
+                k_exp: "".to_string(),
             };
 
             let attestation = Attestation {
