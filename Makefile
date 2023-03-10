@@ -16,15 +16,15 @@ SNP_INIT_SRC =	init/tee/snp_attest.c		\
 SEV_LD_FLAGS =	-lcurl -lidn2 -lssl -lcrypto -lzstd -lz -lbrotlidec-static \
 		-lbrotlicommon-static
 
+INIT_DEFS =
 ifeq ($(SEV),1)
     VARIANT = -sev
     FEATURE_FLAGS := --features amd-sev
-    INIT_DEFS := -DSEV=1
+    INIT_DEFS += -DSEV=1
     INIT_DEFS += $(SEV_LD_FLAGS)
     INIT_SRC += $(SNP_INIT_SRC)
 endif
 
-INIT_DEFS =
 ifeq ($(ROSETTA),1)
     INIT_DEFS += -D__ROSETTA__
 endif
