@@ -25,6 +25,8 @@
 
 #include "tee/snp_attest.h"
 
+#define KRUN_MAGIC "KRUN"
+#define KRUN_FOOTER_LEN 12
 #define CMDLINE_SECRET_PATH "/sfs/secrets/coco/cmdline"
 #define CONFIG_FILE_PATH "/.krun_config.json"
 #define MAX_ARGS 32
@@ -79,15 +81,13 @@ static void set_rlimits(const char *rlimits)
 static char *
 get_luks_passphrase(int *pass_len)
 {
-        int fd, num_tokens, wid_found, url_found, tee_found, tee_data_found;
-        struct stat tc_stat;
-        char wid[256], url[256], tc_json[1024], *tok_start, *tok_end;
-        char full_path[512], tee[256], tee_data[256], *return_str;
+        int fd, ret, num_tokens, wid_found, url_found, tee_found, tee_data_found;
+        uint64_t dev_size, tc_size;
+        char wid[256], url[256], *tc_json, *tok_start, *tok_end;
+        char footer[KRUN_FOOTER_LEN], tee[256], tee_data[256], *return_str;
         jsmn_parser parser;
         jsmntok_t *tokens;
         size_t tok_size;
-        DIR *teeconfig;
-        struct dirent *tc_de;
 
         return_str = NULL;
 
@@ -108,58 +108,62 @@ get_luks_passphrase(int *pass_len)
                 goto rmdir_dev;
         }
 
-        if (mkdir("/teeconfig", 0755) < 0 && errno != EEXIST) {
-                perror("mkdir(/teeconfig)");
-
-                goto umount_dev;
-        }
-
-        if (mount("/dev/vdb", "/teeconfig", "ext4",
-                MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
-                perror("mount(/dev/vdb)");
-
-                goto rmdir_teeconfig;
-        }
-
-        fd = open("/teeconfig/krun-sev.json", O_RDONLY);
+        fd = open("/dev/vda", O_RDONLY);
         if (fd < 0) {
-                perror("open(krun-sev.json)");
+            perror("open(/dev/vda)");
 
-                goto umount_teeconfig;
+            goto umount_dev;
         }
 
-        if (read(fd, (void *) tc_json, 1024) < 0) {
-                perror("read(krun-sev.json)");
-                close(fd);
+        ret = ioctl(fd, BLKGETSIZE64, &dev_size);
+        if (ret != 0) {
+            perror("ioctl(BLKGETSIZE64)");
 
-                goto umount_teeconfig;
-        }
-        close(fd);
-
-        /*
-         * Unmount and remove the mounted directory.
-         */
-        if (umount("/teeconfig") < 0)
-                printf("Unable to unmount /teeconfig");
-
-        teeconfig = opendir("/teeconfig");
-        if (teeconfig == NULL) {
-                printf("Unable to open /teeconfig directory\n");
-
-                goto umount_teeconfig;
+            goto close_dev;
         }
 
-        while ((tc_de = readdir(teeconfig)) != NULL) {
-                stat(tc_de->d_name, &tc_stat);
-                if (!strcmp(".", tc_de->d_name) || !strcmp("..", tc_de->d_name))
-                        continue;
+        if (lseek(fd, dev_size - KRUN_FOOTER_LEN, SEEK_SET) == -1) {
+            perror("lseek(END - KRUN_FOOTER_LEN)");
 
-                sprintf(full_path, "/teeconfig/%s", tc_de->d_name);
-                if (remove(full_path) < 0)
-                        printf("Unable to remove file %s\n", full_path);
+            goto close_dev;
         }
-        if (rmdir("/teeconfig") < 0)
-                printf("Unable to remove directory /teeconfig\n");
+
+        ret = read(fd, &footer[0], KRUN_FOOTER_LEN);
+        if (ret != KRUN_FOOTER_LEN) {
+            perror("read(KRUN_FOOTER_LEN)");
+
+            goto close_dev;
+        }
+
+        if (memcmp(&footer[0], KRUN_MAGIC, 4) != 0) {
+            printf("Couldn't find KRUN footer signature, falling back to SEV\n");
+            return_str = sev_get_luks_passphrase(pass_len);
+
+            goto close_dev;
+        }
+
+        tc_size = *(uint64_t *) &footer[4];
+
+        if (lseek(fd, dev_size - tc_size - KRUN_FOOTER_LEN, SEEK_SET) == -1) {
+            perror("lseek(END - tc_size - KRUN_FOOTER_LEN)");
+
+            goto close_dev;
+        }
+
+        tc_json = malloc(tc_size + 1);
+        if (tc_json == NULL) {
+            perror("malloc(tc_size)");
+
+            goto close_dev;
+        }
+
+        ret = read(fd, tc_json, tc_size);
+        if (ret != tc_size) {
+            perror("read(tc_size)");
+
+            goto free_mem;
+        }
+        tc_json[tc_size] = '\0';
 
         /*
          * Parse the TEE config's workload_id and attestation_url field.
@@ -170,7 +174,7 @@ get_luks_passphrase(int *pass_len)
         if (tokens == NULL) {
                 perror("malloc(jsmntok_t)");
 
-                goto umount_teeconfig;
+                goto free_mem;
         }
 
         num_tokens = jsmn_parse(&parser, tc_json, strlen(tc_json), tokens,
@@ -178,11 +182,11 @@ get_luks_passphrase(int *pass_len)
         if (num_tokens < 0) {
                 printf("Unable to allocate JSON tokens\n");
 
-                goto umount_teeconfig;
+                goto free_mem;
         } else if (num_tokens < 1 || tokens[0].type != JSMN_OBJECT) {
                 printf("Unable to find object in TEE configuration file\n");
 
-                goto umount_teeconfig;
+                goto free_mem;
         }
 
         wid_found = url_found = tee_found = tee_data_found = 0;
@@ -209,21 +213,21 @@ get_luks_passphrase(int *pass_len)
         if (!wid_found) {
                 printf("Unable to find attestation workload ID\n");
 
-                goto umount_teeconfig;
+                goto free_mem;
         } else if (!url_found) {
                 printf("Unable to find attestation server URL\n");
 
-                goto umount_teeconfig;
+                goto free_mem;
         } else if (!tee_found) {
                 printf("Unable to find TEE generation server URL\n");
 
-                goto umount_teeconfig;
+                goto free_mem;
         }
 
         if (strcmp(tee, "snp") == 0) {
                 if (tee_data_found == 0) {
                         printf("Unable to find SNP generation\n");
-                        goto umount_teeconfig;
+                        goto free_mem;
                 }
 
                 return_str = snp_get_luks_passphrase(url, wid, tee_data, pass_len);
@@ -231,11 +235,11 @@ get_luks_passphrase(int *pass_len)
                 return_str = sev_get_luks_passphrase(pass_len);
         }
 
-umount_teeconfig:
-        umount("/teeconfig");
+free_mem:
+        free(tc_json);
 
-rmdir_teeconfig:
-        rmdir("/teeconfig");
+close_dev:
+        close(fd);
 
 umount_dev:
         umount("/dev");
