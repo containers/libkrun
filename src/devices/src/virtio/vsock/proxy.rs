@@ -32,16 +32,12 @@ pub enum ProxyStatus {
     WaitingOnAccept,
 }
 
+#[derive(Default)]
 pub enum ProxyRemoval {
+    #[default]
     Keep,
     Immediate,
     Deferred,
-}
-
-impl Default for ProxyRemoval {
-    fn default() -> ProxyRemoval {
-        ProxyRemoval::Keep
-    }
 }
 
 #[derive(Default)]

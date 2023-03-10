@@ -157,7 +157,7 @@ fn stat(f: &File) -> io::Result<libc::stat64> {
 /// The caching policy that the file system should report to the FUSE client. By default the FUSE
 /// protocol uses close-to-open consistency. This means that any cached contents of the file are
 /// invalidated the next time that file is opened.
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub enum CachePolicy {
     /// The client should never cache file data and all I/O should be directly forwarded to the
     /// server. This policy must be selected when file contents may change without the knowledge of
@@ -166,6 +166,7 @@ pub enum CachePolicy {
 
     /// The client is free to choose when and how to cache file data. This is the default policy and
     /// uses close-to-open consistency as described in the enum documentation.
+    #[default]
     Auto,
 
     /// The client should always cache file data. This means that the FUSE client will not
@@ -185,12 +186,6 @@ impl FromStr for CachePolicy {
             "always" | "Always" | "ALWAYS" => Ok(CachePolicy::Always),
             _ => Err("invalid cache policy"),
         }
-    }
-}
-
-impl Default for CachePolicy {
-    fn default() -> Self {
-        CachePolicy::Auto
     }
 }
 
