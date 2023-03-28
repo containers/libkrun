@@ -17,7 +17,7 @@ if [ $? != 0 ]; then
 	exit -1
 fi
 
-krunvm start libkrun-builder /usr/bin/dnf -- install -y glibc-static gcc make
+krunvm start libkrun-builder /usr/bin/dnf -- install -y glibc-static gcc make libuuid-devel
 if [ $? != 0 ]; then
     krunvm delete libkrun-builder
 	echo "Error running command on VM"
