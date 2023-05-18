@@ -36,9 +36,6 @@ const GIC_FDT_IRQ_TYPE_PPI: u32 = 1;
 const IRQ_TYPE_EDGE_RISING: u32 = 1;
 const IRQ_TYPE_LEVEL_HI: u32 = 4;
 
-// This links to libfdt which handles the creation of the binary blob
-// flattened device tree (fdt) that is passed to the kernel and indicates
-// the hardware configuration of the machine.
 /// Trait for devices to be added to the Flattened Device Tree.
 pub trait DeviceInfoForFDT {
     /// Returns the address where this device will be loaded.
