@@ -37,6 +37,7 @@ dependencies = [
  "kvm-ioctls",
  "libc",
  "utils",
+ "vm-fdt",
  "vm-memory",
 ]
 
@@ -807,6 +808,12 @@ checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
 [[package]]
 name = "virtio_gen"
 version = "0.1.0"
+
+[[package]]
+name = "vm-fdt"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f43fb5a6bd1a7d423ad72802801036719b7546cf847a103f8fe4575f5b0d45a6"
 
 [[package]]
 name = "vm-memory"

@@ -283,10 +283,7 @@ impl Vmm {
             arch::aarch64::configure_system(
                 &self.guest_memory,
                 &self.arch_memory_info,
-                &self
-                    .kernel_cmdline
-                    .as_cstring()
-                    .map_err(Error::LoadCommandline)?,
+                &self.kernel_cmdline.as_str(),
                 vcpu_mpidr,
                 self.mmio_device_manager.get_device_info(),
                 self.vm.get_irqchip(),
@@ -301,10 +298,7 @@ impl Vmm {
             arch::aarch64::configure_system(
                 &self.guest_memory,
                 &self.arch_memory_info,
-                &self
-                    .kernel_cmdline
-                    .as_cstring()
-                    .map_err(Error::LoadCommandline)?,
+                &self.kernel_cmdline.as_str(),
                 vcpu_mpidr,
                 self.mmio_device_manager.get_device_info(),
                 self.vm.get_irqchip(),
