@@ -18,7 +18,6 @@ pub use self::macos::*;
 
 use std::cmp::min;
 use std::collections::HashMap;
-use std::ffi::CStr;
 use std::fmt::Debug;
 
 use self::gic::GICDevice;
@@ -98,7 +97,7 @@ pub fn arch_memory_regions(
 pub fn configure_system<T: DeviceInfoForFDT + Clone + Debug>(
     guest_mem: &GuestMemoryMmap,
     arch_memory_info: &ArchMemoryInfo,
-    cmdline_cstring: &CStr,
+    cmdline_cstring: &str,
     vcpu_mpidr: Vec<u64>,
     device_info: &HashMap<(DeviceType, String), T>,
     gic_device: &Box<dyn GICDevice>,
