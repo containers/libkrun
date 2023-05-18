@@ -15,9 +15,8 @@ use super::get_fdt_addr;
 use super::gic::GICDevice;
 use super::layout::{GTIMER_HYP, GTIMER_PHYS, GTIMER_SEC, GTIMER_VIRT};
 use crate::ArchMemoryInfo;
+use vm_fdt::{Error as FdtError, FdtWriter};
 use vm_memory::{Address, Bytes, GuestAddress, GuestMemoryError, GuestMemoryMmap};
-use vm_fdt::{FdtWriter, Error as FdtError};
-
 
 // This is a value for uniquely identifying the FDT node declaring the interrupt controller.
 const GIC_PHANDLE: u32 = 1;
@@ -188,7 +187,11 @@ fn create_memory_node(
     Ok(())
 }
 
-fn create_chosen_node(fdt: &mut FdtWriter, cmdline: &str, initrd: &Option<InitrdConfig>) -> Result<()> {
+fn create_chosen_node(
+    fdt: &mut FdtWriter,
+    cmdline: &str,
+    initrd: &Option<InitrdConfig>,
+) -> Result<()> {
     let chosen_node = fdt.begin_node("chosen")?;
     fdt.property_string("bootargs", cmdline)?;
 
