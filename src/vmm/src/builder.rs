@@ -721,8 +721,7 @@ pub fn create_guest_memory(
     kernel_size: usize,
 ) -> std::result::Result<(GuestMemoryMmap, ArchMemoryInfo), StartMicrovmError> {
     let mem_size = mem_size_mib << 20;
-    let (arch_mem_info, arch_mem_regions) =
-        arch::arch_memory_regions(mem_size, kernel_load_addr, kernel_size);
+    let (arch_mem_info, arch_mem_regions) = arch::arch_memory_regions(mem_size);
 
     let guest_mem = GuestMemoryMmap::from_ranges(&arch_mem_regions)
         .map_err(StartMicrovmError::GuestMemoryMmap)?;
