@@ -204,7 +204,7 @@ dependencies = [
  "polly",
  "rand",
  "utils",
- "virtio_gen",
+ "virtio-bindings",
  "vm-memory",
 ]
 
@@ -806,8 +806,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
 
 [[package]]
-name = "virtio_gen"
-version = "0.1.0"
+name = "virtio-bindings"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b9084faf91b9aa9676ae2cac8f1432df2839d9566e6f19f29dbc13a8b831dff"
 
 [[package]]
 name = "vm-fdt"
