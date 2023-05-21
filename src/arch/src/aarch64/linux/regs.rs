@@ -161,7 +161,7 @@ pub fn read_mpidr(vcpu: &VcpuFd) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aarch64::{arch_memory_regions, layout};
+    use crate::aarch64::{arch_memory_regions, layout};
     use kvm_ioctls::Kvm;
 
     #[test]
@@ -169,7 +169,7 @@ mod tests {
         let kvm = Kvm::new().unwrap();
         let vm = kvm.create_vm().unwrap();
         let vcpu = vm.create_vcpu(0).unwrap();
-        let regions = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000);
+        let (_mem_info, regions) = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000);
         let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
 
         match setup_regs(&vcpu, 0, 0x0, &mem).unwrap_err() {
