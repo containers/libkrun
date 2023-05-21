@@ -381,8 +381,8 @@ fn create_devices_node<T: DeviceInfoForFDT + Clone + Debug>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aarch64::gic::create_gic;
-    use aarch64::{arch_memory_regions, layout};
+    use crate::aarch64::gic::create_gic;
+    use crate::aarch64::{arch_memory_regions, layout};
     use kvm_ioctls::Kvm;
 
     const LEN: u64 = 4096;
@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn test_create_fdt_with_devices() {
-        let regions = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000);
+        let (mem_info, regions) = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000);
         let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
 
         let dev_info: HashMap<(DeviceType, std::string::String), MMIODeviceInfo> = [
@@ -438,8 +438,9 @@ mod tests {
         let gic = create_gic(&vm, 1).unwrap();
         assert!(create_fdt(
             &mem,
+            &mem_info,
             vec![0],
-            &CString::new("console=tty0").unwrap(),
+            "console=tty0",
             &dev_info,
             &gic,
             &None,

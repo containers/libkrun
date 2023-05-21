@@ -44,11 +44,7 @@ use crate::DeviceType;
 /// Returns a Vec of the valid memory addresses for aarch64.
 /// See [`layout`](layout) module for a drawing of the specific memory model for this platform.
 #[cfg(target_os = "linux")]
-pub fn arch_memory_regions(
-    size: usize,
-    _kernel_load_addr: u64,
-    _kernel_size: usize,
-) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
+pub fn arch_memory_regions(size: usize) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let dram_size = min(size as u64, layout::DRAM_MEM_MAX_SIZE) as usize;
     let ram_last_addr = layout::DRAM_MEM_START + (dram_size as u64);
     let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
@@ -66,11 +62,7 @@ pub fn arch_memory_regions(
     )
 }
 #[cfg(target_os = "macos")]
-pub fn arch_memory_regions(
-    size: usize,
-    _kernel_load_addr: u64,
-    _kernel_size: usize,
-) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
+pub fn arch_memory_regions(size: usize) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let dram_size = min(size as u64, layout::DRAM_MEM_MAX_SIZE) as usize;
     let info = ArchMemoryInfo {
         ram_last_addr: layout::DRAM_MEM_START + dram_size as u64,
@@ -157,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_regions_lt_1024gb() {
-        let regions = arch_memory_regions(1usize << 29);
+        let (_mem_info, regions) = arch_memory_regions(1usize << 29);
         assert_eq!(1, regions.len());
         assert_eq!(GuestAddress(super::layout::DRAM_MEM_START), regions[0].0);
         assert_eq!(1usize << 29, regions[0].1);
@@ -165,7 +157,7 @@ mod tests {
 
     #[test]
     fn test_regions_gt_1024gb() {
-        let regions = arch_memory_regions(1usize << 41);
+        let (_mem_info, regions) = arch_memory_regions(1usize << 41);
         assert_eq!(1, regions.len());
         assert_eq!(GuestAddress(super::layout::DRAM_MEM_START), regions[0].0);
         assert_eq!(super::layout::DRAM_MEM_MAX_SIZE, regions[0].1 as u64);
@@ -173,15 +165,15 @@ mod tests {
 
     #[test]
     fn test_get_fdt_addr() {
-        let regions = arch_memory_regions(layout::FDT_MAX_SIZE - 0x1000);
+        let (_mem_info, regions) = arch_memory_regions(layout::FDT_MAX_SIZE - 0x1000);
         let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
         assert_eq!(get_fdt_addr(&mem), layout::DRAM_MEM_START);
 
-        let regions = arch_memory_regions(layout::FDT_MAX_SIZE);
+        let (_mem_info, regions) = arch_memory_regions(layout::FDT_MAX_SIZE);
         let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
         assert_eq!(get_fdt_addr(&mem), layout::DRAM_MEM_START);
 
-        let regions = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000);
+        let (_mem_info, regions) = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000);
         let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
         assert_eq!(get_fdt_addr(&mem), 0x1000 + layout::DRAM_MEM_START);
     }
