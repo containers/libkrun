@@ -6,7 +6,7 @@ edition = "2021"
 
 [features]
 tee = []
-amd-sev = [ "tee" ]
+amd-sev = ["tee"]
 
 [dependencies]
 bitflags = "1.2.0"
@@ -21,7 +21,7 @@ vm-memory = { version = "0.8.0", features = ["backend-mmap"] }
 arch = { path = "../arch" }
 utils = { path = "../utils" }
 polly = { path = "../polly" }
-virtio_gen = { path = "../virtio_gen" }
+virtio-bindings = "0.2.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 hvf = { path = "../hvf" }

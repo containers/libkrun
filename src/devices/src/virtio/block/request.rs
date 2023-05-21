@@ -9,7 +9,7 @@ use std::convert::From;
 use std::io::{self, Seek, SeekFrom, Write};
 use std::result;
 
-use virtio_gen::virtio_blk::*;
+use virtio_bindings::virtio_blk::*;
 use vm_memory::{ByteValued, Bytes, GuestAddress, GuestMemoryError, GuestMemoryMmap};
 
 use super::super::DescriptorChain;
