@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 use log::{error, warn};
 use utils::eventfd::EventFd;
-use virtio_bindings::virtio_blk::*;
+use virtio_bindings::{virtio_blk::*, virtio_config::VIRTIO_F_VERSION_1};
 use vm_memory::{Bytes, GuestMemoryError, GuestMemoryMmap};
 
 use super::{
