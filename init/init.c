@@ -23,7 +23,9 @@
 
 #include "jsmn.h"
 
+#ifdef SEV
 #include "tee/snp_attest.h"
+#endif
 
 #define KRUN_MAGIC "KRUN"
 #define KRUN_FOOTER_LEN 12
@@ -34,8 +36,11 @@
 #define MAX_TOKENS 16384
 
 static int jsoneq(const char *, jsmntok_t *, const char *);
+
+#ifdef SEV
 static char *sev_get_luks_passphrase(int *);
 static char *snp_get_luks_passphrase(char *, char *, char *, int *);
+#endif
 
 char DEFAULT_KRUN_INIT[] = "/bin/sh";
 
