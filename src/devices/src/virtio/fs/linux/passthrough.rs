@@ -984,7 +984,15 @@ impl FileSystem for PassthroughFs {
     ) -> io::Result<usize> {
         debug!("read: {:?}", inode);
         if inode == self.init_inode {
-            return w.write(&INIT_BINARY[offset as usize..(offset + (size as u64)) as usize]);
+            let off: usize = offset
+                .try_into()
+                .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+            let len = if off + (size as usize) < INIT_BINARY.len() {
+                size as usize
+            } else {
+                INIT_BINARY.len() - off
+            };
+            return w.write(&INIT_BINARY[off..(off + len)]);
         }
 
         let data = self
