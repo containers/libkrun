@@ -30,7 +30,7 @@ mod defs {
     pub const VSOCK_DEV_ID: &str = "vsock";
 
     /// Number of virtio queues.
-    pub const NUM_QUEUES: usize = 5;
+    pub const NUM_QUEUES: usize = 3;
     /// Virtio queue sizes, in number of descriptor chain heads.
     /// There are 3 queues for a virtio device (in this order): RX, TX, Event
     pub const QUEUE_SIZES: &[u16] = &[256; NUM_QUEUES];
@@ -69,7 +69,7 @@ mod defs {
         /// The device conforms to the virtio spec version 1.0.
         pub const VIRTIO_F_VERSION_1: u32 = 32;
         /// The device supports DGRAM.
-        pub const VIRTIO_VSOCK_F_DGRAM: u32 = 0;
+        pub const VIRTIO_VSOCK_F_DGRAM: u32 = 3;
 
         /// Virtio vsock device ID.
         /// Defined in `include/uapi/linux/virtio_ids.h`.

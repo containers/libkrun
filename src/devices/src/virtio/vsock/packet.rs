@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use std::result;
 
 use utils::byte_order;
-use vm_memory::{self, GuestAddress, GuestMemory, GuestMemoryError};
+use vm_memory::{self, Address, GuestAddress, GuestMemory, GuestMemoryError};
 
 use super::super::DescriptorChain;
 use super::defs;
@@ -270,22 +270,37 @@ impl VsockPacket {
             return Err(VsockError::HdrDescTooSmall(head.len));
         }
 
-        // All RX descriptor chains should have a header and a data descriptor.
-        if !head.has_next() {
-            return Err(VsockError::BufDescMissing);
-        }
-        let buf_desc = head.next_descriptor().ok_or(VsockError::BufDescMissing)?;
-        let buf_size = buf_desc.len as usize;
-
-        Ok(Self {
+        let mut pkt = Self {
             hdr: get_host_address(head.mem, head.addr, VSOCK_PKT_HDR_SIZE)
                 .map_err(VsockError::GuestMemoryMmap)?,
-            buf: Some(
-                get_host_address(buf_desc.mem, buf_desc.addr, buf_size)
+            buf: None,
+            buf_size: 0,
+        };
+
+        // Starting from Linux 6.2 the virtio-vsock driver can use a single descriptor for both
+        // header and data.
+        if !head.has_next() && head.len > VSOCK_PKT_HDR_SIZE as u32 {
+            let buf_addr = head
+                .addr
+                .checked_add(VSOCK_PKT_HDR_SIZE as u64)
+                .ok_or(VsockError::GuestMemoryBounds)?;
+
+            pkt.buf_size = head.len as usize - VSOCK_PKT_HDR_SIZE;
+            pkt.buf = Some(
+                get_host_address(head.mem, buf_addr, pkt.buf_size)
                     .map_err(VsockError::GuestMemoryMmap)?,
-            ),
-            buf_size,
-        })
+            );
+        } else {
+            let buf_desc = head.next_descriptor().ok_or(VsockError::BufDescMissing)?;
+
+            pkt.buf_size = buf_desc.len as usize;
+            pkt.buf = Some(
+                get_host_address(buf_desc.mem, buf_desc.addr, pkt.buf_size)
+                    .map_err(VsockError::GuestMemoryMmap)?,
+            );
+        }
+
+        Ok(pkt)
     }
 
     /// Provides in-place, byte-slice, access to the vsock packet header.

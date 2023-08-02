@@ -95,11 +95,9 @@ pub fn push_packet(
 pub struct VsockMuxer {
     cid: u64,
     host_port_map: Option<HashMap<u16, u16>>,
-    queue_stream: Option<Arc<Mutex<VirtQueue>>>,
-    queue_dgram: Option<Arc<Mutex<VirtQueue>>>,
+    queue: Option<Arc<Mutex<VirtQueue>>>,
     mem: Option<GuestMemoryMmap>,
-    rxq_stream: Arc<Mutex<MuxerRxQ>>,
-    rxq_dgram: Arc<Mutex<MuxerRxQ>>,
+    rxq: Arc<Mutex<MuxerRxQ>>,
     epoll: Epoll,
     interrupt_evt: EventFd,
     interrupt_status: Arc<AtomicUsize>,
@@ -119,11 +117,9 @@ impl VsockMuxer {
         VsockMuxer {
             cid,
             host_port_map,
-            queue_stream: None,
-            queue_dgram: None,
+            queue: None,
             mem: None,
-            rxq_stream: Arc::new(Mutex::new(MuxerRxQ::new())),
-            rxq_dgram: Arc::new(Mutex::new(MuxerRxQ::new())),
+            rxq: Arc::new(Mutex::new(MuxerRxQ::new())),
             epoll: Epoll::new().unwrap(),
             interrupt_evt,
             interrupt_status,
@@ -137,13 +133,11 @@ impl VsockMuxer {
     pub(crate) fn activate(
         &mut self,
         mem: GuestMemoryMmap,
-        queue_stream: Arc<Mutex<VirtQueue>>,
-        queue_dgram: Arc<Mutex<VirtQueue>>,
+        queue: Arc<Mutex<VirtQueue>>,
         intc: Option<Arc<Mutex<Gic>>>,
         irq_line: Option<u32>,
     ) {
-        self.queue_stream = Some(queue_stream.clone());
-        self.queue_dgram = Some(queue_dgram.clone());
+        self.queue = Some(queue.clone());
         self.mem = Some(mem.clone());
         self.intc = intc.clone();
         self.irq_line = irq_line;
@@ -153,7 +147,7 @@ impl VsockMuxer {
             let timesync = TimesyncThread::new(
                 self.cid,
                 mem.clone(),
-                queue_dgram.clone(),
+                queue.clone(),
                 self.interrupt_evt.try_clone().unwrap(),
                 self.interrupt_status.clone(),
                 intc.clone(),
@@ -167,12 +161,10 @@ impl VsockMuxer {
         let thread = MuxerThread::new(
             self.cid,
             self.epoll.clone(),
-            self.rxq_stream.clone(),
-            self.rxq_dgram.clone(),
+            self.rxq.clone(),
             self.proxy_map.clone(),
             mem,
-            queue_stream,
-            queue_dgram,
+            queue,
             self.interrupt_evt.try_clone().unwrap(),
             self.interrupt_status.clone(),
             intc,
@@ -186,34 +178,17 @@ impl VsockMuxer {
         reaper.run();
     }
 
-    pub(crate) fn has_pending_stream_rx(&self) -> bool {
-        !self.rxq_stream.lock().unwrap().is_empty()
+    pub(crate) fn has_pending_rx(&self) -> bool {
+        !self.rxq.lock().unwrap().is_empty()
     }
 
-    pub(crate) fn has_pending_dgram_rx(&self) -> bool {
-        !self.rxq_dgram.lock().unwrap().is_empty()
-    }
-
-    pub(crate) fn recv_stream_pkt(&mut self, pkt: &mut VsockPacket) -> super::Result<()> {
+    pub(crate) fn recv_pkt(&mut self, pkt: &mut VsockPacket) -> super::Result<()> {
         debug!("vsock: recv_stream_pkt");
-        if self.rxq_stream.lock().unwrap().is_empty() {
+        if self.rxq.lock().unwrap().is_empty() {
             return Err(VsockError::NoData);
         }
 
-        if let Some(rx) = self.rxq_stream.lock().unwrap().pop() {
-            rx_to_pkt(self.cid, rx, pkt);
-        }
-
-        Ok(())
-    }
-
-    pub(crate) fn recv_dgram_pkt(&mut self, pkt: &mut VsockPacket) -> super::Result<()> {
-        debug!("vsock: recv_dgram_pkt");
-        if self.rxq_dgram.lock().unwrap().is_empty() {
-            return Err(VsockError::NoData);
-        }
-
-        if let Some(rx) = self.rxq_dgram.lock().unwrap().pop() {
+        if let Some(rx) = self.rxq.lock().unwrap().pop() {
             rx_to_pkt(self.cid, rx, pkt);
         }
 
@@ -278,17 +253,10 @@ impl VsockMuxer {
                     return;
                 }
             };
-            let queue_stream = match self.queue_stream.as_ref() {
+            let queue = match self.queue.as_ref() {
                 Some(q) => q,
                 None => {
                     error!("stream proxy creation without stream queue");
-                    return;
-                }
-            };
-            let queue_dgram = match self.queue_dgram.as_ref() {
-                Some(q) => q,
-                None => {
-                    error!("dgram proxy creation without dgram queue");
                     return;
                 }
             };
@@ -303,10 +271,8 @@ impl VsockMuxer {
                         req.peer_port,
                         pkt.src_port(),
                         mem.clone(),
-                        queue_stream.clone(),
-                        queue_dgram.clone(),
-                        self.rxq_stream.clone(),
-                        self.rxq_dgram.clone(),
+                        queue.clone(),
+                        self.rxq.clone(),
                     ) {
                         Ok(proxy) => {
                             self.proxy_map
@@ -325,8 +291,8 @@ impl VsockMuxer {
                         self.cid,
                         req.peer_port,
                         mem.clone(),
-                        queue_dgram.clone(),
-                        self.rxq_dgram.clone(),
+                        queue.clone(),
+                        self.rxq.clone(),
                     ) {
                         Ok(proxy) => {
                             self.proxy_map
@@ -592,7 +558,7 @@ impl VsockMuxer {
                     return;
                 }
             };
-            let queue = match self.queue_stream.as_ref() {
+            let queue = match self.queue.as_ref() {
                 Some(q) => q,
                 None => {
                     warn!("OP_RW without queue");
@@ -605,7 +571,7 @@ impl VsockMuxer {
                 local_port: pkt.dst_port(),
                 peer_port: pkt.src_port(),
             };
-            push_packet(self.cid, rx, &self.rxq_stream, queue, mem);
+            push_packet(self.cid, rx, &self.rxq, queue, mem);
         }
     }
 
