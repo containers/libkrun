@@ -36,8 +36,8 @@ pub struct UdpProxy {
     sendto_addr: Option<SockaddrIn>,
     listening: bool,
     mem: GuestMemoryMmap,
-    queue_dgram: Arc<Mutex<VirtQueue>>,
-    rxq_dgram: Arc<Mutex<MuxerRxQ>>,
+    queue: Arc<Mutex<VirtQueue>>,
+    rxq: Arc<Mutex<MuxerRxQ>>,
     rx_cnt: Wrapping<u32>,
     tx_cnt: Wrapping<u32>,
     peer_buf_alloc: u32,
@@ -50,8 +50,8 @@ impl UdpProxy {
         cid: u64,
         peer_port: u32,
         mem: GuestMemoryMmap,
-        queue_dgram: Arc<Mutex<VirtQueue>>,
-        rxq_dgram: Arc<Mutex<MuxerRxQ>>,
+        queue: Arc<Mutex<VirtQueue>>,
+        rxq: Arc<Mutex<MuxerRxQ>>,
     ) -> Result<Self, ProxyError> {
         let fd = socket(
             AddressFamily::Inet,
@@ -99,8 +99,8 @@ impl UdpProxy {
             sendto_addr: None,
             listening: false,
             mem,
-            queue_dgram,
-            rxq_dgram,
+            queue,
+            rxq,
             rx_cnt: Wrapping(0),
             tx_cnt: Wrapping(0),
             peer_buf_alloc: 0,
@@ -123,6 +123,7 @@ impl UdpProxy {
             .set_fwd_cnt(self.tx_cnt.0);
     }
 
+    /*
     fn peer_avail_credit(&self) -> usize {
         (Wrapping(self.peer_buf_alloc) - (self.rx_cnt - self.peer_fwd_cnt)).0 as usize
     }
@@ -134,14 +135,18 @@ impl UdpProxy {
             peer_port: self.peer_port,
             fwd_cnt: self.tx_cnt.0,
         };
-        push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
+        push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
     }
+    */
 
     fn recv_to_pkt(&self, pkt: &mut VsockPacket) -> RecvPkt {
         if let Some(buf) = pkt.buf_mut() {
-            let peer_credit = self.peer_avail_credit();
-            let max_len = std::cmp::min(buf.len(), peer_credit);
+            // Disable UDP credit accounting until is fixed in the kernel
+            //let peer_credit = self.peer_avail_credit();
+            //let max_len = std::cmp::min(buf.len(), peer_credit);
+            let max_len = buf.len();
 
+            /*
             debug!(
                 "recv_to_pkt: peer_avail_credit={}, buf.len={}, max_len={}",
                 self.peer_avail_credit(),
@@ -152,6 +157,7 @@ impl UdpProxy {
             if max_len == 0 {
                 return RecvPkt::WaitForCredit;
             }
+            */
 
             match recv(self.fd, &mut buf[..max_len], MsgFlags::empty()) {
                 Ok(cnt) => {
@@ -173,15 +179,16 @@ impl UdpProxy {
         }
     }
 
-    fn recv_pkt(&mut self) -> bool {
+    fn recv_pkt(&mut self) -> (bool, bool) {
         let mut have_used = false;
-        let mut queue = self.queue_dgram.lock().unwrap();
+        let mut wait_credit = false;
+        let mut queue = self.queue.lock().unwrap();
 
         while let Some(head) = queue.pop(&self.mem) {
             let len = match VsockPacket::from_rx_virtq_head(&head) {
                 Ok(mut pkt) => match self.recv_to_pkt(&mut pkt) {
                     RecvPkt::WaitForCredit => {
-                        self.status = ProxyStatus::WaitingCreditUpdate;
+                        wait_credit = true;
                         0
                     }
                     RecvPkt::Read(cnt) => {
@@ -213,7 +220,7 @@ impl UdpProxy {
         }
 
         debug!("vsock: udp: recv_pkt: have_used={}", have_used);
-        have_used
+        (have_used, wait_credit)
     }
 }
 
@@ -256,7 +263,7 @@ impl Proxy for UdpProxy {
             peer_port: pkt.src_port(),
             result: res,
         };
-        push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
+        push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
 
         let mut update = ProxyUpdate::default();
         if res == 0 && !self.listening {
@@ -282,7 +289,7 @@ impl Proxy for UdpProxy {
             peer_port: pkt.src_port(),
             data,
         };
-        push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
+        push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
     }
 
     fn sendmsg(&mut self, pkt: &VsockPacket) -> ProxyUpdate {
@@ -418,10 +425,21 @@ impl Proxy for UdpProxy {
         }
 
         if evset.contains(EventSet::IN) {
-            update.signal_queue = self.recv_pkt();
+            let (signal_queue, wait_credit) = self.recv_pkt();
+            update.signal_queue = signal_queue || wait_credit;
+
+            if wait_credit && self.status != ProxyStatus::WaitingCreditUpdate {
+                self.status = ProxyStatus::WaitingCreditUpdate;
+                let rx = MuxerRx::CreditRequest {
+                    local_port: self.local_port,
+                    peer_port: self.peer_port,
+                    fwd_cnt: self.tx_cnt.0,
+                };
+                update.push_credit_req = Some(rx);
+            }
 
             if self.status == ProxyStatus::WaitingCreditUpdate {
-                self.send_credit_request();
+                debug!("process_event: WaitingCreditUpdate");
                 update.polling = Some((self.id(), self.fd, EventSet::empty()));
             }
         }

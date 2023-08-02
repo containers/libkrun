@@ -26,9 +26,7 @@ use crate::legacy::Gic;
 
 pub(crate) const RXQ_INDEX: usize = 0;
 pub(crate) const TXQ_INDEX: usize = 1;
-pub(crate) const DRQ_INDEX: usize = 2;
-pub(crate) const DTQ_INDEX: usize = 3;
-pub(crate) const EVQ_INDEX: usize = 4;
+pub(crate) const EVQ_INDEX: usize = 2;
 
 /// The virtio features supported by our vsock device:
 /// - VIRTIO_F_VERSION_1: the device conforms to at least version 1.0 of the VirtIO spec.
@@ -43,8 +41,6 @@ pub struct Vsock {
     pub(crate) muxer: VsockMuxer,
     pub(crate) queue_rx: Arc<Mutex<VirtQueue>>,
     pub(crate) queue_tx: Arc<Mutex<VirtQueue>>,
-    pub(crate) queue_dr: Arc<Mutex<VirtQueue>>,
-    //pub(crate) queue_ev: Arc<Mutex<VirtQueue>>,
     pub(crate) queues: Vec<VirtQueue>,
     pub(crate) queue_events: Vec<EventFd>,
     pub(crate) avail_features: u64,
@@ -69,10 +65,8 @@ impl Vsock {
                 .push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(VsockError::EventFd)?);
         }
 
-        //let queue_ev = Arc::new(Mutex::new(queues[EVQ_INDEX].clone()));
         let queue_tx = Arc::new(Mutex::new(queues[TXQ_INDEX].clone()));
         let queue_rx = Arc::new(Mutex::new(queues[RXQ_INDEX].clone()));
-        let queue_dr = Arc::new(Mutex::new(queues[DRQ_INDEX].clone()));
 
         let interrupt_evt =
             EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(VsockError::EventFd)?;
@@ -88,8 +82,6 @@ impl Vsock {
             ),
             queue_rx,
             queue_tx,
-            queue_dr,
-            //queue_ev,
             queues,
             queue_events,
             avail_features: AVAIL_FEATURES,
@@ -161,7 +153,7 @@ impl Vsock {
             debug!("vsock: process_rx inside while");
             let used_len = match VsockPacket::from_rx_virtq_head(&head) {
                 Ok(mut pkt) => {
-                    if self.muxer.recv_stream_pkt(&mut pkt).is_ok() {
+                    if self.muxer.recv_pkt(&mut pkt).is_ok() {
                         pkt.hdr().len() as u32 + pkt.len()
                     } else {
                         // We are using a consuming iterator over the virtio buffers, so, if we can't
@@ -179,45 +171,6 @@ impl Vsock {
             debug!("vsock: process_rx: something to queue");
             have_used = true;
             queue_rx.add_used(mem, head.index, used_len);
-        }
-
-        have_used
-    }
-
-    pub fn process_dgram_rx(&mut self) -> bool {
-        debug!("vsock: process_dgram_rx()");
-        let mem = match self.device_state {
-            DeviceState::Activated(ref mem) => mem,
-            // This should never happen, it's been already validated in the event handler.
-            DeviceState::Inactive => unreachable!(),
-        };
-
-        let mut have_used = false;
-
-        debug!("vsock: process_rx before while");
-        let mut queue_dr = self.queue_dr.lock().unwrap();
-        while let Some(head) = queue_dr.pop(mem) {
-            debug!("vsock: process_rx inside while");
-            let used_len = match VsockPacket::from_rx_virtq_head(&head) {
-                Ok(mut pkt) => {
-                    if self.muxer.recv_dgram_pkt(&mut pkt).is_ok() {
-                        pkt.hdr().len() as u32 + pkt.len()
-                    } else {
-                        // We are using a consuming iterator over the virtio buffers, so, if we can't
-                        // fill in this buffer, we'll need to undo the last iterator step.
-                        queue_dr.undo_pop();
-                        break;
-                    }
-                }
-                Err(e) => {
-                    warn!("vsock: RX queue error: {:?}", e);
-                    0
-                }
-            };
-
-            debug!("vsock: process_rx: something to queue");
-            have_used = true;
-            queue_dr.add_used(mem, head.index, used_len);
         }
 
         have_used
@@ -247,47 +200,22 @@ impl Vsock {
                 }
             };
 
-            if self.muxer.send_stream_pkt(&pkt).is_err() {
-                queue_tx.undo_pop();
-                break;
+            if pkt.type_() == uapi::VSOCK_TYPE_DGRAM {
+                debug!("vsock::process_stream_tx() is DGRAM");
+                if self.muxer.send_dgram_pkt(&pkt).is_err() {
+                    queue_tx.undo_pop();
+                    break;
+                }
+            } else {
+                debug!("vsock::process_stream_tx() is STREAM");
+                if self.muxer.send_stream_pkt(&pkt).is_err() {
+                    queue_tx.undo_pop();
+                    break;
+                }
             }
 
             have_used = true;
             queue_tx.add_used(mem, head.index, 0);
-        }
-
-        have_used
-    }
-
-    pub fn process_dgram_tx(&mut self) -> bool {
-        debug!("vsock::process_dgram_tx()");
-        let mem = match self.device_state {
-            DeviceState::Activated(ref mem) => mem,
-            // This should never happen, it's been already validated in the event handler.
-            DeviceState::Inactive => unreachable!(),
-        };
-
-        let mut have_used = false;
-
-        //let mut queue_tx = self.queue_tx.lock().unwrap();
-        while let Some(head) = self.queues[DTQ_INDEX].pop(mem) {
-            let pkt = match VsockPacket::from_tx_virtq_head(&head) {
-                Ok(pkt) => pkt,
-                Err(e) => {
-                    error!("vsock: error reading TX packet: {:?}", e);
-                    have_used = true;
-                    self.queues[DTQ_INDEX].add_used(mem, head.index, 0);
-                    continue;
-                }
-            };
-
-            if self.muxer.send_dgram_pkt(&pkt).is_err() {
-                self.queues[DTQ_INDEX].undo_pop();
-                break;
-            }
-
-            have_used = true;
-            self.queues[DTQ_INDEX].add_used(mem, head.index, 0);
         }
 
         have_used
@@ -377,11 +305,9 @@ impl VirtioDevice for Vsock {
 
         self.queue_tx = Arc::new(Mutex::new(self.queues[TXQ_INDEX].clone()));
         self.queue_rx = Arc::new(Mutex::new(self.queues[RXQ_INDEX].clone()));
-        self.queue_dr = Arc::new(Mutex::new(self.queues[DRQ_INDEX].clone()));
         self.muxer.activate(
             mem.clone(),
             self.queue_rx.clone(),
-            self.queue_dr.clone(),
             self.intc.clone(),
             self.irq_line,
         );

@@ -20,12 +20,10 @@ use vm_memory::GuestMemoryMmap;
 pub struct MuxerThread {
     cid: u64,
     pub epoll: Epoll,
-    rxq_stream: Arc<Mutex<MuxerRxQ>>,
-    rxq_dgram: Arc<Mutex<MuxerRxQ>>,
+    rxq: Arc<Mutex<MuxerRxQ>>,
     proxy_map: ProxyMap,
     mem: GuestMemoryMmap,
-    queue_stream: Arc<Mutex<VirtQueue>>,
-    queue_dgram: Arc<Mutex<VirtQueue>>,
+    queue: Arc<Mutex<VirtQueue>>,
     interrupt_evt: EventFd,
     interrupt_status: Arc<AtomicUsize>,
     intc: Option<Arc<Mutex<Gic>>>,
@@ -38,12 +36,10 @@ impl MuxerThread {
     pub fn new(
         cid: u64,
         epoll: Epoll,
-        rxq_stream: Arc<Mutex<MuxerRxQ>>,
-        rxq_dgram: Arc<Mutex<MuxerRxQ>>,
+        rxq: Arc<Mutex<MuxerRxQ>>,
         proxy_map: ProxyMap,
         mem: GuestMemoryMmap,
-        queue_stream: Arc<Mutex<VirtQueue>>,
-        queue_dgram: Arc<Mutex<VirtQueue>>,
+        queue: Arc<Mutex<VirtQueue>>,
         interrupt_evt: EventFd,
         interrupt_status: Arc<AtomicUsize>,
         intc: Option<Arc<Mutex<Gic>>>,
@@ -53,12 +49,10 @@ impl MuxerThread {
         MuxerThread {
             cid,
             epoll,
-            rxq_stream,
-            rxq_dgram,
+            rxq,
             proxy_map,
             mem,
-            queue_stream,
-            queue_dgram,
+            queue,
             interrupt_evt,
             interrupt_status,
             intc,
@@ -73,13 +67,7 @@ impl MuxerThread {
 
     fn send_credit_request(&self, credit_rx: MuxerRx) {
         debug!("send_credit_request");
-        push_packet(
-            self.cid,
-            credit_rx,
-            &self.rxq_stream,
-            &self.queue_stream,
-            &self.mem,
-        );
+        push_packet(self.cid, credit_rx, &self.rxq, &self.queue, &self.mem);
     }
 
     pub fn update_polling(&self, id: u64, fd: RawFd, evset: EventSet) {
@@ -100,6 +88,7 @@ impl MuxerThread {
         }
 
         if let Some(credit_rx) = update.push_credit_req {
+            debug!("send_credit_request");
             self.send_credit_request(credit_rx);
         }
 
@@ -130,10 +119,8 @@ impl MuxerThread {
                 peer_port,
                 accept_fd,
                 self.mem.clone(),
-                self.queue_stream.clone(),
-                self.queue_dgram.clone(),
-                self.rxq_stream.clone(),
-                self.rxq_dgram.clone(),
+                self.queue.clone(),
+                self.rxq.clone(),
             );
             self.proxy_map
                 .write()
@@ -146,6 +133,7 @@ impl MuxerThread {
         }
 
         if should_signal {
+            debug!("signal IRQ");
             self.interrupt_status
                 .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
             if let Some(intc) = &self.intc {

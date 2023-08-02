@@ -36,10 +36,8 @@ pub struct TcpProxy {
     fd: RawFd,
     pub status: ProxyStatus,
     mem: GuestMemoryMmap,
-    queue_stream: Arc<Mutex<VirtQueue>>,
-    queue_dgram: Arc<Mutex<VirtQueue>>,
-    rxq_stream: Arc<Mutex<MuxerRxQ>>,
-    rxq_dgram: Arc<Mutex<MuxerRxQ>>,
+    queue: Arc<Mutex<VirtQueue>>,
+    rxq: Arc<Mutex<MuxerRxQ>>,
     rx_cnt: Wrapping<u32>,
     tx_cnt: Wrapping<u32>,
     last_tx_cnt_sent: Wrapping<u32>,
@@ -58,10 +56,8 @@ impl TcpProxy {
         peer_port: u32,
         control_port: u32,
         mem: GuestMemoryMmap,
-        queue_stream: Arc<Mutex<VirtQueue>>,
-        queue_dgram: Arc<Mutex<VirtQueue>>,
-        rxq_stream: Arc<Mutex<MuxerRxQ>>,
-        rxq_dgram: Arc<Mutex<MuxerRxQ>>,
+        queue: Arc<Mutex<VirtQueue>>,
+        rxq: Arc<Mutex<MuxerRxQ>>,
     ) -> Result<Self, ProxyError> {
         let fd = socket(
             AddressFamily::Inet,
@@ -110,10 +106,8 @@ impl TcpProxy {
             fd,
             status: ProxyStatus::Idle,
             mem,
-            queue_stream,
-            queue_dgram,
-            rxq_stream,
-            rxq_dgram,
+            queue,
+            rxq,
             rx_cnt: Wrapping(0),
             tx_cnt: Wrapping(0),
             last_tx_cnt_sent: Wrapping(0),
@@ -133,10 +127,8 @@ impl TcpProxy {
         peer_port: u32,
         fd: RawFd,
         mem: GuestMemoryMmap,
-        queue_stream: Arc<Mutex<VirtQueue>>,
-        queue_dgram: Arc<Mutex<VirtQueue>>,
-        rxq_stream: Arc<Mutex<MuxerRxQ>>,
-        rxq_dgram: Arc<Mutex<MuxerRxQ>>,
+        queue: Arc<Mutex<VirtQueue>>,
+        rxq: Arc<Mutex<MuxerRxQ>>,
     ) -> Self {
         debug!(
             "new_reverse: id={} local_port={} peer_port={}",
@@ -152,10 +144,8 @@ impl TcpProxy {
             fd,
             status: ProxyStatus::ReverseInit,
             mem,
-            queue_stream,
-            queue_dgram,
-            rxq_stream,
-            rxq_dgram,
+            queue,
+            rxq,
             rx_cnt: Wrapping(0),
             tx_cnt: Wrapping(0),
             last_tx_cnt_sent: Wrapping(0),
@@ -272,7 +262,7 @@ impl TcpProxy {
     fn recv_pkt(&mut self) -> (bool, bool) {
         let mut have_used = false;
         let mut wait_credit = false;
-        let mut queue = self.queue_stream.lock().unwrap();
+        let mut queue = self.queue.lock().unwrap();
 
         while let Some(head) = queue.pop(&self.mem) {
             let len = match VsockPacket::from_rx_virtq_head(&head) {
@@ -329,7 +319,7 @@ impl TcpProxy {
             peer_port: self.control_port,
             result,
         };
-        push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
+        push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
     }
 
     fn push_accept_rsp(&self, result: i32) {
@@ -344,7 +334,7 @@ impl TcpProxy {
             peer_port: self.control_port,
             result,
         };
-        push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
+        push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
     }
 
     fn push_reset(&self) {
@@ -358,13 +348,7 @@ impl TcpProxy {
             local_port: self.local_port,
             peer_port: self.peer_port,
         };
-        push_packet(
-            self.cid,
-            rx,
-            &self.rxq_stream,
-            &self.queue_stream,
-            &self.mem,
-        );
+        push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
     }
 
     fn switch_to_connected(&mut self) {
@@ -451,13 +435,7 @@ impl Proxy for TcpProxy {
             local_port: pkt.dst_port(),
             peer_port: pkt.src_port(),
         };
-        push_packet(
-            self.cid,
-            rx,
-            &self.rxq_stream,
-            &self.queue_stream,
-            &self.mem,
-        );
+        push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
     }
 
     fn getpeername(&mut self, pkt: &VsockPacket) {
@@ -487,7 +465,7 @@ impl Proxy for TcpProxy {
             peer_port: pkt.src_port(),
             data,
         };
-        push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
+        push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
     }
 
     fn sendmsg(&mut self, pkt: &VsockPacket) -> ProxyUpdate {
@@ -535,13 +513,7 @@ impl Proxy for TcpProxy {
                 peer_port: pkt.src_port(),
                 fwd_cnt: self.tx_cnt.0,
             };
-            push_packet(
-                self.cid,
-                rx,
-                &self.rxq_stream,
-                &self.queue_stream,
-                &self.mem,
-            );
+            push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
             update.signal_queue = true;
         }
 
@@ -573,7 +545,7 @@ impl Proxy for TcpProxy {
             peer_port: pkt.src_port(),
             result,
         };
-        push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
+        push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
 
         if result == 0 {
             self.peer_port = req.vm_port;
@@ -632,7 +604,7 @@ impl Proxy for TcpProxy {
             local_port: self.local_port,
             peer_port: self.peer_port,
         };
-        push_packet(self.cid, rx, &self.rxq_dgram, &self.queue_dgram, &self.mem);
+        push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
     }
 
     fn process_op_response(&mut self, pkt: &VsockPacket) -> ProxyUpdate {
