@@ -1,5 +1,4 @@
 LIBRARY_HEADER = include/libkrun.h
-INIT_BINARY = init/init
 
 ABI_VERSION=1
 FULL_VERSION=1.5.1
@@ -60,8 +59,11 @@ all: $(LIBRARY_RELEASE_$(OS)) libkrun.pc
 
 debug: $(LIBRARY_DEBUG_$(OS)) libkrun.pc
 
+ifneq ($(SEV),1)
+INIT_BINARY = init/init
 $(INIT_BINARY): $(INIT_SRC)
 	gcc -O2 -static -Wall $(INIT_DEFS) -o $@ $(INIT_SRC) $(INIT_DEFS)
+endif
 
 $(LIBRARY_RELEASE_$(OS)): $(INIT_BINARY)
 	cargo build --release $(FEATURE_FLAGS)
