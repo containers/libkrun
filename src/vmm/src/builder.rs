@@ -551,7 +551,7 @@ pub fn build_microvm(
         guest_addr: arch_memory_info.shm_start_addr,
         size: arch_memory_info.shm_size as usize,
     });
-    #[cfg(all(target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     let shm_region = None;
 
     let mut vmm = Vmm {
