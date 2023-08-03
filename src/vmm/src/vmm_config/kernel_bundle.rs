@@ -8,6 +8,7 @@ use std::fmt::{Display, Formatter, Result};
 pub struct KernelBundle {
     pub host_addr: u64,
     pub guest_addr: u64,
+    pub entry_addr: u64,
     pub size: usize,
 }
 

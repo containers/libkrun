@@ -471,7 +471,7 @@ pub fn build_microvm(
     let intc = Some(Arc::new(Mutex::new(devices::legacy::Gic::new())));
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "tee")))]
-    let boot_ip: GuestAddress = GuestAddress(kernel_bundle.guest_addr);
+    let boot_ip: GuestAddress = GuestAddress(kernel_bundle.entry_addr);
     #[cfg(feature = "tee")]
     let boot_ip: GuestAddress = GuestAddress(arch::RESET_VECTOR);
 

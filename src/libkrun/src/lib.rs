@@ -35,7 +35,7 @@ use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
 // Minimum krunfw version we require.
-const KRUNFW_MIN_VERSION: u32 = 3;
+const KRUNFW_MIN_VERSION: u32 = 4;
 // Value returned on success. We use libc's errors otherwise.
 const KRUN_SUCCESS: i32 = 0;
 // Maximum number of arguments/environment variables we allow
@@ -174,7 +174,11 @@ static CTX_IDS: AtomicI32 = AtomicI32::new(0);
 #[cfg(not(feature = "tee"))]
 #[link(name = "krunfw")]
 extern "C" {
-    fn krunfw_get_kernel(load_addr: *mut u64, size: *mut size_t) -> *mut c_char;
+    fn krunfw_get_kernel(
+        load_addr: *mut u64,
+        entry_addr: *mut u64,
+        size: *mut size_t,
+    ) -> *mut c_char;
     fn krunfw_get_version() -> u32;
 }
 
@@ -183,7 +187,11 @@ extern "C" {
 extern "C" {
     fn krunfw_get_qboot(size: *mut size_t) -> *mut c_char;
     fn krunfw_get_initrd(size: *mut size_t) -> *mut c_char;
-    fn krunfw_get_kernel(load_addr: *mut u64, size: *mut size_t) -> *mut c_char;
+    fn krunfw_get_kernel(
+        load_addr: *mut u64,
+        entry_addr: *mut u64,
+        size: *mut size_t,
+    ) -> *mut c_char;
     fn krunfw_get_version() -> u32;
 }
 
@@ -210,10 +218,12 @@ pub extern "C" fn krun_create_ctx() -> i32 {
     }
 
     let mut kernel_guest_addr: u64 = 0;
+    let mut kernel_entry_addr: u64 = 0;
     let mut kernel_size: usize = 0;
     let kernel_host_addr = unsafe {
         krunfw_get_kernel(
             &mut kernel_guest_addr as *mut u64,
+            &mut kernel_entry_addr as *mut u64,
             &mut kernel_size as *mut usize,
         )
     };
@@ -223,6 +233,7 @@ pub extern "C" fn krun_create_ctx() -> i32 {
     let kernel_bundle = KernelBundle {
         host_addr: kernel_host_addr as u64,
         guest_addr: kernel_guest_addr,
+        entry_addr: kernel_entry_addr,
         size: kernel_size,
     };
     ctx_cfg.vmr.set_kernel_bundle(kernel_bundle).unwrap();
