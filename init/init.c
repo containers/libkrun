@@ -848,7 +848,10 @@ int main(int argc, char **argv)
 	}
 #endif
 
-	execvp(exec_argv[0], exec_argv);
+	if (execvp(exec_argv[0], exec_argv) < 0) {
+		printf("Couldn't execute '%s' inside the vm: %s\n", exec_argv[0], strerror(errno));
+		exit(-3);
+	}
 
 	return 0;
 }
