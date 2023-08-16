@@ -584,6 +584,7 @@ pub fn build_microvm(
     attach_block_devices(&mut vmm, &vm_resources.block, event_manager, intc.clone())?;
     if let Some(vsock) = vm_resources.vsock.get() {
         attach_unixsock_vsock_device(&mut vmm, vsock, event_manager, intc)?;
+        vmm.kernel_cmdline.insert_str("tsi_hijack")?;
     }
 
     if let Some(s) = &vm_resources.boot_config.kernel_cmdline_epilog {
