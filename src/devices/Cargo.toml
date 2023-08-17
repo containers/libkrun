@@ -7,6 +7,7 @@ edition = "2021"
 [features]
 tee = []
 amd-sev = ["tee"]
+net = []
 
 [dependencies]
 bitflags = "1.2.0"

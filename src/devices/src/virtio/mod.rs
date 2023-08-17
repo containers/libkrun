@@ -21,6 +21,7 @@ pub mod fs;
 #[cfg(target_os = "macos")]
 pub mod linux_errno;
 mod mmio;
+#[cfg(feature = "net")]
 pub mod net;
 mod queue;
 #[cfg(not(feature = "tee"))]
@@ -36,6 +37,7 @@ pub use self::device::*;
 #[cfg(not(feature = "tee"))]
 pub use self::fs::*;
 pub use self::mmio::*;
+#[cfg(feature = "net")]
 pub use self::net::*;
 pub use self::queue::*;
 #[cfg(not(feature = "tee"))]

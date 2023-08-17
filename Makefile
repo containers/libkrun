@@ -23,6 +23,9 @@ ifeq ($(SEV),1)
     INIT_DEFS += $(SEV_LD_FLAGS)
     INIT_SRC += $(SNP_INIT_SRC)
 endif
+ifeq ($(NET),1)
+    FEATURE_FLAGS += --features net
+endif
 
 ifeq ($(ROSETTA),1)
     INIT_DEFS += -D__ROSETTA__
