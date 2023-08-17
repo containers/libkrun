@@ -25,4 +25,5 @@ pub mod machine_config;
 pub mod vsock;
 
 /// Wrapper for configuring the network devices attached to the microVM.
+#[cfg(feature = "net")]
 pub mod net;

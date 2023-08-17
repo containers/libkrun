@@ -8,6 +8,7 @@ use std::env;
 use std::ffi::CStr;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
+#[cfg(feature = "net")]
 use std::os::fd::RawFd;
 #[cfg(not(feature = "tee"))]
 use std::path::Path;
@@ -33,6 +34,7 @@ use vmm::vmm_config::kernel_bundle::KernelBundle;
 #[cfg(feature = "tee")]
 use vmm::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
 use vmm::vmm_config::machine_config::VmConfig;
+#[cfg(feature = "net")]
 use vmm::vmm_config::net::NetworkInterfaceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
@@ -51,12 +53,14 @@ struct TsiConfig {
     port_map: Option<HashMap<u16, u16>>,
 }
 
+#[cfg(feature = "net")]
 struct PasstConfig {
     fd: RawFd,
 }
 
 enum NetworkConfig {
     Tsi(TsiConfig),
+    #[cfg(feature = "net")]
     Passt(PasstConfig),
 }
 
@@ -172,6 +176,7 @@ impl ContextConfig {
         self.data_block_cfg.clone()
     }
 
+    #[cfg(feature = "net")]
     fn set_net_cfg(&mut self, net_cfg: NetworkConfig) {
         self.net_cfg = net_cfg;
     }
@@ -182,6 +187,7 @@ impl ContextConfig {
                 tsi_config.port_map.replace(new_port_map);
                 Ok(())
             }
+            #[cfg(feature = "net")]
             NetworkConfig::Passt(_) => Err(()),
         }
     }
@@ -494,15 +500,24 @@ pub unsafe extern "C" fn krun_set_passt_fd(ctx_id: u32, fd: c_int) -> i32 {
         return -libc::EINVAL;
     }
 
-    match CTX_MAP.lock().unwrap().entry(ctx_id) {
-        Entry::Occupied(mut ctx_cfg) => {
-            let cfg = ctx_cfg.get_mut();
-            cfg.set_net_cfg(NetworkConfig::Passt(PasstConfig { fd }));
-        }
-        Entry::Vacant(_) => return -libc::ENOENT,
+    #[cfg(not(feature = "net"))]
+    {
+        let _ = ctx_id;
+        let _ = fd;
+        -libc::ENOTSUP
     }
 
-    KRUN_SUCCESS
+    #[cfg(feature = "net")]
+    {
+        match CTX_MAP.lock().unwrap().entry(ctx_id) {
+            Entry::Occupied(mut ctx_cfg) => {
+                let cfg = ctx_cfg.get_mut();
+                cfg.set_net_cfg(NetworkConfig::Passt(PasstConfig { fd }));
+            }
+            Entry::Vacant(_) => return -libc::ENOENT,
+        }
+        KRUN_SUCCESS
+    }
 }
 
 #[allow(clippy::missing_safety_doc)]
@@ -820,6 +835,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             };
             ctx_cfg.vmr.set_vsock_device(vsock_device_config).unwrap();
         }
+        #[cfg(feature = "net")]
         NetworkConfig::Passt(passt_cfg) => {
             let network_interface_config = NetworkInterfaceConfig {
                 iface_id: "eth0".to_string(),

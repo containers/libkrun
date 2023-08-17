@@ -17,9 +17,11 @@ use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
 use devices::legacy::Gic;
 use devices::legacy::Serial;
+#[cfg(feature = "net")]
+use devices::virtio::Net;
 #[cfg(not(feature = "tee"))]
 use devices::virtio::VirtioShmRegion;
-use devices::virtio::{MmioTransport, Net, Vsock};
+use devices::virtio::{MmioTransport, Vsock};
 
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
@@ -586,6 +588,8 @@ pub fn build_microvm(
         attach_unixsock_vsock_device(&mut vmm, vsock, event_manager, intc)?;
         vmm.kernel_cmdline.insert_str("tsi_hijack")?;
     }
+
+    #[cfg(feature = "net")]
     attach_net_devices(&mut vmm, vm_resources.net_builder.iter(), event_manager)?;
 
     if let Some(s) = &vm_resources.boot_config.kernel_cmdline_epilog {
@@ -1115,6 +1119,7 @@ fn attach_console_devices(
     Ok(())
 }
 
+#[cfg(feature = "net")]
 fn attach_net_devices<'a>(
     vmm: &mut Vmm,
     net_devices: impl Iterator<Item = &'a Arc<Mutex<Net>>>,

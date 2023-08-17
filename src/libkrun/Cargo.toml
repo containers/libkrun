@@ -8,6 +8,7 @@ build = "build.rs"
 [features]
 tee = []
 amd-sev = [ "tee" ]
+net = []
 
 [dependencies]
 env_logger = "0.9.0"
