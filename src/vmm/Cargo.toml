@@ -10,6 +10,7 @@ amd-sev = [ "blk", "tee", "codicon", "kbs-types", "procfs", "serde", "serde_json
 net = []
 blk = []
 efi = [ "blk", "net" ]
+gpu = []
 
 [dependencies]
 crossbeam-channel = "0.5"
