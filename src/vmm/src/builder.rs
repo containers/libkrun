@@ -112,8 +112,12 @@ pub enum StartMicrovmError {
     /// Cannot register SIGWINCH event file descriptor.
     #[cfg(target_os = "linux")]
     RegisterFsSigwinch(kvm_ioctls::Error),
+    /// Cannot initialize a MMIO Gpu device or add a device to the MMIO Bus.
+    RegisterGpuDevice(device_manager::mmio::Error),
     /// Cannot initialize a MMIO Network Device or add a device to the MMIO Bus.
     RegisterNetDevice(device_manager::mmio::Error),
+    /// Cannot initialize a MMIO Rng device or add a device to the MMIO Bus.
+    RegisterRngDevice(device_manager::mmio::Error),
     /// Cannot initialize a MMIO Vsock Device or add a device to the MMIO Bus.
     RegisterVsockDevice(device_manager::mmio::Error),
     /// Cannot attest the VM in the Secure Virtualization context.
@@ -218,6 +222,14 @@ impl Display for StartMicrovmError {
                     "Cannot register SIGWINCH file descriptor for Fs Device. {err_msg}"
                 )
             }
+            RegisterGpuDevice(ref err) => {
+                let mut err_msg = format!("{err}");
+                err_msg = err_msg.replace('\"', "");
+                write!(
+                    f,
+                    "Cannot initialize a MMIO Gpu Device or add a device to the MMIO Bus. {err_msg}"
+                )
+            }
             RegisterNetDevice(ref err) => {
                 let mut err_msg = format!("{err}");
                 err_msg = err_msg.replace('\"', "");
@@ -225,6 +237,14 @@ impl Display for StartMicrovmError {
                 write!(
                     f,
                     "Cannot initialize a MMIO Network Device or add a device to the MMIO Bus. {err_msg}"
+                )
+            }
+            RegisterRngDevice(ref err) => {
+                let mut err_msg = format!("{err}");
+                err_msg = err_msg.replace('\"', "");
+                write!(
+                    f,
+                    "Cannot initialize a MMIO Rng Device or add a device to the MMIO Bus. {err_msg}"
                 )
             }
             RegisterVsockDevice(ref err) => {
@@ -518,7 +538,7 @@ pub fn build_microvm(
     }
 
     #[cfg(all(target_os = "linux", not(feature = "tee")))]
-    let shm_region = Some(VirtioShmRegion {
+    let _shm_region = Some(VirtioShmRegion {
         host_addr: guest_memory
             .get_host_address(GuestAddress(arch_memory_info.shm_start_addr))
             .unwrap() as u64,
@@ -546,12 +566,14 @@ pub fn build_microvm(
     #[cfg(not(feature = "tee"))]
     attach_rng_device(&mut vmm, event_manager, intc.clone())?;
     attach_console_devices(&mut vmm, event_manager, intc.clone())?;
+    #[cfg(feature = "gpu")]
+    attach_gpu_device(&mut vmm, event_manager, _shm_region, intc.clone())?;
     #[cfg(not(feature = "tee"))]
     attach_fs_devices(
         &mut vmm,
         &vm_resources.fs,
         event_manager,
-        shm_region,
+        None,
         intc.clone(),
     )?;
     #[cfg(feature = "blk")]
@@ -1314,7 +1336,39 @@ fn attach_rng_device(
 
     // The device mutex mustn't be locked here otherwise it will deadlock.
     attach_mmio_device(vmm, id, MmioTransport::new(vmm.guest_memory().clone(), rng))
-        .map_err(RegisterBalloonDevice)?;
+        .map_err(RegisterRngDevice)?;
+
+    Ok(())
+}
+
+#[cfg(feature = "gpu")]
+fn attach_gpu_device(
+    vmm: &mut Vmm,
+    event_manager: &mut EventManager,
+    shm_region: Option<VirtioShmRegion>,
+    intc: Option<Arc<Mutex<Gic>>>,
+) -> std::result::Result<(), StartMicrovmError> {
+    use self::StartMicrovmError::*;
+
+    let gpu = Arc::new(Mutex::new(devices::virtio::Gpu::new().unwrap()));
+
+    event_manager
+        .add_subscriber(gpu.clone())
+        .map_err(RegisterEvent)?;
+
+    let id = String::from(gpu.lock().unwrap().id());
+
+    if let Some(intc) = intc {
+        gpu.lock().unwrap().set_intc(intc);
+    }
+
+    if let Some(ref shm) = shm_region {
+        gpu.lock().unwrap().set_shm_region(shm.clone());
+    }
+
+    // The device mutex mustn't be locked here otherwise it will deadlock.
+    attach_mmio_device(vmm, id, MmioTransport::new(vmm.guest_memory().clone(), gpu))
+        .map_err(RegisterGpuDevice)?;
 
     Ok(())
 }

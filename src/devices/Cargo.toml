@@ -10,6 +10,7 @@ amd-sev = ["blk", "tee"]
 net = []
 blk = []
 efi = ["blk", "net"]
+gpu = ["rutabaga_gfx", "thiserror", "zerocopy", "zerocopy-derive"]
 
 [dependencies]
 bitflags = "1.2.0"
@@ -19,12 +20,16 @@ libc = ">=0.2.39"
 log = "0.4.0"
 nix = { version = "0.24.1", features = ["poll"] }
 rand = "0.8.5"
+thiserror = { version = "1.0", optional = true }
+virtio-bindings = "0.2.0"
 vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
+zerocopy = { version = "0.6.3", optional = true }
+zerocopy-derive = { version = "0.6.3", optional = true }
 
 arch = { path = "../arch" }
 utils = { path = "../utils" }
 polly = { path = "../polly" }
-virtio-bindings = "0.2.0"
+rutabaga_gfx = { path = "../rutabaga_gfx", features = ["virgl_renderer", "virgl_renderer_next"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 hvf = { path = "../hvf" }

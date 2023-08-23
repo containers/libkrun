@@ -25,6 +25,8 @@ pub mod device;
 pub mod file_traits;
 #[cfg(not(feature = "tee"))]
 pub mod fs;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 #[cfg(target_os = "macos")]
 pub mod linux_errno;
 mod mmio;
@@ -43,6 +45,8 @@ pub use self::console::*;
 pub use self::device::*;
 #[cfg(not(feature = "tee"))]
 pub use self::fs::*;
+#[cfg(feature = "gpu")]
+pub use self::gpu::*;
 pub use self::mmio::*;
 #[cfg(feature = "net")]
 pub use self::net::*;

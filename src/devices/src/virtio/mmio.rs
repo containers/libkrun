@@ -230,7 +230,7 @@ impl BusDevice for MmioTransport {
                     0xfc => self.config_generation,
                     0xb0..=0xbc => {
                         // For no SHM region or invalid region the kernel looks for length of -1
-                        let (shm_base, shm_len) = if self.shm_region_select != 0 {
+                        let (shm_base, shm_len) = if self.shm_region_select > 1 {
                             (0, !0)
                         } else {
                             match self.locked_device().shm_region() {
