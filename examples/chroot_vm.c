@@ -11,11 +11,84 @@
 #include <string.h>
 #include <unistd.h>
 #include <libkrun.h>
+#include <getopt.h>
+#include <stdbool.h>
+#include <assert.h>
 
 #define MAX_ARGS_LEN 4096
 #ifndef MAX_PATH
 #define MAX_PATH 4096
 #endif
+
+static void print_help(char *const name)
+{
+    fprintf(stderr,
+        "Usage: %s [OPTIONS] NEWROOT COMMAND [COMMAND_ARGS...]\n"
+        "OPTIONS: \n"
+        "        -h    --help            Show help\n"
+        "\n"
+        "NEWROOT:      the root directory of the vm\n"
+        "COMMAND:      the command you want to execute in the vm\n"
+        "COMMAND_ARGS: arguments of COMMAND\n",
+        name
+    );
+}
+
+static const struct option long_options[] = {
+    { "help", no_argument, NULL, 'h' },
+    { NULL, 0, NULL, 0 }
+};
+
+struct cmdline {
+    bool show_help;
+    char const *new_root;
+    char *const *guest_argv;
+};
+
+bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
+{
+    assert(cmdline != NULL);
+
+    // set the defaults
+    *cmdline = (struct cmdline){
+        .show_help = false,
+        .new_root = NULL,
+        .guest_argv = NULL,
+    };
+
+    int option_index = 0;
+    int c;
+    // the '+' in optstring is a GNU extension that disables permutating argv
+    while ((c = getopt_long(argc, argv, "+h", long_options, &option_index)) != -1) {
+        switch (c) {
+        case 'h':
+            cmdline->show_help = true;
+            return true;
+        case '?':
+            return false;
+        default:
+            fprintf(stderr, "internal argument parsing error (returned character code 0x%x)\n", c);
+            return false;
+        }
+    }
+
+    if (optind <= argc - 2) {
+        cmdline->new_root = argv[optind];
+        cmdline->guest_argv = &argv[optind + 1];
+        return true;
+    }
+
+    if (optind >= argc - 1) {
+        fprintf(stderr, "Missing COMMAND argument\n");
+    }
+
+    if (optind == argc) {
+        fprintf(stderr, "Missing NEWROOT argument\n");
+    }
+
+    return false;
+}
+
 
 int main(int argc, char *const argv[])
 {
@@ -43,11 +116,17 @@ int main(int argc, char *const argv[])
     int ctx_id;
     int err;
     int i;
+    struct cmdline cmdline;
 
-    if (argc < 3) {
-        printf("Invalid arguments\n");
-        printf("Usage: %s NEWROOT COMMAND [ARG...]\n", argv[0]);
+    if (!parse_cmdline(argc, argv, &cmdline)) {
+        putchar('\n');
+        print_help(argv[0]);
         return -1;
+    }
+
+    if (cmdline.show_help){
+        print_help(argv[0]);
+        return 0;
     }
 
     // Set the log level to "off".
@@ -73,8 +152,7 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    // Use the first command line argument as the path to be used as root.
-    if (err = krun_set_root(ctx_id, argv[1])) {
+    if (err = krun_set_root(ctx_id, cmdline.new_root)) {
         errno = -err;
         perror("Error configuring root path");
         return -1;
@@ -125,9 +203,8 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    // Use the second argument as the path of the binary to be executed in the isolated
-    // context, relative to the root path.
-    if (err = krun_set_exec(ctx_id, argv[2], &argv[3], &envp[0])) {
+    // Specify the path of the binary to be executed in the isolated context, relative to the root path.
+    if (err = krun_set_exec(ctx_id, cmdline.guest_argv[0], &cmdline.guest_argv[1], &envp[0])) {
         errno = -err;
         perror("Error configuring the parameters for the executable to be run");
         return -1;
