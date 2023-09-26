@@ -33,6 +33,7 @@ use vmm::vmm_config::kernel_bundle::KernelBundle;
 #[cfg(feature = "tee")]
 use vmm::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
 use vmm::vmm_config::machine_config::VmConfig;
+use vmm::vmm_config::net::NetworkInterfaceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
 // Minimum krunfw version we require.
@@ -820,7 +821,14 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             ctx_cfg.vmr.set_vsock_device(vsock_device_config).unwrap();
         }
         NetworkConfig::Passt(passt_cfg) => {
-            todo!("Connect to fd {} and implement networking", passt_cfg.fd)
+            let network_interface_config = NetworkInterfaceConfig {
+                iface_id: "eth0".to_string(),
+                passt_fd: passt_cfg.fd,
+            };
+            ctx_cfg
+                .vmr
+                .add_network_interface(network_interface_config)
+                .expect("Failed to create network interface");
         }
     }
 
