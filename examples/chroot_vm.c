@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 #include <libkrun.h>
 #include <getopt.h>
@@ -20,12 +22,19 @@
 #define MAX_PATH 4096
 #endif
 
+enum net_mode {
+    NET_MODE_PASST = 0,
+    NET_MODE_TSI,
+};
+
 static void print_help(char *const name)
 {
     fprintf(stderr,
         "Usage: %s [OPTIONS] NEWROOT COMMAND [COMMAND_ARGS...]\n"
         "OPTIONS: \n"
         "        -h    --help            Show help\n"
+        "              --net=NET_MODE    Set network mode\n"
+        "NET_MODE can be either TSI (default) or PASST\n"
         "\n"
         "NEWROOT:      the root directory of the vm\n"
         "COMMAND:      the command you want to execute in the vm\n"
@@ -36,11 +45,13 @@ static void print_help(char *const name)
 
 static const struct option long_options[] = {
     { "help", no_argument, NULL, 'h' },
+    { "net_mode", required_argument, NULL, 'N' },
     { NULL, 0, NULL, 0 }
 };
 
 struct cmdline {
     bool show_help;
+    enum net_mode net_mode;
     char const *new_root;
     char *const *guest_argv;
 };
@@ -52,6 +63,7 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
     // set the defaults
     *cmdline = (struct cmdline){
         .show_help = false,
+        .net_mode = NET_MODE_TSI,
         .new_root = NULL,
         .guest_argv = NULL,
     };
@@ -64,6 +76,16 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         case 'h':
             cmdline->show_help = true;
             return true;
+        case 'N':
+            if (strcasecmp("TSI", optarg) == 0) {
+                cmdline->net_mode = NET_MODE_TSI;
+            } else if(strcasecmp("PASST", optarg) == 0) {
+                cmdline->net_mode = NET_MODE_PASST;
+            } else {
+                fprintf(stderr, "Unknown mode %s\n", optarg);
+                return false;
+            }
+            break;
         case '?':
             return false;
         default:
@@ -87,6 +109,27 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
     }
 
     return false;
+}
+
+int connect_to_passt()
+{
+    struct sockaddr_un addr;
+    int socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (socket_fd < 0) {
+        perror("Failed to create passt socket fd");
+        return -1;
+    }
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, "/tmp/passt_1.socket", sizeof(addr.sun_path) - 1);
+
+    if (connect(socket_fd, (const struct sockaddr *) &addr, sizeof(addr)) < 0) {
+        perror("Failed to bind passt socket");
+        return -1;
+    }
+
+    return socket_fd;
 }
 
 
@@ -182,11 +225,24 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    // Map port 18000 in the host to 8000 in the guest.
-    if (err = krun_set_port_map(ctx_id, &port_map[0])) {
-        errno = -err;
-        perror("Error configuring port map");
-        return -1;
+    // Map port 18000 in the host to 8000 in the guest (if networking uses TSI)
+    if (cmdline.net_mode == NET_MODE_TSI) {
+        if (err = krun_set_port_map(ctx_id, &port_map[0])) {
+            errno = -err;
+            perror("Error configuring port map");
+            return -1;
+        }
+    } else {
+        int passt_fd = connect_to_passt();
+        if (passt_fd < 0) {
+            return -1;
+        }
+
+        if (err = krun_set_passt_fd(ctx_id, passt_fd)) {
+            errno = -err;
+            perror("Error configuring net mode");
+            return -1;
+        }
     }
 
     // Configure the rlimits that will be set in the guest
