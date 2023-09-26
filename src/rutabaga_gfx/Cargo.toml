@@ -1,0 +1,39 @@
+[package]
+name = "rutabaga_gfx"
+version = "0.1.2"
+authors = ["The ChromiumOS Authors + Android Open Source Project"]
+edition = "2021"
+description = "[highly unstable] Handling virtio-gpu protocols"
+license-file = "LICENSE"
+
+[features]
+gfxstream = []
+gfxstream_stub = []
+virgl_renderer = []
+virgl_renderer_next = []
+minigbm = []
+# To try out Vulkano, delete the following line and uncomment the line in "dependencies". Vulkano
+# features are just a prototype and not integrated yet into the ChromeOS build system.
+vulkano = []
+x = []
+
+[dependencies]
+cfg-if = "1.0.0"
+libc = "0.2.116"
+remain = "0.2"
+thiserror = "1.0.23"
+zerocopy = "0.6"
+log = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+nix = "0.26.1"
+
+[target.'cfg(windows)'.dependencies]
+winapi = "0.3"
+
+# To build latest Vulkano, change version to git = "https:/github.com/vulkano-rs/vulkano.git"
+# vulkano = { version = "0.31.0", optional = true }
+
+[build-dependencies]
+pkg-config = "0.3"
+anyhow = "1.0.57"
