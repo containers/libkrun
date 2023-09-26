@@ -1,3 +1,4 @@
+#![allow(clippy::missing_safety_doc)]
 use libc;
 
 pub const LINUX_EACCES: libc::c_int = 13;
