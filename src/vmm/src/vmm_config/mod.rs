@@ -23,3 +23,6 @@ pub mod machine_config;
 
 /// Wrapper for configuring the vsock devices attached to the microVM.
 pub mod vsock;
+
+/// Wrapper for configuring the network devices attached to the microVM.
+pub mod net;
