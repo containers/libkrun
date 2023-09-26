@@ -12,10 +12,17 @@ use std::io::Error as IOError;
 
 #[cfg(not(feature = "tee"))]
 pub mod balloon;
+#[allow(dead_code)]
+#[allow(non_camel_case_types)]
+pub mod bindings;
 #[cfg(feature = "blk")]
 pub mod block;
 pub mod console;
+#[cfg(not(feature = "tee"))]
+pub mod descriptor_utils;
 pub mod device;
+#[cfg(not(feature = "tee"))]
+pub mod file_traits;
 #[cfg(not(feature = "tee"))]
 pub mod fs;
 #[cfg(target_os = "macos")]
