@@ -19,7 +19,7 @@ use std::sync::Mutex;
 #[cfg(feature = "tee")]
 use devices::virtio::CacheType;
 use env_logger::Env;
-use libc::{c_char, size_t};
+use libc::{c_char, c_int, size_t};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
 use vmm::resources::VmResources;
@@ -456,6 +456,12 @@ pub unsafe extern "C" fn krun_set_data_disk(ctx_id: u32, c_disk_path: *const c_c
     }
 
     KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_passt_fd(ctx_id: u32, fd: c_int) -> i32 {
+    todo!("krun_set_passt_fd({},{})", ctx_id, fd);
 }
 
 #[allow(clippy::missing_safety_doc)]

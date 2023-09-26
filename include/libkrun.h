@@ -104,6 +104,23 @@ int32_t krun_set_data_disk(uint32_t ctx_id, const char *disk_path);
 int32_t krun_set_mapped_volumes(uint32_t ctx_id, char *const mapped_volumes[]);
 
 /*
+ * Configures the networking to use passt.
+ * Call to this function disables TSI backend to use passt instead.
+ *
+ * Arguments:
+ *  "ctx_id"         - the configuration context ID.
+ *  "fd"             - a file descriptor to communicate with passt
+ *
+ * Notes:
+ * If you never call this function, networking uses the TSI backend.
+ * This function should be called before krun_set_port_map.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_passt_fd(uint32_t ctx_id, int fd);
+
+/*
  * Configures a map of host to guest TCP ports for the microVM.
  *
  * Arguments:
@@ -112,6 +129,8 @@ int32_t krun_set_mapped_volumes(uint32_t ctx_id, char *const mapped_volumes[]);
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
+ *  Documented errors:
+ *       -ENOTSUP when passt networking is used
  *
  * Notes:
  *  Passing NULL (or not calling this function) as "port_map" has a different meaning than
@@ -123,6 +142,8 @@ int32_t krun_set_mapped_volumes(uint32_t ctx_id, char *const mapped_volumes[]);
  *  means that for a map such as "8080:80", applications running inside the guest will also
  *  need to access the service through the "8080" port.
  *
+ * If past networking mode is used (krun_set_passt_fd was called), port mapping is not supported
+ * as an API of libkrun (but you can still do port mapping using command line arguments of passt)
  */
 int32_t krun_set_port_map(uint32_t ctx_id, char *const port_map[]);
 
