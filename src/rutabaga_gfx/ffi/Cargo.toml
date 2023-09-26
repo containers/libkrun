@@ -1,0 +1,30 @@
+[package]
+name = "rutabaga_gfx_ffi"
+version = "0.1.2"
+authors = ["The ChromiumOS Authors + Android Open Source Project"]
+edition = "2021"
+description = "Handling virtio-gpu protocols with C API"
+license-file = "LICENSE"
+
+[lib]
+name = "rutabaga_gfx_ffi"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+rutabaga_gfx = { path = "../", version = "0.1.2"}
+libc = "0.2.93"
+log = "0.4"
+once_cell = "1.7"
+
+[features]
+minigbm = ["rutabaga_gfx/minigbm"]
+gfxstream = ["rutabaga_gfx/gfxstream"]
+virgl_renderer = ["rutabaga_gfx/virgl_renderer"]
+virgl_renderer_next = ["rutabaga_gfx/virgl_renderer_next"]
+vulkano = ["rutabaga_gfx/vulkano"]
+
+[profile.dev]
+lto = true
+incremental = false
+
+[workspace]
