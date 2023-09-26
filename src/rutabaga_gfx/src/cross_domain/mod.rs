@@ -329,7 +329,7 @@ impl CrossDomainWorker {
                             .iter_mut()
                             .zip(cmd_receive.identifier_types.iter_mut())
                             .zip(cmd_receive.identifier_sizes.iter_mut())
-                            .zip(files.into_iter())
+                            .zip(files)
                             .take(num_files);
 
                         for (((identifier, identifier_type), identifier_size), mut file) in iter {

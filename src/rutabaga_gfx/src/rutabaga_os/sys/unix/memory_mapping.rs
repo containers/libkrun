@@ -33,7 +33,7 @@ impl Drop for MemoryMapping {
         // This is safe because we mmap the area at addr ourselves, and nobody
         // else is holding a reference to it.
         unsafe {
-            munmap(self.addr as *mut libc::c_void, self.size).unwrap();
+            munmap(self.addr, self.size).unwrap();
         }
     }
 }
