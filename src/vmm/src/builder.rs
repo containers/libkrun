@@ -19,7 +19,7 @@ use devices::legacy::Gic;
 use devices::legacy::Serial;
 #[cfg(not(feature = "tee"))]
 use devices::virtio::VirtioShmRegion;
-use devices::virtio::{MmioTransport, Vsock};
+use devices::virtio::{MmioTransport, Net, Vsock};
 
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
@@ -586,6 +586,7 @@ pub fn build_microvm(
         attach_unixsock_vsock_device(&mut vmm, vsock, event_manager, intc)?;
         vmm.kernel_cmdline.insert_str("tsi_hijack")?;
     }
+    attach_net_devices(&mut vmm, vm_resources.net_builder.iter(), event_manager)?;
 
     if let Some(s) = &vm_resources.boot_config.kernel_cmdline_epilog {
         vmm.kernel_cmdline.insert_str(s).unwrap();
@@ -1111,6 +1112,27 @@ fn attach_console_devices(
     )
     .map_err(RegisterFsDevice)?;
 
+    Ok(())
+}
+
+fn attach_net_devices<'a>(
+    vmm: &mut Vmm,
+    net_devices: impl Iterator<Item = &'a Arc<Mutex<Net>>>,
+    event_manager: &mut EventManager,
+) -> Result<(), StartMicrovmError> {
+    for net_device in net_devices {
+        let id = net_device.lock().unwrap().id().to_string();
+        event_manager
+            .add_subscriber(net_device.clone())
+            .map_err(StartMicrovmError::RegisterEvent)?;
+
+        attach_mmio_device(
+            vmm,
+            id,
+            MmioTransport::new(vmm.guest_memory.clone(), net_device.clone()),
+        )
+        .map_err(StartMicrovmError::RegisterNetDevice)?;
+    }
     Ok(())
 }
 
