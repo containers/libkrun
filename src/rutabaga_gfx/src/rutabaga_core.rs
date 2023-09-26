@@ -1074,6 +1074,12 @@ impl RutabagaBuilder {
         self
     }
 
+    /// Sets use drm in virglrenderer.
+    pub fn set_use_drm(mut self, v: bool) -> RutabagaBuilder {
+        self.virglrenderer_flags = self.virglrenderer_flags.use_drm(v);
+        self
+    }
+
     /// Use the Vulkan swapchain to draw on the host window for gfxstream.
     pub fn set_wsi(mut self, v: RutabagaWsi) -> RutabagaBuilder {
         self.gfxstream_flags = self.gfxstream_flags.set_wsi(v);
