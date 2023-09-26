@@ -15,6 +15,7 @@ use crate::rutabaga_core::RutabagaResource;
 use crate::rutabaga_utils::*;
 
 /// Transfers a resource from potentially many chunked src slices to a dst slice.
+#[allow(clippy::too_many_arguments)]
 fn transfer_2d(
     resource_w: u32,
     resource_h: u32,
@@ -44,11 +45,9 @@ fn transfer_2d(
     let rect_h = rect_h as u64;
 
     let dst_stride = dst_stride as u64;
-    let dst_offset = dst_offset;
     let dst_resource_offset = dst_offset + (rect_y * dst_stride) + (rect_x * bytes_per_pixel);
 
     let src_stride = src_stride as u64;
-    let src_offset = src_offset;
     let src_resource_offset = src_offset + (rect_y * src_stride) + (rect_x * bytes_per_pixel);
 
     let mut next_src;

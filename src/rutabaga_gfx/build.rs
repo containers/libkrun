@@ -12,6 +12,7 @@ fn main() -> Result<(), pkg_config::Error> {
     }
 
     pkg_config::Config::new().probe("epoxy")?;
+    #[cfg(target_os = "linux")]
     pkg_config::Config::new().probe("libdrm")?;
     pkg_config::Config::new().probe("virglrenderer")?;
 
