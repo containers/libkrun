@@ -176,6 +176,9 @@ impl Net {
             Err(e @ passt::WriteError::Internal(_)) => {
                 log::error!("Failed to finish write: {e:?}");
             }
+            Err(e @ passt::WriteError::ProcessNotRunning) => {
+                log::debug!("Failed to finish write: {e:?}");
+            }
         }
     }
 
@@ -318,7 +321,10 @@ impl Net {
                     dropped_frames += drop_rest_of_frames(tx_queue);
                     break;
                 }
-                Err(e @ passt::WriteError::Internal(_)) => return Err(TxError::Passt(e)),
+
+                Err(
+                    e @ passt::WriteError::Internal(_) | e @ passt::WriteError::ProcessNotRunning,
+                ) => return Err(TxError::Passt(e)),
             }
         }
 
