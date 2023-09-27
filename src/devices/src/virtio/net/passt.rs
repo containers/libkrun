@@ -21,6 +21,8 @@ pub enum WriteError {
     NothingWritten,
     /// Part of the buffer was written, the write has to be finished using try_finish_write
     PartialWrite,
+    /// Passt doesnt seem to be running (received EPIPE)
+    ProcessNotRunning,
     /// Another internal error occurred
     Internal(nix::Error),
 }
@@ -183,6 +185,7 @@ impl Passt {
                         return Err(WriteError::PartialWrite);
                     }
                 }
+                Err(nix::Error::EPIPE) => return Err(WriteError::ProcessNotRunning),
                 Err(e) => return Err(WriteError::Internal(e)),
             }
         }
