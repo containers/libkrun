@@ -32,8 +32,9 @@ static void print_help(char *const name)
     fprintf(stderr,
         "Usage: %s [OPTIONS] NEWROOT COMMAND [COMMAND_ARGS...]\n"
         "OPTIONS: \n"
-        "        -h    --help            Show help\n"
-        "              --net=NET_MODE    Set network mode\n"
+        "        -h    --help                Show help\n"
+        "              --net=NET_MODE        Set network mode\n"
+        "              --passt-socket=PATH   Instead of starting passt, connect to passt socket at PATH"
         "NET_MODE can be either TSI (default) or PASST\n"
         "\n"
         "NEWROOT:      the root directory of the vm\n"
@@ -46,12 +47,14 @@ static void print_help(char *const name)
 static const struct option long_options[] = {
     { "help", no_argument, NULL, 'h' },
     { "net_mode", required_argument, NULL, 'N' },
+    { "passt-socket", required_argument, NULL, 'P' },
     { NULL, 0, NULL, 0 }
 };
 
 struct cmdline {
     bool show_help;
     enum net_mode net_mode;
+    char const *passt_socket_path;
     char const *new_root;
     char *const *guest_argv;
 };
@@ -64,6 +67,7 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
     *cmdline = (struct cmdline){
         .show_help = false,
         .net_mode = NET_MODE_TSI,
+        .passt_socket_path = NULL,
         .new_root = NULL,
         .guest_argv = NULL,
     };
@@ -85,6 +89,9 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
                 fprintf(stderr, "Unknown mode %s\n", optarg);
                 return false;
             }
+            break;
+        case 'P':
+            cmdline->passt_socket_path = optarg;
             break;
         case '?':
             return false;
@@ -130,6 +137,47 @@ int connect_to_passt()
     }
 
     return socket_fd;
+}
+
+int start_passt()
+{
+    int socket_fds[2];
+    const int PARENT = 0;
+    const int CHILD = 1;
+    
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, socket_fds) < 0) {
+        perror("Failed to create passt socket fd");
+        return -1;
+    }
+
+    int pid = fork();
+    if (pid < 0) {
+        perror("fork");
+        return -1;
+    }
+    
+    if (pid == 0) { // child
+        if (close(socket_fds[PARENT]) < 0) {
+            perror("close PARENT");
+        }
+
+        char fd_as_str[16]; 
+        snprintf(fd_as_str, sizeof(fd_as_str), "%d", socket_fds[CHILD]);
+
+        printf("passing fd %s to passt", fd_as_str);
+
+        if (execlp("passt", "passt", "-f", "--fd", fd_as_str, NULL) < 0) {
+            perror("execlp");
+            return -1;
+        }
+
+    } else { // parent
+        if (close(socket_fds[CHILD]) < 0) {
+            perror("close CHILD");
+        }
+
+        return socket_fds[PARENT];
+    }
 }
 
 
@@ -233,7 +281,8 @@ int main(int argc, char *const argv[])
             return -1;
         }
     } else {
-        int passt_fd = connect_to_passt();
+        int passt_fd = cmdline.passt_socket_path ? connect_to_passt(cmdline.passt_socket_path) : start_passt();
+
         if (passt_fd < 0) {
             return -1;
         }
