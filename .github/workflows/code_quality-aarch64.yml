@@ -31,3 +31,6 @@ jobs:
 
       - name: Clippy (default features)
         run: cargo clippy -- -D warnings
+      
+      - name: Clippy (net feature)
+        run: cargo clippy --features net -- -D warnings
