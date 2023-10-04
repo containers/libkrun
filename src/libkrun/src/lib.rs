@@ -311,7 +311,7 @@ pub extern "C" fn krun_free_ctx(ctx_id: u32) -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn krun_set_vm_config(ctx_id: u32, num_vcpus: u32, ram_mib: u32) -> i32 {
+pub extern "C" fn krun_set_vm_config(ctx_id: u32, num_vcpus: u8, ram_mib: u32) -> i32 {
     let mem_size_mib: usize = match ram_mib.try_into() {
         Ok(size) => size,
         Err(e) => {
@@ -321,7 +321,7 @@ pub extern "C" fn krun_set_vm_config(ctx_id: u32, num_vcpus: u32, ram_mib: u32) 
     };
 
     let vm_config = VmConfig {
-        vcpu_count: Some(num_vcpus as u8),
+        vcpu_count: Some(num_vcpus),
         mem_size_mib: Some(mem_size_mib),
         ht_enabled: Some(false),
         cpu_template: None,
