@@ -353,7 +353,7 @@ pub fn build_microvm(
     };
 
     #[cfg(not(feature = "tee"))]
-    let mut vm = setup_vm(&guest_memory)?;
+    let vm = setup_vm(&guest_memory)?;
 
     #[cfg(feature = "tee")]
     let (kvm, mut vm) = {
@@ -482,7 +482,7 @@ pub fn build_microvm(
     // while on aarch64 we need to do it the other way around.
     #[cfg(target_arch = "x86_64")]
     {
-        setup_interrupt_controller(&mut vm)?;
+        setup_interrupt_controller(&vm)?;
         attach_legacy_devices(&vm, &mut pio_device_manager)?;
 
         vcpus = create_vcpus_x86_64(
@@ -795,7 +795,7 @@ pub(crate) fn setup_vm(
 
 /// Sets up the irqchip for a x86_64 microVM.
 #[cfg(target_arch = "x86_64")]
-pub fn setup_interrupt_controller(vm: &mut Vm) -> std::result::Result<(), StartMicrovmError> {
+pub fn setup_interrupt_controller(vm: &Vm) -> std::result::Result<(), StartMicrovmError> {
     vm.setup_irqchip()
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)
