@@ -638,6 +638,7 @@ unsafe fn collapse_str_array(array: &[*const c_char]) -> Result<String, std::str
     Ok(strvec.join(" "))
 }
 
+#[allow(clippy::format_collect)]
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_set_exec(
@@ -695,6 +696,7 @@ pub unsafe extern "C" fn krun_set_exec(
     KRUN_SUCCESS
 }
 
+#[allow(clippy::format_collect)]
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_set_env(ctx_id: u32, c_envp: *const *const c_char) -> i32 {
