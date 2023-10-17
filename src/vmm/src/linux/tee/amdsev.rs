@@ -189,7 +189,7 @@ fn find_cpu_model() -> Result<CpuModel, Error> {
     }
 }
 
-fn fetch_chain(fw: &mut Firmware, curl_agent: &mut CurlAgent) -> Result<certs::Chain, Error> {
+fn fetch_chain(fw: &mut Firmware, curl_agent: &mut CurlAgent) -> Result<certs::sev::Chain, Error> {
     const CEK_SVC: &str = "https://kdsintf.amd.com/cek/id";
     const ASK_ARK_SVC: &str = "https://developer.amd.com/wp-content/resources/";
 
@@ -203,8 +203,8 @@ fn fetch_chain(fw: &mut Firmware, curl_agent: &mut CurlAgent) -> Result<certs::C
         .get(&format!("{}/{}", CEK_SVC, id))
         .map_err(Error::DownloadCek)?;
 
-    chain.cek =
-        (certs::sev::Certificate::decode(&mut rsp.as_slice(), ())).map_err(|_| Error::DecodeCek)?;
+    chain.cek = (certs::sev::sev::Certificate::decode(&mut rsp.as_slice(), ()))
+        .map_err(|_| Error::DecodeCek)?;
 
     let cpu_model = find_cpu_model()?;
 
@@ -212,8 +212,9 @@ fn fetch_chain(fw: &mut Firmware, curl_agent: &mut CurlAgent) -> Result<certs::C
         .get(&format!("{}/ask_ark_{}.cert", ASK_ARK_SVC, cpu_model))
         .map_err(Error::DownloadCek)?;
 
-    Ok(certs::Chain {
-        ca: certs::ca::Chain::decode(&mut rsp.as_slice(), ()).map_err(|_| Error::DecodeAskArk)?,
+    Ok(certs::sev::Chain {
+        ca: certs::sev::ca::Chain::decode(&mut rsp.as_slice(), ())
+            .map_err(|_| Error::DecodeAskArk)?,
         sev: chain,
     })
 }
@@ -228,14 +229,14 @@ fn get_and_store_chain(
     fw: &mut Firmware,
     tee_config: &TeeConfig,
     curl_agent: &mut CurlAgent,
-) -> Result<certs::Chain, Error> {
+) -> Result<certs::sev::Chain, Error> {
     let cert_config: SevCertConfig =
         serde_json::from_str(&tee_config.tee_data).map_err(Error::ParseSevCertConfig)?;
 
     if !cert_config.vendor_chain.is_empty() {
         let filepath = Path::new(&cert_config.vendor_chain);
         let mut file = File::open(filepath).map_err(Error::OpenChainFile)?;
-        Ok(certs::Chain::decode(&mut file, ()).map_err(|_| Error::DecodeChain)?)
+        Ok(certs::sev::Chain::decode(&mut file, ()).map_err(|_| Error::DecodeChain)?)
     } else {
         let chain = fetch_chain(fw, curl_agent)?;
         let mut file = File::create("/tmp/libkrun-sev.chain").map_err(|_| Error::OpenTmpFile)?;
@@ -250,7 +251,7 @@ fn get_and_store_chain(
 #[derive(Serialize, Deserialize)]
 struct SessionRequest {
     build: sev::Build,
-    chain: sev::certs::Chain,
+    chain: sev::certs::sev::Chain,
 }
 
 /// Payload received from the attestation server on session request.
@@ -408,6 +409,7 @@ impl AmdSev {
 
         if !self.tee_config.attestation_url.is_empty() {
             let tee_pubkey = TeePubKey {
+                kty: "".to_string(),
                 alg: "".to_string(),
                 k_mod: "".to_string(),
                 k_exp: "".to_string(),
