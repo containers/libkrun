@@ -238,29 +238,17 @@ impl Net {
 
         let tx_queue = &mut self.queues[TX_INDEX];
 
-        let drop_rest_of_frames = |tx_queue: &mut Queue| {
-            let mut dropped_frames = 0;
-            while let Some(head) = tx_queue.pop(mem) {
-                tx_queue.add_used(mem, head.index, 0);
-                dropped_frames += 1;
-            }
-            dropped_frames
-        };
-
         if self.passt.has_unfinished_write()
             && self
                 .passt
                 .try_finish_write(vnet_hdr_len(), &self.tx_frame_buf[..self.tx_frame_len])
                 .is_err()
         {
-            let dropped_frames = drop_rest_of_frames(tx_queue);
-            log::trace!("Dropped {dropped_frames} frames, due to unfinished partial write");
-            self.signal_used_queue().map_err(TxError::DeviceError)?;
+            log::trace!("Cannot process tx because of unfinished partial write!");
             return Ok(());
         }
 
         let mut raise_irq = false;
-        let mut dropped_frames = 0;
 
         while let Some(head) = tx_queue.pop(mem) {
             let head_index = head.index;
@@ -297,9 +285,6 @@ impl Net {
                 }
             }
 
-            tx_queue.add_used(mem, head_index, 0);
-            raise_irq = true;
-
             self.tx_frame_len = read_count;
             match self
                 .passt
@@ -307,10 +292,11 @@ impl Net {
             {
                 Ok(()) => {
                     self.tx_frame_len = 0;
+                    tx_queue.add_used(mem, head_index, 0);
+                    raise_irq = true;
                 }
                 Err(passt::WriteError::NothingWritten) => {
-                    self.tx_frame_len = 0;
-                    dropped_frames += drop_rest_of_frames(tx_queue);
+                    tx_queue.undo_pop();
                     break;
                 }
                 Err(passt::WriteError::PartialWrite) => {
@@ -318,23 +304,22 @@ impl Net {
                     /*
                     This situation should be pretty rare, assuming reasonably sized socket buffers.
                     We have written only a part of a frame to the passt socket (the socket is full).
-                    But we cannot wait for passt to process our sending frames, because passt
+
+                    The frame we have read from the guest remains in tx_frame_buf, and will be sent
+                    later.
+
+                    Note that we cannot wait for passt to process our sending frames, because passt
                     could be blocked on sending a remainder of a frame to us - us waiting for passt
                     would cause a deadlock.
-                    The guest, expects us to process the tx_queue, so we drop the rest of the frames.
                      */
-                    dropped_frames += drop_rest_of_frames(tx_queue);
+                    tx_queue.add_used(mem, head_index, 0);
+                    raise_irq = true;
                     break;
                 }
-
                 Err(
                     e @ passt::WriteError::Internal(_) | e @ passt::WriteError::ProcessNotRunning,
                 ) => return Err(TxError::Passt(e)),
             }
-        }
-
-        if dropped_frames > 0 {
-            log::trace!("Dropped {dropped_frames} frames");
         }
 
         if raise_irq {
