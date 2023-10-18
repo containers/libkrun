@@ -168,7 +168,7 @@ impl Passt {
         while bytes_send < buf.len() {
             match send(
                 self.fd,
-                buf,
+                &buf[bytes_send..],
                 MsgFlags::MSG_DONTWAIT | MsgFlags::MSG_NOSIGNAL,
             ) {
                 Ok(size) => bytes_send += size,
