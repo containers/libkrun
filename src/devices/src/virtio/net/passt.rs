@@ -48,7 +48,7 @@ impl Passt {
         }
     }
 
-    /// Try to read a frame from passt. If no bytes are available reports PasstError::WouldBlock
+    /// Try to read a frame from passt. If no bytes are available reports ReadError::NothingRead
     pub fn read_frame(&mut self, buf: &mut [u8]) -> Result<usize, ReadError> {
         if self.expecting_frame_length == 0 {
             self.expecting_frame_length = {
@@ -122,7 +122,6 @@ impl Passt {
     }
 
     /// Try to read until filling the whole slice.
-    /// May return WouldBlock only if the first read fails
     fn read_loop(&self, buf: &mut [u8], block_until_has_data: bool) -> Result<(), ReadError> {
         let mut bytes_read = 0;
 
