@@ -172,7 +172,12 @@ impl Net {
             .passt
             .try_finish_write(vnet_hdr_len(), &self.tx_frame_buf[..self.tx_frame_len])
         {
-            Ok(()) | Err(passt::WriteError::PartialWrite | passt::WriteError::NothingWritten) => (),
+            Ok(()) => {
+                if let Err(e) = self.process_tx() {
+                    log::error!("Failed to continue processing tx after passt socket was writable again: {e:?}");
+                }
+            }
+            Err(passt::WriteError::PartialWrite | passt::WriteError::NothingWritten) => {}
             Err(e @ passt::WriteError::Internal(_)) => {
                 log::error!("Failed to finish write: {e:?}");
             }
