@@ -1,5 +1,4 @@
 use nix::sys::socket::{recv, send, setsockopt, sockopt, MsgFlags};
-use std::num::NonZeroUsize;
 use std::os::fd::{AsRawFd, RawFd};
 use vm_memory::VolatileMemory;
 
@@ -31,7 +30,8 @@ pub struct Passt {
     fd: RawFd,
     // 0 when a frame length has not been read
     expecting_frame_length: u32,
-    last_partial_write_length: Option<NonZeroUsize>,
+    // 0 if last write is fully complete, otherwise the length that was written
+    last_partial_write_length: usize,
 }
 
 impl Passt {
@@ -44,7 +44,7 @@ impl Passt {
         Self {
             fd: passt_fd,
             expecting_frame_length: 0,
-            last_partial_write_length: None,
+            last_partial_write_length: 0,
         }
     }
 
@@ -76,7 +76,7 @@ impl Passt {
     /// If this function returns WriteError::PartialWrite, you have to finish the write using
     /// try_finish_write.
     pub fn write_frame(&mut self, hdr_len: usize, buf: &mut [u8]) -> Result<(), WriteError> {
-        if self.last_partial_write_length.is_some() {
+        if self.last_partial_write_length != 0 {
             panic!("Cannot write a frame to passt, while a partial write is not resolved.");
         }
         assert!(
@@ -94,7 +94,7 @@ impl Passt {
     }
 
     pub fn has_unfinished_write(&self) -> bool {
-        self.last_partial_write_length.is_some()
+        self.last_partial_write_length != 0
     }
 
     /// Try to finish a partial write
@@ -104,12 +104,13 @@ impl Passt {
     /// * `hdr_len` - must be the same value as passed to write_frame, that caused the partial write
     /// * `buf` - must be same buffer that was given to write_frame, that caused the partial write
     pub fn try_finish_write(&mut self, hdr_len: usize, buf: &[u8]) -> Result<(), WriteError> {
-        if let Some(written_bytes) = self.last_partial_write_length {
+        if self.last_partial_write_length != 0 {
+            let already_written = self.last_partial_write_length;
             log::trace!("Requested to finish partial write");
-            self.write_loop(&buf[hdr_len - PASST_HEADER_LEN + written_bytes.get()..])?;
+            self.write_loop(&buf[hdr_len - PASST_HEADER_LEN + already_written..])?;
             log::debug!(
                 "Finished partial write ({}bytes written before)",
-                written_bytes.get()
+                already_written
             )
         }
 
@@ -181,7 +182,8 @@ impl Passt {
                             "Wrote {} bytes, but socket blocked, will need try_finish_write() to finish",
                             bytes_send
                         );
-                        self.last_partial_write_length = Some(bytes_send.try_into().unwrap());
+
+                        self.last_partial_write_length += bytes_send;
                         return Err(WriteError::PartialWrite);
                     }
                 }
@@ -189,7 +191,7 @@ impl Passt {
                 Err(e) => return Err(WriteError::Internal(e)),
             }
         }
-        self.last_partial_write_length = None;
+        self.last_partial_write_length = 0;
         Ok(())
     }
 }
