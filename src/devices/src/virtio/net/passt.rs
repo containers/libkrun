@@ -1,4 +1,4 @@
-use nix::sys::socket::{recv, send, setsockopt, sockopt, MsgFlags};
+use nix::sys::socket::{getsockopt, recv, send, setsockopt, sockopt, MsgFlags};
 use std::os::fd::{AsRawFd, RawFd};
 use vm_memory::VolatileMemory;
 
@@ -40,6 +40,12 @@ impl Passt {
         if let Err(e) = setsockopt(passt_fd, sockopt::SndBuf, &(16 * 1024 * 1024)) {
             log::warn!("Failed to increase SO_SNDBUF (performance may be decreased): {e}");
         }
+
+        log::debug!(
+            "passt socket (fd {passt_fd}) buffer sizes: SndBuf={:?} RcvBuf={:?}",
+            getsockopt(passt_fd, sockopt::SndBuf),
+            getsockopt(passt_fd, sockopt::RcvBuf)
+        );
 
         Self {
             fd: passt_fd,
