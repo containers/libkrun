@@ -266,6 +266,47 @@ impl Default for Config {
     }
 }
 
+fn insert_root_dir(
+    root_dir: &str,
+    inodes: &mut MultikeyBTreeMap<Inode, InodeAltKey, Arc<InodeData>>,
+) -> io::Result<()> {
+    let root = CString::new(root_dir).expect("CString::new failed");
+
+    // Safe because this doesn't modify any memory and we check the return value.
+    // We use `O_PATH` because we just want this for traversing the directory tree
+    // and not for actually reading the contents.
+    let fd = unsafe {
+        libc::openat(
+            libc::AT_FDCWD,
+            root.as_ptr(),
+            libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    // Safe because we just opened this fd above.
+    let f = unsafe { File::from_raw_fd(fd) };
+
+    let st = stat(&f)?;
+
+    // Not sure why the root inode gets a refcount of 2 but that's what libfuse does.
+    inodes.insert(
+        fuse::ROOT_ID,
+        InodeAltKey {
+            ino: st.st_ino,
+            dev: st.st_dev,
+        },
+        Arc::new(InodeData {
+            inode: fuse::ROOT_ID,
+            file: f,
+            refcount: AtomicU64::new(2),
+        }),
+    );
+    Ok(())
+}
+
 /// A file system that simply "passes through" all requests it receives to the underlying file
 /// system. To keep the implementation simple it servers the contents of its root directory. Users
 /// that wish to serve only a specific directory should set up the environment so that that
@@ -324,9 +365,11 @@ impl PassthroughFs {
 
         // Safe because we just opened this fd or it was provided by our caller.
         let proc_self_fd = unsafe { File::from_raw_fd(fd) };
+        let mut inodes = MultikeyBTreeMap::new();
+        insert_root_dir(&cfg.root_dir, &mut inodes)?;
 
         Ok(PassthroughFs {
-            inodes: RwLock::new(MultikeyBTreeMap::new()),
+            inodes: RwLock::new(inodes),
             next_inode: AtomicU64::new(fuse::ROOT_ID + 2),
             init_inode: fuse::ROOT_ID + 1,
 
@@ -683,47 +726,10 @@ impl FileSystem for PassthroughFs {
     type Handle = Handle;
 
     fn init(&self, capable: FsOptions) -> io::Result<FsOptions> {
-        let root = CString::new(self.cfg.root_dir.as_str()).expect("CString::new failed");
-
-        // Safe because this doesn't modify any memory and we check the return value.
-        // We use `O_PATH` because we just want this for traversing the directory tree
-        // and not for actually reading the contents.
-        let fd = unsafe {
-            libc::openat(
-                libc::AT_FDCWD,
-                root.as_ptr(),
-                libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            )
-        };
-        if fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        // Safe because we just opened this fd above.
-        let f = unsafe { File::from_raw_fd(fd) };
-
-        let st = stat(&f)?;
-
         // Safe because this doesn't modify any memory and there is no need to check the return
         // value because this system call always succeeds. We need to clear the umask here because
         // we want the client to be able to set all the bits in the mode.
         unsafe { libc::umask(0o000) };
-
-        let mut inodes = self.inodes.write().unwrap();
-
-        // Not sure why the root inode gets a refcount of 2 but that's what libfuse does.
-        inodes.insert(
-            fuse::ROOT_ID,
-            InodeAltKey {
-                ino: st.st_ino,
-                dev: st.st_dev,
-            },
-            Arc::new(InodeData {
-                inode: fuse::ROOT_ID,
-                file: f,
-                refcount: AtomicU64::new(2),
-            }),
-        );
 
         let mut opts = FsOptions::DO_READDIRPLUS | FsOptions::READDIRPLUS_AUTO;
         if self.cfg.writeback && capable.contains(FsOptions::WRITEBACK_CACHE) {

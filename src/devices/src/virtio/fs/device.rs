@@ -95,7 +95,7 @@ impl Fs {
             device_state: DeviceState::Inactive,
             config,
             shm_region: None,
-            server: Server::new(PassthroughFs::new(fs_cfg).unwrap()),
+            server: Server::new(PassthroughFs::new(fs_cfg).map_err(FsError::FailedToMount)?),
             intc: None,
             irq_line: None,
         })

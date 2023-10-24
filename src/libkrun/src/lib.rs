@@ -770,8 +770,8 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     #[cfg(not(feature = "tee"))]
     if let Some(fs_cfg) = ctx_cfg.get_fs_cfg() {
-        if ctx_cfg.vmr.set_fs_device(fs_cfg).is_err() {
-            error!("Error configuring virtio-fs");
+        if let Err(e) = ctx_cfg.vmr.set_fs_device(fs_cfg) {
+            error!("Error configuring virtio-fs {e:?}");
             return -libc::EINVAL;
         }
     }
