@@ -72,6 +72,7 @@ struct LinuxDirent64 {
     d_reclen: libc::c_ushort,
     d_ty: libc::c_uchar,
 }
+
 unsafe impl ByteValued for LinuxDirent64 {}
 
 fn ebadf() -> io::Error {
@@ -522,13 +523,135 @@ fn read_rosetta_data() -> io::Result<Vec<u8>> {
     Ok(data)
 }
 
+fn insert_root_dir(
+    root_dir: &str,
+    inodes: &mut MultikeyBTreeMap<Inode, InodeAltKey, Arc<InodeData>>,
+    path_cache: &mut BTreeMap<Inode, Vec<String>>,
+) -> io::Result<()> {
+    let root_dir_cstr = CString::new(root_dir).expect("CString::new failed");
+
+    // Safe because this doesn't modify any memory and we check the return value.
+    let fd = unsafe {
+        libc::openat(
+            libc::AT_FDCWD,
+            root_dir_cstr.as_ptr(),
+            libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(linux_error(io::Error::last_os_error()));
+    }
+
+    // Safe because we just opened this fd above.
+    let f = unsafe { File::from_raw_fd(fd) };
+
+    let st = fstat(&f)?;
+
+    // Safe because this doesn't modify any memory and there is no need to check the return
+    // value because this system call always succeeds. We need to clear the umask here because
+    // we want the client to be able to set all the bits in the mode.
+    unsafe { libc::umask(0o000) };
+
+    // Not sure why the root inode gets a refcount of 2 but that's what libfuse does.
+    inodes.insert(
+        fuse::ROOT_ID,
+        InodeAltKey {
+            ino: st.st_ino,
+            dev: st.st_dev,
+        },
+        Arc::new(InodeData {
+            inode: fuse::ROOT_ID,
+            linkdata: CString::new("").unwrap(),
+            refcount: AtomicU64::new(2),
+        }),
+    );
+    add_path(path_cache, fuse::ROOT_ID, root_dir.to_owned());
+    Ok(())
+}
+
+fn insert_mapped_volumes(
+    mapped_volumes: &[(PathBuf, PathBuf)],
+    inodes: &mut MultikeyBTreeMap<Inode, InodeAltKey, Arc<InodeData>>,
+    next_inode: &mut u64,
+    path_cache: &mut BTreeMap<Inode, Vec<String>>,
+    host_volumes: &mut HashMap<String, u64>,
+) -> io::Result<()> {
+    for (host_vol, guest_vol) in mapped_volumes {
+        assert!(host_vol.is_absolute());
+        assert!(guest_vol.is_absolute());
+        assert_eq!(guest_vol.components().count(), 2);
+
+        let guest_vol_str = guest_vol
+            .file_name()
+            .unwrap()
+            .to_str()
+            .expect("Couldn't parse guest volume as String");
+        let host_vol_str = host_vol
+            .to_str()
+            .expect("Couldn't parse host volume as String");
+        let path = CString::new(host_vol_str).expect("Couldn't parse volume as CString");
+        // Safe because this doesn't modify any memory and we check the return value.
+        let fd = unsafe { libc::open(path.as_ptr(), libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+        if fd < 0 {
+            error!(
+                "Error setting up mapped volume: {:?}:{:?}: {:?}",
+                host_vol,
+                guest_vol,
+                io::Error::last_os_error(),
+            );
+            continue;
+        }
+
+        // Safe because we just opened this fd above.
+        let f = unsafe { File::from_raw_fd(fd) };
+
+        let st = fstat(&f)?;
+        let inode = *next_inode;
+        *next_inode += 1;
+
+        inodes.insert(
+            inode,
+            InodeAltKey {
+                ino: st.st_ino,
+                dev: st.st_dev,
+            },
+            Arc::new(InodeData {
+                inode,
+                linkdata: CString::new("").unwrap(),
+                refcount: AtomicU64::new(1),
+            }),
+        );
+        add_path(path_cache, inode, host_vol_str.to_string());
+        host_volumes.insert(guest_vol_str.to_string(), inode);
+    }
+
+    Ok(())
+}
+
 impl PassthroughFs {
     pub fn new(cfg: Config) -> io::Result<PassthroughFs> {
+        let mut inodes = MultikeyBTreeMap::new();
+        let mut next_inode = fuse::ROOT_ID + 2;
+        let mut path_cache = BTreeMap::new();
+        let mut host_volumes = HashMap::new();
+
+        insert_root_dir(&cfg.root_dir, &mut inodes, &mut path_cache)?;
+
+        if let Some(mapped_volumes) = &cfg.mapped_volumes {
+            insert_mapped_volumes(
+                mapped_volumes,
+                &mut inodes,
+                &mut next_inode,
+                &mut path_cache,
+                &mut host_volumes,
+            )?;
+        }
+
         Ok(PassthroughFs {
-            inodes: RwLock::new(MultikeyBTreeMap::new()),
-            next_inode: AtomicU64::new(fuse::ROOT_ID + 2),
+            inodes: RwLock::new(inodes),
+            next_inode: AtomicU64::new(next_inode),
             init_inode: fuse::ROOT_ID + 1,
-            path_cache: Mutex::new(BTreeMap::new()),
+            path_cache: Mutex::new(path_cache),
             file_cache: Mutex::new(LruCache::new(NonZeroUsize::new(256).unwrap())),
             pinned_files: Mutex::new(BTreeMap::new()),
 
@@ -536,7 +659,7 @@ impl PassthroughFs {
             next_handle: AtomicU64::new(1),
             init_handle: 0,
 
-            host_volumes: RwLock::new(HashMap::new()),
+            host_volumes: RwLock::new(host_volumes),
             writeback: AtomicBool::new(false),
 
             rosetta_data: read_rosetta_data().ok(),
@@ -1021,102 +1144,6 @@ impl FileSystem for PassthroughFs {
     type Handle = Handle;
 
     fn init(&self, capable: FsOptions) -> io::Result<FsOptions> {
-        let root = CString::new(self.cfg.root_dir.as_str()).expect("CString::new failed");
-
-        // Safe because this doesn't modify any memory and we check the return value.
-        let fd = unsafe {
-            libc::openat(
-                libc::AT_FDCWD,
-                root.as_ptr(),
-                libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            )
-        };
-        if fd < 0 {
-            return Err(linux_error(io::Error::last_os_error()));
-        }
-
-        // Safe because we just opened this fd above.
-        let f = unsafe { File::from_raw_fd(fd) };
-
-        let st = fstat(&f)?;
-
-        // Safe because this doesn't modify any memory and there is no need to check the return
-        // value because this system call always succeeds. We need to clear the umask here because
-        // we want the client to be able to set all the bits in the mode.
-        unsafe { libc::umask(0o000) };
-
-        let mut inodes = self.inodes.write().unwrap();
-
-        // Not sure why the root inode gets a refcount of 2 but that's what libfuse does.
-        inodes.insert(
-            fuse::ROOT_ID,
-            InodeAltKey {
-                ino: st.st_ino,
-                dev: st.st_dev,
-            },
-            Arc::new(InodeData {
-                inode: fuse::ROOT_ID,
-                linkdata: CString::new("").unwrap(),
-                refcount: AtomicU64::new(2),
-            }),
-        );
-
-        let mut path_cache = self.path_cache.lock().unwrap();
-        add_path(&mut path_cache, fuse::ROOT_ID, self.cfg.root_dir.clone());
-
-        if let Some(mapped_volumes) = &self.cfg.mapped_volumes {
-            for (host_vol, guest_vol) in mapped_volumes.iter() {
-                assert!(host_vol.is_absolute());
-                assert!(guest_vol.is_absolute());
-                assert_eq!(guest_vol.components().count(), 2);
-
-                let guest_vol_str = guest_vol
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .expect("Couldn't parse guest volume as String");
-                let host_vol_str = host_vol
-                    .to_str()
-                    .expect("Couldn't parse host volume as String");
-                let path = CString::new(host_vol_str).expect("Couldn't parse volume as CString");
-                // Safe because this doesn't modify any memory and we check the return value.
-                let fd = unsafe { libc::open(path.as_ptr(), libc::O_NOFOLLOW | libc::O_CLOEXEC) };
-                if fd < 0 {
-                    error!(
-                        "Error setting up mapped volume: {:?}:{:?}: {:?}",
-                        host_vol,
-                        guest_vol,
-                        io::Error::last_os_error(),
-                    );
-                    continue;
-                }
-
-                // Safe because we just opened this fd above.
-                let f = unsafe { File::from_raw_fd(fd) };
-
-                let st = fstat(&f)?;
-                let inode = self.next_inode.fetch_add(1, Ordering::Relaxed);
-
-                inodes.insert(
-                    inode,
-                    InodeAltKey {
-                        ino: st.st_ino,
-                        dev: st.st_dev,
-                    },
-                    Arc::new(InodeData {
-                        inode,
-                        linkdata: CString::new("").unwrap(),
-                        refcount: AtomicU64::new(1),
-                    }),
-                );
-                add_path(&mut path_cache, inode, host_vol_str.to_string());
-                self.host_volumes
-                    .write()
-                    .unwrap()
-                    .insert(guest_vol_str.to_string(), inode);
-            }
-        }
-
         let mut opts = FsOptions::empty();
         if self.cfg.writeback && capable.contains(FsOptions::WRITEBACK_CACHE) {
             opts |= FsOptions::WRITEBACK_CACHE;
