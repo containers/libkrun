@@ -4,15 +4,17 @@ ABI_VERSION=1
 FULL_VERSION=1.6.0
 
 INIT_SRC = init/init.c
-SNP_INIT_SRC =	init/tee/snp_attest.c		\
-		init/tee/snp_attest.h		\
-		init/tee/kbs/kbs.h		\
+KBS_INIT_SRC =	init/tee/kbs/kbs.h		\
 		init/tee/kbs/kbs_util.c		\
 		init/tee/kbs/kbs_types.c	\
 		init/tee/kbs/kbs_curl.c		\
 		init/tee/kbs/kbs_crypto.c	\
 
-SEV_LD_FLAGS =	-lcurl -lidn2 -lssl -lcrypto -lzstd -lz -lbrotlidec-static \
+SNP_INIT_SRC =	init/tee/snp_attest.c		\
+		init/tee/snp_attest.h		\
+		$(KBS_INIT_SRC)			\
+
+KBS_LD_FLAGS =	-lcurl -lidn2 -lssl -lcrypto -lzstd -lz -lbrotlidec-static \
 		-lbrotlicommon-static
 
 INIT_DEFS =
@@ -20,7 +22,7 @@ ifeq ($(SEV),1)
     VARIANT = -sev
     FEATURE_FLAGS := --features amd-sev
     INIT_DEFS += -DSEV=1
-    INIT_DEFS += $(SEV_LD_FLAGS)
+    INIT_DEFS += $(KBS_LD_FLAGS)
     INIT_SRC += $(SNP_INIT_SRC)
 endif
 ifeq ($(NET),1)
