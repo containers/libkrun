@@ -48,7 +48,7 @@ impl NetBuilder {
     /// Creates an empty list of Network Devices.
     pub fn new() -> Self {
         NetBuilder {
-            /// List of built network devices.
+            // List of built network devices.
             net_devices: Vec::new(),
         }
     }
