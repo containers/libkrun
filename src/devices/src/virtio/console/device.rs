@@ -2,7 +2,6 @@ use std::cmp;
 use std::collections::VecDeque;
 use std::io;
 use std::io::Write;
-use std::ops::DerefMut;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::result;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -10,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use libc::TIOCGWINSZ;
 use utils::eventfd::EventFd;
-use vm_memory::{ByteValued, Bytes, GuestMemoryMmap};
+use vm_memory::{ByteValued, Bytes, GuestMemory, GuestMemoryMmap};
 
 use super::super::super::legacy::ReadableFd;
 use super::super::{
@@ -242,9 +241,10 @@ impl Console {
         let queue = &mut self.queues[TXQ_INDEX];
         let mut used_any = false;
         while let Some(head) = queue.pop(mem) {
-            //let mut out = self.output.lock().unwrap();
-            mem.write_to(head.addr, &mut self.output.deref_mut(), head.len as usize)
+            let mut buf = vec![0; head.len as usize];
+            mem.write_volatile_to(head.addr, &mut buf, head.len as usize)
                 .unwrap();
+            self.output.write_all(&buf).unwrap();
             self.output.flush().unwrap();
 
             queue.add_used(mem, head.index, head.len);

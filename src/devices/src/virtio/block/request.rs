@@ -10,7 +10,7 @@ use std::io::{self, Seek, SeekFrom, Write};
 use std::result;
 
 use virtio_bindings::virtio_blk::*;
-use vm_memory::{ByteValued, Bytes, GuestAddress, GuestMemoryError, GuestMemoryMmap};
+use vm_memory::{ByteValued, Bytes, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap};
 
 use super::super::DescriptorChain;
 use super::device::{CacheType, DiskProperties};
@@ -201,11 +201,11 @@ impl Request {
 
         match self.request_type {
             RequestType::In => mem
-                .read_exact_from(self.data_addr, diskfile, self.data_len as usize)
+                .read_exact_volatile_from(self.data_addr, diskfile, self.data_len as usize)
                 .map(|_| self.data_len)
                 .map_err(ExecuteError::Read),
             RequestType::Out => mem
-                .write_all_to(self.data_addr, diskfile, self.data_len as usize)
+                .write_all_volatile_to(self.data_addr, diskfile, self.data_len as usize)
                 .map(|_| 0)
                 .map_err(ExecuteError::Write),
             RequestType::Flush => {

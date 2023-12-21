@@ -192,7 +192,7 @@ fn get_host_address<T: GuestMemory>(
     guest_addr: GuestAddress,
     size: usize,
 ) -> result::Result<*mut u8, GuestMemoryError> {
-    Ok(mem.get_slice(guest_addr, size)?.as_ptr())
+    Ok(mem.get_slice(guest_addr, size)?.ptr_guard_mut().as_ptr())
 }
 
 impl VsockPacket {

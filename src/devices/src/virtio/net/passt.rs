@@ -1,6 +1,5 @@
 use nix::sys::socket::{getsockopt, recv, send, setsockopt, sockopt, MsgFlags};
 use std::os::fd::{AsRawFd, RawFd};
-use vm_memory::VolatileMemory;
 
 /// Each frame from passt is prepended by a 4 byte "header".
 /// It is interpreted as a big-endian u32 integer and is the length of the following ethernet frame.
