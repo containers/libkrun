@@ -353,7 +353,8 @@ pub fn build_microvm(
     };
 
     #[cfg(not(feature = "tee"))]
-    let vm = setup_vm(&guest_memory)?;
+    #[allow(unused_mut)]
+    let mut vm = setup_vm(&guest_memory)?;
 
     #[cfg(feature = "tee")]
     let (kvm, mut vm) = {
