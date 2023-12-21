@@ -317,7 +317,7 @@ impl<'a> io::Read for Reader<'a> {
 
                 // Safe because we have already verified that `vs` points to valid memory.
                 unsafe {
-                    copy_nonoverlapping(vs.as_ptr() as *const u8, rem.as_mut_ptr(), copy_len);
+                    copy_nonoverlapping(vs.ptr_guard().as_ptr(), rem.as_mut_ptr(), copy_len);
                 }
                 rem = &mut rem[copy_len..];
                 total += copy_len;
@@ -458,7 +458,7 @@ impl<'a> io::Write for Writer<'a> {
 
                 // Safe because we have already verified that `vs` points to valid memory.
                 unsafe {
-                    copy_nonoverlapping(rem.as_ptr(), vs.as_ptr(), copy_len);
+                    copy_nonoverlapping(rem.as_ptr(), vs.ptr_guard_mut().as_ptr(), copy_len);
                 }
                 rem = &rem[copy_len..];
                 total += copy_len;

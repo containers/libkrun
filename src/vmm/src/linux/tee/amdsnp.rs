@@ -292,6 +292,8 @@ impl AmdSnp {
          * entire slice of a guest memory region.
          */
         let gr: &GuestRegionMmap = guest_mem.find_region(ga).unwrap();
+        // TODO: Find the right way to replace this deprecated method.
+        #[allow(deprecated)]
         let region_slice = unsafe { gr.as_slice().unwrap() };
 
         /*

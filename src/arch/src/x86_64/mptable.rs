@@ -5,7 +5,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
-use std::io;
 use std::mem;
 use std::result;
 use std::slice;
@@ -148,7 +147,8 @@ pub fn setup_mptable(mem: &GuestMemoryMmap, num_cpus: u8) -> Result<()> {
         return Err(Error::AddressOverflow);
     }
 
-    mem.read_from(base_mp, &mut io::repeat(0), mp_size)
+    let buf: Vec<u8> = vec![0; mp_size];
+    mem.read_volatile_from(base_mp, &mut buf.as_slice(), mp_size)
         .map_err(|_| Error::Clear)?;
 
     {
@@ -286,6 +286,8 @@ pub fn setup_mptable(mem: &GuestMemoryMmap, num_cpus: u8) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io;
+    use std::io::Write;
     use vm_memory::Bytes;
 
     fn table_entry_size(type_: u8) -> usize {
@@ -371,8 +373,10 @@ mod tests {
         }
 
         let mut sum = Sum(0);
-        mem.write_to(mpc_offset, &mut sum, mpc_table.0.length as usize)
+        let mut buf: Vec<u8> = vec![0; mpc_table.0.length as usize];
+        mem.write_volatile_to(mpc_offset, &mut buf, mpc_table.0.length as usize)
             .unwrap();
+        sum.write(&buf).unwrap();
         assert_eq!(sum.0, 0);
     }
 

@@ -222,8 +222,13 @@ macro_rules! volatile_impl {
             fn read_volatile(&mut self, slice: VolatileSlice) -> Result<usize> {
                 // Safe because only bytes inside the slice are accessed and the kernel is expected
                 // to handle arbitrary memory for I/O.
-                let ret =
-                    unsafe { read(self.as_raw_fd(), slice.as_ptr() as *mut c_void, slice.len()) };
+                let ret = unsafe {
+                    read(
+                        self.as_raw_fd(),
+                        slice.ptr_guard_mut().as_ptr() as *mut c_void,
+                        slice.len(),
+                    )
+                };
                 if ret >= 0 {
                     Ok(ret as usize)
                 } else {
@@ -235,7 +240,7 @@ macro_rules! volatile_impl {
                 let iovecs: Vec<libc::iovec> = bufs
                     .iter()
                     .map(|s| libc::iovec {
-                        iov_base: s.as_ptr() as *mut c_void,
+                        iov_base: s.ptr_guard_mut().as_ptr() as *mut c_void,
                         iov_len: s.len() as size_t,
                     })
                     .collect();
@@ -260,7 +265,7 @@ macro_rules! volatile_impl {
                 let ret = unsafe {
                     write(
                         self.as_raw_fd(),
-                        slice.as_ptr() as *const c_void,
+                        slice.ptr_guard().as_ptr() as *const c_void,
                         slice.len(),
                     )
                 };
@@ -275,7 +280,7 @@ macro_rules! volatile_impl {
                 let iovecs: Vec<libc::iovec> = bufs
                     .iter()
                     .map(|s| libc::iovec {
-                        iov_base: s.as_ptr() as *mut c_void,
+                        iov_base: s.ptr_guard_mut().as_ptr() as *mut c_void,
                         iov_len: s.len() as size_t,
                     })
                     .collect();
@@ -302,7 +307,7 @@ macro_rules! volatile_impl {
                 let ret = unsafe {
                     pread64(
                         self.as_raw_fd(),
-                        slice.as_ptr() as *mut c_void,
+                        slice.ptr_guard_mut().as_ptr() as *mut c_void,
                         slice.len(),
                         offset as off64_t,
                     )
@@ -323,7 +328,7 @@ macro_rules! volatile_impl {
                 let iovecs: Vec<libc::iovec> = bufs
                     .iter()
                     .map(|s| libc::iovec {
-                        iov_base: s.as_ptr() as *mut c_void,
+                        iov_base: s.ptr_guard_mut().as_ptr() as *mut c_void,
                         iov_len: s.len() as size_t,
                     })
                     .collect();
@@ -355,7 +360,7 @@ macro_rules! volatile_impl {
                 let ret = unsafe {
                     pwrite64(
                         self.as_raw_fd(),
-                        slice.as_ptr() as *const c_void,
+                        slice.ptr_guard().as_ptr() as *const c_void,
                         slice.len(),
                         offset as off64_t,
                     )
@@ -376,7 +381,7 @@ macro_rules! volatile_impl {
                 let iovecs: Vec<libc::iovec> = bufs
                     .iter()
                     .map(|s| libc::iovec {
-                        iov_base: s.as_ptr() as *mut c_void,
+                        iov_base: s.ptr_guard_mut().as_ptr() as *mut c_void,
                         iov_len: s.len() as size_t,
                     })
                     .collect();
