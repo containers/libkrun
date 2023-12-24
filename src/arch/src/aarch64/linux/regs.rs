@@ -127,14 +127,14 @@ arm64_sys_reg!(MPIDR_EL1, 3, 0, 0, 0, 5);
 pub fn setup_regs(vcpu: &VcpuFd, cpu_id: u8, boot_ip: u64, mem: &GuestMemoryMmap) -> Result<()> {
     // Get the register index of the PSTATE (Processor State) register.
     #[allow(deref_nullptr)]
-    vcpu.set_one_reg(arm64_core_reg!(pstate), PSTATE_FAULT_BITS_64.into())
+    vcpu.set_one_reg(arm64_core_reg!(pstate), &PSTATE_FAULT_BITS_64.to_le_bytes())
         .map_err(Error::SetCoreRegister)?;
 
     // Other vCPUs are powered off initially awaiting PSCI wakeup.
     if cpu_id == 0 {
         // Setting the PC (Processor Counter) to the current program address (kernel address).
         #[allow(deref_nullptr)]
-        vcpu.set_one_reg(arm64_core_reg!(pc), boot_ip.into())
+        vcpu.set_one_reg(arm64_core_reg!(pc), &boot_ip.to_le_bytes())
             .map_err(Error::SetCoreRegister)?;
 
         // Last mandatory thing to set -> the address pointing to the FDT (also called DTB).
@@ -142,7 +142,7 @@ pub fn setup_regs(vcpu: &VcpuFd, cpu_id: u8, boot_ip: u64, mem: &GuestMemoryMmap
         // not exceed 2 megabytes in size." -> https://www.kernel.org/doc/Documentation/arm64/booting.txt.
         // We are choosing to place it the end of DRAM. See `get_fdt_addr`.
         #[allow(deref_nullptr)]
-        vcpu.set_one_reg(arm64_core_reg!(regs), get_fdt_addr(mem).into())
+        vcpu.set_one_reg(arm64_core_reg!(regs), &get_fdt_addr(mem).to_le_bytes())
             .map_err(Error::SetCoreRegister)?;
     }
     Ok(())
@@ -154,8 +154,10 @@ pub fn setup_regs(vcpu: &VcpuFd, cpu_id: u8, boot_ip: u64, mem: &GuestMemoryMmap
 ///
 /// * `vcpu` - Structure for the VCPU that holds the VCPU's fd.
 pub fn read_mpidr(vcpu: &VcpuFd) -> Result<u64> {
-    u64::try_from(vcpu.get_one_reg(MPIDR_EL1).map_err(Error::GetSysRegister)?)
-        .map_err(Error::MpidrTooBig)
+    let mut data = [0u8; 8];
+    vcpu.get_one_reg(MPIDR_EL1, &mut data)
+        .map_err(Error::GetSysRegister)?;
+    Ok(u64::from_le_bytes(data))
 }
 
 #[cfg(test)]
