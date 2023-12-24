@@ -535,7 +535,7 @@ impl Vm {
             supported_msrs,
             sev,
             snp,
-            tee: tee_config.tee.clone(),
+            tee: tee_config.tee,
         })
     }
 

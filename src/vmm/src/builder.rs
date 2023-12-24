@@ -366,7 +366,7 @@ pub fn build_microvm(
     };
 
     #[cfg(feature = "tee")]
-    let tee = vm_resources.tee_config().tee.clone();
+    let tee = vm_resources.tee_config().tee;
 
     #[cfg(feature = "tee")]
     let sev_launcher = match tee {
