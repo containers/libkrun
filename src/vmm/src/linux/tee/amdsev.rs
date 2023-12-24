@@ -289,7 +289,7 @@ impl AmdSev {
             };
             let request = Request {
                 version: "0.0.0".to_string(),
-                tee: tee_config.tee.clone(),
+                tee: tee_config.tee,
                 extra_params: serde_json::json!(sev_request).to_string(),
             };
 
