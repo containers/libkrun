@@ -894,6 +894,7 @@ dependencies = [
  "kvm-ioctls",
  "libc",
  "log",
+ "nix",
  "polly",
  "procfs",
  "serde",

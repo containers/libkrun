@@ -7,7 +7,8 @@ use utils::eventfd::EventFd;
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use crate::virtio::console::defs::control_event::{
-    VIRTIO_CONSOLE_CONSOLE_PORT, VIRTIO_CONSOLE_PORT_ADD, VIRTIO_CONSOLE_RESIZE,
+    VIRTIO_CONSOLE_CONSOLE_PORT, VIRTIO_CONSOLE_PORT_ADD, VIRTIO_CONSOLE_PORT_OPEN,
+    VIRTIO_CONSOLE_RESIZE,
 };
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -96,6 +97,14 @@ impl ConsoleControl {
             id: port_id,
             event: VIRTIO_CONSOLE_PORT_ADD,
             value: 0,
+        })
+    }
+
+    pub fn port_open(&self, port_id: u32, open: bool) {
+        self.push_msg(VirtioConsoleControl {
+            id: port_id,
+            event: VIRTIO_CONSOLE_PORT_OPEN,
+            value: open as u16,
         })
     }
 
