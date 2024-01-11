@@ -85,17 +85,7 @@ impl Port {
         log::trace!("process_tx");
         while let Some(head) = queue.pop(mem) {
             let src = mem.get_slice(head.addr, head.len as usize).unwrap();
-            let mut tmp: Vec<u8> = Vec::new();
-            tmp.write_volatile(&src).unwrap();
-            log::trace!("write {{");
             let result = self.output.write_volatile(&src);
-            log::trace!("}} write");
-            log::trace!(
-                "Output result: {:?} (\"{}\") {:x?}",
-                result,
-                String::from_utf8_lossy(&tmp),
-                tmp
-            );
             match result {
                 Ok(n) => {
                     //TODO: ablity to finish writing the rest
