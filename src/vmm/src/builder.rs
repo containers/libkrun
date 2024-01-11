@@ -7,7 +7,6 @@
 use crossbeam_channel::unbounded;
 use std::fmt::{Display, Formatter};
 use std::io;
-use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 
 use super::{Error, Vmm};
@@ -21,7 +20,7 @@ use devices::legacy::Serial;
 use devices::virtio::Net;
 #[cfg(not(feature = "tee"))]
 use devices::virtio::VirtioShmRegion;
-use devices::virtio::{MmioTransport, Vsock};
+use devices::virtio::{MmioTransport, PortDescription, PortInput, PortOutput, Vsock};
 
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
@@ -42,7 +41,7 @@ use crate::vstate::KvmContext;
 #[cfg(all(target_os = "linux", feature = "tee"))]
 use crate::vstate::MeasuredRegion;
 use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
-use crate::{device_manager, VmmEventsObserver};
+use crate::{device_manager};
 use arch::ArchMemoryInfo;
 #[cfg(feature = "tee")]
 use arch::InitrdConfig;
@@ -50,7 +49,6 @@ use arch::InitrdConfig;
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
 use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
-use utils::terminal::Terminal;
 use utils::time::TimestampUs;
 #[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "tee")))]
 use vm_memory::mmap::GuestRegionMmap;
@@ -59,6 +57,7 @@ use vm_memory::Bytes;
 #[cfg(target_os = "linux")]
 use vm_memory::GuestMemory;
 use vm_memory::{mmap::MmapRegion, GuestAddress, GuestMemoryMmap};
+use crate::terminal::term_set_raw_mode;
 
 /// Errors associated with starting the instance.
 #[derive(Debug)]
@@ -251,51 +250,6 @@ impl Display for StartMicrovmError {
     }
 }
 
-// Wrapper over io::Stdin that implements `Serial::ReadableFd` and `vmm::VmmEventsObserver`.
-pub struct SerialStdin(io::Stdin);
-impl SerialStdin {
-    /// Returns a `SerialStdin` wrapper over `io::stdin`.
-    pub fn get() -> Self {
-        let stdin = io::stdin();
-        stdin.lock().set_raw_mode().unwrap();
-        SerialStdin(stdin)
-    }
-
-    pub fn restore() {
-        let stdin = io::stdin();
-        stdin.lock().set_canon_mode().unwrap();
-    }
-}
-
-impl io::Read for SerialStdin {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.0.read(buf)
-    }
-}
-
-impl AsRawFd for SerialStdin {
-    fn as_raw_fd(&self) -> RawFd {
-        self.0.as_raw_fd()
-    }
-}
-
-impl devices::legacy::ReadableFd for SerialStdin {}
-
-impl VmmEventsObserver for SerialStdin {
-    fn on_vmm_boot(&mut self) -> std::result::Result<(), utils::errno::Error> {
-        // Set raw mode for stdin.
-        self.0.lock().set_raw_mode().map_err(|e| {
-            warn!("Cannot set raw mode for the terminal. {:?}", e);
-            e
-        })
-    }
-    fn on_vmm_stop(&mut self) -> std::result::Result<(), utils::errno::Error> {
-        self.0.lock().set_canon_mode().map_err(|e| {
-            warn!("Cannot set canonical mode for the terminal. {:?}", e);
-            e
-        })
-    }
-}
 
 /// Builds and starts a microVM based on the current Firecracker VmResources configuration.
 ///
@@ -1086,19 +1040,19 @@ fn attach_console_devices(
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
+    if let Err(e) = term_set_raw_mode() {
+        log::error!("Failed to set terminal to raw mode: {e}")
+    }
+
     let console = Arc::new(Mutex::new(
-        devices::virtio::Console::new(Box::new(SerialStdin::get()), Box::new(io::stdout()))
-            .unwrap(),
-    ));
+        devices::virtio::Console::new(PortDescription::Console {
+            input: PortInput::stdin().unwrap(),
+            output: PortOutput::stdout().unwrap(),
+        }).unwrap()),
+    );
 
     if let Some(intc) = intc {
         console.lock().unwrap().set_intc(intc);
-    }
-
-    // Stdin may not be pollable (i.e. when running a container without "-i"). If that's
-    // the case, disable the interactive mode in the console.
-    if !event_manager.is_pollable(io::stdin().as_raw_fd()) {
-        console.lock().unwrap().set_interactive(false)
     }
 
     event_manager
@@ -1277,12 +1231,6 @@ pub mod tests {
         };
 
         create_guest_memory(mem_size_mib, kernel_region, kernel_guest_addr, kernel_size)
-    }
-
-    #[test]
-    fn test_stdin_wrapper() {
-        let wrapper = SerialStdin::get();
-        assert_eq!(wrapper.as_raw_fd(), io::stdin().as_raw_fd())
     }
 
     #[test]

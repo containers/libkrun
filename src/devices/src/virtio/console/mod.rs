@@ -1,9 +1,12 @@
 mod console_control;
 mod device;
 mod event_handler;
+mod port;
+mod port_io;
 
 pub use self::defs::uapi::VIRTIO_ID_CONSOLE as TYPE_CONSOLE;
-pub use self::device::Console;
+pub use self::device::{Console, PortDescription};
+pub use self::port_io::{PortInput, PortOutput};
 
 mod defs {
     pub const CONSOLE_DEV_ID: &str = "virtio_console";

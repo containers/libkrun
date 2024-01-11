@@ -1,6 +1,4 @@
 use std::cmp;
-use std::collections::VecDeque;
-use std::io;
 use std::io::Write;
 use std::mem::{size_of, size_of_val};
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -10,9 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use libc::TIOCGWINSZ;
 use utils::eventfd::EventFd;
-use vm_memory::{ByteValued, Bytes, GuestMemory, GuestMemoryMmap};
+use vm_memory::{ByteValued, Bytes, GuestMemoryMmap};
 
-use super::super::super::legacy::ReadableFd;
 use super::super::{
     ActivateError, ActivateResult, ConsoleError, DeviceState, Queue as VirtQueue, VirtioDevice,
     VIRTIO_MMIO_INT_CONFIG, VIRTIO_MMIO_INT_VRING,
@@ -21,6 +18,8 @@ use super::{defs, defs::control_event, defs::uapi};
 use crate::legacy::Gic;
 use crate::virtio::console::console_control::{ConsoleControlSender, VirtioConsoleControl};
 use crate::virtio::console::defs::NUM_PORTS;
+use crate::virtio::console::port::{Port, PortStatus};
+use crate::virtio::{PortInput, PortOutput};
 use crate::Error as DeviceError;
 
 pub(crate) const RXQ_INDEX: usize = 0;
@@ -79,16 +78,10 @@ impl VirtioConsoleConfig {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum PortStatus {
-    NotReady,
-    Ready { opened: bool },
-}
-
 pub struct Console {
     pub(crate) queues: Vec<VirtQueue>,
     pub(crate) queue_events: Vec<EventFd>,
-    port_statuses: Vec<PortStatus>,
+    pub(crate) ports: Vec<Port>,
     pub(crate) avail_features: u64,
     pub(crate) acked_features: u64,
     pub(crate) interrupt_status: Arc<AtomicUsize>,
@@ -96,22 +89,24 @@ pub struct Console {
     pub(crate) activate_evt: EventFd,
     pub(crate) sigwinch_evt: EventFd,
     pub(crate) device_state: DeviceState,
-    pub(crate) in_buffer: VecDeque<u8>,
     config: VirtioConsoleConfig,
-    pub(crate) input: Box<dyn ReadableFd + Send>,
-    output: Box<dyn io::Write + Send>,
-    configured: bool,
-    pub(crate) interactive: bool,
     intc: Option<Arc<Mutex<Gic>>>,
     irq_line: Option<u32>,
 }
 
+pub enum PortDescription {
+    Console {
+        input: PortInput,
+        output: PortOutput,
+    },
+}
+
 impl Console {
-    pub(crate) fn with_queues(
-        input: Box<dyn ReadableFd + Send>,
-        output: Box<dyn io::Write + Send>,
-        queues: Vec<VirtQueue>,
-    ) -> super::Result<Console> {
+    pub fn new(port_description: PortDescription) -> super::Result<Console> {
+        let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
+            .iter()
+            .map(|&max_size| VirtQueue::new(max_size))
+            .collect();
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
             queue_events
@@ -124,7 +119,7 @@ impl Console {
         Ok(Console {
             queues,
             queue_events,
-            port_statuses: vec![PortStatus::NotReady; NUM_PORTS],
+            ports: vec![Port::new(port_description)],
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
             interrupt_status: Arc::new(AtomicUsize::new(0)),
@@ -135,26 +130,10 @@ impl Console {
             sigwinch_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
                 .map_err(ConsoleError::EventFd)?,
             device_state: DeviceState::Inactive,
-            in_buffer: VecDeque::new(),
             config,
-            input,
-            output,
-            configured: false,
-            interactive: true,
             intc: None,
             irq_line: None,
         })
-    }
-
-    pub fn new(
-        input: Box<dyn ReadableFd + Send>,
-        output: Box<dyn io::Write + Send>,
-    ) -> super::Result<Console> {
-        let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
-            .iter()
-            .map(|&max_size| VirtQueue::new(max_size))
-            .collect();
-        Self::with_queues(input, output, queues)
     }
 
     pub fn id(&self) -> &str {
@@ -167,10 +146,6 @@ impl Console {
 
     pub fn get_sigwinch_fd(&self) -> RawFd {
         self.sigwinch_evt.as_raw_fd()
-    }
-
-    pub fn set_interactive(&mut self, interactive: bool) {
-        self.interactive = interactive;
     }
 
     /// Signal the guest driver that we've used some virtio buffers that it had previously made
@@ -248,7 +223,7 @@ impl Console {
                         log::error!("Port initialization failed: {:?}", cmd);
                         continue;
                     }
-                    self.port_statuses[cmd.id as usize] = PortStatus::Ready { opened: false };
+                    self.ports[cmd.id as usize].status = PortStatus::Ready { opened: false };
                     if cmd.id == 0 {
                         control.send_mark_console_port(mem, 0);
                     }
@@ -267,80 +242,16 @@ impl Console {
                         }
                     };
 
-                    if self.port_statuses[cmd.id as usize] == PortStatus::NotReady {
+                    if self.ports[cmd.id as usize].status == PortStatus::NotReady {
                         log::warn!("Driver signaled opened={} to port {} that was not ready, assuming the port is ready.",opened, cmd.id)
                     }
-                    self.port_statuses[cmd.id as usize] = PortStatus::Ready { opened };
+                    self.ports[cmd.id as usize].status = PortStatus::Ready { opened };
                 }
                 _ => log::warn!("Unknown console control event {:x}", cmd.event),
             }
         }
 
         send_irq
-    }
-
-    pub(crate) fn process_rx(&mut self) -> bool {
-        //debug!("console: RXQ queue event");
-        let mem = match self.device_state {
-            DeviceState::Activated(ref mem) => mem,
-            // This should never happen, it's been already validated in the event handler.
-            DeviceState::Inactive => unreachable!(),
-        };
-
-        if self.in_buffer.is_empty() {
-            return false;
-        }
-
-        let queue = &mut self.queues[RXQ_INDEX];
-        let mut used_any = false;
-        while let Some(head) = queue.pop(mem) {
-            let len = cmp::min(head.len, self.in_buffer.len() as u32);
-            let source_slice = self.in_buffer.drain(..len as usize).collect::<Vec<u8>>();
-            if let Err(e) = mem.write_slice(&source_slice[..], head.addr) {
-                error!("Failed to write slice: {:?}", e);
-                queue.go_to_previous_position();
-                break;
-            }
-
-            queue.add_used(mem, head.index, len);
-            used_any = true;
-
-            if self.in_buffer.is_empty() {
-                break;
-            }
-        }
-
-        used_any
-    }
-
-    pub(crate) fn process_tx(&mut self) -> bool {
-        //debug!("console: TXQ queue event");
-        let mem = match self.device_state {
-            DeviceState::Activated(ref mem) => mem,
-            // This should never happen, it's been already validated in the event handler.
-            DeviceState::Inactive => unreachable!(),
-        };
-
-        // This won't be needed once we support multiport
-        if !self.configured {
-            self.configured = true;
-            self.signal_config_update().unwrap();
-        }
-
-        let queue = &mut self.queues[TXQ_INDEX];
-        let mut used_any = false;
-        while let Some(head) = queue.pop(mem) {
-            let mut buf = vec![0; head.len as usize];
-            mem.write_volatile_to(head.addr, &mut buf, head.len as usize)
-                .unwrap();
-            self.output.write_all(&buf).unwrap();
-            self.output.flush().unwrap();
-
-            queue.add_used(mem, head.index, head.len);
-            used_any = true;
-        }
-
-        used_any
     }
 }
 
@@ -433,6 +344,17 @@ impl VirtioDevice for Console {
             DeviceState::Activated(_) => true,
         }
     }
+}
+
+#[macro_export]
+macro_rules! get_mem {
+    ($self:tt) => {
+        match $self.device_state {
+            DeviceState::Activated(ref mem) => mem,
+            // This should never happen, it's been already validated in the event handler.
+            DeviceState::Inactive => unreachable!(),
+        }
+    };
 }
 
 fn borrow_mut_two_indices<T>(slice: &mut [T], idx1: usize, idx2: usize) -> (&mut T, &mut T) {

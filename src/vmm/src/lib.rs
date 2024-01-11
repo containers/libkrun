@@ -30,6 +30,8 @@ mod linux;
 use crate::linux::vstate;
 #[cfg(target_os = "macos")]
 mod macos;
+mod terminal;
+
 #[cfg(target_os = "macos")]
 use macos::vstate;
 
@@ -56,6 +58,7 @@ use utils::epoll::{EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 use utils::time::TimestampUs;
 use vm_memory::GuestMemoryMmap;
+use crate::terminal::term_set_canonical_mode;
 
 /// Success exit code.
 pub const FC_EXIT_CODE_OK: u8 = 0;
@@ -329,13 +332,9 @@ impl Vmm {
     pub fn stop(&mut self, exit_code: i32) {
         info!("Vmm is stopping.");
 
-        //if let Some(observer) = self.events_observer.as_mut() {
-        //    if let Err(e) = observer.on_vmm_stop() {
-        //        warn!("{}", Error::VmmObserverTeardown(e));
-        //    }
-        //}
-
-        builder::SerialStdin::restore();
+        if let Err(e) = term_set_canonical_mode() {
+            log::error!("Failed to restore terminal to canonical mode: {e}")
+        }
 
         // Exit from Firecracker using the provided exit code. Safe because we're terminating
         // the process anyway.

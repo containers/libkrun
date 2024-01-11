@@ -26,9 +26,9 @@ pub struct ConsoleControlSender<'a> {
 
 impl<'a> ConsoleControlSender<'a> {
     pub fn new(control_rx_queue: &'a mut VirtQueue) -> Self {
-        return ConsoleControlSender {
+        ConsoleControlSender {
             queue: control_rx_queue,
-        };
+        }
     }
 
     pub fn send_mark_console_port(&mut self, mem: &GuestMemoryMmap, port_id: u32) {

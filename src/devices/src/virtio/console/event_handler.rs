@@ -1,13 +1,13 @@
-use std::io::Read;
 use std::os::unix::io::AsRawFd;
-use std::process;
 
+use crate::get_mem;
 use crate::virtio::console::device::{CONTROL_RXQ_INDEX, CONTROL_TXQ_INDEX};
 use polly::event_manager::{EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
 
 use super::device::{get_win_size, Console, RXQ_INDEX, TXQ_INDEX};
 use crate::virtio::device::VirtioDevice;
+use crate::virtio::DeviceState;
 
 impl Console {
     pub(crate) fn read_queue_event(&self, queue_index: usize, event: &EpollEvent) -> bool {
@@ -25,28 +25,6 @@ impl Console {
         }
 
         true
-    }
-
-    pub(crate) fn handle_input(&mut self, event: &EpollEvent) {
-        debug!("console: input event");
-
-        let event_set = event.event_set();
-        match event_set {
-            EventSet::HANG_UP => process::exit(0),
-            EventSet::IN => {}
-            _ => {
-                warn!("console: input unexpected event {:?}", event_set);
-                return;
-            }
-        }
-
-        let mut out = [0u8; 64];
-        let count = self.input.read(&mut out).unwrap();
-        self.in_buffer.extend(&out[..count]);
-
-        if self.process_rx() {
-            self.signal_used_queue().unwrap();
-        }
     }
 
     fn handle_activate_event(&self, event_manager: &mut EventManager) {
@@ -113,16 +91,18 @@ impl Subscriber for Console {
 
         let activate_evt = self.activate_evt.as_raw_fd();
         let sigwinch_evt = self.sigwinch_evt.as_raw_fd();
-        let input = self.input.as_raw_fd();
+        let input = self.ports[0].input_rawfd();
 
         if self.is_activated() {
             let mut raise_irq = false;
             match source {
                 _ if source == rxq => {
-                    raise_irq |= self.read_queue_event(RXQ_INDEX, event) && self.process_rx()
+                    raise_irq |= self.read_queue_event(RXQ_INDEX, event)
+                        && self.ports[0].process_rx(get_mem!(self), &mut self.queues[RXQ_INDEX])
                 }
                 _ if source == txq => {
-                    raise_irq |= self.read_queue_event(TXQ_INDEX, event) && self.process_tx()
+                    raise_irq |= self.read_queue_event(TXQ_INDEX, event)
+                        && self.ports[0].process_tx(get_mem!(self), &mut self.queues[TXQ_INDEX])
                 }
                 _ if source == control_txq => {
                     raise_irq |=
@@ -131,7 +111,10 @@ impl Subscriber for Console {
                 _ if source == control_rxq => {
                     raise_irq |= self.read_queue_event(CONTROL_RXQ_INDEX, event)
                 }
-                _ if source == input => self.handle_input(event),
+                _ if source == input => {
+                    raise_irq |=
+                        self.ports[0].process_rx(get_mem!(self), &mut self.queues[RXQ_INDEX])
+                }
                 _ if source == activate_evt => {
                     self.handle_activate_event(event_manager);
                 }
@@ -152,17 +135,10 @@ impl Subscriber for Console {
     }
 
     fn interest_list(&self) -> Vec<EpollEvent> {
-        if self.interactive {
-            vec![
-                EpollEvent::new(EventSet::IN, self.activate_evt.as_raw_fd() as u64),
-                EpollEvent::new(EventSet::IN, self.sigwinch_evt.as_raw_fd() as u64),
-                EpollEvent::new(EventSet::IN, self.input.as_raw_fd() as u64),
-            ]
-        } else {
-            vec![
-                EpollEvent::new(EventSet::IN, self.activate_evt.as_raw_fd() as u64),
-                EpollEvent::new(EventSet::IN, self.sigwinch_evt.as_raw_fd() as u64),
-            ]
-        }
+        vec![
+            EpollEvent::new(EventSet::IN, self.activate_evt.as_raw_fd() as u64),
+            EpollEvent::new(EventSet::IN, self.sigwinch_evt.as_raw_fd() as u64),
+            EpollEvent::new(EventSet::IN, self.ports[0].input_rawfd() as u64),
+        ]
     }
 }
