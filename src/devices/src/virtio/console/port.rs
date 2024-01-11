@@ -1,6 +1,4 @@
-//! See https://docs.oasis-open.org/virtio/virtio/v1.2/csd01/virtio-v1.2-csd01.html#x1-2920002
-//! for port <-> virtio queue index mapping
-
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::{mem, thread};
@@ -19,6 +17,14 @@ pub enum PortDescription {
         input: Option<Box<dyn PortInput + Send>>,
         output: Option<Box<dyn PortOutput + Send>>,
     },
+    InputPipe {
+        name: Cow<'static, str>,
+        input: Box<dyn PortInput + Send>,
+    },
+    OutputPipe {
+        name: Cow<'static, str>,
+        output: Box<dyn PortOutput + Send>,
+    },
 }
 
 enum PortState {
@@ -34,6 +40,9 @@ enum PortState {
 
 pub(crate) struct Port {
     port_id: u32,
+    /// Empty if no name given
+    name: Cow<'static, str>,
+    represents_console: bool,
     state: PortState,
 }
 
@@ -42,9 +51,37 @@ impl Port {
         match description {
             PortDescription::Console { input, output } => Self {
                 port_id,
+                name: "".into(),
+                represents_console: true,
                 state: PortState::Inactive { input, output },
             },
+            PortDescription::InputPipe { name, input } => Self {
+                port_id,
+                name,
+                represents_console: false,
+                state: PortState::Inactive {
+                    input: Some(input),
+                    output: None,
+                },
+            },
+            PortDescription::OutputPipe { name, output } => Self {
+                port_id,
+                name,
+                represents_console: false,
+                state: PortState::Inactive {
+                    input: None,
+                    output: Some(output),
+                },
+            },
         }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn is_console(&self) -> bool {
+        self.represents_console
     }
 
     pub fn notify_rx(&self) {

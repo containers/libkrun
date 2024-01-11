@@ -1,5 +1,6 @@
 use std::cmp;
 use std::io::Write;
+use std::iter::zip;
 use std::mem::{size_of, size_of_val};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::atomic::AtomicUsize;
@@ -17,13 +18,14 @@ use crate::legacy::Gic;
 use crate::virtio::console::console_control::{
     ConsoleControl, VirtioConsoleControl, VirtioConsoleResize,
 };
-use crate::virtio::console::defs::NUM_PORTS;
+use crate::virtio::console::defs::QUEUE_SIZE;
 use crate::virtio::console::irq_signaler::IRQSignaler;
 use crate::virtio::console::port::Port;
+use crate::virtio::console::port_queue_mapping::{
+    num_queues, port_id_to_queue_idx, QueueDirection,
+};
 use crate::virtio::PortDescription;
 
-pub(crate) const RXQ_INDEX: usize = 0;
-pub(crate) const TXQ_INDEX: usize = 1;
 pub(crate) const CONTROL_RXQ_INDEX: usize = 2;
 pub(crate) const CONTROL_TXQ_INDEX: usize = 3;
 
@@ -76,7 +78,7 @@ pub struct Console {
     pub(crate) device_state: DeviceState,
     pub(crate) irq: IRQSignaler,
     pub(crate) control: Arc<ConsoleControl>,
-    pub(crate) port: Port,
+    pub(crate) ports: Vec<Port>,
 
     pub(crate) queues: Vec<VirtQueue>,
     pub(crate) queue_events: Vec<EventFd>,
@@ -91,11 +93,15 @@ pub struct Console {
 }
 
 impl Console {
-    pub fn new(port: PortDescription) -> super::Result<Console> {
-        let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
-            .iter()
-            .map(|&max_size| VirtQueue::new(max_size))
-            .collect();
+    pub fn new(ports: Vec<PortDescription>) -> super::Result<Console> {
+        assert!(!ports.is_empty(), "Expected at least 1 port");
+        assert!(
+            matches!(ports[0], PortDescription::Console { .. }),
+            "First port must be a console"
+        );
+
+        let num_queues = num_queues(ports.len());
+        let queues = vec![VirtQueue::new(QUEUE_SIZE); num_queues];
 
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
@@ -104,12 +110,15 @@ impl Console {
         }
 
         let (cols, rows) = get_win_size();
-        let config = VirtioConsoleConfig::new(cols, rows, NUM_PORTS as u32);
+        let config = VirtioConsoleConfig::new(cols, rows, ports.len() as u32);
+        let ports = zip(0u32.., ports)
+            .map(|(port_id, description)| Port::new(port_id, description))
+            .collect();
 
         Ok(Console {
             irq: IRQSignaler::new(),
             control: ConsoleControl::new(),
-            port: Port::new(0, port),
+            ports,
             queues,
             queue_events,
             avail_features: AVAIL_FEATURES,
@@ -181,7 +190,7 @@ impl Console {
         let tx_queue = &mut self.queues[CONTROL_TXQ_INDEX];
         let mut raise_irq = false;
 
-        let mut start_port = false;
+        let mut ports_to_start = Vec::new();
 
         while let Some(head) = tx_queue.pop(mem) {
             raise_irq = true;
@@ -206,14 +215,29 @@ impl Console {
                         "Device is ready: initialization {}",
                         if cmd.value == 1 { "ok" } else { "failed" }
                     );
-                    self.control.port_add(0);
+                    for port_id in 0..self.ports.len() {
+                        self.control.port_add(port_id as u32);
+                    }
                 }
                 control_event::VIRTIO_CONSOLE_PORT_READY => {
                     if cmd.value != 1 {
                         log::error!("Port initialization failed: {:?}", cmd);
                         continue;
                     }
-                    self.control.mark_console_port(mem, cmd.id);
+
+                    if self.ports[cmd.id as usize].is_console() {
+                        self.control.mark_console_port(mem, cmd.id);
+                    } else {
+                        // We start with all ports open, this makes sense for now,
+                        // because underlying file descriptors STDIN, STDOUT, STDERR are always open too
+                        self.control.port_open(cmd.id, true)
+                    }
+
+                    let name = self.ports[cmd.id as usize].name();
+                    log::trace!("Port ready {id}: {name}", id = cmd.id);
+                    if !name.is_empty() {
+                        self.control.port_name(cmd.id, name)
+                    }
                 }
                 control_event::VIRTIO_CONSOLE_PORT_OPEN => {
                     let opened = match cmd.value {
@@ -234,18 +258,18 @@ impl Console {
                         continue;
                     }
 
-                    start_port = true;
+                    ports_to_start.push(cmd.id as usize);
                 }
                 _ => log::warn!("Unknown console control event {:x}", cmd.event),
             }
         }
 
-        if start_port {
-            log::trace!("Starting port");
-            self.port.start(
+        for port_id in ports_to_start {
+            log::trace!("Starting port io for port {}", port_id);
+            self.ports[port_id].start(
                 mem.clone(),
-                self.queues[RXQ_INDEX].clone(),
-                self.queues[TXQ_INDEX].clone(),
+                self.queues[port_id_to_queue_idx(QueueDirection::Rx, port_id)].clone(),
+                self.queues[port_id_to_queue_idx(QueueDirection::Tx, port_id)].clone(),
                 self.irq.clone(),
                 self.control.clone(),
             );

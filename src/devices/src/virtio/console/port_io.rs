@@ -1,7 +1,7 @@
 use std::io::{self, ErrorKind};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
-use libc::{fcntl, F_GETFL, F_SETFL, O_NONBLOCK, STDIN_FILENO, STDOUT_FILENO};
+use libc::{fcntl, F_GETFL, F_SETFL, O_NONBLOCK, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 use nix::errno::Errno;
 use nix::poll::{poll, PollFd, PollFlags};
 use nix::unistd::dup;
@@ -27,7 +27,15 @@ pub fn stdin() -> Result<Box<dyn PortInput + Send>, nix::Error> {
 }
 
 pub fn stdout() -> Result<Box<dyn PortOutput + Send>, nix::Error> {
-    let fd = dup_raw_fd_into_owned(STDOUT_FILENO)?;
+    output_to_raw_fd_dup(STDOUT_FILENO)
+}
+
+pub fn stderr() -> Result<Box<dyn PortOutput + Send>, nix::Error> {
+    output_to_raw_fd_dup(STDERR_FILENO)
+}
+
+pub fn output_to_raw_fd_dup(fd: RawFd) -> Result<Box<dyn PortOutput + Send>, nix::Error> {
+    let fd = dup_raw_fd_into_owned(fd)?;
     make_non_blocking(&fd)?;
     Ok(Box::new(PortOutputFd(fd)))
 }
