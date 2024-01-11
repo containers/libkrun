@@ -7,8 +7,8 @@ use utils::eventfd::EventFd;
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use crate::virtio::console::defs::control_event::{
-    VIRTIO_CONSOLE_CONSOLE_PORT, VIRTIO_CONSOLE_PORT_ADD, VIRTIO_CONSOLE_PORT_OPEN,
-    VIRTIO_CONSOLE_RESIZE,
+    VIRTIO_CONSOLE_CONSOLE_PORT, VIRTIO_CONSOLE_PORT_ADD, VIRTIO_CONSOLE_PORT_NAME,
+    VIRTIO_CONSOLE_PORT_OPEN, VIRTIO_CONSOLE_RESIZE,
 };
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -106,6 +106,23 @@ impl ConsoleControl {
             event: VIRTIO_CONSOLE_PORT_OPEN,
             value: open as u16,
         })
+    }
+
+    pub fn port_name(&self, port_id: u32, name: &str) {
+        let mut buf: Vec<u8> = Vec::new();
+
+        buf.extend_from_slice(
+            VirtioConsoleControl {
+                id: port_id,
+                event: VIRTIO_CONSOLE_PORT_NAME,
+                value: 1, // Unspecified/unused in the spec, lets use the same value as QEMU.
+            }
+            .as_slice(),
+        );
+
+        // The spec says the name shouldn't be NUL terminated.
+        buf.extend(name.as_bytes());
+        self.push_vec(buf)
     }
 
     pub fn queue_pop(&self) -> Option<Payload> {

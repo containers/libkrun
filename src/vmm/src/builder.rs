@@ -48,6 +48,8 @@ use arch::ArchMemoryInfo;
 use arch::InitrdConfig;
 #[cfg(feature = "tee")]
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
+use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
+use nix::unistd::isatty;
 use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
 use utils::time::TimestampUs;
@@ -1041,12 +1043,50 @@ fn attach_console_devices(
     if let Err(e) = term_set_raw_mode(false) {
         log::error!("Failed to set terminal to raw mode: {e}")
     }
-    let port = PortDescription::Console {
-        input:Some(port_io::stdin().unwrap()),
-        output: Some(port_io::stdout().unwrap())
+
+    let stdin_is_terminal = isatty(STDIN_FILENO).unwrap_or(false);
+    let stdout_is_terminal = isatty(STDOUT_FILENO).unwrap_or(false);
+    let stderr_is_terminal = isatty(STDERR_FILENO).unwrap_or(false);
+
+    if let Err(e) = term_set_raw_mode(!stdin_is_terminal) {
+        log::error!("Failed to set terminal to raw mode: {e}")
+    }
+
+    let mut ports = vec![PortDescription::Console {
+        input: if stdin_is_terminal {
+            Some(port_io::stdin().unwrap())
+        } else {
+            None
+        },
+        output: if stdout_is_terminal {
+            Some(port_io::stdout().unwrap())
+        } else {
+            None
+        },
+    }];
+
+    if !stdin_is_terminal {
+        ports.push(PortDescription::InputPipe {
+            name: "krun-stdin".into(),
+            input: port_io::stdin().unwrap(),
+        })
+    }
+
+    if !stdout_is_terminal {
+        ports.push(PortDescription::OutputPipe {
+            name: "krun-stdout".into(),
+            output: port_io::stdout().unwrap(),
+        })
     };
 
-    let console = Arc::new(Mutex::new(devices::virtio::Console::new(port).unwrap()));
+    if !stderr_is_terminal {
+        ports.push(PortDescription::OutputPipe {
+            name: "krun-stderr".into(),
+            output: port_io::stderr().unwrap(),
+        });
+    }
+
+    let console = Arc::new(Mutex::new(devices::virtio::Console::new(ports).unwrap()));
 
     if let Some(intc) = intc {
         console.lock().unwrap().set_intc(intc);

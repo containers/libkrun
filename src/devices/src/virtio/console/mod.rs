@@ -4,6 +4,7 @@ mod event_handler;
 mod irq_signaler;
 mod port;
 pub mod port_io;
+mod port_queue_mapping;
 mod process_rx;
 mod process_tx;
 
@@ -13,10 +14,7 @@ pub use self::port::PortDescription;
 
 mod defs {
     pub const CONSOLE_DEV_ID: &str = "virtio_console";
-    pub const NUM_PORTS: usize = 1;
-    // 2 control queues and then an rx and tx queue for each port
-    pub const NUM_QUEUES: usize = 2 + NUM_PORTS * 2;
-    pub const QUEUE_SIZES: &[u16] = &[256; NUM_QUEUES];
+    pub const QUEUE_SIZE: u16 = 32;
 
     pub mod uapi {
         /// The device conforms to the virtio spec version 1.0.

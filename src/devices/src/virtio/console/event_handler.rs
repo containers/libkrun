@@ -3,8 +3,9 @@ use std::os::unix::io::AsRawFd;
 use polly::event_manager::{EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
 
-use super::device::{get_win_size, Console, RXQ_INDEX, TXQ_INDEX};
+use super::device::{get_win_size, Console};
 use crate::virtio::console::device::{CONTROL_RXQ_INDEX, CONTROL_TXQ_INDEX};
+use crate::virtio::console::port_queue_mapping::{queue_idx_to_port_id, QueueDirection};
 use crate::virtio::device::VirtioDevice;
 
 impl Console {
@@ -23,6 +24,20 @@ impl Console {
         }
 
         true
+    }
+
+    fn notify_port_queue_event(&mut self, queue_index: usize) {
+        let (direction, port_id) = queue_idx_to_port_id(queue_index);
+        match direction {
+            QueueDirection::Rx => {
+                log::trace!("Notify rx (queue event)");
+                self.ports[port_id].notify_rx()
+            }
+            QueueDirection::Tx => {
+                log::trace!("Notify tx (queue event)");
+                self.ports[port_id].notify_tx()
+            }
+        }
     }
 
     fn handle_activate_event(&self, event_manager: &mut EventManager) {
@@ -92,8 +107,6 @@ impl Console {
 impl Subscriber for Console {
     fn process(&mut self, event: &EpollEvent, event_manager: &mut EventManager) {
         let source = event.fd();
-        let rxq = self.queue_events[RXQ_INDEX].as_raw_fd();
-        let txq = self.queue_events[TXQ_INDEX].as_raw_fd();
 
         let control_rxq = self.queue_events[CONTROL_RXQ_INDEX].as_raw_fd();
         let control_txq = self.queue_events[CONTROL_TXQ_INDEX].as_raw_fd();
@@ -114,12 +127,14 @@ impl Subscriber for Console {
             } else if source == control_rxq {
                 raise_irq |= self.read_queue_event(CONTROL_RXQ_INDEX, event)
             }
-            else if source == rxq {
-                self.read_queue_event(RXQ_INDEX, event);
-                self.port.notify_rx();
-            } else if source == txq {
-                self.read_queue_event(TXQ_INDEX, event);
-                self.port.notify_tx()
+            /* Guest signaled input/output on port */
+            else if let Some(queue_index) = self
+                .queue_events
+                .iter()
+                .position(|fd| fd.as_raw_fd() == source)
+            {
+                raise_irq |= self.read_queue_event(queue_index, event);
+                self.notify_port_queue_event(queue_index);
             } else if source == activate_evt {
                 self.handle_activate_event(event_manager);
             } else if source == sigwinch_evt {
