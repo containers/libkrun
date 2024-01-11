@@ -45,6 +45,7 @@ use std::time::Duration;
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
+use crate::terminal::term_set_canonical_mode;
 #[cfg(target_os = "linux")]
 use crate::vstate::VcpuEvent;
 use crate::vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
@@ -58,7 +59,6 @@ use utils::epoll::{EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 use utils::time::TimestampUs;
 use vm_memory::GuestMemoryMmap;
-use crate::terminal::term_set_canonical_mode;
 
 /// Success exit code.
 pub const FC_EXIT_CODE_OK: u8 = 0;

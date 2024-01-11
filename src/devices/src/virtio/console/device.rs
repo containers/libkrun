@@ -16,7 +16,9 @@ use super::super::{
 };
 use super::{defs, defs::control_event, defs::uapi};
 use crate::legacy::Gic;
-use crate::virtio::console::console_control::{ConsoleControlSender, VirtioConsoleControl};
+use crate::virtio::console::console_control::{
+    ConsoleControlSender, VirtioConsoleControl, VirtioConsoleResize,
+};
 use crate::virtio::console::defs::NUM_PORTS;
 use crate::virtio::console::port::{Port, PortStatus};
 use crate::virtio::{PortInput, PortOutput};
@@ -101,6 +103,17 @@ pub enum PortDescription {
     },
 }
 
+#[macro_export]
+macro_rules! get_mem {
+    ($self:tt) => {
+        match $self.device_state {
+            DeviceState::Activated(ref mem) => mem,
+            // This should never happen, it's been already validated in the event handler.
+            DeviceState::Inactive => unreachable!(),
+        }
+    };
+}
+
 impl Console {
     pub fn new(port_description: PortDescription) -> super::Result<Console> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
@@ -178,6 +191,11 @@ impl Console {
     pub fn update_console_size(&mut self, cols: u16, rows: u16) {
         debug!("update_console_size: {} {}", cols, rows);
         self.config.update_console_size(cols, rows);
+        ConsoleControlSender::new(&mut self.queues[CONTROL_RXQ_INDEX]).send_console_resize(
+            get_mem!(self),
+            0,
+            &VirtioConsoleResize { rows, cols },
+        );
         self.signal_config_update().unwrap();
     }
 
@@ -344,17 +362,6 @@ impl VirtioDevice for Console {
             DeviceState::Activated(_) => true,
         }
     }
-}
-
-#[macro_export]
-macro_rules! get_mem {
-    ($self:tt) => {
-        match $self.device_state {
-            DeviceState::Activated(ref mem) => mem,
-            // This should never happen, it's been already validated in the event handler.
-            DeviceState::Inactive => unreachable!(),
-        }
-    };
 }
 
 fn borrow_mut_two_indices<T>(slice: &mut [T], idx1: usize, idx2: usize) -> (&mut T, &mut T) {

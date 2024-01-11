@@ -25,10 +25,12 @@ use devices::virtio::{MmioTransport, PortDescription, PortInput, PortOutput, Vso
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
 
+use crate::device_manager;
 #[cfg(feature = "tee")]
 use crate::resources::TeeConfig;
 #[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigwinch_handler;
+use crate::terminal::term_set_raw_mode;
 #[cfg(feature = "tee")]
 use crate::vmm_config::block::BlockBuilder;
 use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
@@ -41,7 +43,6 @@ use crate::vstate::KvmContext;
 #[cfg(all(target_os = "linux", feature = "tee"))]
 use crate::vstate::MeasuredRegion;
 use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
-use crate::{device_manager};
 use arch::ArchMemoryInfo;
 #[cfg(feature = "tee")]
 use arch::InitrdConfig;
@@ -57,7 +58,6 @@ use vm_memory::Bytes;
 #[cfg(target_os = "linux")]
 use vm_memory::GuestMemory;
 use vm_memory::{mmap::MmapRegion, GuestAddress, GuestMemoryMmap};
-use crate::terminal::term_set_raw_mode;
 
 /// Errors associated with starting the instance.
 #[derive(Debug)]
@@ -249,7 +249,6 @@ impl Display for StartMicrovmError {
         }
     }
 }
-
 
 /// Builds and starts a microVM based on the current Firecracker VmResources configuration.
 ///
@@ -1048,8 +1047,9 @@ fn attach_console_devices(
         devices::virtio::Console::new(PortDescription::Console {
             input: PortInput::stdin().unwrap(),
             output: PortOutput::stdout().unwrap(),
-        }).unwrap()),
-    );
+        })
+        .unwrap(),
+    ));
 
     if let Some(intc) = intc {
         console.lock().unwrap().set_intc(intc);

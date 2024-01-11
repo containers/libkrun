@@ -1,7 +1,8 @@
 use crate::virtio::console::defs::control_event::{
-    VIRTIO_CONSOLE_CONSOLE_PORT, VIRTIO_CONSOLE_PORT_ADD,
+    VIRTIO_CONSOLE_CONSOLE_PORT, VIRTIO_CONSOLE_PORT_ADD, VIRTIO_CONSOLE_RESIZE,
 };
 use crate::virtio::Queue as VirtQueue;
+use std::mem::size_of;
 use vm_memory::{ByteValued, Bytes, GuestMemoryMmap};
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -18,6 +19,18 @@ pub struct VirtioConsoleControl {
 // Safe because it only has data and has no implicit padding.
 // But NOTE that this relies on CPU being little endian, to have correct semantics
 unsafe impl ByteValued for VirtioConsoleControl {}
+
+#[derive(Copy, Clone, Debug, Default)]
+#[repr(C, packed)]
+pub struct VirtioConsoleResize {
+    // The order of these fields in the kernel and in the spec do not match
+    pub rows: u16,
+    pub cols: u16,
+}
+
+// Safe because it only has data and has no implicit padding.
+// but NOTE, that we rely on CPU being little endian, for the values to be correct
+unsafe impl ByteValued for VirtioConsoleResize {}
 
 // Utility for sending commands into control rx queue
 pub struct ConsoleControlSender<'a> {
@@ -40,6 +53,26 @@ impl<'a> ConsoleControlSender<'a> {
                 value: 1,
             },
         )
+    }
+
+    pub fn send_console_resize(
+        &mut self,
+        mem: &GuestMemoryMmap,
+        port_id: u32,
+        new_size: &VirtioConsoleResize,
+    ) {
+        let resize_cmd = VirtioConsoleControl {
+            id: port_id,
+            event: VIRTIO_CONSOLE_RESIZE,
+            value: 0,
+        };
+
+        const SIZE_1: usize = size_of::<VirtioConsoleControl>();
+        const SIZE_2: usize = size_of::<VirtioConsoleResize>();
+        let mut data = [0u8; SIZE_1 + SIZE_2];
+        data[..SIZE_1].copy_from_slice(resize_cmd.as_slice());
+        data[SIZE_1..].copy_from_slice(new_size.as_slice());
+        self.send_bytes(mem, data.as_slice());
     }
 
     /// Adds another port with the specified port_id

@@ -1,7 +1,7 @@
-use std::os::fd::RawFd;
 use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
-use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
+use nix::sys::termios::{tcgetattr, tcsetattr, LocalFlags, SetArg};
 use nix::unistd::isatty;
+use std::os::fd::RawFd;
 
 pub fn term_set_raw_mode() -> Result<(), nix::Error> {
     if let Some(fd) = get_connected_term_fd() {
@@ -44,5 +44,3 @@ pub fn get_connected_term_fd() -> Option<RawFd> {
         None
     }
 }
-
-
