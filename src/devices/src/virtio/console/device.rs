@@ -2,6 +2,7 @@ use std::cmp;
 use std::collections::VecDeque;
 use std::io;
 use std::io::Write;
+use std::mem::{size_of, size_of_val};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::result;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -16,14 +17,23 @@ use super::super::{
     ActivateError, ActivateResult, ConsoleError, DeviceState, Queue as VirtQueue, VirtioDevice,
     VIRTIO_MMIO_INT_CONFIG, VIRTIO_MMIO_INT_VRING,
 };
-use super::{defs, defs::uapi};
+use super::{defs, defs::control_event, defs::uapi};
 use crate::legacy::Gic;
+use crate::virtio::console::console_control::{
+    ConsoleControl, VirtioConsoleControl, VirtioConsoleResize,
+};
+use crate::virtio::console::defs::NUM_PORTS;
 use crate::Error as DeviceError;
 
 pub(crate) const RXQ_INDEX: usize = 0;
 pub(crate) const TXQ_INDEX: usize = 1;
-pub(crate) const AVAIL_FEATURES: u64 =
-    1 << uapi::VIRTIO_CONSOLE_F_SIZE as u64 | 1 << uapi::VIRTIO_F_VERSION_1 as u64;
+
+pub(crate) const CONTROL_RXQ_INDEX: usize = 2;
+pub(crate) const CONTROL_TXQ_INDEX: usize = 3;
+
+pub(crate) const AVAIL_FEATURES: u64 = 1 << uapi::VIRTIO_CONSOLE_F_SIZE as u64
+    | 1 << uapi::VIRTIO_CONSOLE_F_MULTIPORT as u64
+    | 1 << uapi::VIRTIO_F_VERSION_1 as u64;
 
 pub(crate) fn get_win_size() -> (u16, u16) {
     #[repr(C)]
@@ -60,20 +70,16 @@ impl VirtioConsoleConfig {
         VirtioConsoleConfig {
             cols,
             rows,
-            max_nr_ports: 1u32,
+            max_nr_ports: NUM_PORTS as u32,
             emerg_wr: 0u32,
         }
-    }
-
-    pub fn update_console_size(&mut self, cols: u16, rows: u16) {
-        self.cols = cols;
-        self.rows = rows;
     }
 }
 
 pub struct Console {
     pub(crate) queues: Vec<VirtQueue>,
     pub(crate) queue_events: Vec<EventFd>,
+    pub(crate) control: Arc<ConsoleControl>,
     pub(crate) avail_features: u64,
     pub(crate) acked_features: u64,
     pub(crate) interrupt_status: Arc<AtomicUsize>,
@@ -107,6 +113,7 @@ impl Console {
         let config = VirtioConsoleConfig::new(cols, rows);
 
         Ok(Console {
+            control: ConsoleControl::new(),
             queues,
             queue_events,
             avail_features: AVAIL_FEATURES,
@@ -185,9 +192,110 @@ impl Console {
     }
 
     pub fn update_console_size(&mut self, cols: u16, rows: u16) {
-        debug!("update_console_size: {} {}", cols, rows);
-        self.config.update_console_size(cols, rows);
-        self.signal_config_update().unwrap();
+        log::debug!("update_console_size: {} {}", cols, rows);
+        // Note that we currently only support resizing on the first/main console
+        self.control
+            .console_resize(0, VirtioConsoleResize { rows, cols });
+    }
+
+    pub(crate) fn process_control_rx(&mut self) -> bool {
+        log::trace!("process_control_rx");
+        let DeviceState::Activated(ref mem) = self.device_state else {
+            unreachable!()
+        };
+        let mut raise_irq = false;
+
+        while let Some(head) = self.queues[CONTROL_RXQ_INDEX].pop(mem) {
+            if let Some(buf) = self.control.queue_pop() {
+                match mem.write(&buf, head.addr) {
+                    Ok(n) => {
+                        if n != buf.len() {
+                            log::error!("process_control_rx: partial write");
+                        }
+                        raise_irq = true;
+                        log::trace!("process_control_rx wrote {n}");
+                        self.queues[CONTROL_RXQ_INDEX].add_used(mem, head.index, n as u32);
+                    }
+                    Err(e) => {
+                        log::error!("process_control_rx failed to write: {e}");
+                    }
+                }
+            } else {
+                self.queues[CONTROL_RXQ_INDEX].undo_pop();
+                break;
+            }
+        }
+        raise_irq
+    }
+
+    pub(crate) fn process_control_tx(&mut self) -> bool {
+        let mem = match self.device_state {
+            DeviceState::Activated(ref mem) => mem,
+            // This should never happen, it's been already validated in the event handler.
+            DeviceState::Inactive => unreachable!(),
+        };
+
+        let tx_queue = &mut self.queues[CONTROL_TXQ_INDEX];
+        let mut raise_irq = false;
+
+        while let Some(head) = tx_queue.pop(mem) {
+            raise_irq = true;
+
+            let cmd: VirtioConsoleControl = match mem.read_obj(head.addr) {
+                Ok(cmd) => cmd,
+                Err(e) => {
+                    log::error!(
+                    "Failed to read VirtioConsoleControl struct: {e:?}, struct len = {len}, head.len = {head_len}",
+                    len = size_of::<VirtioConsoleControl>(),
+                    head_len = head.len,
+                );
+                    continue;
+                }
+            };
+            tx_queue.add_used(mem, head.index, size_of_val(&cmd) as u32);
+
+            log::trace!("VirtioConsoleControl cmd: {cmd:?}");
+            match cmd.event {
+                control_event::VIRTIO_CONSOLE_DEVICE_READY => {
+                    log::debug!(
+                        "Device is ready: initialization {}",
+                        if cmd.value == 1 { "ok" } else { "failed" }
+                    );
+                    self.control.port_add(0);
+                }
+                control_event::VIRTIO_CONSOLE_PORT_READY => {
+                    if cmd.value != 1 {
+                        log::error!("Port initialization failed: {:?}", cmd);
+                        continue;
+                    }
+                    if cmd.id == 0 {
+                        self.control.mark_console_port(mem, 0);
+                    }
+                }
+                control_event::VIRTIO_CONSOLE_PORT_OPEN => {
+                    let opened = match cmd.value {
+                        0 => false,
+                        1 => true,
+                        _ => {
+                            log::error!(
+                                "Invalid value ({}) for VIRTIO_CONSOLE_PORT_OPEN on port {}",
+                                cmd.value,
+                                cmd.id
+                            );
+                            continue;
+                        }
+                    };
+
+                    if !opened {
+                        log::debug!("Guest closed port {}", cmd.id);
+                        continue;
+                    }
+                }
+                _ => log::warn!("Unknown console control event {:x}", cmd.event),
+            }
+        }
+
+        raise_irq
     }
 
     pub(crate) fn process_rx(&mut self) -> bool {
