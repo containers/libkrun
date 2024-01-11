@@ -1,6 +1,4 @@
-use std::io::Read;
 use std::os::unix::io::AsRawFd;
-use std::process;
 
 use polly::event_manager::{EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
@@ -25,28 +23,6 @@ impl Console {
         }
 
         true
-    }
-
-    pub(crate) fn handle_input(&mut self, event: &EpollEvent) {
-        debug!("console: input event");
-
-        let event_set = event.event_set();
-        match event_set {
-            EventSet::HANG_UP => process::exit(0),
-            EventSet::IN => {}
-            _ => {
-                warn!("console: input unexpected event {:?}", event_set);
-                return;
-            }
-        }
-
-        let mut out = [0u8; 64];
-        let count = self.input.read(&mut out).unwrap();
-        self.in_buffer.extend(&out[..count]);
-
-        if self.process_rx() {
-            self.signal_used_queue().unwrap();
-        }
     }
 
     fn handle_activate_event(&self, event_manager: &mut EventManager) {
@@ -104,11 +80,11 @@ impl Console {
     fn read_control_queue_event(&mut self, event: &EpollEvent) {
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            log::warn!("Unexpected event {:?}", event_set);
+            warn!("Unexpected event {:?}", event_set);
         }
 
         if let Err(e) = self.control.queue_evt().read() {
-            log::error!("Failed to read the ConsoleControl event: {:?}", e);
+            error!("Failed to read the ConsoleControl event: {:?}", e);
         }
     }
 }
@@ -125,7 +101,6 @@ impl Subscriber for Console {
 
         let activate_evt = self.activate_evt.as_raw_fd();
         let sigwinch_evt = self.sigwinch_evt.as_raw_fd();
-        let input = self.input.as_raw_fd();
 
         if self.is_activated() {
             let mut raise_irq = false;
@@ -138,12 +113,13 @@ impl Subscriber for Console {
                 raise_irq |= self.process_control_rx();
             } else if source == control_rxq {
                 raise_irq |= self.read_queue_event(CONTROL_RXQ_INDEX, event)
-            } else if source == rxq {
-                raise_irq |= self.read_queue_event(RXQ_INDEX, event) && self.process_rx()
+            }
+            else if source == rxq {
+                self.read_queue_event(RXQ_INDEX, event);
+                self.port.notify_rx();
             } else if source == txq {
-                raise_irq |= self.read_queue_event(TXQ_INDEX, event) && self.process_tx()
-            } else if source == input {
-                self.handle_input(event)
+                self.read_queue_event(TXQ_INDEX, event);
+                self.port.notify_tx()
             } else if source == activate_evt {
                 self.handle_activate_event(event_manager);
             } else if source == sigwinch_evt {
@@ -152,7 +128,7 @@ impl Subscriber for Console {
                 log::warn!("Unexpected console event received: {:?}", source)
             }
             if raise_irq {
-                self.signal_used_queue().unwrap_or_default();
+                self.irq.signal_used_queue("event_handler");
             }
         } else {
             warn!(
@@ -163,19 +139,10 @@ impl Subscriber for Console {
     }
 
     fn interest_list(&self) -> Vec<EpollEvent> {
-        if self.interactive {
-            vec![
-                EpollEvent::new(EventSet::IN, self.activate_evt.as_raw_fd() as u64),
-                EpollEvent::new(EventSet::IN, self.sigwinch_evt.as_raw_fd() as u64),
-                EpollEvent::new(EventSet::IN, self.control.queue_evt().as_raw_fd() as u64),
-                EpollEvent::new(EventSet::IN, self.input.as_raw_fd() as u64),
-            ]
-        } else {
-            vec![
-                EpollEvent::new(EventSet::IN, self.activate_evt.as_raw_fd() as u64),
-                EpollEvent::new(EventSet::IN, self.sigwinch_evt.as_raw_fd() as u64),
-                EpollEvent::new(EventSet::IN, self.control.queue_evt().as_raw_fd() as u64),
-            ]
-        }
+        vec![
+            EpollEvent::new(EventSet::IN, self.activate_evt.as_raw_fd() as u64),
+            EpollEvent::new(EventSet::IN, self.sigwinch_evt.as_raw_fd() as u64),
+            EpollEvent::new(EventSet::IN, self.control.queue_evt().as_raw_fd() as u64),
+        ]
     }
 }
