@@ -2,6 +2,7 @@ use std::cmp;
 use std::collections::VecDeque;
 use std::io;
 use std::io::Write;
+use std::mem::{size_of, size_of_val};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::result;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -16,14 +17,21 @@ use super::super::{
     ActivateError, ActivateResult, ConsoleError, DeviceState, Queue as VirtQueue, VirtioDevice,
     VIRTIO_MMIO_INT_CONFIG, VIRTIO_MMIO_INT_VRING,
 };
-use super::{defs, defs::uapi};
+use super::{defs, defs::control_event, defs::uapi};
 use crate::legacy::Gic;
+use crate::virtio::console::console_control::{ConsoleControlSender, VirtioConsoleControl};
+use crate::virtio::console::defs::NUM_PORTS;
 use crate::Error as DeviceError;
 
 pub(crate) const RXQ_INDEX: usize = 0;
 pub(crate) const TXQ_INDEX: usize = 1;
-pub(crate) const AVAIL_FEATURES: u64 =
-    1 << uapi::VIRTIO_CONSOLE_F_SIZE as u64 | 1 << uapi::VIRTIO_F_VERSION_1 as u64;
+
+pub(crate) const CONTROL_RXQ_INDEX: usize = 2;
+pub(crate) const CONTROL_TXQ_INDEX: usize = 3;
+
+pub(crate) const AVAIL_FEATURES: u64 = 1 << uapi::VIRTIO_CONSOLE_F_SIZE as u64
+    | 1 << uapi::VIRTIO_CONSOLE_F_MULTIPORT as u64
+    | 1 << uapi::VIRTIO_F_VERSION_1 as u64;
 
 pub(crate) fn get_win_size() -> (u16, u16) {
     #[repr(C)]
@@ -60,7 +68,7 @@ impl VirtioConsoleConfig {
         VirtioConsoleConfig {
             cols,
             rows,
-            max_nr_ports: 1u32,
+            max_nr_ports: NUM_PORTS as u32,
             emerg_wr: 0u32,
         }
     }
@@ -71,9 +79,16 @@ impl VirtioConsoleConfig {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum PortStatus {
+    NotReady,
+    Ready { opened: bool },
+}
+
 pub struct Console {
     pub(crate) queues: Vec<VirtQueue>,
     pub(crate) queue_events: Vec<EventFd>,
+    port_statuses: Vec<PortStatus>,
     pub(crate) avail_features: u64,
     pub(crate) acked_features: u64,
     pub(crate) interrupt_status: Arc<AtomicUsize>,
@@ -109,6 +124,7 @@ impl Console {
         Ok(Console {
             queues,
             queue_events,
+            port_statuses: vec![PortStatus::NotReady; NUM_PORTS],
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
             interrupt_status: Arc::new(AtomicUsize::new(0)),
@@ -188,6 +204,79 @@ impl Console {
         debug!("update_console_size: {} {}", cols, rows);
         self.config.update_console_size(cols, rows);
         self.signal_config_update().unwrap();
+    }
+
+    pub(crate) fn process_control_tx(&mut self) -> bool {
+        let mem = match self.device_state {
+            DeviceState::Activated(ref mem) => mem,
+            // This should never happen, it's been already validated in the event handler.
+            DeviceState::Inactive => unreachable!(),
+        };
+
+        let (rx_queue, tx_queue) =
+            borrow_mut_two_indices(&mut self.queues, CONTROL_RXQ_INDEX, CONTROL_TXQ_INDEX);
+        let mut control = ConsoleControlSender::new(rx_queue);
+        let mut send_irq = false;
+
+        while let Some(head) = tx_queue.pop(mem) {
+            send_irq = true;
+
+            let cmd: VirtioConsoleControl = match mem.read_obj(head.addr) {
+                Ok(cmd) => cmd,
+                Err(e) => {
+                    log::error!(
+                    "Failed to read VirtioConsoleControl struct: {e:?}, struct len = {len}, head.len = {head_len}",
+                    len = size_of::<VirtioConsoleControl>(),
+                    head_len = head.len,
+                );
+                    continue;
+                }
+            };
+            tx_queue.add_used(mem, head.index, size_of_val(&cmd) as u32);
+
+            log::trace!("VirtioConsoleControl cmd: {cmd:?}");
+            match cmd.event {
+                control_event::VIRTIO_CONSOLE_DEVICE_READY => {
+                    log::debug!(
+                        "Device is ready: initialization {}",
+                        if cmd.value == 1 { "ok" } else { "failed" }
+                    );
+                    control.send_port_add(mem, 0);
+                }
+                control_event::VIRTIO_CONSOLE_PORT_READY => {
+                    if cmd.value != 1 {
+                        log::error!("Port initialization failed: {:?}", cmd);
+                        continue;
+                    }
+                    self.port_statuses[cmd.id as usize] = PortStatus::Ready { opened: false };
+                    if cmd.id == 0 {
+                        control.send_mark_console_port(mem, 0);
+                    }
+                }
+                control_event::VIRTIO_CONSOLE_PORT_OPEN => {
+                    let opened = match cmd.value {
+                        0 => false,
+                        1 => true,
+                        _ => {
+                            log::error!(
+                                "Invalid value ({}) for VIRTIO_CONSOLE_PORT_OPEN on port {}",
+                                cmd.value,
+                                cmd.id
+                            );
+                            continue;
+                        }
+                    };
+
+                    if self.port_statuses[cmd.id as usize] == PortStatus::NotReady {
+                        log::warn!("Driver signaled opened={} to port {} that was not ready, assuming the port is ready.",opened, cmd.id)
+                    }
+                    self.port_statuses[cmd.id as usize] = PortStatus::Ready { opened };
+                }
+                _ => log::warn!("Unknown console control event {:x}", cmd.event),
+            }
+        }
+
+        send_irq
     }
 
     pub(crate) fn process_rx(&mut self) -> bool {
@@ -344,4 +433,10 @@ impl VirtioDevice for Console {
             DeviceState::Activated(_) => true,
         }
     }
+}
+
+fn borrow_mut_two_indices<T>(slice: &mut [T], idx1: usize, idx2: usize) -> (&mut T, &mut T) {
+    assert!(idx2 > idx1);
+    let (slice1, slice2) = slice.split_at_mut(idx2);
+    (&mut slice1[idx1], &mut slice2[0])
 }
