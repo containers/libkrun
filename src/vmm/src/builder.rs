@@ -48,6 +48,8 @@ use arch::ArchMemoryInfo;
 use arch::InitrdConfig;
 #[cfg(feature = "tee")]
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
+use libc::STDIN_FILENO;
+use nix::unistd::isatty;
 use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
 use utils::time::TimestampUs;
@@ -1039,14 +1041,27 @@ fn attach_console_devices(
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
-    if let Err(e) = term_set_raw_mode() {
+    let stdin_is_terminal = isatty(STDIN_FILENO).unwrap_or(false);
+
+    if let Err(e) = term_set_raw_mode(!stdin_is_terminal) {
         log::error!("Failed to set terminal to raw mode: {e}")
     }
 
-    let ports = vec![PortDescription::Console {
-        input: PortInput::stdin().unwrap(),
+    let mut ports = vec![PortDescription::Console {
+        input: if stdin_is_terminal {
+            Some(PortInput::stdin().unwrap())
+        } else {
+            None
+        },
         output: PortOutput::stdout().unwrap(),
     }];
+
+    if !stdin_is_terminal {
+        ports.push(PortDescription::InputPipe {
+            name: "krun-stdin".into(),
+            input: PortInput::stdin().unwrap(),
+        })
+    }
 
     let console = Arc::new(Mutex::new(devices::virtio::Console::new(ports).unwrap()));
 

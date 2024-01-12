@@ -113,7 +113,7 @@ impl Subscriber for Console {
                 .ports
                 .iter_mut()
                 .enumerate()
-                .find(|(_port_id, port)| port.input_rawfd() == source)
+                .find(|(_port_id, port)| port.input_rawfd() == Some(source))
             {
                 let queue_index = port_id_to_queue_idx(QueueDirection::Rx, port_id);
                 raise_irq |=
@@ -160,7 +160,8 @@ impl Subscriber for Console {
         let port_events = self
             .ports
             .iter()
-            .map(|port| EpollEvent::new(EventSet::IN, port.input_rawfd() as u64));
+            .filter_map(|port| port.input_rawfd())
+            .map(|fd| EpollEvent::new(EventSet::IN, fd as u64));
 
         static_events.into_iter().chain(port_events).collect()
     }

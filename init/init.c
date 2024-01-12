@@ -756,6 +756,65 @@ void clock_worker()
 }
 #endif
 
+int reopen_fd(int fd, char *path, int flags)
+{
+    int newfd = open(path,flags);
+    if (newfd < 0) {
+        printf("Failed to open '%s': %s\n", path,strerror(errno));
+        return -1;
+    }
+
+    close(fd);
+    if (dup2(newfd, fd) < 0) {
+        perror("dup2");
+        close(newfd);
+        return -1;
+    }
+    close(newfd);
+    return 0;
+}
+
+int setup_redirects()
+{
+    DIR *ports_dir = opendir("/sys/class/virtio-ports");
+    if (ports_dir == NULL) {
+        printf("Unable to open ports directory!\n");
+        return -4;
+    }
+
+    char path[2048];
+    char name_buf[1024];
+
+    struct dirent *entry = NULL;
+    while ((entry=readdir(ports_dir))) {
+        char* port_identifier = entry->d_name;
+        int result_len = snprintf(path, sizeof(path), "/sys/class/virtio-ports/%s/name", port_identifier);
+
+        // result was truncated
+        if (result_len > sizeof(name_buf) - 1) {
+            printf("Path buffer too small");
+            return -1;
+        }
+
+        FILE *port_name_file = fopen(path, "r");
+        if (port_name_file == NULL) {
+            continue;
+        }
+
+        char *port_name = fgets(name_buf, sizeof(name_buf), port_name_file);
+        fclose(port_name_file);
+
+        if (port_name != NULL && strcmp(port_name, "krun-stdin\n") == 0) {
+            // if previous snprintf didn't fail, this one cannot fail either
+            snprintf(path, sizeof(path), "/dev/%s", port_identifier);
+            reopen_fd(STDIN_FILENO, path, O_RDONLY);
+        }
+    }
+
+    closedir(ports_dir);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
 	struct ifreq ifr;
@@ -847,6 +906,10 @@ int main(int argc, char **argv)
 		clock_worker();
 	}
 #endif
+
+    if (setup_redirects() < 0) {
+       exit(-4);
+    }
 
 	if (execvp(exec_argv[0], exec_argv) < 0) {
 		printf("Couldn't execute '%s' inside the vm: %s\n", exec_argv[0], strerror(errno));

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cmp;
 use std::io::Write;
 use std::mem::{size_of, size_of_val};
@@ -96,8 +97,12 @@ pub struct Console {
 
 pub enum PortDescription {
     Console {
-        input: PortInput,
+        input: Option<PortInput>,
         output: PortOutput,
+    },
+    InputPipe {
+        name: Cow<'static, str>,
+        input: PortInput,
     },
 }
 
@@ -245,6 +250,14 @@ impl Console {
                     self.ports[cmd.id as usize].status = PortStatus::Ready { opened: false };
                     if self.ports[cmd.id as usize].represents_console {
                         control.send_mark_console_port(mem, cmd.id);
+                    } else {
+                        // lets start with all ports open for now
+                        control.send_port_open(mem, cmd.id, true)
+                    }
+
+                    let name = &self.ports[cmd.id as usize].name;
+                    if !name.is_empty() {
+                        control.send_port_name(mem, cmd.id, name)
                     }
                 }
                 control_event::VIRTIO_CONSOLE_PORT_OPEN => {
