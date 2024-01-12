@@ -22,7 +22,9 @@ use crate::virtio::console::console_control::{
 };
 use crate::virtio::console::defs::QUEUE_SIZE;
 use crate::virtio::console::port::{Port, PortStatus};
-use crate::virtio::console::port_queue_mapping::num_queues;
+use crate::virtio::console::port_queue_mapping::{
+    num_queues, port_id_to_queue_idx, QueueDirection,
+};
 use crate::virtio::{PortInput, PortOutput};
 use crate::Error as DeviceError;
 
@@ -153,6 +155,59 @@ impl Console {
         })
     }
 
+    pub fn handle_input(&mut self, port_id: usize, has_input: bool, has_eof: bool) -> bool {
+        let mut raise_irq = false;
+
+        match self.ports[port_id].status {
+            PortStatus::NotReady => {
+                log::trace!(
+                    "handle_input on port {port_id} but port is not ready: has_input={has_input} has_eof={has_eof}"
+                );
+                if has_input {
+                    self.ports[port_id].pending_input = true;
+                }
+                if has_eof {
+                    self.ports[port_id].pending_eof = true;
+                }
+            }
+            PortStatus::Ready { opened: false } => {
+                log::trace!(
+                    "handle_input on port {port_id} but port is closed: has_input={has_input} has_eof={has_eof}",
+                );
+            }
+            PortStatus::Ready { opened: true } => {
+                log::trace!("handle_input on opened port {port_id}");
+                if has_input {
+                    raise_irq |= self.ports[port_id].process_rx(
+                        get_mem!(self),
+                        &mut self.queues[port_id_to_queue_idx(QueueDirection::Rx, port_id)],
+                    );
+                }
+                if has_eof {
+                    // We need to make sure not not close the port until input is fully processed
+                    if self.ports[port_id].pending_input {
+                        self.ports[port_id].pending_eof = true
+                    } else {
+                        self.ports[port_id].status = PortStatus::Ready { opened: false };
+                        ConsoleControlSender::new(&mut self.queues[CONTROL_RXQ_INDEX])
+                            .send_port_open(get_mem!(self), port_id as u32, false);
+                        raise_irq |= true;
+                    }
+                }
+            }
+        }
+
+        raise_irq
+    }
+
+    pub fn resume_rx(&mut self, port_id: usize) -> bool {
+        self.handle_input(
+            port_id,
+            self.ports[port_id].pending_input,
+            self.ports[port_id].pending_eof,
+        )
+    }
+
     pub fn id(&self) -> &str {
         defs::CONSOLE_DEV_ID
     }
@@ -214,6 +269,8 @@ impl Console {
             borrow_mut_two_indices(&mut self.queues, CONTROL_RXQ_INDEX, CONTROL_TXQ_INDEX);
         let mut control = ConsoleControlSender::new(rx_queue);
         let mut send_irq = false;
+
+        let mut ports_to_resume: Vec<u32> = Vec::new();
 
         while let Some(head) = tx_queue.pop(mem) {
             send_irq = true;
@@ -278,9 +335,17 @@ impl Console {
                         log::warn!("Driver signaled opened={} to port {} that was not ready, assuming the port is ready.",opened, cmd.id)
                     }
                     self.ports[cmd.id as usize].status = PortStatus::Ready { opened };
+                    // There could be pending input on the given port, so lets try to process it
+                    if opened {
+                        ports_to_resume.push(cmd.id);
+                    }
                 }
                 _ => log::warn!("Unknown console control event {:x}", cmd.event),
             }
+        }
+
+        for port_id in ports_to_resume {
+            send_irq |= self.resume_rx(port_id as usize);
         }
 
         send_irq

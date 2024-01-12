@@ -25,6 +25,8 @@ pub(crate) struct Port {
     pub(crate) name: Cow<'static, str>,
     pub(crate) status: PortStatus,
     pub(crate) input: Option<PortInput>,
+    pub(crate) pending_input: bool,
+    pub(crate) pending_eof: bool,
     pub(crate) output: Option<PortOutput>,
     pub(crate) represents_console: bool,
 }
@@ -37,12 +39,16 @@ impl Port {
                 represents_console: true,
                 status: PortStatus::NotReady,
                 input,
+                pending_input: false,
+                pending_eof: false,
                 output: Some(output),
             },
             PortDescription::InputPipe { name, input } => Self {
                 name,
                 status: PortStatus::NotReady,
                 input: Some(input),
+                pending_input: false,
+                pending_eof: false,
                 output: None,
                 represents_console: false,
             },
@@ -66,17 +72,23 @@ impl Port {
                 let result = input.read_volatile(&mut target);
                 log::trace!("}} read");
                 match result {
-                    Ok(n) => Ok(n),
+                    Ok(n) => {
+                        if n == 0 {
+                            self.pending_input = false;
+                        }
+                        Ok(n)
+                    }
                     // We can't return an error otherwise we would not know how many bytes were processed before WouldBlock
                     Err(VolatileMemoryError::IOError(e))
                         if e.kind() == io::ErrorKind::WouldBlock =>
                     {
+                        self.pending_input = false;
                         Ok(0)
                     }
                     Err(e) => Err(e.into()),
                 }
             });
-
+            raise_irq = true;
             match result {
                 Ok(0) => {
                     log::trace!("Rx EOF/WouldBlock");
@@ -86,7 +98,6 @@ impl Port {
                 Ok(len) => {
                     log::trace!("Rx {len} bytes");
                     queue.add_used(mem, head.index, len as u32);
-                    raise_irq = true;
                 }
                 Err(e) => {
                     log::error!("Failed to read: {e:?}")

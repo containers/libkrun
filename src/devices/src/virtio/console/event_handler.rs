@@ -2,9 +2,7 @@ use std::os::unix::io::AsRawFd;
 
 use crate::get_mem;
 use crate::virtio::console::device::{CONTROL_RXQ_INDEX, CONTROL_TXQ_INDEX};
-use crate::virtio::console::port_queue_mapping::{
-    port_id_to_queue_idx, queue_idx_to_port_id, QueueDirection,
-};
+use crate::virtio::console::port_queue_mapping::{queue_idx_to_port_id, QueueDirection};
 use polly::event_manager::{EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
 
@@ -33,9 +31,7 @@ impl Console {
     fn handle_port_queue_event(&mut self, queue_index: usize) -> bool {
         let (direction, port_id) = queue_idx_to_port_id(queue_index);
         match direction {
-            QueueDirection::Rx => {
-                self.ports[port_id].process_rx(get_mem!(self), &mut self.queues[queue_index])
-            }
+            QueueDirection::Rx => self.resume_rx(port_id),
             QueueDirection::Tx => {
                 self.ports[port_id].process_tx(get_mem!(self), &mut self.queues[queue_index])
             }
@@ -105,20 +101,23 @@ impl Subscriber for Console {
         let activate_evt = self.activate_evt.as_raw_fd();
         let sigwinch_evt = self.sigwinch_evt.as_raw_fd();
 
-        if self.is_activated() {
-            let mut raise_irq = false;
+        let port_id_of_input = self
+            .ports
+            .iter_mut()
+            .enumerate()
+            .find(|(_port_id, port)| port.input_rawfd() == Some(source))
+            .map(|(port_id, _)| port_id);
 
-            // Input on port coming from the host
-            if let Some((port_id, _)) = self
-                .ports
-                .iter_mut()
-                .enumerate()
-                .find(|(_port_id, port)| port.input_rawfd() == Some(source))
-            {
-                let queue_index = port_id_to_queue_idx(QueueDirection::Rx, port_id);
-                raise_irq |=
-                    self.ports[port_id].process_rx(get_mem!(self), &mut self.queues[queue_index]);
-            } else if source == control_txq {
+        let mut raise_irq = false;
+
+        if let Some(port_id) = port_id_of_input {
+            let has_input = event.event_set().contains(EventSet::IN);
+            let has_eof = event
+                .event_set()
+                .intersects(EventSet::HANG_UP | EventSet::READ_HANG_UP);
+            raise_irq |= self.handle_input(port_id, has_input, has_eof)
+        } else if self.is_activated() {
+            if source == control_txq {
                 raise_irq |=
                     self.read_queue_event(CONTROL_TXQ_INDEX, event) && self.process_control_tx()
             } else if source == control_rxq {
@@ -139,15 +138,15 @@ impl Subscriber for Console {
             } else {
                 log::warn!("Unexpected console event received: {:?}", source)
             }
-
-            if raise_irq {
-                self.signal_used_queue().unwrap_or_default();
-            }
         } else {
             warn!(
                 "console: The device is not yet activated. Spurious event received: {:?}",
                 source
             );
+        }
+
+        if raise_irq {
+            self.signal_used_queue().unwrap_or_default();
         }
     }
 
@@ -161,7 +160,7 @@ impl Subscriber for Console {
             .ports
             .iter()
             .filter_map(|port| port.input_rawfd())
-            .map(|fd| EpollEvent::new(EventSet::IN, fd as u64));
+            .map(|fd| EpollEvent::new(EventSet::IN | EventSet::EDGE_TRIGGERED, fd as u64));
 
         static_events.into_iter().chain(port_events).collect()
     }
