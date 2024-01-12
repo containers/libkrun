@@ -2,10 +2,13 @@ use std::os::unix::io::AsRawFd;
 
 use crate::get_mem;
 use crate::virtio::console::device::{CONTROL_RXQ_INDEX, CONTROL_TXQ_INDEX};
+use crate::virtio::console::port_queue_mapping::{
+    port_id_to_queue_idx, queue_idx_to_port_id, QueueDirection,
+};
 use polly::event_manager::{EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
 
-use super::device::{get_win_size, Console, RXQ_INDEX, TXQ_INDEX};
+use super::device::{get_win_size, Console};
 use crate::virtio::device::VirtioDevice;
 use crate::virtio::DeviceState;
 
@@ -25,6 +28,18 @@ impl Console {
         }
 
         true
+    }
+
+    fn handle_port_queue_event(&mut self, queue_index: usize) -> bool {
+        let (direction, port_id) = queue_idx_to_port_id(queue_index);
+        match direction {
+            QueueDirection::Rx => {
+                self.ports[port_id].process_rx(get_mem!(self), &mut self.queues[queue_index])
+            }
+            QueueDirection::Tx => {
+                self.ports[port_id].process_tx(get_mem!(self), &mut self.queues[queue_index])
+            }
+        }
     }
 
     fn handle_activate_event(&self, event_manager: &mut EventManager) {
@@ -83,46 +98,48 @@ impl Console {
 impl Subscriber for Console {
     fn process(&mut self, event: &EpollEvent, event_manager: &mut EventManager) {
         let source = event.fd();
-        let rxq = self.queue_events[RXQ_INDEX].as_raw_fd();
-        let txq = self.queue_events[TXQ_INDEX].as_raw_fd();
 
         let control_rxq = self.queue_events[CONTROL_RXQ_INDEX].as_raw_fd();
         let control_txq = self.queue_events[CONTROL_TXQ_INDEX].as_raw_fd();
 
         let activate_evt = self.activate_evt.as_raw_fd();
         let sigwinch_evt = self.sigwinch_evt.as_raw_fd();
-        let input = self.ports[0].input_rawfd();
 
         if self.is_activated() {
             let mut raise_irq = false;
-            match source {
-                _ if source == rxq => {
-                    raise_irq |= self.read_queue_event(RXQ_INDEX, event)
-                        && self.ports[0].process_rx(get_mem!(self), &mut self.queues[RXQ_INDEX])
-                }
-                _ if source == txq => {
-                    raise_irq |= self.read_queue_event(TXQ_INDEX, event)
-                        && self.ports[0].process_tx(get_mem!(self), &mut self.queues[TXQ_INDEX])
-                }
-                _ if source == control_txq => {
-                    raise_irq |=
-                        self.read_queue_event(CONTROL_TXQ_INDEX, event) && self.process_control_tx()
-                }
-                _ if source == control_rxq => {
-                    raise_irq |= self.read_queue_event(CONTROL_RXQ_INDEX, event)
-                }
-                _ if source == input => {
-                    raise_irq |=
-                        self.ports[0].process_rx(get_mem!(self), &mut self.queues[RXQ_INDEX])
-                }
-                _ if source == activate_evt => {
-                    self.handle_activate_event(event_manager);
-                }
-                _ if source == sigwinch_evt => {
-                    self.handle_sigwinch_event(event);
-                }
-                _ => warn!("Unexpected console event received: {:?}", source),
+
+            // Input on port coming from the host
+            if let Some((port_id, _)) = self
+                .ports
+                .iter_mut()
+                .enumerate()
+                .find(|(_port_id, port)| port.input_rawfd() == source)
+            {
+                let queue_index = port_id_to_queue_idx(QueueDirection::Rx, port_id);
+                raise_irq |=
+                    self.ports[port_id].process_rx(get_mem!(self), &mut self.queues[queue_index]);
+            } else if source == control_txq {
+                raise_irq |=
+                    self.read_queue_event(CONTROL_TXQ_INDEX, event) && self.process_control_tx()
+            } else if source == control_rxq {
+                raise_irq |= self.read_queue_event(CONTROL_RXQ_INDEX, event)
             }
+            // Guest signaled input/output on port
+            else if let Some(queue_index) = self
+                .queue_events
+                .iter()
+                .position(|fd| fd.as_raw_fd() == source)
+            {
+                raise_irq |= self.read_queue_event(queue_index, event)
+                    && self.handle_port_queue_event(queue_index)
+            } else if source == activate_evt {
+                self.handle_activate_event(event_manager);
+            } else if source == sigwinch_evt {
+                self.handle_sigwinch_event(event);
+            } else {
+                log::warn!("Unexpected console event received: {:?}", source)
+            }
+
             if raise_irq {
                 self.signal_used_queue().unwrap_or_default();
             }
@@ -135,10 +152,16 @@ impl Subscriber for Console {
     }
 
     fn interest_list(&self) -> Vec<EpollEvent> {
-        vec![
+        let static_events = [
             EpollEvent::new(EventSet::IN, self.activate_evt.as_raw_fd() as u64),
             EpollEvent::new(EventSet::IN, self.sigwinch_evt.as_raw_fd() as u64),
-            EpollEvent::new(EventSet::IN, self.ports[0].input_rawfd() as u64),
-        ]
+        ];
+
+        let port_events = self
+            .ports
+            .iter()
+            .map(|port| EpollEvent::new(EventSet::IN, port.input_rawfd() as u64));
+
+        static_events.into_iter().chain(port_events).collect()
     }
 }

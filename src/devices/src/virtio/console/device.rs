@@ -19,13 +19,11 @@ use crate::legacy::Gic;
 use crate::virtio::console::console_control::{
     ConsoleControlSender, VirtioConsoleControl, VirtioConsoleResize,
 };
-use crate::virtio::console::defs::NUM_PORTS;
+use crate::virtio::console::defs::QUEUE_SIZE;
 use crate::virtio::console::port::{Port, PortStatus};
+use crate::virtio::console::port_queue_mapping::num_queues;
 use crate::virtio::{PortInput, PortOutput};
 use crate::Error as DeviceError;
-
-pub(crate) const RXQ_INDEX: usize = 0;
-pub(crate) const TXQ_INDEX: usize = 1;
 
 pub(crate) const CONTROL_RXQ_INDEX: usize = 2;
 pub(crate) const CONTROL_TXQ_INDEX: usize = 3;
@@ -65,11 +63,11 @@ pub struct VirtioConsoleConfig {
 unsafe impl ByteValued for VirtioConsoleConfig {}
 
 impl VirtioConsoleConfig {
-    pub fn new(cols: u16, rows: u16) -> Self {
+    pub fn new(cols: u16, rows: u16, max_nr_ports: u32) -> Self {
         VirtioConsoleConfig {
             cols,
             rows,
-            max_nr_ports: NUM_PORTS as u32,
+            max_nr_ports,
             emerg_wr: 0u32,
         }
     }
@@ -115,11 +113,12 @@ macro_rules! get_mem {
 }
 
 impl Console {
-    pub fn new(port_description: PortDescription) -> super::Result<Console> {
-        let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
-            .iter()
-            .map(|&max_size| VirtQueue::new(max_size))
-            .collect();
+    pub fn new(port_descriptions: Vec<PortDescription>) -> super::Result<Console> {
+        let ports: Vec<Port> = port_descriptions.into_iter().map(Port::new).collect();
+
+        let num_queues = num_queues(ports.len());
+        let queues = vec![VirtQueue::new(QUEUE_SIZE); num_queues];
+
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
             queue_events
@@ -127,12 +126,12 @@ impl Console {
         }
 
         let (cols, rows) = get_win_size();
-        let config = VirtioConsoleConfig::new(cols, rows);
+        let config = VirtioConsoleConfig::new(cols, rows, ports.len() as u32);
 
         Ok(Console {
             queues,
             queue_events,
-            ports: vec![Port::new(port_description)],
+            ports,
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
             interrupt_status: Arc::new(AtomicUsize::new(0)),
@@ -234,7 +233,9 @@ impl Console {
                         "Device is ready: initialization {}",
                         if cmd.value == 1 { "ok" } else { "failed" }
                     );
-                    control.send_port_add(mem, 0);
+                    for port_id in 0..self.ports.len() {
+                        control.send_port_add(mem, port_id as u32);
+                    }
                 }
                 control_event::VIRTIO_CONSOLE_PORT_READY => {
                     if cmd.value != 1 {
@@ -242,8 +243,8 @@ impl Console {
                         continue;
                     }
                     self.ports[cmd.id as usize].status = PortStatus::Ready { opened: false };
-                    if cmd.id == 0 {
-                        control.send_mark_console_port(mem, 0);
+                    if self.ports[cmd.id as usize].represents_console {
+                        control.send_mark_console_port(mem, cmd.id);
                     }
                 }
                 control_event::VIRTIO_CONSOLE_PORT_OPEN => {
@@ -337,15 +338,6 @@ impl VirtioDevice for Console {
     }
 
     fn activate(&mut self, mem: GuestMemoryMmap) -> ActivateResult {
-        if self.queues.len() != defs::NUM_QUEUES {
-            error!(
-                "Cannot perform activate. Expected {} queue(s), got {}",
-                defs::NUM_QUEUES,
-                self.queues.len()
-            );
-            return Err(ActivateError::BadActivate);
-        }
-
         if self.activate_evt.write(1).is_err() {
             error!("Cannot write to activate_evt",);
             return Err(ActivateError::BadActivate);

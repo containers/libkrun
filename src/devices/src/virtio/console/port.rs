@@ -23,12 +23,14 @@ pub(crate) struct Port {
     pub(crate) status: PortStatus,
     pub(crate) input: PortInput,
     pub(crate) output: PortOutput,
+    pub(crate) represents_console: bool,
 }
 
 impl Port {
     pub(crate) fn new(description: PortDescription) -> Self {
         match description {
             PortDescription::Console { input, output } => Self {
+                represents_console: true,
                 status: PortStatus::NotReady,
                 input,
                 output,

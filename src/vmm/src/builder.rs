@@ -1043,13 +1043,12 @@ fn attach_console_devices(
         log::error!("Failed to set terminal to raw mode: {e}")
     }
 
-    let console = Arc::new(Mutex::new(
-        devices::virtio::Console::new(PortDescription::Console {
-            input: PortInput::stdin().unwrap(),
-            output: PortOutput::stdout().unwrap(),
-        })
-        .unwrap(),
-    ));
+    let ports = vec![PortDescription::Console {
+        input: PortInput::stdin().unwrap(),
+        output: PortOutput::stdout().unwrap(),
+    }];
+
+    let console = Arc::new(Mutex::new(devices::virtio::Console::new(ports).unwrap()));
 
     if let Some(intc) = intc {
         console.lock().unwrap().set_intc(intc);
