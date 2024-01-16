@@ -75,7 +75,9 @@ impl WriteVolatile for PortOutput {
 
 impl PortOutput {
     pub fn stdout() -> Result<Self, nix::Error> {
-        dup_raw_fd_into_owned(STDOUT_FILENO).map(PortOutput)
+        let fd = dup_raw_fd_into_owned(STDOUT_FILENO)?;
+        make_non_blocking(&fd)?;
+        Ok(PortOutput(fd))
     }
 }
 

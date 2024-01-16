@@ -188,9 +188,7 @@ impl Console {
                     if self.ports[port_id].pending_input {
                         self.ports[port_id].pending_eof = true
                     } else {
-                        self.ports[port_id].status = PortStatus::Ready { opened: false };
-                        ConsoleControlSender::new(&mut self.queues[CONTROL_RXQ_INDEX])
-                            .send_port_open(get_mem!(self), port_id as u32, false);
+                        self.close_port(port_id);
                         raise_irq |= true;
                     }
                 }
@@ -206,6 +204,48 @@ impl Console {
             self.ports[port_id].pending_input,
             self.ports[port_id].pending_eof,
         )
+    }
+
+    fn close_port(&mut self, port_id: usize) {
+        self.ports[port_id].status = PortStatus::Ready { opened: false };
+        ConsoleControlSender::new(&mut self.queues[CONTROL_RXQ_INDEX]).send_port_open(
+            get_mem!(self),
+            port_id as u32,
+            false,
+        );
+        self.ports[port_id].input = None;
+        self.ports[port_id].output = None;
+    }
+
+    pub fn handle_output(&mut self, port_id: usize, has_eof: bool) -> bool {
+        let mut raise_irq = false;
+        match self.ports[port_id].status {
+            PortStatus::Ready { opened: true } => {
+                raise_irq |= self.ports[port_id].process_tx(
+                    get_mem!(self),
+                    &mut self.queues[port_id_to_queue_idx(QueueDirection::Tx, port_id)],
+                );
+
+                if has_eof {
+                    // We only close the port if the output is written
+                    if self.ports[port_id].has_pending_output() {
+                        self.ports[port_id].pending_eof = true;
+                    } else {
+                        self.close_port(port_id);
+                        raise_irq |= true;
+                    }
+                }
+            }
+            PortStatus::NotReady | PortStatus::Ready { opened: false } => {
+                log::trace!("Port {port_id} is not ready to accept input")
+            }
+        }
+
+        raise_irq
+    }
+
+    pub fn resume_tx(&mut self, port_id: usize) -> bool {
+        self.handle_output(port_id, self.ports[port_id].pending_eof)
     }
 
     pub fn id(&self) -> &str {

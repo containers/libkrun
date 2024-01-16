@@ -10,14 +10,20 @@ use crate::virtio::console::device::PortDescription;
 use crate::virtio::console::port_io::{PortInput, PortOutput};
 use crate::virtio::Queue;
 use vm_memory::{
-    GuestMemory, GuestMemoryMmap, GuestMemoryRegion, ReadVolatile, VolatileMemoryError,
-    WriteVolatile,
+    Address, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion, ReadVolatile,
+    VolatileMemoryError, WriteVolatile,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum PortStatus {
     NotReady,
     Ready { opened: bool },
+}
+
+struct UnfinishedDescriptorChain {
+    addr: GuestAddress,
+    len: u32,
+    index: u16,
 }
 
 pub(crate) struct Port {
@@ -28,6 +34,7 @@ pub(crate) struct Port {
     pub(crate) pending_input: bool,
     pub(crate) pending_eof: bool,
     pub(crate) output: Option<PortOutput>,
+    unfinished_output: Option<UnfinishedDescriptorChain>,
     pub(crate) represents_console: bool,
 }
 
@@ -42,6 +49,7 @@ impl Port {
                 pending_input: false,
                 pending_eof: false,
                 output: Some(output),
+                unfinished_output: None,
             },
             PortDescription::InputPipe { name, input } => Self {
                 name,
@@ -51,12 +59,21 @@ impl Port {
                 pending_eof: false,
                 output: None,
                 represents_console: false,
+                unfinished_output: None,
             },
         }
     }
 
     pub fn input_rawfd(&self) -> Option<RawFd> {
         self.input.as_ref().map(|inp| inp.as_raw_fd())
+    }
+
+    pub fn output_rawfd(&self) -> Option<RawFd> {
+        self.output.as_ref().map(|out| out.as_raw_fd())
+    }
+
+    pub fn has_pending_output(&self) -> bool {
+        self.unfinished_output.is_some()
     }
 
     pub fn process_rx(&mut self, mem: &GuestMemoryMmap, queue: &mut Queue) -> bool {
@@ -115,14 +132,50 @@ impl Port {
             return raise_irq;
         };
 
-        log::trace!("process_tx");
-        while let Some(head) = queue.pop(mem) {
-            let src = mem.get_slice(head.addr, head.len as usize).unwrap();
-            let result = output.write_volatile(&src);
+        loop {
+            let (addr, len, index) = if let Some(out) = &self.unfinished_output {
+                (out.addr, out.len, out.index)
+            } else if let Some(head) = queue.pop(mem) {
+                (head.addr, head.len, head.index)
+            } else {
+                break;
+            };
+
+            let result = mem.try_access(len as usize, addr, |_, len, addr, region| {
+                let src = region.get_slice(addr, len).unwrap();
+                let result = output.write_volatile(&src);
+
+                match result {
+                    // try_access seem to handle partial write for us (we will be invoked again with an offset)
+                    Ok(n) => Ok(n),
+                    // We can't return an error otherwise we would not know how many bytes were processed before WouldBlock
+                    Err(VolatileMemoryError::IOError(e))
+                        if e.kind() == io::ErrorKind::WouldBlock =>
+                    {
+                        Ok(0)
+                    }
+                    Err(e) => Err(e.into()),
+                }
+            });
+
             match result {
+                Ok(0) => {
+                    log::trace!("Tx EOF/WouldBlock");
+                    queue.undo_pop();
+                    break;
+                }
                 Ok(n) => {
-                    //TODO: ablity to finish writing the rest
-                    queue.add_used(mem, head.index, n as u32)
+                    if n == len as usize {
+                        self.unfinished_output = None;
+                        queue.add_used(mem, index, n as u32)
+                    } else {
+                        assert!(n < len as usize);
+                        self.unfinished_output = Some(UnfinishedDescriptorChain {
+                            addr: addr.checked_add(n as u64).expect("Guest address overflow!"),
+                            len: len - n as u32,
+                            index,
+                        })
+                    }
                 }
                 Err(e) => {
                     log::error!("Failed to write output: {e}");

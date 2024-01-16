@@ -1,14 +1,14 @@
+use std::os::fd::RawFd;
 use std::os::unix::io::AsRawFd;
 
-use crate::get_mem;
 use crate::virtio::console::device::{CONTROL_RXQ_INDEX, CONTROL_TXQ_INDEX};
 use crate::virtio::console::port_queue_mapping::{queue_idx_to_port_id, QueueDirection};
+use polly::event_manager::Error::EpollCreate;
 use polly::event_manager::{EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
 
 use super::device::{get_win_size, Console};
 use crate::virtio::device::VirtioDevice;
-use crate::virtio::DeviceState;
 
 impl Console {
     pub(crate) fn read_queue_event(&self, queue_index: usize, event: &EpollEvent) -> bool {
@@ -32,9 +32,7 @@ impl Console {
         let (direction, port_id) = queue_idx_to_port_id(queue_index);
         match direction {
             QueueDirection::Rx => self.resume_rx(port_id),
-            QueueDirection::Tx => {
-                self.ports[port_id].process_tx(get_mem!(self), &mut self.queues[queue_index])
-            }
+            QueueDirection::Tx => self.resume_tx(port_id),
         }
     }
 
@@ -89,6 +87,22 @@ impl Console {
         let (cols, rows) = get_win_size();
         self.update_console_size(cols, rows);
     }
+
+    fn port_id_of_input(&self, source: RawFd) -> Option<usize> {
+        self.ports
+            .iter()
+            .enumerate()
+            .find(|(_port_id, port)| port.input_rawfd() == Some(source))
+            .map(|(port_id, _)| port_id)
+    }
+
+    fn port_id_of_output(&self, source: RawFd) -> Option<usize> {
+        self.ports
+            .iter()
+            .enumerate()
+            .find(|(_port_id, port)| port.output_rawfd() == Some(source))
+            .map(|(port_id, _)| port_id)
+    }
 }
 
 impl Subscriber for Console {
@@ -101,21 +115,19 @@ impl Subscriber for Console {
         let activate_evt = self.activate_evt.as_raw_fd();
         let sigwinch_evt = self.sigwinch_evt.as_raw_fd();
 
-        let port_id_of_input = self
-            .ports
-            .iter_mut()
-            .enumerate()
-            .find(|(_port_id, port)| port.input_rawfd() == Some(source))
-            .map(|(port_id, _)| port_id);
-
         let mut raise_irq = false;
 
-        if let Some(port_id) = port_id_of_input {
+        if let Some(port_id) = self.port_id_of_input(source) {
             let has_input = event.event_set().contains(EventSet::IN);
             let has_eof = event
                 .event_set()
                 .intersects(EventSet::HANG_UP | EventSet::READ_HANG_UP);
             raise_irq |= self.handle_input(port_id, has_input, has_eof)
+        } else if let Some(port_id) = self.port_id_of_output(source) {
+            let has_eof = event
+                .event_set()
+                .intersects(EventSet::HANG_UP | EventSet::READ_HANG_UP);
+            raise_irq |= self.handle_output(port_id, has_eof)
         } else if self.is_activated() {
             if source == control_txq {
                 raise_irq |=
@@ -156,12 +168,22 @@ impl Subscriber for Console {
             EpollEvent::new(EventSet::IN, self.sigwinch_evt.as_raw_fd() as u64),
         ];
 
-        let port_events = self
+        let in_port_events = self
             .ports
             .iter()
             .filter_map(|port| port.input_rawfd())
             .map(|fd| EpollEvent::new(EventSet::IN | EventSet::EDGE_TRIGGERED, fd as u64));
 
-        static_events.into_iter().chain(port_events).collect()
+        let out_port_events = self
+            .ports
+            .iter()
+            .filter_map(|port| port.output_rawfd())
+            .map(|fd| EpollEvent::new(EventSet::OUT | EventSet::EDGE_TRIGGERED, fd as u64));
+
+        static_events
+            .into_iter()
+            .chain(in_port_events)
+            .chain(out_port_events)
+            .collect()
     }
 }
