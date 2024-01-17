@@ -808,6 +808,9 @@ int setup_redirects()
             // if previous snprintf didn't fail, this one cannot fail either
             snprintf(path, sizeof(path), "/dev/%s", port_identifier);
             reopen_fd(STDIN_FILENO, path, O_RDONLY);
+        }else if (port_name != NULL && strcmp(port_name, "krun-stdout\n") == 0) {
+             snprintf(path, sizeof(path), "/dev/%s", port_identifier);
+             reopen_fd(STDOUT_FILENO, path, O_WRONLY);
         }
     }
 

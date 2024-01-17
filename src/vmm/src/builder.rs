@@ -48,7 +48,7 @@ use arch::ArchMemoryInfo;
 use arch::InitrdConfig;
 #[cfg(feature = "tee")]
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
-use libc::STDIN_FILENO;
+use libc::{STDIN_FILENO, STDOUT_FILENO};
 use nix::unistd::isatty;
 use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
@@ -1042,6 +1042,7 @@ fn attach_console_devices(
     use self::StartMicrovmError::*;
 
     let stdin_is_terminal = isatty(STDIN_FILENO).unwrap_or(false);
+    let stdout_is_terminal = isatty(STDOUT_FILENO).unwrap_or(false);
 
     if let Err(e) = term_set_raw_mode(!stdin_is_terminal) {
         log::error!("Failed to set terminal to raw mode: {e}")
@@ -1053,7 +1054,12 @@ fn attach_console_devices(
         } else {
             None
         },
-        output: PortOutput::stdout().unwrap(),
+        // TODO: redirect to rust-log if stdout is not a terminal
+        output: if stdout_is_terminal {
+            Some(PortOutput::stdout().unwrap())
+        } else {
+            None
+        },
     }];
 
     if !stdin_is_terminal {
@@ -1062,6 +1068,14 @@ fn attach_console_devices(
             input: PortInput::stdin().unwrap(),
         })
     }
+
+    if !stdout_is_terminal {
+        ports.push(PortDescription::OutputPipe {
+            name: "krun-stdout".into(),
+            output: PortOutput::stdout().unwrap(),
+        })
+    };
+    //TODO: same for stderr
 
     let console = Arc::new(Mutex::new(devices::virtio::Console::new(ports).unwrap()));
 

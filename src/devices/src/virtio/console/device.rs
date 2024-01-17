@@ -100,11 +100,15 @@ pub struct Console {
 pub enum PortDescription {
     Console {
         input: Option<PortInput>,
-        output: PortOutput,
+        output: Option<PortOutput>,
     },
     InputPipe {
         name: Cow<'static, str>,
         input: PortInput,
+    },
+    OutputPipe {
+        name: Cow<'static, str>,
+        output: PortOutput,
     },
 }
 

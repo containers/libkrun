@@ -3,7 +3,6 @@ use std::os::unix::io::AsRawFd;
 
 use crate::virtio::console::device::{CONTROL_RXQ_INDEX, CONTROL_TXQ_INDEX};
 use crate::virtio::console::port_queue_mapping::{queue_idx_to_port_id, QueueDirection};
-use polly::event_manager::Error::EpollCreate;
 use polly::event_manager::{EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
 
