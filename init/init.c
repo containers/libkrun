@@ -8,6 +8,7 @@
 #include <string.h>
 #include <time.h>
 #include <dirent.h>
+#include <termios.h>
 
 #include <net/if.h>
 #include <sys/ioctl.h>
@@ -913,14 +914,23 @@ int main(int argc, char **argv)
 	}
 #endif
 
-    if (setup_redirects() < 0) {
-       exit(-4);
+    // We need to fork ourselves, because pid 1 cannot doesn't receive SIGINT signal
+    int pid = fork();
+    if (pid < 0) {
+        perror("fork");
+        exit(-3);
+    } if (pid == 0) { // child
+        if (setup_redirects() < 0) {
+           exit(-4);
+        }
+        if (execvp(exec_argv[0], exec_argv) < 0) {
+            printf("Couldn't execute '%s' inside the vm: %s\n", exec_argv[0], strerror(errno));
+            exit(-3);
+        }
+    } else { // parent
+        // wait for children since we can't exit init
+        waitpid(pid, NULL, 0);
     }
-
-	if (execvp(exec_argv[0], exec_argv) < 0) {
-		printf("Couldn't execute '%s' inside the vm: %s\n", exec_argv[0], strerror(errno));
-		exit(-3);
-	}
 
 	return 0;
 }

@@ -1,11 +1,14 @@
 use std::io::{self, ErrorKind};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
-use libc::{fcntl, F_GETFL, F_SETFL, O_NONBLOCK, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
+use libc::{
+    fcntl, EFD_NONBLOCK, F_GETFL, F_SETFL, O_NONBLOCK, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO,
+};
 use log::Level;
 use nix::errno::Errno;
 use nix::poll::{poll, PollFd, PollFlags};
 use nix::unistd::dup;
+use utils::eventfd::EventFd;
 use vm_memory::bitmap::Bitmap;
 use vm_memory::{VolatileMemoryError, VolatileSlice, WriteVolatile};
 
@@ -178,4 +181,41 @@ impl PortOutput for PortOutputLog {
     }
 
     fn wait_until_writable(&self) {}
+}
+
+pub struct PortInputSigInt {
+    sigint_evt: EventFd,
+}
+
+impl PortInputSigInt {
+    pub fn new() -> Self {
+        PortInputSigInt {
+            sigint_evt: EventFd::new(EFD_NONBLOCK)
+                .expect("Failed to create EventFd for SIGINT signaling"),
+        }
+    }
+
+    pub fn sigint_evt(&self) -> &EventFd {
+        &self.sigint_evt
+    }
+}
+
+impl Default for PortInputSigInt {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PortInput for PortInputSigInt {
+    fn read_volatile(&mut self, buf: &mut VolatileSlice) -> Result<usize, io::Error> {
+        self.sigint_evt.read()?;
+        log::trace!("SIGINT received");
+        buf.copy_from(&[3u8]); //ASCII 'ETX' -> generates SIGINIT in a terminal
+        Ok(1)
+    }
+
+    fn wait_until_readable(&self) {
+        let mut poll_fds = [PollFd::new(self.sigint_evt.as_raw_fd(), PollFlags::POLLIN)];
+        poll(&mut poll_fds, -1).expect("Failed to poll");
+    }
 }
