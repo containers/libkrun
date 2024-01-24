@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::{io, thread};
 
 use vm_memory::{GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion};
@@ -11,9 +13,12 @@ pub(crate) fn process_tx(
     mut queue: Queue,
     irq: IRQSignaler,
     mut output: Box<dyn PortOutput + Send>,
+    stop: Arc<AtomicBool>,
 ) {
     loop {
-        let head = pop_head_blocking(&mut queue, &mem, &irq);
+        let Some(head) = pop_head_blocking(&mut queue, &mem, &irq, &stop) else {
+            return;
+        };
 
         let head_index = head.index;
         let mut bytes_written = 0;
@@ -48,13 +53,17 @@ fn pop_head_blocking<'mem>(
     queue: &mut Queue,
     mem: &'mem GuestMemoryMmap,
     irq: &IRQSignaler,
-) -> DescriptorChain<'mem> {
+    stop: &AtomicBool,
+) -> Option<DescriptorChain<'mem>> {
     loop {
         match queue.pop(mem) {
-            Some(descriptor) => break descriptor,
+            Some(descriptor) => break Some(descriptor),
             None => {
                 irq.signal_used_queue("tx queue empty, parking");
                 thread::park();
+                if stop.load(Ordering::Acquire) {
+                    break None;
+                }
                 log::trace!("tx unparked, queue len {}", queue.len(mem))
             }
         }

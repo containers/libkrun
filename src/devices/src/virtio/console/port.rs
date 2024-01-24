@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::{mem, thread};
@@ -33,6 +34,7 @@ enum PortState {
         output: Option<Box<dyn PortOutput + Send>>,
     },
     Active {
+        stop: Arc<AtomicBool>,
         rx_thread: Option<JoinHandle<()>>,
         tx_thread: Option<JoinHandle<()>>,
     },
@@ -126,12 +128,36 @@ impl Port {
             thread::spawn(move || process_rx(mem, rx_queue, irq_signaler, input, control, port_id))
         });
 
-        let tx_thread = output
-            .map(|output| thread::spawn(move || process_tx(mem, tx_queue, irq_signaler, output)));
+        let stop = Arc::new(AtomicBool::new(false));
+        let tx_thread = output.map(|output| {
+            let stop = stop.clone();
+            thread::spawn(move || process_tx(mem, tx_queue, irq_signaler, output, stop))
+        });
 
         self.state = PortState::Active {
+            stop,
             rx_thread,
             tx_thread,
         }
+    }
+
+    pub fn flush(&mut self) {
+        if let PortState::Active {
+            stop,
+            tx_thread,
+            rx_thread: _,
+        } = &mut self.state
+        {
+            stop.store(true, Ordering::Release);
+            if let Some(tx_thread) = mem::take(tx_thread) {
+                tx_thread.thread().unpark();
+                if let Err(e) = tx_thread.join() {
+                    log::error!(
+                        "Failed to flush tx for port {port_id}, thread panicked: {e:?}",
+                        port_id = self.port_id
+                    )
+                }
+            }
+        };
     }
 }
