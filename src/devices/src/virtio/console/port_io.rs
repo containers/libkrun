@@ -2,6 +2,7 @@ use std::io::{self, ErrorKind};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
 use libc::{fcntl, F_GETFL, F_SETFL, O_NONBLOCK, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
+use log::Level;
 use nix::errno::Errno;
 use nix::poll::{poll, PollFd, PollFlags};
 use nix::unistd::dup;
@@ -38,6 +39,10 @@ pub fn output_to_raw_fd_dup(fd: RawFd) -> Result<Box<dyn PortOutput + Send>, nix
     let fd = dup_raw_fd_into_owned(fd)?;
     make_non_blocking(&fd)?;
     Ok(Box::new(PortOutputFd(fd)))
+}
+
+pub fn output_to_log_as_err() -> Box<dyn PortOutput + Send> {
+    Box::new(PortOutputLog::new())
 }
 
 struct PortInputFd(OwnedFd);
@@ -128,4 +133,49 @@ fn make_non_blocking(as_rw_fd: &impl AsRawFd) -> Result<(), nix::Error> {
         }
     }
     Ok(())
+}
+
+// Utility to relay log from the VM (the kernel boot log and messages from init)
+// to the rust log
+#[derive(Default)]
+pub struct PortOutputLog {
+    buf: Vec<u8>,
+}
+
+impl PortOutputLog {
+    const FORCE_FLUSH_TRESHOLD: usize = 512;
+    const LOG_TARGET: &'static str = "init_or_kernel";
+
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn force_flush(&mut self) {
+        log::log!(target: PortOutputLog::LOG_TARGET, Level::Error, "[missing newline]{}", String::from_utf8_lossy(&self.buf));
+        self.buf.clear();
+    }
+}
+
+impl PortOutput for PortOutputLog {
+    fn write_volatile(&mut self, buf: &VolatileSlice) -> Result<usize, io::Error> {
+        self.buf
+            .write_volatile(buf)
+            .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+
+        let mut start = 0;
+        for (i, ch) in self.buf.iter().cloned().enumerate() {
+            if ch == b'\n' {
+                log::log!(target: PortOutputLog::LOG_TARGET, Level::Error, "{}", String::from_utf8_lossy(&self.buf[start..i]));
+                start = i + 1;
+            }
+        }
+        self.buf.drain(0..start);
+        // Make sure to not grow the internal buffer forever!
+        if self.buf.len() > PortOutputLog::FORCE_FLUSH_TRESHOLD {
+            self.force_flush()
+        }
+        Ok(buf.len())
+    }
+
+    fn wait_until_writable(&self) {}
 }
