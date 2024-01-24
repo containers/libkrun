@@ -7,6 +7,7 @@
 use crossbeam_channel::unbounded;
 use std::fmt::{Display, Formatter};
 use std::io;
+use std::os::fd::AsRawFd;
 use std::sync::{Arc, Mutex};
 
 use super::{Error, Vmm};
@@ -28,6 +29,7 @@ use kbs_types::Tee;
 use crate::device_manager;
 #[cfg(feature = "tee")]
 use crate::resources::TeeConfig;
+use crate::signal_handler::register_sigint_handler;
 #[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigwinch_handler;
 use crate::terminal::term_set_raw_mode;
@@ -1040,9 +1042,6 @@ fn attach_console_devices(
     intc: Option<Arc<Mutex<Gic>>>,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
-    if let Err(e) = term_set_raw_mode(false) {
-        log::error!("Failed to set terminal to raw mode: {e}")
-    }
 
     let stdin_is_terminal = isatty(STDIN_FILENO).unwrap_or(false);
     let stdout_is_terminal = isatty(STDOUT_FILENO).unwrap_or(false);
@@ -1052,17 +1051,26 @@ fn attach_console_devices(
         log::error!("Failed to set terminal to raw mode: {e}")
     }
 
+    let console_input = if stdin_is_terminal {
+        Some(port_io::stdin().unwrap())
+    } else {
+        let sigint_input = port_io::PortInputSigInt::new();
+        let sigint_input_fd = sigint_input.sigint_evt().as_raw_fd();
+
+        register_sigint_handler(sigint_input_fd).map_err(RegisterFsSigwinch)?;
+
+        Some(Box::new(sigint_input) as _)
+    };
+
+    let console_output = if stdout_is_terminal {
+        Some(port_io::stdout().unwrap())
+    } else {
+        Some(port_io::output_to_log_as_err())
+    };
+
     let mut ports = vec![PortDescription::Console {
-        input: if stdin_is_terminal {
-            Some(port_io::stdin().unwrap())
-        } else {
-            None
-        },
-        output: if stdout_is_terminal {
-            Some(port_io::stdout().unwrap())
-        } else {
-            Some(port_io::output_to_log_as_err())
-        },
+        input: console_input,
+        output: console_output,
     }];
 
     if !stdin_is_terminal {

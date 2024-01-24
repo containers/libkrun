@@ -26,7 +26,7 @@ pub fn term_fd_set_raw_mode(
     let mut termios = tcgetattr(term)?;
 
     let mut mask = LocalFlags::ECHO | LocalFlags::ICANON;
-    if handle_signals_by_terminal {
+    if !handle_signals_by_terminal {
         mask |= LocalFlags::ISIG
     }
 
