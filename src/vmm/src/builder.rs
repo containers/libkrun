@@ -1061,7 +1061,7 @@ fn attach_console_devices(
         output: if stdout_is_terminal {
             Some(port_io::stdout().unwrap())
         } else {
-            None
+            Some(port_io::output_to_log_as_err())
         },
     }];
 
