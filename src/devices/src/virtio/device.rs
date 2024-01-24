@@ -125,6 +125,17 @@ pub trait VirtioDevice: AsAny + Send {
     }
 }
 
+pub trait VmmExitObserver {
+    /// Callback to finish processing or cleanup the device resources
+    fn on_vmm_exit(&mut self) {}
+}
+
+impl<F: Fn()> VmmExitObserver for F {
+    fn on_vmm_exit(&mut self) {
+        self()
+    }
+}
+
 impl std::fmt::Debug for dyn VirtioDevice {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "VirtioDevice type {}", self.device_type())

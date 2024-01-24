@@ -24,7 +24,7 @@ use crate::virtio::console::port::Port;
 use crate::virtio::console::port_queue_mapping::{
     num_queues, port_id_to_queue_idx, QueueDirection,
 };
-use crate::virtio::PortDescription;
+use crate::virtio::{PortDescription, VmmExitObserver};
 
 pub(crate) const CONTROL_RXQ_INDEX: usize = 2;
 pub(crate) const CONTROL_TXQ_INDEX: usize = 3;
@@ -358,5 +358,15 @@ impl VirtioDevice for Console {
             DeviceState::Inactive => false,
             DeviceState::Activated(_) => true,
         }
+    }
+}
+
+impl VmmExitObserver for Console {
+    fn on_vmm_exit(&mut self) {
+        for port in &mut self.ports {
+            port.flush();
+        }
+
+        log::trace!("Console on_vmm_exit finished");
     }
 }

@@ -515,12 +515,12 @@ pub fn build_microvm(
     let shm_region = None;
 
     let mut vmm = Vmm {
-        //events_observer: Some(Box::new(SerialStdin::get())),
         guest_memory,
         arch_memory_info,
         kernel_cmdline,
         vcpus_handles: Vec::new(),
         exit_evt,
+        exit_observers: Vec::new(),
         vm,
         mmio_device_manager,
         #[cfg(target_arch = "x86_64")]
@@ -603,6 +603,9 @@ pub fn build_microvm(
     vmm.start_vcpus(vcpus)
         .map_err(StartMicrovmError::Internal)?;
 
+    // Clippy thinks we don't need Arc<Mutex<...
+    // but we don't want to change the event_manager interface
+    #[allow(clippy::arc_with_non_send_sync)]
     let vmm = Arc::new(Mutex::new(vmm));
     event_manager
         .add_subscriber(vmm.clone())
@@ -1095,6 +1098,8 @@ fn attach_console_devices(
     }
 
     let console = Arc::new(Mutex::new(devices::virtio::Console::new(ports).unwrap()));
+
+    vmm.exit_observers.push(console.clone());
 
     if let Some(intc) = intc {
         console.lock().unwrap().set_intc(intc);
