@@ -213,7 +213,7 @@ mod tests {
     }
 
     fn read_u64(gm: &GuestMemoryMmap, offset: u64) -> u64 {
-        let read_addr = GuestAddress(offset as u64);
+        let read_addr = GuestAddress(offset);
         gm.read_obj(read_addr).unwrap()
     }
 
@@ -253,7 +253,7 @@ mod tests {
             assert_eq!((i << 21) + 0x83u64, read_u64(gm, PDE_START + (i * 8)));
         }
 
-        assert_eq!(PML4_START as u64, sregs.cr3);
+        assert_eq!({ PML4_START }, sregs.cr3);
         assert!(sregs.cr4 & X86_CR4_PAE != 0);
         assert!(sregs.cr0 & X86_CR0_PG != 0);
     }
@@ -298,9 +298,9 @@ mod tests {
         let expected_regs: kvm_regs = kvm_regs {
             rflags: 0x0000_0000_0000_0002u64,
             rip: 1,
-            rsp: super::super::layout::BOOT_STACK_POINTER as u64,
-            rbp: super::super::layout::BOOT_STACK_POINTER as u64,
-            rsi: super::super::layout::ZERO_PAGE_START as u64,
+            rsp: super::super::layout::BOOT_STACK_POINTER,
+            rbp: super::super::layout::BOOT_STACK_POINTER,
+            rsi: super::super::layout::ZERO_PAGE_START,
             ..Default::default()
         };
 

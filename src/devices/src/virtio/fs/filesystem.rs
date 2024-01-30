@@ -16,7 +16,6 @@ pub use super::fuse::FsOptions;
 pub use fuse::OpenOptions;
 pub use fuse::RemovemappingOne;
 pub use fuse::SetattrValid;
-pub use fuse::ROOT_ID;
 
 /// Information about a path in the filesystem.
 pub struct Entry {

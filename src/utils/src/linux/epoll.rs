@@ -267,20 +267,12 @@ mod tests {
         // For EPOLL_CTL_ADD behavior we will try to add some fds with different event masks into
         // the interest list of epoll instance.
         assert!(epoll
-            .ctl(
-                ControlOperation::Add,
-                event_fd_1.as_raw_fd() as i32,
-                &event_1
-            )
+            .ctl(ControlOperation::Add, event_fd_1.as_raw_fd(), &event_1)
             .is_ok());
 
         // We can't add twice the same fd to epoll interest list.
         assert!(epoll
-            .ctl(
-                ControlOperation::Add,
-                event_fd_1.as_raw_fd() as i32,
-                &event_1
-            )
+            .ctl(ControlOperation::Add, event_fd_1.as_raw_fd(), &event_1)
             .is_err());
 
         let event_fd_2 = EventFd::new(libc::EFD_NONBLOCK).unwrap();
@@ -288,7 +280,7 @@ mod tests {
         assert!(epoll
             .ctl(
                 ControlOperation::Add,
-                event_fd_2.as_raw_fd() as i32,
+                event_fd_2.as_raw_fd(),
                 // For this fd, we want an Event instance that has `data` field set to other
                 // value than the value of the fd and `events` without EPOLLIN type set.
                 &EpollEvent::new(EventSet::OUT, 10)
@@ -301,11 +293,7 @@ mod tests {
         let event_fd_3 = EventFd::new(libc::EFD_NONBLOCK).unwrap();
         let event_3 = EpollEvent::new(EventSet::OUT | EventSet::IN, event_fd_3.as_raw_fd() as u64);
         assert!(epoll
-            .ctl(
-                ControlOperation::Add,
-                event_fd_3.as_raw_fd() as i32,
-                &event_3
-            )
+            .ctl(ControlOperation::Add, event_fd_3.as_raw_fd(), &event_3)
             .is_ok());
 
         // Let's check `epoll_wait()` behavior for our epoll instance.
@@ -341,11 +329,7 @@ mod tests {
         // that we want to monitor this time on event_fd_1.
         event_1 = EpollEvent::new(EventSet::OUT, 20);
         assert!(epoll
-            .ctl(
-                ControlOperation::Modify,
-                event_fd_1.as_raw_fd() as i32,
-                &event_1
-            )
+            .ctl(ControlOperation::Modify, event_fd_1.as_raw_fd(), &event_1)
             .is_ok());
 
         let event_fd_4 = EventFd::new(libc::EFD_NONBLOCK).unwrap();
@@ -353,7 +337,7 @@ mod tests {
         assert!(epoll
             .ctl(
                 ControlOperation::Modify,
-                event_fd_4.as_raw_fd() as i32,
+                event_fd_4.as_raw_fd(),
                 &EpollEvent::default()
             )
             .is_err());
@@ -371,7 +355,7 @@ mod tests {
         assert!(epoll
             .ctl(
                 ControlOperation::Modify,
-                event_fd_1.as_raw_fd() as i32,
+                event_fd_1.as_raw_fd(),
                 &EpollEvent::default()
             )
             .is_ok());
@@ -386,7 +370,7 @@ mod tests {
         assert!(epoll
             .ctl(
                 ControlOperation::Delete,
-                event_fd_2.as_raw_fd() as i32,
+                event_fd_2.as_raw_fd(),
                 &EpollEvent::default()
             )
             .is_ok());
@@ -404,7 +388,7 @@ mod tests {
         assert!(epoll
             .ctl(
                 ControlOperation::Delete,
-                event_fd_4.as_raw_fd() as i32,
+                event_fd_4.as_raw_fd(),
                 &EpollEvent::default()
             )
             .is_err());

@@ -545,7 +545,7 @@ mod tests {
         use DescriptorType::*;
 
         let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&vec![(memory_start_addr, 0x10000)]).unwrap();
+        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
 
         let chain = create_descriptor_chain(
             &memory,
@@ -564,7 +564,7 @@ mod tests {
         assert_eq!(reader.available_bytes(), 106);
         assert_eq!(reader.bytes_read(), 0);
 
-        let mut buffer = [0 as u8; 64];
+        let mut buffer = [0_u8; 64];
         if let Err(_) = reader.read_exact(&mut buffer) {
             panic!("read_exact should not fail here");
         }
@@ -586,7 +586,7 @@ mod tests {
         use DescriptorType::*;
 
         let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&vec![(memory_start_addr, 0x10000)]).unwrap();
+        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
 
         let chain = create_descriptor_chain(
             &memory,
@@ -605,7 +605,7 @@ mod tests {
         assert_eq!(writer.available_bytes(), 106);
         assert_eq!(writer.bytes_written(), 0);
 
-        let mut buffer = [0 as u8; 64];
+        let mut buffer = [0_u8; 64];
         if let Err(_) = writer.write_all(&mut buffer) {
             panic!("write_all should not fail here");
         }
@@ -627,7 +627,7 @@ mod tests {
         use DescriptorType::*;
 
         let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&vec![(memory_start_addr, 0x10000)]).unwrap();
+        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
 
         let chain = create_descriptor_chain(
             &memory,
@@ -652,7 +652,7 @@ mod tests {
         use DescriptorType::*;
 
         let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&vec![(memory_start_addr, 0x10000)]).unwrap();
+        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
 
         let chain = create_descriptor_chain(
             &memory,
@@ -677,7 +677,7 @@ mod tests {
         use DescriptorType::*;
 
         let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&vec![(memory_start_addr, 0x10000)]).unwrap();
+        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
 
         let chain = create_descriptor_chain(
             &memory,
@@ -725,7 +725,7 @@ mod tests {
         use DescriptorType::*;
 
         let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&vec![(memory_start_addr, 0x10000)]).unwrap();
+        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
 
         let secret: Le32 = 0x12345678.into();
 
@@ -764,7 +764,7 @@ mod tests {
         use DescriptorType::*;
 
         let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&vec![(memory_start_addr, 0x10000)]).unwrap();
+        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
 
         let chain = create_descriptor_chain(
             &memory,
@@ -794,7 +794,7 @@ mod tests {
         use DescriptorType::*;
 
         let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&vec![(memory_start_addr, 0x10000)]).unwrap();
+        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
 
         let chain = create_descriptor_chain(
             &memory,
@@ -823,7 +823,7 @@ mod tests {
         use DescriptorType::*;
 
         let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&vec![(memory_start_addr, 0x10000)]).unwrap();
+        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
 
         let chain = create_descriptor_chain(
             &memory,
@@ -852,7 +852,7 @@ mod tests {
         use DescriptorType::*;
 
         let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&vec![(memory_start_addr, 0x10000)]).unwrap();
+        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
 
         let chain = create_descriptor_chain(
             &memory,
@@ -881,7 +881,7 @@ mod tests {
         use DescriptorType::*;
 
         let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&vec![(memory_start_addr, 0x10000)]).unwrap();
+        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
 
         let chain = create_descriptor_chain(
             &memory,
@@ -910,7 +910,7 @@ mod tests {
         use DescriptorType::*;
 
         let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&vec![(memory_start_addr, 0x10000)]).unwrap();
+        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
 
         let chain = create_descriptor_chain(
             &memory,
@@ -939,7 +939,7 @@ mod tests {
         use DescriptorType::*;
 
         let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&vec![(memory_start_addr, 0x10000)]).unwrap();
+        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
 
         let chain = create_descriptor_chain(
             &memory,
@@ -951,7 +951,7 @@ mod tests {
         .expect("create_descriptor_chain failed");
         let mut reader = Reader::new(&memory, chain).expect("failed to create Reader");
 
-        let mut buf = vec![0u8; 64];
+        let mut buf = [0u8; 64];
         assert_eq!(
             reader.read(&mut buf[..]).expect("failed to read to buffer"),
             48
@@ -963,7 +963,7 @@ mod tests {
         use DescriptorType::*;
 
         let memory_start_addr = GuestAddress(0x0);
-        let memory = GuestMemoryMmap::from_ranges(&vec![(memory_start_addr, 0x10000)]).unwrap();
+        let memory = GuestMemoryMmap::from_ranges(&[(memory_start_addr, 0x10000)]).unwrap();
 
         let chain = create_descriptor_chain(
             &memory,
@@ -975,7 +975,7 @@ mod tests {
         .expect("create_descriptor_chain failed");
         let mut writer = Writer::new(&memory, chain).expect("failed to create Writer");
 
-        let buf = vec![0xdeu8; 64];
+        let buf = [0xdeu8; 64];
         assert_eq!(
             writer.write(&buf[..]).expect("failed to write from buffer"),
             48
