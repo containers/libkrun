@@ -16,8 +16,6 @@ pub mod event_handler;
 mod passt;
 
 pub use self::device::Net;
-pub use self::event_handler::*;
-
 #[derive(Debug)]
 pub enum Error {
     /// EventFd error.

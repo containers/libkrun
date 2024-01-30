@@ -84,6 +84,7 @@ pub mod leaf_0x4 {
         use crate::bit_helper::BitRange;
 
         // inherit eax from leaf_cache_parameters
+        #[allow(unused_imports)]
         pub use crate::cpu_leaf::leaf_cache_parameters::eax::*;
 
         pub const MAX_CORES_PER_PACKAGE_BITRANGE: BitRange = bit_range!(31, 26);
@@ -300,6 +301,7 @@ pub mod leaf_0x8000001d {
     pub const LEAF_NUM: u32 = 0x8000_001d;
 
     // inherit eax from leaf_cache_parameters
+    #[allow(unused_imports)]
     pub use crate::cpu_leaf::leaf_cache_parameters::eax;
 }
 
