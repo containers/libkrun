@@ -11,7 +11,14 @@ mod gic;
 mod i8042;
 #[cfg(target_arch = "aarch64")]
 mod rtc_pl031;
-mod serial;
+#[cfg(target_arch = "x86_64")]
+mod x86_64;
+#[cfg(target_arch = "x86_64")]
+use x86_64::serial;
+#[cfg(target_arch = "aarch64")]
+mod aarch64;
+#[cfg(target_arch = "aarch64")]
+use aarch64::serial;
 
 #[cfg(target_os = "macos")]
 pub use self::gic::Gic;
@@ -19,7 +26,13 @@ pub use self::i8042::Error as I8042DeviceError;
 pub use self::i8042::I8042Device;
 #[cfg(target_arch = "aarch64")]
 pub use self::rtc_pl031::RTC;
-pub use self::serial::{ReadableFd, Serial};
+pub use self::serial::Serial;
+
+// Cannot use multiple types as bounds for a trait object, so we define our own trait
+// which is a composition of the desired bounds. In this case, io::Read and AsRawFd.
+// Run `rustc --explain E0225` for more details.
+/// Trait that composes the `std::io::Read` and `std::os::unix::io::AsRawFd` traits.
+pub trait ReadableFd: std::io::Read + std::os::fd::AsRawFd {}
 
 #[cfg(target_os = "linux")]
 pub struct Gic {}
