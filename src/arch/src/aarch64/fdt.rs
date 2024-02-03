@@ -321,7 +321,8 @@ fn create_serial_node<T: DeviceInfoForFDT + Clone + Debug>(
     let irq = generate_prop32(&[GIC_FDT_IRQ_TYPE_SPI, dev_info.irq(), IRQ_TYPE_EDGE_RISING]);
 
     let node = fdt.begin_node(&format!("uart@{:x}", dev_info.addr()))?;
-    fdt.property_string("compatible", "ns16550a")?;
+    fdt.property_string("compatible", "arm,pl011")?;
+    fdt.property_string("status", "okay")?;
     fdt.property("reg", &serial_reg_prop)?;
     fdt.property_u32("clocks", CLOCK_PHANDLE)?;
     fdt.property_string("clock-names", "apb_pclk")?;

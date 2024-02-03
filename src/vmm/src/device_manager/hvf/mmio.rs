@@ -145,11 +145,17 @@ impl MMIODeviceManager {
         &mut self,
         _vm: &Vm,
         cmdline: &mut kernel_cmdline::Cmdline,
-        _intc: Option<Arc<Mutex<devices::legacy::Gic>>>,
+        intc: Option<Arc<Mutex<devices::legacy::Gic>>>,
         serial: Arc<Mutex<devices::legacy::Serial>>,
     ) -> Result<()> {
         if self.irq > self.last_irq {
             return Err(Error::IrqsExhausted);
+        }
+
+        if let Some(intc) = intc {
+            let mut serial = serial.lock().unwrap();
+            serial.set_intc(intc);
+            serial.set_irq_line(self.irq);
         }
 
         self.bus
@@ -157,7 +163,10 @@ impl MMIODeviceManager {
             .map_err(Error::BusError)?;
 
         cmdline
-            .insert("earlycon", &format!("uart,mmio,0x{:08x}", self.mmio_base))
+            .insert(
+                "earlycon",
+                &format!("pl011,mmio32,0x{:08x}", self.mmio_base),
+            )
             .map_err(Error::Cmdline)?;
 
         let ret = self.mmio_base;

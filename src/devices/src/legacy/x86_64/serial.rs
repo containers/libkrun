@@ -7,13 +7,13 @@
 
 use std::collections::VecDeque;
 use std::io;
-use std::os::unix::io::AsRawFd;
 
 use polly::event_manager::{EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 
 use crate::bus::BusDevice;
+use crate::legacy::ReadableFd;
 
 const LOOP_SIZE: usize = 0x40;
 
@@ -52,12 +52,6 @@ const DEFAULT_LINE_CONTROL: u8 = 0x3; // 8-bits per character
 const DEFAULT_MODEM_CONTROL: u8 = 0x8; // Auxiliary output 2
 const DEFAULT_MODEM_STATUS: u8 = 0x20 | 0x10 | 0x80; // data ready, clear to send, carrier detect
 const DEFAULT_BAUD_DIVISOR: u16 = 12; // 9600 bps
-
-// Cannot use multiple types as bounds for a trait object, so we define our own trait
-// which is a composition of the desired bounds. In this case, io::Read and AsRawFd.
-// Run `rustc --explain E0225` for more details.
-/// Trait that composes the `std::io::Read` and `std::os::unix::io::AsRawFd` traits.
-pub trait ReadableFd: io::Read + AsRawFd {}
 
 /// Emulates serial COM ports commonly seen on x86 I/O ports 0x3f8/0x2f8/0x3e8/0x2e8.
 ///
@@ -312,7 +306,7 @@ mod tests {
     use super::*;
     use std::io;
     use std::io::Write;
-    use std::os::unix::io::RawFd;
+    use std::os::unix::io::{AsRawFd, RawFd};
     use std::sync::{Arc, Mutex};
 
     use polly::event_manager::EventManager;
