@@ -12,7 +12,6 @@ use std::ffi::CString;
 use std::os::fd::RawFd;
 #[cfg(not(feature = "tee"))]
 use std::path::Path;
-#[cfg(feature = "tee")]
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -92,6 +91,7 @@ struct ContextConfig {
     data_block_cfg: Option<BlockDeviceConfig>,
     #[cfg(feature = "tee")]
     tee_config_file: Option<PathBuf>,
+    unix_ipc_port_map: Option<HashMap<u32, PathBuf>>,
 }
 
 impl ContextConfig {
@@ -204,6 +204,16 @@ impl ContextConfig {
     #[cfg(feature = "tee")]
     fn get_tee_config_file(&self) -> Option<PathBuf> {
         self.tee_config_file.clone()
+    }
+
+    fn add_vsock_port(&mut self, port: u32, filepath: PathBuf) {
+        if let Some(ref mut map) = &mut self.unix_ipc_port_map {
+            map.insert(port, filepath);
+        } else {
+            let mut map: HashMap<u32, PathBuf> = HashMap::new();
+            map.insert(port, filepath);
+            self.unix_ipc_port_map = Some(map);
+        }
     }
 }
 
@@ -766,6 +776,30 @@ pub unsafe extern "C" fn krun_set_tee_config_file(ctx_id: u32, c_filepath: *cons
     KRUN_SUCCESS
 }
 
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_vsock_port(
+    ctx_id: u32,
+    port: u32,
+    c_filepath: *const c_char,
+) -> i32 {
+    let filepath = match CStr::from_ptr(c_filepath).to_str() {
+        Ok(f) => f,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.add_vsock_port(port, PathBuf::from(filepath.to_string()));
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(unused_assignments)]
 #[no_mangle]
 pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "linux")]
@@ -848,14 +882,23 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         return -libc::EINVAL;
     }
 
+    let mut vsock_set = false;
+    let mut vsock_config = VsockDeviceConfig {
+        vsock_id: "vsock0".to_string(),
+        guest_cid: 3,
+        host_port_map: None,
+        unix_ipc_port_map: None,
+    };
+
+    if let Some(map) = ctx_cfg.unix_ipc_port_map {
+        vsock_config.unix_ipc_port_map = Some(map);
+        vsock_set = true;
+    }
+
     match ctx_cfg.net_cfg {
         NetworkConfig::Tsi(tsi_cfg) => {
-            let vsock_device_config = VsockDeviceConfig {
-                vsock_id: "vsock0".to_string(),
-                guest_cid: 3,
-                host_port_map: tsi_cfg.port_map,
-            };
-            ctx_cfg.vmr.set_vsock_device(vsock_device_config).unwrap();
+            vsock_config.host_port_map = tsi_cfg.port_map;
+            vsock_set = true;
         }
         #[cfg(feature = "net")]
         NetworkConfig::Passt(passt_cfg) => {
@@ -868,6 +911,10 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
                 .add_network_interface(network_interface_config)
                 .expect("Failed to create network interface");
         }
+    }
+
+    if vsock_set {
+        ctx_cfg.vmr.set_vsock_device(vsock_config).unwrap();
     }
 
     let _vmm = match vmm::builder::build_microvm(&ctx_cfg.vmr, &mut event_manager) {

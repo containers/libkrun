@@ -220,6 +220,19 @@ int32_t krun_set_env(uint32_t ctx_id, char *const envp[]);
 int32_t krun_set_tee_config_file(uint32_t ctx_id, const char *filepath);
 
 /*
+ * Adds a port-path pairing for guest IPC with a process in the host.
+ *
+ * Arguments:
+ *  "ctx_id"    - the configuration context ID.
+ *  "port"      - a vsock port that the guest will connect to for IPC.
+ *  "filepath"  - a null-terminated string representing the path of the UNIX
+ *                socket in the host.
+ */
+int32_t krun_add_vsock_port(uint32_t ctx_id,
+                            uint32_t port,
+                            const char *c_filepath);
+
+/*
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
  * stdin/stdout to manage them on behalf of the process running inside the isolated environment,
  * simulating that the latter has direct control of the terminal.

@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use devices::virtio::{Vsock, VsockError};
@@ -37,6 +38,8 @@ pub struct VsockDeviceConfig {
     pub guest_cid: u32,
     /// An optional map of host to guest port mappings.
     pub host_port_map: Option<HashMap<u16, u16>>,
+    /// An optional map of guest port to host UNIX domain sockets for IPC.
+    pub unix_ipc_port_map: Option<HashMap<u32, PathBuf>>,
 }
 
 struct VsockWrapper {
@@ -71,8 +74,12 @@ impl VsockBuilder {
 
     /// Creates a Vsock device from a VsockDeviceConfig.
     pub fn create_vsock(cfg: VsockDeviceConfig) -> Result<Vsock> {
-        Vsock::new(u64::from(cfg.guest_cid), cfg.host_port_map)
-            .map_err(VsockConfigError::CreateVsockDevice)
+        Vsock::new(
+            u64::from(cfg.guest_cid),
+            cfg.host_port_map,
+            cfg.unix_ipc_port_map,
+        )
+        .map_err(VsockConfigError::CreateVsockDevice)
     }
 }
 
@@ -107,6 +114,7 @@ pub(crate) mod tests {
             vsock_id: vsock_dev_id.to_string(),
             guest_cid: 3,
             host_port_map: None,
+            unix_ipc_port_map: None,
         }
     }
 
