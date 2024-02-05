@@ -633,6 +633,12 @@ static int config_parse_file(char ***argv, char **workdir)
 			parsed_env = 1;
 		}
 
+		if (!parsed_args && jsoneq(data, &tokens[i], "args") == 0 &&
+			(i + 1) < num_tokens) {
+			config_argv = config_parse_args(data, &tokens[i + 1]);
+			parsed_args = 1;
+		}
+
 		if (!parsed_args && jsoneq(data, &tokens[i], "Cmd") == 0 &&
 			(i + 1) < num_tokens) {
 			config_argv = config_parse_args(data, &tokens[i + 1]);
