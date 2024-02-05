@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::os::unix::io::RawFd;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -105,6 +106,7 @@ pub struct VsockMuxer {
     irq_line: Option<u32>,
     proxy_map: ProxyMap,
     reaper_sender: Option<Sender<u64>>,
+    unix_ipc_port_map: Option<HashMap<u32, PathBuf>>,
 }
 
 impl VsockMuxer {
@@ -113,6 +115,7 @@ impl VsockMuxer {
         host_port_map: Option<HashMap<u16, u16>>,
         interrupt_evt: EventFd,
         interrupt_status: Arc<AtomicUsize>,
+        unix_ipc_port_map: Option<HashMap<u32, PathBuf>>,
     ) -> Self {
         VsockMuxer {
             cid,
@@ -127,6 +130,7 @@ impl VsockMuxer {
             irq_line: None,
             proxy_map: Arc::new(RwLock::new(HashMap::new())),
             reaper_sender: None,
+            unix_ipc_port_map,
         }
     }
 
@@ -487,6 +491,8 @@ impl VsockMuxer {
         let id: u64 = (pkt.src_port() as u64) << 32 | pkt.dst_port() as u64;
         if let Some(proxy) = self.proxy_map.read().unwrap().get(&id) {
             proxy.lock().unwrap().confirm_connect(pkt)
+        } else if let Some(map) = &self.unix_ipc_port_map {
+            println!("FOUND IN MAP");
         }
     }
 
