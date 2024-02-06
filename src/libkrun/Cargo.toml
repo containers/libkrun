@@ -10,6 +10,7 @@ tee = []
 amd-sev = [ "blk", "tee" ]
 net = []
 blk = []
+efi = [ "blk", "net" ]
 
 [dependencies]
 env_logger = "0.9.0"

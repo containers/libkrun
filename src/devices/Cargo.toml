@@ -9,6 +9,7 @@ tee = []
 amd-sev = ["blk", "tee"]
 net = []
 blk = []
+efi = ["blk", "net"]
 
 [dependencies]
 bitflags = "1.2.0"
