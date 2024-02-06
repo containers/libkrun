@@ -172,7 +172,7 @@ fn create_memory_node(
     _guest_mem: &GuestMemoryMmap,
     arch_memory_info: &ArchMemoryInfo,
 ) -> Result<()> {
-    let mem_size = arch_memory_info.ram_last_addr - super::layout::DRAM_MEM_START + 1;
+    let mem_size = arch_memory_info.ram_last_addr - super::layout::DRAM_MEM_START;
     // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/booting-without-of.txt#L960
     // for an explanation of this.
     let mem_reg_prop = generate_prop64(&[super::layout::DRAM_MEM_START, mem_size]);
