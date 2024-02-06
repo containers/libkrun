@@ -6,8 +6,9 @@ edition = "2021"
 
 [features]
 tee = []
-amd-sev = [ "tee", "codicon", "kbs-types", "procfs", "serde", "serde_json", "sev", "curl" ]
+amd-sev = [ "blk", "tee", "codicon", "kbs-types", "procfs", "serde", "serde_json", "sev", "curl" ]
 net = []
+blk = []
 
 [dependencies]
 crossbeam-channel = "0.5"

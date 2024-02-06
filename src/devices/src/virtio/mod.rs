@@ -12,7 +12,7 @@ use std::io::Error as IOError;
 
 #[cfg(not(feature = "tee"))]
 pub mod balloon;
-#[cfg(feature = "tee")]
+#[cfg(feature = "blk")]
 pub mod block;
 pub mod console;
 pub mod device;
@@ -30,7 +30,7 @@ pub mod vsock;
 
 #[cfg(not(feature = "tee"))]
 pub use self::balloon::*;
-#[cfg(feature = "tee")]
+#[cfg(feature = "blk")]
 pub use self::block::*;
 pub use self::console::*;
 pub use self::device::*;
