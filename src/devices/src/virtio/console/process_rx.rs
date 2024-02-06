@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::{io, thread};
 
 use vm_memory::{GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion};
@@ -8,17 +9,21 @@ use crate::virtio::console::irq_signaler::IRQSignaler;
 use crate::virtio::console::port_io::PortInput;
 use crate::virtio::{DescriptorChain, Queue};
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn process_rx(
     mem: GuestMemoryMmap,
     mut queue: Queue,
     irq: IRQSignaler,
-    mut input: Box<dyn PortInput + Send>,
+    input: Arc<Mutex<Box<dyn PortInput + Send>>>,
     control: Arc<ConsoleControl>,
     port_id: u32,
+    stopfd: utils::eventfd::EventFd,
+    stop: Arc<AtomicBool>,
 ) {
     let mem = &mem;
     let mut eof = false;
 
+    let mut input = input.lock().unwrap();
     loop {
         let head = pop_head_blocking(&mut queue, mem, &irq);
 
@@ -52,7 +57,11 @@ pub(crate) fn process_rx(
         } else if bytes_read == 0 {
             queue.undo_pop();
             irq.signal_used_queue("rx WouldBlock");
-            input.wait_until_readable();
+            input.wait_until_readable(Some(&stopfd));
+        }
+
+        if stop.load(Ordering::Acquire) {
+            return;
         }
     }
 }

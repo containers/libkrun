@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::{mem, thread};
 
@@ -29,11 +29,9 @@ pub enum PortDescription {
 }
 
 enum PortState {
-    Inactive {
-        input: Option<Box<dyn PortInput + Send>>,
-        output: Option<Box<dyn PortOutput + Send>>,
-    },
+    Inactive,
     Active {
+        stopfd: utils::eventfd::EventFd,
         stop: Arc<AtomicBool>,
         rx_thread: Option<JoinHandle<()>>,
         tx_thread: Option<JoinHandle<()>>,
@@ -46,6 +44,8 @@ pub(crate) struct Port {
     name: Cow<'static, str>,
     represents_console: bool,
     state: PortState,
+    input: Option<Arc<Mutex<Box<dyn PortInput + Send>>>>,
+    output: Option<Arc<Mutex<Box<dyn PortOutput + Send>>>>,
 }
 
 impl Port {
@@ -55,25 +55,25 @@ impl Port {
                 port_id,
                 name: "".into(),
                 represents_console: true,
-                state: PortState::Inactive { input, output },
+                state: PortState::Inactive,
+                input: Some(Arc::new(Mutex::new(input.unwrap()))),
+                output: Some(Arc::new(Mutex::new(output.unwrap()))),
             },
             PortDescription::InputPipe { name, input } => Self {
                 port_id,
                 name,
                 represents_console: false,
-                state: PortState::Inactive {
-                    input: Some(input),
-                    output: None,
-                },
+                state: PortState::Inactive,
+                input: Some(Arc::new(Mutex::new(input))),
+                output: None,
             },
             PortDescription::OutputPipe { name, output } => Self {
                 port_id,
                 name,
                 represents_console: false,
-                state: PortState::Inactive {
-                    input: None,
-                    output: Some(output),
-                },
+                state: PortState::Inactive,
+                input: None,
+                output: Some(Arc::new(Mutex::new(output))),
             },
         }
     }
@@ -114,44 +114,72 @@ impl Port {
         irq_signaler: IRQSignaler,
         control: Arc<ConsoleControl>,
     ) {
-        let (input, output) = if let PortState::Inactive { input, output } = &mut self.state {
-            (mem::take(input), mem::take(output))
-        } else {
-            // The threads are already started
-            return;
+        if let PortState::Active { .. } = &mut self.state {
+            self.shutdown();
         };
+
+        let input = self.input.as_ref().cloned();
+        let output = self.output.as_ref().cloned();
+
+        let stopfd = utils::eventfd::EventFd::new(utils::eventfd::EFD_NONBLOCK)
+            .expect("Failed to create EventFd for interrupt_evt");
+        let stop = Arc::new(AtomicBool::new(false));
 
         let rx_thread = input.map(|input| {
             let mem = mem.clone();
             let irq_signaler = irq_signaler.clone();
             let port_id = self.port_id;
-            thread::spawn(move || process_rx(mem, rx_queue, irq_signaler, input, control, port_id))
+            let stopfd = stopfd.try_clone().unwrap();
+            let stop = stop.clone();
+            thread::spawn(move || {
+                process_rx(
+                    mem,
+                    rx_queue,
+                    irq_signaler,
+                    input,
+                    control,
+                    port_id,
+                    stopfd,
+                    stop,
+                )
+            })
         });
 
-        let stop = Arc::new(AtomicBool::new(false));
         let tx_thread = output.map(|output| {
             let stop = stop.clone();
             thread::spawn(move || process_tx(mem, tx_queue, irq_signaler, output, stop))
         });
 
         self.state = PortState::Active {
+            stopfd,
             stop,
             rx_thread,
             tx_thread,
         }
     }
 
-    pub fn flush(&mut self) {
+    pub fn shutdown(&mut self) {
         if let PortState::Active {
+            stopfd,
             stop,
             tx_thread,
-            rx_thread: _,
+            rx_thread,
         } = &mut self.state
         {
             stop.store(true, Ordering::Release);
             if let Some(tx_thread) = mem::take(tx_thread) {
                 tx_thread.thread().unpark();
                 if let Err(e) = tx_thread.join() {
+                    log::error!(
+                        "Failed to flush tx for port {port_id}, thread panicked: {e:?}",
+                        port_id = self.port_id
+                    )
+                }
+            }
+            stopfd.write(1).unwrap();
+            if let Some(rx_thread) = mem::take(rx_thread) {
+                rx_thread.thread().unpark();
+                if let Err(e) = rx_thread.join() {
                     log::error!(
                         "Failed to flush tx for port {port_id}, thread panicked: {e:?}",
                         port_id = self.port_id
