@@ -201,4 +201,12 @@ impl VirtioDevice for Rng {
             DeviceState::Activated(_) => true,
         }
     }
+
+    fn reset(&mut self) -> bool {
+        // Strictly speaking, we should unsubscribe the queue events resubscribe
+        // the activate eventfd and deactivate the device, but we don't support
+        // any scenario in which neither GuestMemory nor the queue events would
+        // change, so let's avoid doing any unnecessary work.
+        true
+    }
 }
