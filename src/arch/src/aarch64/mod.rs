@@ -136,13 +136,17 @@ pub fn initrd_load_addr(guest_mem: &GuestMemoryMmap, initrd_size: usize) -> supe
 }
 
 // Auxiliary function to get the address where the device tree blob is loaded.
-pub fn get_fdt_addr(mem: &GuestMemoryMmap) -> u64 {
+pub fn get_fdt_addr(_mem: &GuestMemoryMmap) -> u64 {
     // If the memory allocated is smaller than the size allocated for the FDT,
     // we return the start of the DRAM so that
     // we allow the code to try and load the FDT.
 
-    if let Some(addr) = mem.last_addr().checked_sub(layout::FDT_MAX_SIZE as u64 - 1) {
-        if mem.address_in_range(addr) {
+    #[cfg(not(feature = "efi"))]
+    if let Some(addr) = _mem
+        .last_addr()
+        .checked_sub(layout::FDT_MAX_SIZE as u64 - 1)
+    {
+        if _mem.address_in_range(addr) {
             return addr.raw_value();
         }
     }
