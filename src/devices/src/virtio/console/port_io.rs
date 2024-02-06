@@ -1,14 +1,13 @@
 use std::io::{self, ErrorKind};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
-use libc::{
-    fcntl, EFD_NONBLOCK, F_GETFL, F_SETFL, O_NONBLOCK, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO,
-};
+use libc::{fcntl, F_GETFL, F_SETFL, O_NONBLOCK, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 use log::Level;
 use nix::errno::Errno;
 use nix::poll::{poll, PollFd, PollFlags};
 use nix::unistd::dup;
 use utils::eventfd::EventFd;
+use utils::eventfd::EFD_NONBLOCK;
 use vm_memory::bitmap::Bitmap;
 use vm_memory::{VolatileMemoryError, VolatileSlice, WriteVolatile};
 
