@@ -129,13 +129,13 @@ impl Passt {
     /// Try to read until filling the whole slice.
     fn read_loop(&self, buf: &mut [u8], block_until_has_data: bool) -> Result<(), ReadError> {
         let mut bytes_read = 0;
+        #[cfg(target_os = "linux")]
+        let flags = MsgFlags::MSG_DONTWAIT | MsgFlags::MSG_NOSIGNAL;
+        #[cfg(target_os = "macos")]
+        let flags = MsgFlags::MSG_DONTWAIT;
 
         if !block_until_has_data {
-            match recv(
-                self.fd,
-                buf,
-                MsgFlags::MSG_DONTWAIT | MsgFlags::MSG_NOSIGNAL,
-            ) {
+            match recv(self.fd, buf, flags) {
                 Ok(size) => bytes_read += size,
                 #[allow(unreachable_patterns)]
                 Err(nix::Error::EAGAIN | nix::Error::EWOULDBLOCK) => {
@@ -145,12 +145,13 @@ impl Passt {
             }
         }
 
+        #[cfg(target_os = "linux")]
+        let flags = MsgFlags::MSG_WAITALL | MsgFlags::MSG_NOSIGNAL;
+        #[cfg(target_os = "macos")]
+        let flags = MsgFlags::MSG_WAITALL;
+
         while bytes_read < buf.len() {
-            match recv(
-                self.fd,
-                &mut buf[bytes_read..],
-                MsgFlags::MSG_WAITALL | MsgFlags::MSG_NOSIGNAL,
-            ) {
+            match recv(self.fd, &mut buf[bytes_read..], flags) {
                 #[allow(unreachable_patterns)]
                 Err(nix::Error::EAGAIN | nix::Error::EWOULDBLOCK) => {
                     log::warn!("read_loop: unexpected EAGAIN/EWOULDBLOCK on blocking socket");
@@ -170,12 +171,13 @@ impl Passt {
     fn write_loop(&mut self, buf: &[u8]) -> Result<(), WriteError> {
         let mut bytes_send = 0;
 
+        #[cfg(target_os = "linux")]
+        let flags = MsgFlags::MSG_DONTWAIT | MsgFlags::MSG_NOSIGNAL;
+        #[cfg(target_os = "macos")]
+        let flags = MsgFlags::MSG_DONTWAIT;
+
         while bytes_send < buf.len() {
-            match send(
-                self.fd,
-                &buf[bytes_send..],
-                MsgFlags::MSG_DONTWAIT | MsgFlags::MSG_NOSIGNAL,
-            ) {
+            match send(self.fd, &buf[bytes_send..], flags) {
                 Ok(size) => bytes_send += size,
                 #[allow(unreachable_patterns)]
                 Err(nix::Error::EAGAIN | nix::Error::EWOULDBLOCK) => {
