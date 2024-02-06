@@ -360,14 +360,23 @@ impl VirtioDevice for Console {
             DeviceState::Activated(_) => true,
         }
     }
+
+    fn reset(&mut self) -> bool {
+        // Strictly speaking, we should also unsubscribe the queue
+        // events, resubscribe the activate eventfd and deactivate
+        // the device, but we don't support any scenario in which
+        // neither GuestMemory nor the queue events would change,
+        // so let's avoid doing any unnecessary work.
+        for port in &mut self.ports {
+            port.shutdown();
+        }
+        true
+    }
 }
 
 impl VmmExitObserver for Console {
     fn on_vmm_exit(&mut self) {
-        for port in &mut self.ports {
-            port.flush();
-        }
-
+        self.reset();
         log::trace!("Console on_vmm_exit finished");
     }
 }

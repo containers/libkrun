@@ -14,7 +14,7 @@ use vm_memory::{VolatileMemoryError, VolatileSlice, WriteVolatile};
 pub trait PortInput {
     fn read_volatile(&mut self, buf: &mut VolatileSlice) -> Result<usize, io::Error>;
 
-    fn wait_until_readable(&self);
+    fn wait_until_readable(&self, stopfd: Option<&EventFd>);
 }
 
 pub trait PortOutput {
@@ -85,8 +85,12 @@ impl PortInput for PortInputFd {
         }
     }
 
-    fn wait_until_readable(&self) {
-        let mut poll_fds = [PollFd::new(self.as_raw_fd(), PollFlags::POLLIN)];
+    fn wait_until_readable(&self, stopfd: Option<&EventFd>) {
+        let mut poll_fds = Vec::new();
+        poll_fds.push(PollFd::new(self.as_raw_fd(), PollFlags::POLLIN));
+        if let Some(stopfd) = stopfd {
+            poll_fds.push(PollFd::new(stopfd.as_raw_fd(), PollFlags::POLLIN));
+        }
         poll(&mut poll_fds, -1).expect("Failed to poll");
     }
 }
@@ -213,7 +217,7 @@ impl PortInput for PortInputSigInt {
         Ok(1)
     }
 
-    fn wait_until_readable(&self) {
+    fn wait_until_readable(&self, _stopfd: Option<&EventFd>) {
         let mut poll_fds = [PollFd::new(self.sigint_evt.as_raw_fd(), PollFlags::POLLIN)];
         poll(&mut poll_fds, -1).expect("Failed to poll");
     }

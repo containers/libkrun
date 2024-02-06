@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::{io, thread};
 
 use vm_memory::{GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion};
@@ -12,7 +12,7 @@ pub(crate) fn process_tx(
     mem: GuestMemoryMmap,
     mut queue: Queue,
     irq: IRQSignaler,
-    mut output: Box<dyn PortOutput + Send>,
+    output: Arc<Mutex<Box<dyn PortOutput + Send>>>,
     stop: Arc<AtomicBool>,
 ) {
     loop {
@@ -25,7 +25,7 @@ pub(crate) fn process_tx(
 
         for desc in head.into_iter().readable() {
             let desc_len = desc.len as usize;
-            match write_desc_to_output(desc, output.as_mut(), &irq) {
+            match write_desc_to_output(desc, output.lock().unwrap().as_mut(), &irq) {
                 Ok(0) => {
                     break;
                 }
