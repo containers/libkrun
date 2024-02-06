@@ -34,7 +34,7 @@ use crate::signal_handler::register_sigint_handler;
 #[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigwinch_handler;
 use crate::terminal::term_set_raw_mode;
-#[cfg(feature = "tee")]
+#[cfg(feature = "blk")]
 use crate::vmm_config::block::BlockBuilder;
 use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
 #[cfg(not(feature = "tee"))]
@@ -541,7 +541,7 @@ pub fn build_microvm(
         shm_region,
         intc.clone(),
     )?;
-    #[cfg(feature = "tee")]
+    #[cfg(feature = "blk")]
     attach_block_devices(&mut vmm, &vm_resources.block, event_manager, intc.clone())?;
     if let Some(vsock) = vm_resources.vsock.get() {
         attach_unixsock_vsock_device(&mut vmm, vsock, event_manager, intc)?;
@@ -1210,7 +1210,7 @@ fn attach_balloon_device(
     Ok(())
 }
 
-#[cfg(feature = "tee")]
+#[cfg(feature = "blk")]
 fn attach_block_devices(
     vmm: &mut Vmm,
     block_devs: &BlockBuilder,

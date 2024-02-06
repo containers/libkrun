@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
 
-#[cfg(feature = "tee")]
+#[cfg(feature = "blk")]
 use crate::vmm_config::block::{BlockBuilder, BlockConfigError, BlockDeviceConfig};
 use crate::vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
 #[cfg(not(feature = "tee"))]
@@ -101,7 +101,7 @@ pub struct VmResources {
     /// The vsock device.
     pub vsock: VsockBuilder,
     /// The virtio-blk device.
-    #[cfg(feature = "tee")]
+    #[cfg(feature = "blk")]
     pub block: BlockBuilder,
     /// The network devices builder.
     #[cfg(feature = "net")]
@@ -232,7 +232,7 @@ impl VmResources {
         self.fs.insert(config)
     }
 
-    #[cfg(feature = "tee")]
+    #[cfg(feature = "blk")]
     pub fn add_block_device(&mut self, config: BlockDeviceConfig) -> Result<BlockConfigError> {
         self.block.insert(config)
     }
