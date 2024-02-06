@@ -94,13 +94,6 @@ impl MmioTransport {
         self.device_status & (set | clr) == set
     }
 
-    fn are_queues_valid(&self) -> bool {
-        self.locked_device()
-            .queues()
-            .iter()
-            .all(|q| q.is_valid(&self.mem))
-    }
-
     fn with_queue<U, F>(&self, d: U, f: F) -> U
     where
         F: FnOnce(&Queue) -> U,
@@ -129,10 +122,7 @@ impl MmioTransport {
     }
 
     fn update_queue_field<F: FnOnce(&mut Queue)>(&mut self, f: F) {
-        if self.check_device_status(
-            device_status::FEATURES_OK,
-            device_status::DRIVER_OK | device_status::FAILED,
-        ) {
+        if self.check_device_status(device_status::FEATURES_OK, device_status::FAILED) {
             self.with_queue_mut(f);
         } else {
             warn!(
@@ -184,7 +174,7 @@ impl MmioTransport {
             DRIVER_OK if self.device_status == (ACKNOWLEDGE | DRIVER | FEATURES_OK) => {
                 self.device_status = status;
                 let device_activated = self.locked_device().is_activated();
-                if !device_activated && self.are_queues_valid() {
+                if !device_activated {
                     self.locked_device()
                         .activate(self.mem.clone())
                         .expect("Failed to activate device");
@@ -488,8 +478,6 @@ pub(crate) mod tests {
 
         assert_eq!(d.locked_device().queue_events().len(), 2);
 
-        assert!(!d.are_queues_valid());
-
         d.queue_select = 0;
         assert_eq!(d.with_queue(0, Queue::get_max_size), 16);
         assert!(d.with_queue_mut(|q| q.size = 16));
@@ -503,8 +491,6 @@ pub(crate) mod tests {
         d.queue_select = 2;
         assert_eq!(d.with_queue(0, Queue::get_max_size), 0);
         assert!(!d.with_queue_mut(|q| q.size = 16));
-
-        assert!(!d.are_queues_valid());
     }
 
     #[test]
@@ -748,7 +734,6 @@ pub(crate) mod tests {
         let m = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x1000)]).unwrap();
         let mut d = MmioTransport::new(m, Arc::new(Mutex::new(DummyDevice::new())));
 
-        assert!(!d.are_queues_valid());
         assert!(!d.locked_device().is_activated());
         assert_eq!(d.device_status, device_status::INIT);
 
@@ -787,7 +772,6 @@ pub(crate) mod tests {
             write_le_u32(&mut buf[..], 1);
             d.write(0, 0x44, &buf[..]);
         }
-        assert!(d.are_queues_valid());
         assert!(!d.locked_device().is_activated());
 
         // Device should be ready for activation now.
@@ -812,14 +796,6 @@ pub(crate) mod tests {
                 | device_status::DRIVER_OK
         );
         assert!(d.locked_device().is_activated());
-
-        // A write which changes the size of a queue after activation; currently only triggers
-        // a warning path and have no effect on queue state.
-        write_le_u32(&mut buf[..], 0);
-        d.queue_select = 0;
-        d.write(0, 0x44, &buf[..]);
-        d.read(0, 0x44, &mut buf[..]);
-        assert_eq!(read_le_u32(&buf[..]), 1);
     }
 
     fn activate_device(d: &mut MmioTransport) {
@@ -840,7 +816,6 @@ pub(crate) mod tests {
             write_le_u32(&mut buf[..], 1);
             d.write(0, 0x44, &buf[..]);
         }
-        assert!(d.are_queues_valid());
         assert!(!d.locked_device().is_activated());
 
         // Device should be ready for activation now.
@@ -867,7 +842,6 @@ pub(crate) mod tests {
         let mut d = MmioTransport::new(m, Arc::new(Mutex::new(DummyDevice::new())));
         let mut buf = [0; 4];
 
-        assert!(!d.are_queues_valid());
         assert!(!d.locked_device().is_activated());
         assert_eq!(d.device_status, 0);
         activate_device(&mut d);
