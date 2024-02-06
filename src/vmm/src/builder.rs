@@ -387,21 +387,15 @@ pub fn build_microvm(
 
     // On x86_64 always create a serial device,
     // while on aarch64 only create it if 'console=' is specified in the boot args.
-    /*
-    let serial_device = if cfg!(target_arch = "x86_64")
-        || (cfg!(target_arch = "aarch64") && kernel_cmdline.as_str().contains("console="))
-    {
+    let serial_device = if cfg!(feature = "efi") {
         Some(setup_serial_device(
             event_manager,
-            Box::new(SerialStdin::get()),
-            Box::new(io::stdout()),
+            None,
+            Some(Box::new(io::stdout())),
         )?)
     } else {
         None
     };
-    */
-
-    let serial_device = None;
 
     let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
         .map_err(Error::EventFd)
@@ -792,20 +786,23 @@ pub fn setup_interrupt_controller(
 /// Sets up the serial device.
 pub fn setup_serial_device(
     event_manager: &mut EventManager,
-    input: Box<dyn devices::legacy::ReadableFd + Send>,
-    out: Box<dyn io::Write + Send>,
+    input: Option<Box<dyn devices::legacy::ReadableFd + Send>>,
+    out: Option<Box<dyn io::Write + Send>>,
 ) -> std::result::Result<Arc<Mutex<Serial>>, StartMicrovmError> {
     let interrupt_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
         .map_err(Error::EventFd)
         .map_err(StartMicrovmError::Internal)?;
-    let serial = Arc::new(Mutex::new(Serial::new_in_out(interrupt_evt, input, out)));
-    if let Err(e) = event_manager.add_subscriber(serial.clone()) {
-        // TODO: We just log this message, and immediately return Ok, instead of returning the
-        // actual error because this operation always fails with EPERM when adding a fd which
-        // has been redirected to /dev/null via dup2 (this may happen inside the jailer).
-        // Find a better solution to this (and think about the state of the serial device
-        // while we're at it).
-        warn!("Could not add serial input event to epoll: {:?}", e);
+    let has_input = input.is_some();
+    let serial = Arc::new(Mutex::new(Serial::new(interrupt_evt, out, input)));
+    if has_input {
+        if let Err(e) = event_manager.add_subscriber(serial.clone()) {
+            // TODO: We just log this message, and immediately return Ok, instead of returning the
+            // actual error because this operation always fails with EPERM when adding a fd which
+            // has been redirected to /dev/null via dup2 (this may happen inside the jailer).
+            // Find a better solution to this (and think about the state of the serial device
+            // while we're at it).
+            warn!("Could not add serial input event to epoll: {:?}", e);
+        }
     }
     Ok(serial)
 }
