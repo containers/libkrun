@@ -185,16 +185,8 @@ impl MmioTransport {
                 self.device_status |= FAILED;
             }
             _ if status == 0 => {
-                if self.locked_device().is_activated() {
-                    let mut device_status = self.device_status;
-                    let reset_result = self.locked_device().reset();
-                    match reset_result {
-                        Some((_interrupt_evt, mut _queue_evts)) => {}
-                        None => {
-                            device_status |= FAILED;
-                        }
-                    }
-                    self.device_status = device_status;
+                if self.locked_device().is_activated() && !self.locked_device().reset() {
+                    self.device_status |= FAILED;
                 }
 
                 // If the backend device driver doesn't support reset,
@@ -468,9 +460,7 @@ pub(crate) mod tests {
     #[test]
     fn test_new() {
         let m = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x1000)]).unwrap();
-        let mut dummy = DummyDevice::new();
-        // Validate reset is no-op.
-        assert!(dummy.reset().is_none());
+        let dummy = DummyDevice::new();
         let mut d = MmioTransport::new(m, Arc::new(Mutex::new(dummy)));
 
         // We just make sure here that the implementation of a mmio device behaves as we expect,
