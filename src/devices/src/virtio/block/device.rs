@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use log::{error, warn};
-use utils::eventfd::EventFd;
+use utils::eventfd::{EventFd, EFD_NONBLOCK};
 use virtio_bindings::{virtio_blk::*, virtio_config::VIRTIO_F_VERSION_1};
 use vm_memory::{Bytes, GuestMemoryError, GuestMemoryMmap};
 
@@ -207,7 +207,7 @@ impl Block {
             avail_features |= 1u64 << VIRTIO_BLK_F_RO;
         };
 
-        let queue_evts = [EventFd::new(libc::EFD_NONBLOCK)?];
+        let queue_evts = [EventFd::new(EFD_NONBLOCK)?];
 
         let queues = QUEUE_SIZES.iter().map(|&s| Queue::new(s)).collect();
 
@@ -220,11 +220,11 @@ impl Block {
             avail_features,
             acked_features: 0u64,
             interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(libc::EFD_NONBLOCK)?,
+            interrupt_evt: EventFd::new(EFD_NONBLOCK)?,
             queue_evts,
             queues,
             device_state: DeviceState::Inactive,
-            activate_evt: EventFd::new(libc::EFD_NONBLOCK)?,
+            activate_evt: EventFd::new(EFD_NONBLOCK)?,
             intc: None,
             irq_line: None,
         })
