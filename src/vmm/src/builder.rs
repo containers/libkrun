@@ -29,6 +29,7 @@ use kbs_types::Tee;
 use crate::device_manager;
 #[cfg(feature = "tee")]
 use crate::resources::TeeConfig;
+#[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigint_handler;
 #[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigwinch_handler;
@@ -1057,12 +1058,15 @@ fn attach_console_devices(
     let console_input = if stdin_is_terminal {
         Some(port_io::stdin().unwrap())
     } else {
-        let sigint_input = port_io::PortInputSigInt::new();
-        let sigint_input_fd = sigint_input.sigint_evt().as_raw_fd();
-
-        register_sigint_handler(sigint_input_fd).map_err(RegisterFsSigwinch)?;
-
-        Some(Box::new(sigint_input) as _)
+        #[cfg(target_os = "linux")]
+        {
+            let sigint_input = port_io::PortInputSigInt::new();
+            let sigint_input_fd = sigint_input.sigint_evt().as_raw_fd();
+            register_sigint_handler(sigint_input_fd).map_err(RegisterFsSigwinch)?;
+            Some(Box::new(sigint_input) as _)
+        }
+        #[cfg(not(target_os = "linux"))]
+        None
     };
 
     let console_output = if stdout_is_terminal {

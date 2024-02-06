@@ -2,8 +2,8 @@ use std::collections::VecDeque;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
-use libc::EFD_NONBLOCK;
 use utils::eventfd::EventFd;
+use utils::eventfd::EFD_NONBLOCK;
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use crate::virtio::console::defs::control_event::{
