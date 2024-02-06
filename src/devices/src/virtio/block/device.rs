@@ -9,7 +9,10 @@ use std::cmp;
 use std::convert::From;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Seek, SeekFrom, Write};
+#[cfg(target_os = "linux")]
 use std::os::linux::fs::MetadataExt;
+#[cfg(target_os = "macos")]
+use std::os::macos::fs::MetadataExt;
 use std::path::PathBuf;
 use std::result;
 use std::sync::atomic::{AtomicUsize, Ordering};
