@@ -115,8 +115,8 @@ pub trait VirtioDevice: AsAny + Send {
 
     /// Optionally deactivates this device and returns ownership of the guest memory map, interrupt
     /// event, and queue events.
-    fn reset(&mut self) -> Option<(EventFd, Vec<EventFd>)> {
-        None
+    fn reset(&mut self) -> bool {
+        false
     }
 
     /// Get base and size of the SHM region
