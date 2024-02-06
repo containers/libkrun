@@ -61,7 +61,7 @@ impl GICDevice for GICv2 {
     }
 
     fn fdt_compatibility(&self) -> &str {
-        "arm,gic-400"
+        "arm,cortex-a15-gic"
     }
 
     fn fdt_maint_irq(&self) -> u32 {
