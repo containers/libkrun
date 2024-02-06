@@ -1,0 +1,36 @@
+name: Code Quality (rustfmt and clippy)
+on: [pull_request, create]
+
+jobs:
+  build:
+    if: github.event_name == 'pull_request'
+    name: Code Quality (clippy, rustfmt)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+        target:
+          - aarch64-apple-darwin
+    steps:
+      - name: Code checkout
+        uses: actions/checkout@v2
+      - name: Install Rust toolchain (${{ matrix.rust }})
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: ${{ matrix.rust }}
+            target: ${{ matrix.target }}
+            override: true
+            components: rustfmt, clippy
+
+      - name: Create a fake init
+        run: touch init/init
+
+      - name: Formatting (rustfmt)
+        run: cargo fmt -- --check
+
+      - name: Clippy (default features)
+        run: cargo clippy -- -D warnings
+
+      - name: Clippy (net feature)
+        run: cargo clippy --features net -- -D warnings
