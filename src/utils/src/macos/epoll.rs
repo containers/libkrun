@@ -24,6 +24,8 @@ bitflags! {
         const IN = 0b00000001;
         const OUT = 0b00000010;
         const HANG_UP = 0b00000100;
+        const READ_HANG_UP = 0b00001000;
+        const EDGE_TRIGGERED = 0b00010000;
     }
 }
 
@@ -143,13 +145,28 @@ impl Epoll {
         match operation {
             ControlOperation::Add | ControlOperation::Modify => {
                 let mut kevs: Vec<Kevent> = Vec::new();
+                let oneshot = if eset.contains(EventSet::EDGE_TRIGGERED) {
+                    libc::EV_ONESHOT
+                } else {
+                    0
+                };
                 if eset.contains(EventSet::IN) {
                     debug!("add fd in: {}", fd);
-                    kevs.push(Kevent::new(fd as usize, -1, 0x1, event.u64));
+                    kevs.push(Kevent::new(
+                        fd as usize,
+                        libc::EVFILT_READ,
+                        libc::EV_ADD | oneshot,
+                        event.u64,
+                    ));
                 }
                 if eset.contains(EventSet::OUT) {
                     debug!("add fd out: {}", fd);
-                    kevs.push(Kevent::new(fd as usize, -2, 0x1, event.u64));
+                    kevs.push(Kevent::new(
+                        fd as usize,
+                        libc::EVFILT_WRITE,
+                        libc::EV_ADD | oneshot,
+                        event.u64,
+                    ));
                 }
                 let ret = unsafe {
                     libc::kevent(
@@ -167,16 +184,36 @@ impl Epoll {
                 let mut kevs: Vec<Kevent> = Vec::new();
                 if eset.bits() == 0 {
                     debug!("remove fd in and out: {}", fd);
-                    kevs.push(Kevent::new(fd as usize, -1, 0x2, event.u64));
-                    kevs.push(Kevent::new(fd as usize, -2, 0x2, event.u64));
+                    kevs.push(Kevent::new(
+                        fd as usize,
+                        libc::EVFILT_READ,
+                        libc::EV_DELETE,
+                        event.u64,
+                    ));
+                    kevs.push(Kevent::new(
+                        fd as usize,
+                        libc::EVFILT_WRITE,
+                        libc::EV_DELETE,
+                        event.u64,
+                    ));
                 } else {
                     if eset.contains(EventSet::IN) {
                         debug!("remove fd in: {}", fd);
-                        kevs.push(Kevent::new(fd as usize, -1, 0x2, event.u64));
+                        kevs.push(Kevent::new(
+                            fd as usize,
+                            libc::EVFILT_READ,
+                            libc::EV_DELETE,
+                            event.u64,
+                        ));
                     }
                     if eset.contains(EventSet::OUT) {
                         debug!("remove fd out: {}", fd);
-                        kevs.push(Kevent::new(fd as usize, -2, 0x2, event.u64));
+                        kevs.push(Kevent::new(
+                            fd as usize,
+                            libc::EVFILT_WRITE,
+                            libc::EV_DELETE,
+                            event.u64,
+                        ));
                     }
                 }
                 let _ = unsafe {
@@ -228,10 +265,17 @@ impl Epoll {
 
         for i in 0..ret {
             debug!("kev: {:?}", kevs[i as usize]);
-            if kevs[i as usize].0.filter == -1 {
+            if kevs[i as usize].0.filter == libc::EVFILT_READ {
                 events[i as usize].events = EventSet::IN.bits();
-            } else if kevs[i as usize].0.filter == -2 {
+            } else if kevs[i as usize].0.filter == libc::EVFILT_WRITE {
                 events[i as usize].events = EventSet::OUT.bits();
+            }
+            if kevs[i as usize].0.flags & libc::EV_EOF != 0 {
+                events[i as usize].events |= if kevs[i as usize].0.flags & libc::EV_ONESHOT != 0 {
+                    EventSet::READ_HANG_UP.bits()
+                } else {
+                    EventSet::HANG_UP.bits()
+                };
             }
             events[i as usize].u64 = kevs[i as usize].udata() as u64;
         }
