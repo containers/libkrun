@@ -73,7 +73,7 @@ pub struct Serial {
 }
 
 impl Serial {
-    fn new(
+    pub fn new(
         interrupt_evt: EventFd,
         out: Option<Box<dyn io::Write + Send>>,
         input: Option<Box<dyn ReadableFd + Send>>,
