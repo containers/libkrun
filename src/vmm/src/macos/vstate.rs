@@ -131,8 +131,8 @@ impl Vm {
             self.hvf_vm
                 .map_memory(
                     host_addr as u64,
-                    region.start_addr().raw_value() as u64,
-                    region.len() as u64,
+                    region.start_addr().raw_value(),
+                    region.len(),
                 )
                 .map_err(Error::SetUserMemoryRegion)?;
         }

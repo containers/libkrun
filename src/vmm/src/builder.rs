@@ -696,7 +696,7 @@ pub fn create_guest_memory(
 
     let kernel_data = unsafe { std::slice::from_raw_parts(kernel_region.as_ptr(), kernel_size) };
     guest_mem
-        .write(kernel_data, GuestAddress(kernel_load_addr as u64))
+        .write(kernel_data, GuestAddress(kernel_load_addr))
         .unwrap();
     Ok((guest_mem, arch_mem_info))
 }

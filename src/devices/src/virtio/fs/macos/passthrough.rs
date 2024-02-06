@@ -138,7 +138,7 @@ fn open_path(
 fn add_path(path_cache: &mut BTreeMap<Inode, Vec<String>>, inode: Inode, filepath: String) {
     debug!("add_path: inode={} filepath={}", inode, filepath);
 
-    let path_list = path_cache.entry(inode).or_insert_with(Vec::new);
+    let path_list = path_cache.entry(inode).or_default();
     if !path_list.contains(&filepath) {
         path_list.push(filepath);
     }
@@ -363,7 +363,7 @@ fn fstat(f: &File) -> io::Result<bindings::stat64> {
 /// The caching policy that the file system should report to the FUSE client. By default the FUSE
 /// protocol uses close-to-open consistency. This means that any cached contents of the file are
 /// invalidated the next time that file is opened.
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub enum CachePolicy {
     /// The client should never cache file data and all I/O should be directly forwarded to the
     /// server. This policy must be selected when file contents may change without the knowledge of
@@ -372,6 +372,7 @@ pub enum CachePolicy {
 
     /// The client is free to choose when and how to cache file data. This is the default policy and
     /// uses close-to-open consistency as described in the enum documentation.
+    #[default]
     Auto,
 
     /// The client should always cache file data. This means that the FUSE client will not
@@ -391,12 +392,6 @@ impl FromStr for CachePolicy {
             "always" | "Always" | "ALWAYS" => Ok(CachePolicy::Always),
             _ => Err("invalid cache policy"),
         }
-    }
-}
-
-impl Default for CachePolicy {
-    fn default() -> Self {
-        CachePolicy::Auto
     }
 }
 
@@ -830,7 +825,7 @@ impl PassthroughFs {
     fn do_open(&self, inode: Inode, flags: u32) -> io::Result<(Option<Handle>, OpenOptions)> {
         let flags = self.parse_open_flags(flags as i32);
 
-        let file = RwLock::new(self.open_inode(inode, flags as i32)?);
+        let file = RwLock::new(self.open_inode(inode, flags)?);
 
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
         let data = HandleData {
