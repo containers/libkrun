@@ -17,7 +17,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::{cmp, mem, result};
-use utils::eventfd::EventFd;
+use utils::eventfd::{EventFd, EFD_NONBLOCK};
 use virtio_bindings::virtio_net::{
     virtio_net_hdr_v1, VIRTIO_NET_F_CSUM, VIRTIO_NET_F_GUEST_CSUM, VIRTIO_NET_F_GUEST_TSO4,
     VIRTIO_NET_F_GUEST_UFO, VIRTIO_NET_F_HOST_TSO4, VIRTIO_NET_F_HOST_UFO,
@@ -100,7 +100,7 @@ impl Net {
 
         let mut queue_evts = Vec::new();
         for _ in QUEUE_SIZES.iter() {
-            queue_evts.push(EventFd::new(libc::EFD_NONBLOCK).map_err(Error::EventFd)?);
+            queue_evts.push(EventFd::new(EFD_NONBLOCK).map_err(Error::EventFd)?);
         }
 
         let queues = QUEUE_SIZES.iter().map(|&s| Queue::new(s)).collect();
@@ -124,10 +124,10 @@ impl Net {
             tx_iovec: Vec::with_capacity(QUEUE_SIZE as usize),
 
             interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(Error::EventFd)?,
+            interrupt_evt: EventFd::new(EFD_NONBLOCK).map_err(Error::EventFd)?,
 
             device_state: DeviceState::Inactive,
-            activate_evt: EventFd::new(libc::EFD_NONBLOCK).map_err(Error::EventFd)?,
+            activate_evt: EventFd::new(EFD_NONBLOCK).map_err(Error::EventFd)?,
 
             intc: None,
             irq_line: None,
