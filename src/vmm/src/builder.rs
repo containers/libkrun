@@ -64,6 +64,9 @@ use vm_memory::Bytes;
 use vm_memory::GuestMemory;
 use vm_memory::{mmap::MmapRegion, GuestAddress, GuestMemoryMmap};
 
+#[cfg(feature = "efi")]
+static EDK2_BINARY: &[u8] = include_bytes!("../../../edk2/KRUN_EFI.silent.fd");
+
 /// Errors associated with starting the instance.
 #[derive(Debug)]
 pub enum StartMicrovmError {
@@ -483,11 +486,17 @@ pub fn build_microvm(
 
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     {
+        let start_addr = if cfg!(feature = "efi") {
+            GuestAddress(0u64)
+        } else {
+            GuestAddress(kernel_bundle.guest_addr)
+        };
+
         vcpus = create_vcpus_aarch64(
             &vm,
             &vcpu_config,
             &guest_memory,
-            GuestAddress(kernel_bundle.guest_addr),
+            start_addr,
             request_ts,
             &exit_evt,
             intc.clone().unwrap(),
@@ -684,9 +693,9 @@ pub fn create_guest_memory(
 #[cfg(target_arch = "aarch64")]
 pub fn create_guest_memory(
     mem_size_mib: usize,
-    kernel_region: MmapRegion,
-    kernel_load_addr: u64,
-    kernel_size: usize,
+    _kernel_region: MmapRegion,
+    _kernel_load_addr: u64,
+    _kernel_size: usize,
 ) -> std::result::Result<(GuestMemoryMmap, ArchMemoryInfo), StartMicrovmError> {
     let mem_size = mem_size_mib << 20;
     let (arch_mem_info, arch_mem_regions) = arch::arch_memory_regions(mem_size);
@@ -694,10 +703,16 @@ pub fn create_guest_memory(
     let guest_mem = GuestMemoryMmap::from_ranges(&arch_mem_regions)
         .map_err(StartMicrovmError::GuestMemoryMmap)?;
 
-    let kernel_data = unsafe { std::slice::from_raw_parts(kernel_region.as_ptr(), kernel_size) };
-    guest_mem
-        .write(kernel_data, GuestAddress(kernel_load_addr))
-        .unwrap();
+    #[cfg(feature = "efi")]
+    guest_mem.write(EDK2_BINARY, GuestAddress(0u64)).unwrap();
+    #[cfg(not(feature = "efi"))]
+    {
+        let kernel_data =
+            unsafe { std::slice::from_raw_parts(_kernel_region.as_ptr(), _kernel_size) };
+        guest_mem
+            .write(kernel_data, GuestAddress(_kernel_load_addr))
+            .unwrap();
+    }
     Ok((guest_mem, arch_mem_info))
 }
 

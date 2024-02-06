@@ -69,10 +69,17 @@ pub fn arch_memory_regions(size: usize) -> (ArchMemoryInfo, Vec<(GuestAddress, u
         shm_start_addr: 0,
         shm_size: 0,
     };
-    (
-        info,
-        vec![(GuestAddress(layout::DRAM_MEM_START), dram_size)],
-    )
+    let regions = if cfg!(feature = "efi") {
+        vec![
+            // Space for loading EDK2 and its variables
+            (GuestAddress(0u64), 0x800_0000),
+            (GuestAddress(layout::DRAM_MEM_START), dram_size),
+        ]
+    } else {
+        vec![(GuestAddress(layout::DRAM_MEM_START), dram_size)]
+    };
+
+    (info, regions)
 }
 
 /// Configures the system and should be called once per vm before starting vcpu threads.

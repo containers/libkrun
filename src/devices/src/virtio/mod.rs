@@ -31,7 +31,7 @@ pub mod vsock;
 #[cfg(not(feature = "tee"))]
 pub use self::balloon::*;
 #[cfg(feature = "blk")]
-pub use self::block::*;
+pub use self::block::{Block, CacheType};
 pub use self::console::*;
 pub use self::device::*;
 #[cfg(not(feature = "tee"))]

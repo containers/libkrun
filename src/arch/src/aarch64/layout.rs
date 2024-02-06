@@ -50,7 +50,10 @@
 // Taken from (http://infocenter.arm.com/help/topic/com.arm.doc.den0001c/DEN0001C_principles_of_arm_memory_maps.pdf).
 
 /// Start of RAM on 64 bit ARM.
+#[cfg(not(feature = "efi"))]
 pub const DRAM_MEM_START: u64 = 0x8000_0000; // 2 GB.
+#[cfg(feature = "efi")]
+pub const DRAM_MEM_START: u64 = 0x4000_0000; // 1 GB.
 /// The maximum addressable RAM address.
 pub const DRAM_MEM_END: u64 = 0x00FF_8000_0000; // 1024 - 2 = 1022 GB.
 /// The maximum RAM size.
@@ -82,4 +85,7 @@ pub const GTIMER_VIRT: u32 = 11;
 pub const GTIMER_PHYS: u32 = 12;
 
 /// Below this address will reside the GIC, above this address will reside the MMIO devices.
+#[cfg(not(feature = "efi"))]
 pub const MAPPED_IO_START: u64 = 1 << 30; // 1 GB
+#[cfg(feature = "efi")]
+pub const MAPPED_IO_START: u64 = 0x0a00_0000;
