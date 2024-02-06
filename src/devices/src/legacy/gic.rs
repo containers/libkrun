@@ -72,7 +72,7 @@ impl Gic {
                 panic!("Unknown vCPU id: {}", vcpuid);
             }
             Entry::Occupied(mut vcpu_entry) => {
-                let mut vcpu = vcpu_entry.get_mut();
+                let vcpu = vcpu_entry.get_mut();
 
                 vcpu.pending_irqs.push_back(irq_line);
 
@@ -107,7 +107,7 @@ impl Gic {
 
             debug!("signaling irq={} to vcpuid={}", irq_line, vcpuid);
 
-            self.set_irq_common(vcpuid as u8, irq_line);
+            self.set_irq_common(vcpuid, irq_line);
         }
     }
 
@@ -132,7 +132,7 @@ impl Gic {
                 panic!("Unknown vCPU id: {}", vcpuid);
             }
             Entry::Occupied(mut vcpu_entry) => {
-                let mut vcpu = vcpu_entry.get_mut();
+                let vcpu = vcpu_entry.get_mut();
                 if vcpu.pending_irqs.is_empty() {
                     vcpu.status = VcpuStatus::Waiting;
                     true
@@ -246,7 +246,7 @@ impl Gic {
                     0b01 => {
                         for cpu in 0..self.vcpu_count {
                             if cpu != vcpuid as u8 {
-                                self.set_sgi_irq(cpu as u8, irq);
+                                self.set_sgi_irq(cpu, irq);
                             }
                         }
                     }
@@ -256,7 +256,7 @@ impl Gic {
                         for vcpuid in 0..self.vcpu_count {
                             if (target_cpus & (1 << vcpuid)) != 0 {
                                 debug!("signal irq={} to vcpu: {}", irq, vcpuid);
-                                self.set_sgi_irq(vcpuid as u8, irq);
+                                self.set_sgi_irq(vcpuid, irq);
                             }
                         }
                     }

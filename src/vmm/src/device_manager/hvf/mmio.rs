@@ -106,12 +106,7 @@ impl MMIODeviceManager {
 
         let mut queue_evts: Vec<EventFd> = Vec::new();
 
-        for (_i, queue_evt) in mmio_device
-            .locked_device()
-            .queue_events()
-            .iter()
-            .enumerate()
-        {
+        for queue_evt in mmio_device.locked_device().queue_events().iter() {
             queue_evts.push(queue_evt.try_clone().unwrap());
         }
 

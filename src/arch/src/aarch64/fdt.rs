@@ -193,10 +193,7 @@ fn create_chosen_node(
     fdt.property_string("bootargs", cmdline)?;
 
     if let Some(initrd_config) = initrd {
-        fdt.property_u64(
-            "linux,initrd-start",
-            initrd_config.address.raw_value() as u64,
-        )?;
+        fdt.property_u64("linux,initrd-start", initrd_config.address.raw_value())?;
         fdt.property_u64(
             "linux,initrd-end",
             initrd_config.address.raw_value() + initrd_config.size as u64,
