@@ -17,6 +17,7 @@ SNP_INIT_SRC =	init/tee/snp_attest.c		\
 KBS_LD_FLAGS =	-lcurl -lidn2 -lssl -lcrypto -lzstd -lz -lbrotlidec-static \
 		-lbrotlicommon-static
 
+BUILD_INIT = 1
 INIT_DEFS =
 ifeq ($(SEV),1)
     VARIANT = -sev
@@ -24,9 +25,15 @@ ifeq ($(SEV),1)
     INIT_DEFS += -DSEV=1
     INIT_DEFS += $(KBS_LD_FLAGS)
     INIT_SRC += $(SNP_INIT_SRC)
+	BUILD_INIT = 0
 endif
 ifeq ($(NET),1)
     FEATURE_FLAGS += --features net
+endif
+ifeq ($(EFI),1)
+	VARIANT = -efi
+	FEATURE_FLAGS := --features efi
+	BUILD_INIT = 0
 endif
 
 ifeq ($(ROSETTA),1)
@@ -42,9 +49,9 @@ KRUN_BINARY_Linux = libkrun$(VARIANT).so.$(FULL_VERSION)
 KRUN_SONAME_Linux = libkrun$(VARIANT).so.$(ABI_VERSION)
 KRUN_BASE_Linux = libkrun$(VARIANT).so
 
-KRUN_BINARY_Darwin = libkrun.$(FULL_VERSION).dylib
-KRUN_SONAME_Darwin = libkrun.$(ABI_VERSION).dylib
-KRUN_BASE_Darwin = libkrun.dylib
+KRUN_BINARY_Darwin = libkrun$(VARIANT).$(FULL_VERSION).dylib
+KRUN_SONAME_Darwin = libkrun$(VARIANT).$(ABI_VERSION).dylib
+KRUN_BASE_Darwin = libkrun$(VARIANT).dylib
 
 LIBRARY_RELEASE_Linux = target/release/$(KRUN_BINARY_Linux)
 LIBRARY_DEBUG_Linux = target/debug/$(KRUN_BINARY_Linux)
@@ -64,7 +71,7 @@ all: $(LIBRARY_RELEASE_$(OS)) libkrun.pc
 
 debug: $(LIBRARY_DEBUG_$(OS)) libkrun.pc
 
-ifneq ($(SEV),1)
+ifeq ($(BUILD_INIT),1)
 INIT_BINARY = init/init
 $(INIT_BINARY): $(INIT_SRC)
 	gcc -O2 -static -Wall $(INIT_DEFS) -o $@ $(INIT_SRC) $(INIT_DEFS)
