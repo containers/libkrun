@@ -7,6 +7,7 @@
 use crossbeam_channel::unbounded;
 use std::fmt::{Display, Formatter};
 use std::io;
+#[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::sync::{Arc, Mutex};
 
