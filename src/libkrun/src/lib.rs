@@ -21,7 +21,9 @@ use std::sync::Mutex;
 #[cfg(feature = "blk")]
 use devices::virtio::CacheType;
 use env_logger::Env;
-use libc::{c_char, c_int, size_t};
+#[cfg(not(feature = "efi"))]
+use libc::size_t;
+use libc::{c_char, c_int};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
 use vmm::resources::VmResources;
@@ -30,6 +32,7 @@ use vmm::vmm_config::block::BlockDeviceConfig;
 use vmm::vmm_config::boot_source::{BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
 #[cfg(not(feature = "tee"))]
 use vmm::vmm_config::fs::FsDeviceConfig;
+#[cfg(not(feature = "efi"))]
 use vmm::vmm_config::kernel_bundle::KernelBundle;
 #[cfg(feature = "tee")]
 use vmm::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
@@ -39,6 +42,7 @@ use vmm::vmm_config::net::NetworkInterfaceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
 // Minimum krunfw version we require.
+#[cfg(not(feature = "efi"))]
 const KRUNFW_MIN_VERSION: u32 = 4;
 // Value returned on success. We use libc's errors otherwise.
 const KRUN_SUCCESS: i32 = 0;
@@ -206,7 +210,7 @@ impl ContextConfig {
 static CTX_MAP: Lazy<Mutex<HashMap<u32, ContextConfig>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static CTX_IDS: AtomicI32 = AtomicI32::new(0);
 
-#[cfg(not(feature = "tee"))]
+#[cfg(all(not(feature = "tee"), not(feature = "efi")))]
 #[link(name = "krunfw")]
 extern "C" {
     fn krunfw_get_kernel(
@@ -245,6 +249,7 @@ pub extern "C" fn krun_set_log_level(level: u32) -> i32 {
 }
 
 #[no_mangle]
+#[cfg(not(feature = "efi"))]
 pub extern "C" fn krun_create_ctx() -> i32 {
     let krunfw_version = unsafe { krunfw_get_version() };
     if krunfw_version < KRUNFW_MIN_VERSION {
@@ -291,6 +296,21 @@ pub extern "C" fn krun_create_ctx() -> i32 {
         };
         ctx_cfg.vmr.set_initrd_bundle(initrd_bundle).unwrap();
     }
+
+    let ctx_id = CTX_IDS.fetch_add(1, Ordering::SeqCst);
+    if ctx_id == i32::MAX || CTX_MAP.lock().unwrap().contains_key(&(ctx_id as u32)) {
+        // libkrun is not intended to be used as a daemon for managing VMs.
+        panic!("Context ID namespace exhausted");
+    }
+    CTX_MAP.lock().unwrap().insert(ctx_id as u32, ctx_cfg);
+
+    ctx_id
+}
+
+#[no_mangle]
+#[cfg(feature = "efi")]
+pub extern "C" fn krun_create_ctx() -> i32 {
+    let ctx_cfg = ContextConfig::default();
 
     let ctx_id = CTX_IDS.fetch_add(1, Ordering::SeqCst);
     if ctx_id == i32::MAX || CTX_MAP.lock().unwrap().contains_key(&(ctx_id as u32)) {
