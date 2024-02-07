@@ -145,8 +145,8 @@ impl Epoll {
         match operation {
             ControlOperation::Add | ControlOperation::Modify => {
                 let mut kevs: Vec<Kevent> = Vec::new();
-                let oneshot = if eset.contains(EventSet::EDGE_TRIGGERED) {
-                    libc::EV_ONESHOT
+                let clear = if eset.contains(EventSet::EDGE_TRIGGERED) {
+                    libc::EV_CLEAR
                 } else {
                     0
                 };
@@ -155,7 +155,7 @@ impl Epoll {
                     kevs.push(Kevent::new(
                         fd as usize,
                         libc::EVFILT_READ,
-                        libc::EV_ADD | oneshot,
+                        libc::EV_ADD | clear,
                         event.u64,
                     ));
                 }
@@ -164,7 +164,7 @@ impl Epoll {
                     kevs.push(Kevent::new(
                         fd as usize,
                         libc::EVFILT_WRITE,
-                        libc::EV_ADD | oneshot,
+                        libc::EV_ADD | clear,
                         event.u64,
                     ));
                 }
@@ -271,7 +271,7 @@ impl Epoll {
                 events[i as usize].events = EventSet::OUT.bits();
             }
             if kevs[i as usize].0.flags & libc::EV_EOF != 0 {
-                events[i as usize].events |= if kevs[i as usize].0.flags & libc::EV_ONESHOT != 0 {
+                events[i as usize].events |= if kevs[i as usize].0.flags & libc::EV_CLEAR != 0 {
                     EventSet::READ_HANG_UP.bits()
                 } else {
                     EventSet::HANG_UP.bits()
