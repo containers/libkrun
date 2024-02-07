@@ -139,6 +139,10 @@ impl Net {
         &self.id
     }
 
+    pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
+        self.intc = Some(intc);
+    }
+
     pub(crate) fn process_rx_queue_event(&mut self) {
         if let Err(e) = self.queue_evts[RX_INDEX].read() {
             log::error!("Failed to get rx event from queue: {:?}", e);
