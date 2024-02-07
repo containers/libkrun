@@ -30,7 +30,10 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Clippy (default features)
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --target aarch64-apple-darwin -- -D warnings
 
       - name: Clippy (net feature)
-        run: cargo clippy --features net -- -D warnings
+        run: cargo clippy --target aarch64-apple-darwin --features net -- -D warnings
+
+      - name: Clippy (efi feature)
+        run: cargo clippy --target aarch64-apple-darwin --features efi -- -D warnings
