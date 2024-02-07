@@ -277,7 +277,7 @@ impl Epoll {
                     EventSet::HANG_UP.bits()
                 };
             }
-            events[i as usize].u64 = kevs[i as usize].udata() as u64;
+            events[i as usize].u64 = kevs[i as usize].udata();
         }
 
         match ret {
