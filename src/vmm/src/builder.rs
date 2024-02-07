@@ -553,12 +553,17 @@ pub fn build_microvm(
     #[cfg(feature = "blk")]
     attach_block_devices(&mut vmm, &vm_resources.block, event_manager, intc.clone())?;
     if let Some(vsock) = vm_resources.vsock.get() {
-        attach_unixsock_vsock_device(&mut vmm, vsock, event_manager, intc)?;
+        attach_unixsock_vsock_device(&mut vmm, vsock, event_manager, intc.clone())?;
         vmm.kernel_cmdline.insert_str("tsi_hijack")?;
     }
 
     #[cfg(feature = "net")]
-    attach_net_devices(&mut vmm, vm_resources.net_builder.iter(), event_manager)?;
+    attach_net_devices(
+        &mut vmm,
+        vm_resources.net_builder.iter(),
+        event_manager,
+        intc,
+    )?;
 
     if let Some(s) = &vm_resources.boot_config.kernel_cmdline_epilog {
         vmm.kernel_cmdline.insert_str(s).unwrap();
@@ -1159,9 +1164,15 @@ fn attach_net_devices<'a>(
     vmm: &mut Vmm,
     net_devices: impl Iterator<Item = &'a Arc<Mutex<Net>>>,
     event_manager: &mut EventManager,
+    intc: Option<Arc<Mutex<Gic>>>,
 ) -> Result<(), StartMicrovmError> {
     for net_device in net_devices {
         let id = net_device.lock().unwrap().id().to_string();
+
+        if let Some(ref intc) = intc {
+            net_device.lock().unwrap().set_intc(intc.clone());
+        }
+
         event_manager
             .add_subscriber(net_device.clone())
             .map_err(StartMicrovmError::RegisterEvent)?;
