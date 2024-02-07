@@ -4,29 +4,37 @@ LDFLAGS_x86_64_Linux = -lkrun
 LDFLAGS_aarch64_Linux = -lkrun
 LDFLAGS_arm64_Darwin = -L/opt/homebrew/lib -lkrun
 LDFLAGS_sev = -lkrun-sev
-CFLAGS_Linux = -O2 -g
-CFLAGS_Darwin = -O2 -g -I/opt/homebrew/include
+LDFLAGS_efi = -L/opt/homebrew/lib -lkrun-efi
+CFLAGS = -O2 -g -I../include
 ROOTFS_DISTRO := fedora
 ROOTFS_DIR = rootfs_$(ROOTFS_DISTRO)
 
 .PHONY: clean rootfs
 
+EXAMPLES := chroot_vm
 ifeq ($(SEV),1)
     EXAMPLES := launch-tee
-else
-    EXAMPLES := chroot_vm
+endif
+ifeq ($(EFI),1)
+    EXAMPLES := boot_efi
 endif
 
 all: $(EXAMPLES)
 
 chroot_vm: chroot_vm.c
-	gcc -o $@ $< $(CFLAGS_$(OS)) $(LDFLAGS_$(ARCH)_$(OS))
+	gcc -o $@ $< $(CFLAGS) $(LDFLAGS_$(ARCH)_$(OS))
 ifeq ($(OS),Darwin)
 	codesign --entitlements chroot_vm.entitlements --force -s - $@
 endif
 
 launch-tee: launch-tee.c
-	gcc -o $@ $< $(CFLAGS_$(OS)) $(LDFLAGS_sev)
+	gcc -o $@ $< $(CFLAGS) $(LDFLAGS_sev)
+
+boot_efi: boot_efi.c
+	gcc -o $@ $< $(CFLAGS) $(LDFLAGS_efi)
+ifeq ($(OS),Darwin)
+	codesign --entitlements chroot_vm.entitlements --force -s - $@
+endif
 
 # Build the rootfs to be used with chroot_vm.
 rootfs:
@@ -36,4 +44,4 @@ rootfs:
 	podman rm libkrun_chroot_vm
 
 clean:
-	rm -rf chroot_vm $(ROOTFS_DIR) launch-tee
+	rm -rf chroot_vm $(ROOTFS_DIR) launch-tee boot_efi
