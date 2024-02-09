@@ -17,6 +17,7 @@ use devices;
 use devices::legacy::Gic;
 use devices::BusDevice;
 use kernel::cmdline as kernel_cmdline;
+use polly::event_manager::EventManager;
 #[cfg(target_arch = "aarch64")]
 use utils::eventfd::EventFd;
 
@@ -198,6 +199,54 @@ impl MMIODeviceManager {
         let ret = self.mmio_base;
         self.id_to_dev_info.insert(
             (DeviceType::RTC, "rtc".to_string()),
+            MMIODeviceInfo {
+                addr: ret,
+                len: MMIO_LEN,
+                irq: self.irq,
+            },
+        );
+
+        self.mmio_base += MMIO_LEN;
+        self.irq += 1;
+
+        Ok(())
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    /// Register a GPIO
+    pub fn register_mmio_gpio(
+        &mut self,
+        _vm: &Vm,
+        intc: Option<Arc<Mutex<devices::legacy::Gic>>>,
+        event_manager: &mut EventManager,
+        shutdown_efd: EventFd,
+    ) -> Result<()> {
+        // Attaching the GPIO device.
+        let gpio_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(Error::EventFd)?;
+        let gpio = Arc::new(Mutex::new(devices::legacy::Gpio::new(
+            shutdown_efd,
+            gpio_evt.try_clone().map_err(Error::EventFd)?,
+        )));
+
+        event_manager.add_subscriber(gpio.clone()).unwrap();
+
+        if self.irq > self.last_irq {
+            return Err(Error::IrqsExhausted);
+        }
+
+        if let Some(intc) = intc {
+            let mut gpio = gpio.lock().unwrap();
+            gpio.set_intc(intc);
+            gpio.set_irq_line(self.irq);
+        }
+
+        self.bus
+            .insert(gpio, self.mmio_base, MMIO_LEN)
+            .map_err(Error::BusError)?;
+
+        let ret = self.mmio_base;
+        self.id_to_dev_info.insert(
+            (DeviceType::Gpio, DeviceType::Gpio.to_string()),
             MMIODeviceInfo {
                 addr: ret,
                 len: MMIO_LEN,

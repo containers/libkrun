@@ -18,10 +18,14 @@ use x86_64::serial;
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
 #[cfg(target_arch = "aarch64")]
+use aarch64::gpio;
+#[cfg(target_arch = "aarch64")]
 use aarch64::serial;
 
 #[cfg(target_os = "macos")]
 pub use self::gic::Gic;
+#[cfg(target_arch = "aarch64")]
+pub use self::gpio::Gpio;
 pub use self::i8042::Error as I8042DeviceError;
 pub use self::i8042::I8042Device;
 #[cfg(target_arch = "aarch64")]
