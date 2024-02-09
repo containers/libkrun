@@ -271,6 +271,7 @@ impl Display for StartMicrovmError {
 pub fn build_microvm(
     vm_resources: &super::resources::VmResources,
     event_manager: &mut EventManager,
+    _shutdown_efd: Option<EventFd>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
     // Timestamp for measuring microVM boot duration.
     let request_ts = TimestampUs::default();
@@ -511,6 +512,8 @@ pub fn build_microvm(
             &mut kernel_cmdline,
             intc.clone(),
             serial_device,
+            event_manager,
+            _shutdown_efd,
         )?;
     }
 
@@ -885,6 +888,8 @@ fn attach_legacy_devices(
     kernel_cmdline: &mut kernel::cmdline::Cmdline,
     intc: Option<Arc<Mutex<Gic>>>,
     serial: Option<Arc<Mutex<Serial>>>,
+    _event_manager: &mut EventManager,
+    _shutdown_efd: Option<EventFd>,
 ) -> std::result::Result<(), StartMicrovmError> {
     if let Some(serial) = serial {
         mmio_device_manager
@@ -899,7 +904,7 @@ fn attach_legacy_devices(
         .map_err(StartMicrovmError::Internal)?;
 
     mmio_device_manager
-        .register_mmio_gic(vm, intc)
+        .register_mmio_gic(vm, intc.clone())
         .map_err(Error::RegisterMMIODevice)
         .map_err(StartMicrovmError::Internal)?;
 
