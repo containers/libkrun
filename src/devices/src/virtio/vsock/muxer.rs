@@ -518,9 +518,10 @@ impl VsockMuxer {
                     addr: Ipv4Addr::new(0, 0, 0, 0),
                     port: 0,
                 };
-                unix.connect(pkt, tsi);
+                let update = unix.connect(pkt, tsi);
                 unix.confirm_connect(pkt);
                 proxy_map.insert(id, Mutex::new(Box::new(unix)));
+                self.process_proxy_update(id, update);
             }
         }
     }

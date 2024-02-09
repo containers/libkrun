@@ -1,4 +1,7 @@
-use super::defs;
+use super::{
+    defs::{self, uapi},
+    proxy::{ProxyRemoval, RecvPkt},
+};
 
 use std::collections::HashMap;
 use std::num::Wrapping;
@@ -8,8 +11,8 @@ use std::sync::{Arc, Mutex};
 
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
-    connect, send, setsockopt, socket, sockopt, AddressFamily, MsgFlags, SockFlag, SockType,
-    UnixAddr,
+    accept, connect, recv, send, setsockopt, socket, sockopt, AddressFamily, MsgFlags, SockFlag,
+    SockType, UnixAddr,
 };
 use nix::unistd::close;
 
@@ -40,6 +43,8 @@ pub struct UnixProxy {
     peer_buf_alloc: u32,
     tx_cnt: Wrapping<u32>,
     last_tx_cnt_sent: Wrapping<u32>,
+    push_cnt: Wrapping<u32>,
+    rx_cnt: Wrapping<u32>,
 }
 
 impl UnixProxy {
@@ -107,6 +112,8 @@ impl UnixProxy {
             path,
             tx_cnt: Wrapping(0),
             last_tx_cnt_sent: Wrapping(0),
+            push_cnt: Wrapping(0),
+            rx_cnt: Wrapping(0),
         })
     }
 
@@ -138,6 +145,125 @@ impl UnixProxy {
             result,
         };
         push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
+    }
+
+    fn push_reset(&self) {
+        debug!(
+            "push_reset: id: {}, peer_port: {}, local_port: {}",
+            self.id, self.peer_port, self.local_port
+        );
+
+        let rx = MuxerRx::Reset {
+            local_port: self.local_port,
+            peer_port: self.peer_port,
+        };
+
+        push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
+    }
+
+    fn peer_avail_credit(&self) -> usize {
+        (Wrapping(self.peer_buf_alloc) - (self.rx_cnt - self.peer_fwd_cnt)).0 as usize
+    }
+
+    fn recv_to_pkt(&self, pkt: &mut VsockPacket) -> RecvPkt {
+        if let Some(buf) = pkt.buf_mut() {
+            let peer_credit = self.peer_avail_credit();
+            let max_len = std::cmp::min(buf.len(), peer_credit);
+
+            debug!(
+                "recv_to_pkt: peer_avail_credit={}, buf.len={}, max_len={}",
+                self.peer_avail_credit(),
+                buf.len(),
+                max_len
+            );
+
+            if max_len == 0 {
+                return RecvPkt::WaitForCredit;
+            }
+
+            match recv(self.fd, &mut buf[..max_len], MsgFlags::MSG_DONTWAIT) {
+                Ok(cnt) => {
+                    debug!("vsock: unix: recv cnt={}", cnt);
+                    if cnt > 0 {
+                        debug!("vsock: tcp: recv rx_cnt={}", self.rx_cnt);
+                        RecvPkt::Read(cnt)
+                    } else {
+                        RecvPkt::Close
+                    }
+                }
+                Err(e) => {
+                    debug!("vsock: tcp: recv_pkt: recv error: {:?}", e);
+                    RecvPkt::Error
+                }
+            }
+        } else {
+            debug!("vsock: tcp: recv_pkt: pkt without buf");
+            RecvPkt::Error
+        }
+    }
+
+    fn recv_pkt(&mut self) -> (bool, bool) {
+        let mut have_used = false;
+        let mut wait_credit = false;
+        let mut queue = self.queue.lock().unwrap();
+
+        while let Some(head) = queue.pop(&self.mem) {
+            let len = match VsockPacket::from_rx_virtq_head(&head) {
+                Ok(mut pkt) => match self.recv_to_pkt(&mut pkt) {
+                    RecvPkt::WaitForCredit => {
+                        wait_credit = true;
+                        0
+                    }
+                    RecvPkt::Read(cnt) => {
+                        self.rx_cnt += Wrapping(cnt as u32);
+                        self.init_data_pkt(&mut pkt);
+                        pkt.set_len(cnt as u32);
+                        pkt.hdr().len() + cnt
+                    }
+                    RecvPkt::Close => {
+                        self.status = ProxyStatus::Closed;
+                        0
+                    }
+                    RecvPkt::Error => 0,
+                },
+                Err(e) => {
+                    debug!("vsock: tcp: recv_pkt: RX queue error: {:?}", e);
+                    0
+                }
+            };
+
+            if len == 0 {
+                queue.undo_pop();
+                break;
+            } else {
+                have_used = true;
+                self.push_cnt += Wrapping(len as u32);
+                debug!(
+                    "vsock: tcp: recv_pkt: pushing packet with {} bytes, push_cnt={}",
+                    len, self.push_cnt
+                );
+                queue.add_used(&self.mem, head.index, len as u32);
+            }
+        }
+
+        debug!("vsock: tcp: recv_pkt: have_used={}", have_used);
+        (have_used, wait_credit)
+    }
+
+    fn init_data_pkt(&self, pkt: &mut VsockPacket) {
+        debug!(
+            "tcp: init_data_pkt: id={}, local_port={}, peer_port={}",
+            self.id, self.local_port, self.peer_port
+        );
+
+        pkt.set_op(uapi::VSOCK_OP_RW)
+            .set_src_cid(uapi::VSOCK_HOST_CID)
+            .set_dst_cid(self.cid)
+            .set_src_port(self.local_port)
+            .set_dst_port(self.peer_port)
+            .set_type(uapi::VSOCK_TYPE_STREAM)
+            .set_buf_alloc(defs::CONN_TX_BUF_SIZE as u32)
+            .set_fwd_cnt(self.tx_cnt.0);
     }
 }
 
@@ -311,8 +437,92 @@ impl Proxy for UnixProxy {
         todo!();
     }
 
-    fn process_event(&mut self, _evset: EventSet) -> ProxyUpdate {
-        todo!();
+    fn process_event(&mut self, evset: EventSet) -> ProxyUpdate {
+        let mut update = ProxyUpdate::default();
+
+        if evset.contains(EventSet::HANG_UP) {
+            debug!("process_event: HANG_UP");
+
+            if self.status == ProxyStatus::Connecting {
+                self.push_connect_rsp(-libc::ECONNREFUSED);
+            } else {
+                self.push_reset();
+            }
+
+            self.status = ProxyStatus::Closed;
+            update.polling = Some((self.id, self.fd, EventSet::empty()));
+            update.signal_queue = true;
+            update.remove_proxy = if self.status == ProxyStatus::Listening {
+                ProxyRemoval::Immediate
+            } else {
+                ProxyRemoval::Deferred
+            };
+
+            return update;
+        }
+
+        if evset.contains(EventSet::IN) {
+            debug!("process_event: IN");
+            if self.status == ProxyStatus::Connected {
+                let (signal_queue, wait_credit) = self.recv_pkt();
+                update.signal_queue = signal_queue;
+
+                if wait_credit && self.status != ProxyStatus::WaitingCreditUpdate {
+                    self.status = ProxyStatus::WaitingCreditUpdate;
+                    let rx = MuxerRx::CreditRequest {
+                        local_port: self.local_port,
+                        peer_port: self.peer_port,
+                        fwd_cnt: self.tx_cnt.0,
+                    };
+                    update.push_credit_req = Some(rx);
+                }
+
+                if self.status == ProxyStatus::Closed {
+                    debug!(
+                        "process_event: endpoint closed, sending reset: id={}",
+                        self.id
+                    );
+
+                    self.push_reset();
+                    update.signal_queue = true;
+                    update.polling = Some((self.id(), self.fd, EventSet::empty()));
+                    return update;
+                } else if self.status == ProxyStatus::WaitingCreditUpdate {
+                    debug!("process_event: WaitingCreditUpdate");
+                    update.polling = Some((self.id(), self.fd, EventSet::empty()));
+                }
+            } else if self.status == ProxyStatus::Listening
+                || self.status == ProxyStatus::WaitingOnAccept
+            {
+                match accept(self.fd) {
+                    Ok(accept_fd) => {
+                        update.new_proxy = Some((self.peer_port, accept_fd));
+                    }
+                    Err(e) => warn!("error accepting connection: id={}, err={}", self.id, e),
+                };
+                update.signal_queue = true;
+                return update;
+            } else {
+                debug!(
+                    "vsock::tcp: EventSet::IN while not connected: {:?}",
+                    self.status
+                );
+            }
+        }
+
+        if evset.contains(EventSet::OUT) {
+            debug!("process_event: OUT");
+            if self.status == ProxyStatus::Connecting {
+                self.switch_to_connected();
+                self.push_connect_rsp(0);
+                update.signal_queue = true;
+                update.polling = Some((self.id(), self.fd, EventSet::IN));
+            } else {
+                error!("vsock::tcp: EventSet::OUT while not connecting");
+            }
+        }
+
+        update
     }
 }
 
