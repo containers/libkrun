@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
-    accept, connect, recv, send, setsockopt, socket, sockopt, AddressFamily, MsgFlags, SockFlag,
-    SockType, UnixAddr,
+    accept, connect, recv, send, setsockopt, shutdown, socket, sockopt, AddressFamily, MsgFlags,
+    Shutdown, SockFlag, SockType, UnixAddr,
 };
 use nix::unistd::close;
 
@@ -429,12 +429,38 @@ impl Proxy for UnixProxy {
         todo!();
     }
 
-    fn shutdown(&mut self, _pkt: &VsockPacket) {
-        todo!();
+    fn shutdown(&mut self, pkt: &VsockPacket) {
+        let recv_off = pkt.flags() & uapi::VSOCK_FLAGS_SHUTDOWN_RCV != 0;
+        let send_off = pkt.flags() & uapi::VSOCK_FLAGS_SHUTDOWN_SEND != 0;
+
+        let how = if recv_off && send_off {
+            Shutdown::Both
+        } else if recv_off {
+            Shutdown::Read
+        } else {
+            Shutdown::Write
+        };
+
+        if let Err(e) = shutdown(self.fd, how) {
+            warn!("error sending shutdown to socket: {}", e);
+        }
     }
 
     fn release(&mut self) -> ProxyUpdate {
-        todo!();
+        debug!(
+            "release: id={}, tx_cnt={}, last_tx_cnt={}",
+            self.id, self.tx_cnt, self.last_tx_cnt_sent
+        );
+        let remove_proxy = if self.status == ProxyStatus::Listening {
+            ProxyRemoval::Immediate
+        } else {
+            ProxyRemoval::Deferred
+        };
+
+        ProxyUpdate {
+            remove_proxy,
+            ..Default::default()
+        }
     }
 
     fn process_event(&mut self, evset: EventSet) -> ProxyUpdate {
