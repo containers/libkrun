@@ -16,6 +16,7 @@
 #include <getopt.h>
 #include <stdbool.h>
 #include <assert.h>
+#include <pthread.h>
 
 #define MAX_ARGS_LEN 4096
 #ifndef MAX_PATH
@@ -110,10 +111,67 @@ int connect_to_passt(char *socket_path)
     return socket_fd;
 }
 
+#define SHUTDOWN_SOCK_PATH  "/tmp/krun_shutdown.sock"
+
+void *listen_shutdown_request(void *opaque)
+{
+    int server_sock, client_sock, len, ret;
+    int bytes_rec = 0;
+    int shutdown_efd = (int) opaque;
+    char buf[8];
+    struct sockaddr_un server_sockaddr;
+    struct sockaddr_un client_sockaddr;
+    memset(&server_sockaddr, 0, sizeof(struct sockaddr_un));
+    memset(&client_sockaddr, 0, sizeof(struct sockaddr_un));
+
+    server_sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (server_sock == -1){
+        perror("Error creating socket");
+        exit(1);
+    }
+
+    server_sockaddr.sun_family = AF_UNIX;
+    strcpy(server_sockaddr.sun_path, SHUTDOWN_SOCK_PATH);
+    len = sizeof(server_sockaddr);
+
+    unlink(SHUTDOWN_SOCK_PATH);
+    ret = bind(server_sock, (struct sockaddr *) &server_sockaddr, len);
+    if (ret == -1){
+        perror("Error binding socket");
+        close(server_sock);
+        exit(1);
+    }
+
+    ret = listen(server_sock, 1);
+    if (ret == -1){
+        perror("Error listening on socket");
+        close(server_sock);
+        exit(1);
+    }
+
+    while (1) {
+        client_sock = accept(server_sock, (struct sockaddr *) &client_sockaddr, &len);
+        if (client_sock == -1){
+            perror("Error accepting connection");
+            close(server_sock);
+            close(client_sock);
+            exit(1);
+        }
+
+        ret = write(shutdown_efd, &buf[0], 8);
+        if (ret < 0) {
+            perror("Error writing to eventfd");
+        }
+
+        close(client_sock);
+    }
+}
+
 int main(int argc, char *const argv[])
 {
     int ctx_id;
     int err;
+    pthread_t thread;
     struct cmdline cmdline;
 
     if (!parse_cmdline(argc, argv, &cmdline)) {
@@ -167,6 +225,16 @@ int main(int argc, char *const argv[])
       perror("Error configuring net mode");
       return -1;
     }
+
+    int efd = krun_get_shutdown_eventfd(ctx_id);
+    if (efd < 0) {
+        perror("Can't get shutdown eventfd");
+        return -1;
+    }
+
+    // Spawn a thread to listen on "/tmp/krun_shutdown.sock" for a request to send
+    // a shutdown signal to the guest.
+    pthread_create(&thread, NULL, listen_shutdown_request, (void*) efd);
 
     // Start and enter the microVM. Unless there is some error while creating the microVM
     // this function never returns.
