@@ -231,6 +231,17 @@ int32_t krun_set_tee_config_file(uint32_t ctx_id, const char *filepath);
 int32_t krun_add_vsock_port(uint32_t ctx_id,
                             uint32_t port,
                             const char *c_filepath);
+/*
+ * Returns the eventfd file descriptor to signal the guest to shut down orderly. This must be
+ * called before starting the microVM with "krun_start_event". Only available in libkrun-efi.
+ *
+ * Arguments:
+ *  "ctx_id"    - the configuration context ID.
+ *
+ * Returns:
+ *  The eventfd file descriptor or a negative error number on failure.
+ */
+int32_t krun_get_shutdown_eventfd(uint32_t ctx_id);
 
 /*
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over

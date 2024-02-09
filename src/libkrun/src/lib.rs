@@ -8,6 +8,8 @@ use std::env;
 use std::ffi::CStr;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 #[cfg(feature = "net")]
 use std::os::fd::RawFd;
 #[cfg(not(feature = "tee"))]
@@ -25,6 +27,7 @@ use libc::size_t;
 use libc::{c_char, c_int};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
+use utils::eventfd::EventFd;
 use vmm::resources::VmResources;
 #[cfg(feature = "blk")]
 use vmm::vmm_config::block::BlockDeviceConfig;
@@ -92,6 +95,7 @@ struct ContextConfig {
     #[cfg(feature = "tee")]
     tee_config_file: Option<PathBuf>,
     unix_ipc_port_map: Option<HashMap<u32, PathBuf>>,
+    shutdown_efd: Option<EventFd>,
 }
 
 impl ContextConfig {
@@ -320,7 +324,10 @@ pub extern "C" fn krun_create_ctx() -> i32 {
 #[no_mangle]
 #[cfg(feature = "efi")]
 pub extern "C" fn krun_create_ctx() -> i32 {
-    let ctx_cfg = ContextConfig::default();
+    let ctx_cfg = ContextConfig {
+        shutdown_efd: Some(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap()),
+        ..Default::default()
+    };
 
     let ctx_id = CTX_IDS.fetch_add(1, Ordering::SeqCst);
     if ctx_id == i32::MAX || CTX_MAP.lock().unwrap().contains_key(&(ctx_id as u32)) {
@@ -801,6 +808,24 @@ pub unsafe extern "C" fn krun_add_vsock_port(
 
 #[allow(unused_assignments)]
 #[no_mangle]
+pub extern "C" fn krun_get_shutdown_eventfd(ctx_id: u32) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            if let Some(efd) = cfg.shutdown_efd.as_ref() {
+                #[cfg(target_os = "macos")]
+                return efd.get_write_fd();
+                #[cfg(target_os = "linux")]
+                return efd.as_raw_fd();
+            } else {
+                -libc::EINVAL
+            }
+        }
+        Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "linux")]
     {
@@ -917,13 +942,14 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         ctx_cfg.vmr.set_vsock_device(vsock_config).unwrap();
     }
 
-    let _vmm = match vmm::builder::build_microvm(&ctx_cfg.vmr, &mut event_manager) {
-        Ok(vmm) => vmm,
-        Err(e) => {
-            error!("Building the microVM failed: {:?}", e);
-            return -libc::EINVAL;
-        }
-    };
+    let _vmm =
+        match vmm::builder::build_microvm(&ctx_cfg.vmr, &mut event_manager, ctx_cfg.shutdown_efd) {
+            Ok(vmm) => vmm,
+            Err(e) => {
+                error!("Building the microVM failed: {:?}", e);
+                return -libc::EINVAL;
+            }
+        };
 
     loop {
         match event_manager.run() {
