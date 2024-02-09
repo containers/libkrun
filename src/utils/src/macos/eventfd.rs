@@ -96,6 +96,10 @@ impl EventFd {
 
         Ok(EventFd { read_fd, write_fd })
     }
+
+    pub fn get_write_fd(&self) -> RawFd {
+        self.write_fd
+    }
 }
 
 impl AsRawFd for EventFd {
