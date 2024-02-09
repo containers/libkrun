@@ -59,6 +59,8 @@ pub enum FsError {
     InvalidXattrSize((u32, usize)),
     QueueReader(DescriptorError),
     QueueWriter(DescriptorError),
+    /// Could not open the root directory or mapped volumes (they do not exist, permission error...)
+    FailedToMount(io::Error),
 }
 
 type Result<T> = std::result::Result<T, FsError>;
