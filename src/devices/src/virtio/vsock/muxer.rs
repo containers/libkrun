@@ -11,18 +11,21 @@ use super::defs;
 use super::defs::uapi;
 use super::muxer_rxq::{rx_to_pkt, MuxerRxQ};
 use super::muxer_thread::MuxerThread;
-use super::packet::{TsiGetnameRsp, VsockPacket};
+use super::packet::{TsiConnectReq, TsiGetnameRsp, VsockPacket};
 use super::proxy::{Proxy, ProxyRemoval, ProxyUpdate};
 use super::reaper::ReaperThread;
 use super::tcp::TcpProxy;
 #[cfg(target_os = "macos")]
 use super::timesync::TimesyncThread;
 use super::udp::UdpProxy;
+use super::unix::UnixProxy;
 use super::VsockError;
 use crossbeam_channel::{unbounded, Sender};
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 use vm_memory::GuestMemoryMmap;
+
+use std::net::Ipv4Addr;
 
 pub type ProxyMap = Arc<RwLock<HashMap<u64, Mutex<Box<dyn Proxy>>>>>;
 
@@ -486,13 +489,39 @@ impl VsockMuxer {
         Ok(())
     }
 
-    fn process_op_request(&self, pkt: &VsockPacket) {
+    fn process_op_request(&mut self, pkt: &VsockPacket) {
         debug!("vsock: OP_REQUEST");
         let id: u64 = (pkt.src_port() as u64) << 32 | pkt.dst_port() as u64;
-        if let Some(proxy) = self.proxy_map.read().unwrap().get(&id) {
+        let mut proxy_map = self.proxy_map.write().unwrap();
+
+        if let Some(proxy) = proxy_map.get(&id) {
             proxy.lock().unwrap().confirm_connect(pkt)
-        } else if let Some(map) = &self.unix_ipc_port_map {
-            println!("FOUND IN MAP");
+        } else if let Some(ref mut ipc_map) = &mut self.unix_ipc_port_map {
+            if let Some(path) = ipc_map.get(&pkt.dst_port()) {
+                let mem = self.mem.as_ref().unwrap();
+                let queue = self.queue.as_ref().unwrap();
+                let rxq = self.rxq.clone();
+
+                let mut unix = UnixProxy::new(
+                    id,
+                    self.cid,
+                    pkt.dst_port(),
+                    pkt.src_port(),
+                    mem.clone(),
+                    queue.clone(),
+                    rxq,
+                    path.to_path_buf(),
+                )
+                .unwrap();
+                let tsi = TsiConnectReq {
+                    peer_port: 0,
+                    addr: Ipv4Addr::new(0, 0, 0, 0),
+                    port: 0,
+                };
+                unix.connect(pkt, tsi);
+                unix.confirm_connect(pkt);
+                proxy_map.insert(id, Mutex::new(Box::new(unix)));
+            }
         }
     }
 
