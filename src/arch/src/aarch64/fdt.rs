@@ -22,9 +22,14 @@ use vm_memory::{Address, Bytes, GuestAddress, GuestMemoryError, GuestMemoryMmap}
 const GIC_PHANDLE: u32 = 1;
 // This is a value for uniquely identifying the FDT node containing the clock definition.
 const CLOCK_PHANDLE: u32 = 2;
+// This is a value for uniquely identifying the FDT node containing the gpio controller.
+const GPIO_PHANDLE: u32 = 4;
 // Read the documentation specified when appending the root node to the FDT.
 const ADDRESS_CELLS: u32 = 0x2;
 const SIZE_CELLS: u32 = 0x2;
+
+// System restart
+const KEY_RESTART: u32 = 0x198;
 
 // As per kvm tool and
 // https://www.kernel.org/doc/Documentation/devicetree/bindings/interrupt-controller/arm%2Cgic.txt
@@ -350,6 +355,47 @@ fn create_rtc_node<T: DeviceInfoForFDT + Clone + Debug>(
     Ok(())
 }
 
+fn create_gpio_node<T: DeviceInfoForFDT + Clone + Debug>(
+    fdt: &mut FdtWriter,
+    dev_info: &T,
+) -> Result<()> {
+    let compatible = b"arm,pl061\0arm,primecell\0";
+
+    let gpio_reg_prop = generate_prop64(&[dev_info.addr(), dev_info.length()]);
+    let irq = generate_prop32(&[
+        GIC_FDT_IRQ_TYPE_SPI,
+        dev_info.irq() - 32,
+        IRQ_TYPE_EDGE_RISING,
+    ]);
+
+    let gpio_node = fdt.begin_node(&format!("pl061@{:x}", dev_info.addr()))?;
+    fdt.property("compatible", compatible)?;
+
+    fdt.property("reg", &gpio_reg_prop)?;
+    fdt.property("interrupts", &irq)?;
+    fdt.property_null("gpio-controller")?;
+    fdt.property_u32("#gpio-cells", 2)?;
+    fdt.property_u32("clocks", CLOCK_PHANDLE)?;
+    fdt.property_string("clock-names", "apb_pclk")?;
+    fdt.property_u32("phandle", GPIO_PHANDLE)?;
+    fdt.end_node(gpio_node)?;
+
+    // gpio-keys node
+    let gpio_keys_node = fdt.begin_node("gpio-keys")?;
+    fdt.property_string("compatible", "gpio-keys")?;
+    fdt.property_u32("#size-cells", 0)?;
+    fdt.property_u32("#address-cells", 1)?;
+    let gpio_keys_poweroff_node = fdt.begin_node("button@1")?;
+    fdt.property_string("label", "GPIO Key Poweroff")?;
+    fdt.property_u32("linux,code", KEY_RESTART)?;
+    let gpios = [GPIO_PHANDLE, 3, 0];
+    fdt.property_array_u32("gpios", &gpios)?;
+    fdt.end_node(gpio_keys_poweroff_node)?;
+    fdt.end_node(gpio_keys_node)?;
+
+    Ok(())
+}
+
 fn create_devices_node<T: DeviceInfoForFDT + Clone + Debug>(
     fdt: &mut FdtWriter,
     dev_info: &HashMap<(DeviceType, String), T>,
@@ -359,6 +405,7 @@ fn create_devices_node<T: DeviceInfoForFDT + Clone + Debug>(
 
     for ((device_type, _device_id), info) in dev_info {
         match device_type {
+            DeviceType::Gpio => create_gpio_node(fdt, info)?,
             DeviceType::RTC => create_rtc_node(fdt, info)?,
             DeviceType::Serial => create_serial_node(fdt, info)?,
             DeviceType::Virtio(_) => {

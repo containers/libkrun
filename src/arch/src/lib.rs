@@ -44,6 +44,9 @@ pub type Result<T> = result::Result<T, Error>;
 pub enum DeviceType {
     /// Device Type: Virtio.
     Virtio(u32),
+    /// Device Type: GPIO (PL061).
+    #[cfg(target_arch = "aarch64")]
+    Gpio,
     /// Device Type: Serial.
     #[cfg(target_arch = "aarch64")]
     Serial,

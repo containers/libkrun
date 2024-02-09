@@ -888,8 +888,8 @@ fn attach_legacy_devices(
     kernel_cmdline: &mut kernel::cmdline::Cmdline,
     intc: Option<Arc<Mutex<Gic>>>,
     serial: Option<Arc<Mutex<Serial>>>,
-    _event_manager: &mut EventManager,
-    _shutdown_efd: Option<EventFd>,
+    event_manager: &mut EventManager,
+    shutdown_efd: Option<EventFd>,
 ) -> std::result::Result<(), StartMicrovmError> {
     if let Some(serial) = serial {
         mmio_device_manager
@@ -907,6 +907,13 @@ fn attach_legacy_devices(
         .register_mmio_gic(vm, intc.clone())
         .map_err(Error::RegisterMMIODevice)
         .map_err(StartMicrovmError::Internal)?;
+
+    if let Some(shutdown_efd) = shutdown_efd {
+        mmio_device_manager
+            .register_mmio_gpio(vm, intc, event_manager, shutdown_efd)
+            .map_err(Error::RegisterMMIODevice)
+            .map_err(StartMicrovmError::Internal)?;
+    }
 
     Ok(())
 }
