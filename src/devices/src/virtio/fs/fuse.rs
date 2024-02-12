@@ -70,89 +70,119 @@ bitflags! {
 }
 
 // INIT request/reply flags.
-
 /// Asynchronous read requests.
-const ASYNC_READ: u32 = 1;
+const ASYNC_READ: u64 = 1 << 0;
 
 /// Remote locking for POSIX file locks.
-const POSIX_LOCKS: u32 = 2;
+const POSIX_LOCKS: u64 = 1 << 1;
 
 /// Kernel sends file handle for fstat, etc... (not yet supported).
-const FILE_OPS: u32 = 4;
+const FILE_OPS: u64 = 1 << 2;
 
 /// Handles the O_TRUNC open flag in the filesystem.
-const ATOMIC_O_TRUNC: u32 = 8;
+const ATOMIC_O_TRUNC: u64 = 1 << 3;
 
 /// FileSystem handles lookups of "." and "..".
-const EXPORT_SUPPORT: u32 = 16;
+const EXPORT_SUPPORT: u64 = 1 << 4;
 
 /// FileSystem can handle write size larger than 4kB.
-const BIG_WRITES: u32 = 32;
+const BIG_WRITES: u64 = 1 << 5;
 
 /// Don't apply umask to file mode on create operations.
-const DONT_MASK: u32 = 64;
+const DONT_MASK: u64 = 1 << 6;
 
 /// Kernel supports splice write on the device.
-const SPLICE_WRITE: u32 = 128;
+const SPLICE_WRITE: u64 = 1 << 7;
 
 /// Kernel supports splice move on the device.
-const SPLICE_MOVE: u32 = 256;
+const SPLICE_MOVE: u64 = 1 << 8;
 
 /// Kernel supports splice read on the device.
-const SPLICE_READ: u32 = 512;
+const SPLICE_READ: u64 = 1 << 9;
 
 /// Remote locking for BSD style file locks.
-const FLOCK_LOCKS: u32 = 1024;
+const FLOCK_LOCKS: u64 = 1 << 10;
 
 /// Kernel supports ioctl on directories.
-const HAS_IOCTL_DIR: u32 = 2048;
+const HAS_IOCTL_DIR: u64 = 1 << 11;
 
 /// Automatically invalidate cached pages.
-const AUTO_INVAL_DATA: u32 = 4096;
+const AUTO_INVAL_DATA: u64 = 1 << 12;
 
 /// Do READDIRPLUS (READDIR+LOOKUP in one).
-const DO_READDIRPLUS: u32 = 8192;
+const DO_READDIRPLUS: u64 = 1 << 13;
 
 /// Adaptive readdirplus.
-const READDIRPLUS_AUTO: u32 = 16384;
+const READDIRPLUS_AUTO: u64 = 1 << 14;
 
 /// Asynchronous direct I/O submission.
-const ASYNC_DIO: u32 = 32768;
+const ASYNC_DIO: u64 = 1 << 15;
 
 /// Use writeback cache for buffered writes.
-const WRITEBACK_CACHE: u32 = 65536;
+const WRITEBACK_CACHE: u64 = 1 << 16;
 
 /// Kernel supports zero-message opens.
-const NO_OPEN_SUPPORT: u32 = 131_072;
+const NO_OPEN_SUPPORT: u64 = 1 << 17;
 
 /// Allow parallel lookups and readdir.
-const PARALLEL_DIROPS: u32 = 262_144;
+const PARALLEL_DIROPS: u64 = 1 << 18;
 
 /// Fs handles killing suid/sgid/cap on write/chown/trunc.
-const HANDLE_KILLPRIV: u32 = 524_288;
+const HANDLE_KILLPRIV: u64 = 1 << 19;
 
 /// FileSystem supports posix acls.
-const POSIX_ACL: u32 = 1_048_576;
+const POSIX_ACL: u64 = 1 << 20;
 
 /// Reading the device after abort returns ECONNABORTED.
-const ABORT_ERROR: u32 = 2_097_152;
+const ABORT_ERROR: u64 = 1 << 21;
 
 /// Init_out.max_pages contains the max number of req pages.
-const MAX_PAGES: u32 = 4_194_304;
+const MAX_PAGES: u64 = 1 << 22;
 
 /// Cache READLINK responses
-const CACHE_SYMLINKS: u32 = 8_388_608;
+const CACHE_SYMLINKS: u64 = 1 << 23;
 
 /// Kernel supports zero-message opendir
-const NO_OPENDIR_SUPPORT: u32 = 16_777_216;
+const NO_OPENDIR_SUPPORT: u64 = 1 << 24;
 
 /// Only invalidate cached pages on explicit request
-const EXPLICIT_INVAL_DATA: u32 = 33_554_432;
+const EXPLICIT_INVAL_DATA: u64 = 1 << 25;
+
+/// init_out.map_alignment contains log2(byte alignment) for
+/// foffset and moffset fields in struct fuse_setupmapping_out and
+/// fuse_removemapping_one
+#[allow(dead_code)]
+const MAP_ALIGNMENT: u64 = 1 << 26;
+
+/// Kernel supports auto-mounting directory submounts
+const SUBMOUNTS: u64 = 1 << 27;
+
+/// Fs handles killing suid/sgid/cap on write/chown/trunc (v2).
+const HANDLE_KILLPRIV_V2: u64 = 1 << 28;
+
+/// Server supports extended struct SetxattrIn
+const SETXATTR_EXT: u64 = 1 << 29;
+
+/// Extended fuse_init_in request
+const INIT_EXT: u64 = 1 << 30;
+
+/// Reserved. Do not use.
+const INIT_RESERVED: u64 = 1 << 31;
+
+/// Add security context to create, mkdir, symlink, and mknod
+const SECURITY_CTX: u64 = 1 << 32;
+
+/// Use per inode DAX
+const HAS_INODE_DAX: u64 = 1 << 33;
+
+/// Add supplementary groups info to create, mkdir, symlink
+/// and mknod (single group that matches parent)
+const CREATE_SUPP_GROUP: u64 = 1 << 34;
 
 bitflags! {
     /// A bitfield passed in as a parameter to and returned from the `init` method of the
     /// `FileSystem` trait.
-    pub struct FsOptions: u32 {
+    pub struct FsOptions: u64 {
         /// Indicates that the filesystem supports asynchronous read requests.
         ///
         /// If this capability is not requested/available, the kernel will ensure that there is at
@@ -352,6 +382,53 @@ bitflags! {
         ///
         /// This feature is not currently supported.
         const EXPLICIT_INVAL_DATA = EXPLICIT_INVAL_DATA;
+
+        /// Indicates that the kernel supports the FUSE_ATTR_SUBMOUNT flag.
+        ///
+        /// Setting (or not setting) this flag in the `FsOptions` returned from the `init` method
+        /// has no effect.
+        const SUBMOUNTS = SUBMOUNTS;
+
+        /// Indicates that the filesystem is responsible for clearing
+        /// security.capability xattr and clearing setuid and setgid bits. Following
+        /// are the rules.
+        /// - clear "security.capability" on write, truncate and chown unconditionally
+        /// - clear suid/sgid if following is true. Note, sgid is cleared only if
+        ///   group executable bit is set.
+        ///    o setattr has FATTR_SIZE and FATTR_KILL_SUIDGID set.
+        ///    o setattr has FATTR_UID or FATTR_GID
+        ///    o open has O_TRUNC and FUSE_OPEN_KILL_SUIDGID
+        ///    o create has O_TRUNC and FUSE_OPEN_KILL_SUIDGID flag set.
+        ///    o write has FUSE_WRITE_KILL_SUIDGID
+        ///
+        /// This feature is enabled by default if supported by the kernel.
+        const HANDLE_KILLPRIV_V2 = HANDLE_KILLPRIV_V2;
+
+        /// Server supports extended struct SetxattrIn
+        const SETXATTR_EXT = SETXATTR_EXT;
+
+        /// Indicates that fuse_init_in structure has been extended and
+        /// expect extended struct coming in from kernel.
+        const INIT_EXT = INIT_EXT;
+
+        /// This bit is reserved. Don't use it.
+        const INIT_RESERVED = INIT_RESERVED;
+
+        /// Indicates that kernel is capable of sending a security
+        /// context at file creation time (create, mkdir, symlink
+        /// and mknod). This is expected to be a SELinux security
+        /// context as of now.
+        const SECURITY_CTX = SECURITY_CTX;
+
+        /// Indicates that kernel is capable of understanding
+        /// per inode dax flag sent in response to getattr
+        /// request. This will allow server to enable to
+        /// enable dax on selective files.
+        const HAS_INODE_DAX = HAS_INODE_DAX;
+
+        /// Add supplementary groups info to create, mkdir, symlink
+        /// and mknod (single group that matches parent).
+        const CREATE_SUPP_GROUP = CREATE_SUPP_GROUP;
     }
 }
 
@@ -902,13 +979,21 @@ unsafe impl ByteValued for AccessIn {}
 
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
-pub struct InitIn {
+pub struct InitInCompat {
     pub major: u32,
     pub minor: u32,
     pub max_readahead: u32,
     pub flags: u32,
 }
-unsafe impl ByteValued for InitIn {}
+unsafe impl ByteValued for InitInCompat {}
+
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct InitInExt {
+    pub flags2: u32,
+    pub unused: [u32; 11],
+}
+unsafe impl ByteValued for InitInExt {}
 
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
@@ -922,8 +1007,9 @@ pub struct InitOut {
     pub max_write: u32,
     pub time_gran: u32,
     pub max_pages: u16,
-    pub padding: u16,
-    pub unused: [u32; 8],
+    pub map_alignment: u16,
+    pub flags2: u32,
+    pub unused: [u32; 7],
 }
 unsafe impl ByteValued for InitOut {}
 
