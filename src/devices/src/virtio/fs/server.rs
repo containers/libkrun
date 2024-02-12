@@ -3,19 +3,21 @@
 // found in the LICENSE file.
 
 use std::convert::TryInto;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem::size_of;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use vm_memory::ByteValued;
 
 use super::bindings;
 use super::descriptor_utils::{Reader, Writer};
 use super::filesystem::{
-    Context, DirEntry, Entry, FileSystem, GetxattrReply, ListxattrReply, ZeroCopyReader,
-    ZeroCopyWriter,
+    Context, DirEntry, Entry, Extensions, FileSystem, GetxattrReply, ListxattrReply, SecContext,
+    ZeroCopyReader, ZeroCopyWriter,
 };
+use super::fs_utils::einval;
 use super::fuse::*;
 use super::{FsError as Error, Result};
 use crate::virtio::VirtioShmRegion;
@@ -58,11 +60,15 @@ impl<'a> io::Write for ZCWriter<'a> {
 
 pub struct Server<F: FileSystem + Sync> {
     fs: F,
+    options: AtomicU64,
 }
 
 impl<F: FileSystem + Sync> Server<F> {
     pub fn new(fs: F) -> Server<F> {
-        Server { fs }
+        Server {
+            fs,
+            options: AtomicU64::new(FsOptions::empty().bits()),
+        }
     }
 
     #[allow(clippy::cognitive_complexity)]
@@ -260,20 +266,21 @@ impl<F: FileSystem + Sync> Server<F> {
 
         r.read_exact(&mut buf).map_err(Error::DecodeMessage)?;
 
-        // We want to include the '\0' byte in the first slice.
-        let split_pos = buf
-            .iter()
-            .position(|c| *c == b'\0')
-            .map(|p| p + 1)
-            .ok_or(Error::MissingParameter)?;
+        let mut components = buf.split_inclusive(|c| *c == b'\0');
 
-        let (name, linkname) = buf.split_at(split_pos);
+        let name = components.next().ok_or(Error::MissingParameter)?;
+        let linkname = components.next().ok_or(Error::MissingParameter)?;
+
+        let options = FsOptions::from_bits_truncate(self.options.load(Ordering::Relaxed));
+
+        let extensions = get_extensions(options, name.len() + linkname.len(), buf.as_slice())?;
 
         match self.fs.symlink(
             Context::from(in_header),
             bytes_to_cstr(linkname)?,
             in_header.nodeid.into(),
             bytes_to_cstr(name)?,
+            extensions,
         ) {
             Ok(entry) => {
                 let out = EntryOut::from(entry);
@@ -289,21 +296,28 @@ impl<F: FileSystem + Sync> Server<F> {
             mode, rdev, umask, ..
         } = r.read_obj().map_err(Error::DecodeMessage)?;
 
-        let namelen = (in_header.len as usize)
+        let remaining_len = (in_header.len as usize)
             .checked_sub(size_of::<InHeader>())
             .and_then(|l| l.checked_sub(size_of::<MknodIn>()))
             .ok_or(Error::InvalidHeaderLength)?;
-        let mut name = vec![0; namelen];
+        let mut buf = vec![0; remaining_len];
 
-        r.read_exact(&mut name).map_err(Error::DecodeMessage)?;
+        r.read_exact(&mut buf).map_err(Error::DecodeMessage)?;
+        let mut components = buf.split_inclusive(|c| *c == b'\0');
+        let name = components.next().ok_or(Error::MissingParameter)?;
+
+        let options = FsOptions::from_bits_truncate(self.options.load(Ordering::Relaxed));
+
+        let extensions = get_extensions(options, name.len(), buf.as_slice())?;
 
         match self.fs.mknod(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(&name)?,
+            bytes_to_cstr(name)?,
             mode,
             rdev,
             umask,
+            extensions,
         ) {
             Ok(entry) => {
                 let out = EntryOut::from(entry);
@@ -317,20 +331,27 @@ impl<F: FileSystem + Sync> Server<F> {
     fn mkdir(&self, in_header: InHeader, mut r: Reader, w: Writer) -> Result<usize> {
         let MkdirIn { mode, umask } = r.read_obj().map_err(Error::DecodeMessage)?;
 
-        let namelen = (in_header.len as usize)
+        let remaining_len = (in_header.len as usize)
             .checked_sub(size_of::<InHeader>())
             .and_then(|l| l.checked_sub(size_of::<MkdirIn>()))
             .ok_or(Error::InvalidHeaderLength)?;
-        let mut name = vec![0; namelen];
+        let mut buf = vec![0; remaining_len];
 
-        r.read_exact(&mut name).map_err(Error::DecodeMessage)?;
+        r.read_exact(&mut buf).map_err(Error::DecodeMessage)?;
+        let mut components = buf.split_inclusive(|c| *c == b'\0');
+        let name = components.next().ok_or(Error::MissingParameter)?;
+
+        let options = FsOptions::from_bits_truncate(self.options.load(Ordering::Relaxed));
+
+        let extensions = get_extensions(options, name.len(), buf.as_slice())?;
 
         match self.fs.mkdir(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(&name)?,
+            bytes_to_cstr(name)?,
             mode,
             umask,
+            extensions,
         ) {
             Ok(entry) => {
                 let out = EntryOut::from(entry);
@@ -828,7 +849,7 @@ impl<F: FileSystem + Sync> Server<F> {
         }
 
         // These fuse features are supported by this server by default.
-        let supported = FsOptions::ASYNC_READ
+        let mut supported = FsOptions::ASYNC_READ
             | FsOptions::PARALLEL_DIROPS
             | FsOptions::BIG_WRITES
             | FsOptions::AUTO_INVAL_DATA
@@ -836,7 +857,12 @@ impl<F: FileSystem + Sync> Server<F> {
             | FsOptions::ASYNC_DIO
             | FsOptions::HAS_IOCTL_DIR
             | FsOptions::ATOMIC_O_TRUNC
-            | FsOptions::MAX_PAGES;
+            | FsOptions::MAX_PAGES
+            | FsOptions::INIT_EXT;
+
+        if cfg!(target_os = "macos") {
+            supported |= FsOptions::SECURITY_CTX;
+        }
 
         let flags_64 = ((flags2 as u64) << 32) | (flags as u64);
         let capable = FsOptions::from_bits_truncate(flags_64);
@@ -847,6 +873,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.init(capable) {
             Ok(want) => {
                 let enabled = (capable & (want | supported)).bits();
+                self.options.store(enabled, Ordering::Relaxed);
 
                 let out = InitOut {
                     major: KERNEL_VERSION,
@@ -1044,16 +1071,21 @@ impl<F: FileSystem + Sync> Server<F> {
         let mut buf = vec![0; namelen];
 
         r.read_exact(&mut buf).map_err(Error::DecodeMessage)?;
+        let mut components = buf.split_inclusive(|c| *c == b'\0');
+        let name = components.next().ok_or(Error::MissingParameter)?;
 
-        let name = bytes_to_cstr(&buf)?;
+        let options = FsOptions::from_bits_truncate(self.options.load(Ordering::Relaxed));
+
+        let extensions = get_extensions(options, name.len(), buf.as_slice())?;
 
         match self.fs.create(
             Context::from(in_header),
             in_header.nodeid.into(),
-            name,
+            bytes_to_cstr(name)?,
             mode,
             flags,
             umask,
+            extensions,
         ) {
             Ok((entry, handle, opts)) => {
                 let entry_out = EntryOut {
@@ -1449,4 +1481,117 @@ fn add_dirent(
 
         Ok(total_len)
     }
+}
+
+fn take_object<T: ByteValued>(data: &[u8]) -> Result<(T, &[u8])> {
+    if data.len() < size_of::<T>() {
+        return Err(Error::DecodeMessage(einval()));
+    }
+
+    let (object_bytes, remaining_bytes) = data.split_at(size_of::<T>());
+    // SAFETY: `T` implements `ByteValued` that guarantees that it is safe to instantiate
+    // `T` with random data.
+    let object: T = unsafe { std::ptr::read_unaligned(object_bytes.as_ptr() as *const T) };
+    Ok((object, remaining_bytes))
+}
+
+fn parse_security_context(nr_secctx: u32, data: &[u8]) -> Result<Option<SecContext>> {
+    // Although the FUSE security context extension allows sending several security contexts,
+    // currently the guest kernel only sends one.
+    if nr_secctx > 1 {
+        return Err(Error::DecodeMessage(einval()));
+    } else if nr_secctx == 0 {
+        // No security context sent. May be no LSM supports it.
+        return Ok(None);
+    }
+
+    let (secctx, data) = take_object::<Secctx>(data)?;
+
+    if secctx.size == 0 {
+        return Err(Error::DecodeMessage(einval()));
+    }
+
+    let mut components = data.split_inclusive(|c| *c == b'\0');
+    let secctx_name = components.next().ok_or(Error::MissingParameter)?;
+    let (_, data) = data.split_at(secctx_name.len());
+
+    if data.len() < secctx.size as usize {
+        return Err(Error::DecodeMessage(einval()));
+    }
+
+    // Fuse client aligns the whole security context block to 64 byte
+    // boundary. So it is possible that after actual security context
+    // of secctx.size, there are some null padding bytes left. If
+    // we ever parse more data after secctx, we will have to take those
+    // null bytes into account. Total size (including null bytes) is
+    // available in SecctxHeader->size.
+    let (remaining, _) = data.split_at(secctx.size as usize);
+
+    let fuse_secctx = SecContext {
+        name: CString::from_vec_with_nul(secctx_name.to_vec()).map_err(Error::InvalidCString2)?,
+        secctx: remaining.to_vec(),
+    };
+
+    Ok(Some(fuse_secctx))
+}
+
+fn get_extensions(options: FsOptions, skip: usize, request_bytes: &[u8]) -> Result<Extensions> {
+    let mut extensions = Extensions::default();
+
+    if !(options.contains(FsOptions::SECURITY_CTX)
+        || options.contains(FsOptions::CREATE_SUPP_GROUP))
+    {
+        return Ok(extensions);
+    }
+
+    // It's not guaranty to receive an extension even if it's supported by the guest kernel
+    if request_bytes.len() < skip {
+        return Err(Error::DecodeMessage(einval()));
+    }
+
+    // We need to track if a SecCtx was received, because it's valid
+    // for the guest to send an empty SecCtx (i.e, nr_secctx == 0)
+    let mut secctx_received = false;
+
+    let mut buf = &request_bytes[skip..];
+    while !buf.is_empty() {
+        let (extension_header, remaining_bytes) = take_object::<ExtHeader>(buf)?;
+
+        let extension_size = (extension_header.size as usize)
+            .checked_sub(size_of::<ExtHeader>())
+            .ok_or(Error::InvalidHeaderLength)?;
+
+        let (current_extension_bytes, next_extension_bytes) =
+            remaining_bytes.split_at(extension_size);
+
+        let ext_type = ExtType::try_from(extension_header.ext_type)
+            .map_err(|_| Error::DecodeMessage(einval()))?;
+
+        match ext_type {
+            ExtType::SecCtx(nr_secctx) => {
+                if !options.contains(FsOptions::SECURITY_CTX) || secctx_received {
+                    return Err(Error::DecodeMessage(einval()));
+                }
+
+                secctx_received = true;
+                extensions.secctx = parse_security_context(nr_secctx, current_extension_bytes)?;
+            }
+            ExtType::SupGroups => {
+                // We're not exposing this feature to the guest, so we shouldn't get
+                // any messages including this extension.
+                unimplemented!("Support for supplemental groups is not implemented");
+            }
+        }
+
+        // Let's process the next extension
+        buf = next_extension_bytes;
+    }
+
+    // The SupGroup extension can be missing, since it is only sent if needed.
+    // A SecCtx is always sent in create/synlink/mknod/mkdir if supported.
+    if options.contains(FsOptions::SECURITY_CTX) && !secctx_received {
+        return Err(Error::MissingExtension);
+    }
+
+    Ok(extensions)
 }

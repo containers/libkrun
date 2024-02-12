@@ -1271,3 +1271,79 @@ pub struct RemovemappingOne {
 }
 
 unsafe impl ByteValued for RemovemappingOne {}
+
+/// Extension header
+/// `size`: total size of this extension including this header
+/// `ext_type`: type of extension
+/// This is made compatible with `SecctxHeader` by using type values > `FUSE_MAX_NR_SECCTX`
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct ExtHeader {
+    pub size: u32,
+    pub ext_type: u32,
+}
+
+/// Extension types
+/// Types `0..MAX_NR_SECCTX` are reserved for `SecCtx` extension for backward compatibility.
+const MAX_NR_SECCTX: u32 = 31; // Maximum value of `SecctxHeader::nr_secctx`
+const EXT_SUP_GROUPS: u32 = 32;
+
+unsafe impl ByteValued for ExtHeader {}
+
+/// Extension type
+#[derive(Debug, Copy, Clone)]
+pub enum ExtType {
+    /// Security contexts
+    SecCtx(u32),
+    /// `Supplementary groups
+    SupGroups,
+}
+
+impl TryFrom<u32> for ExtType {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            v if v <= MAX_NR_SECCTX => Ok(Self::SecCtx(value)),
+            v if v == EXT_SUP_GROUPS => Ok(Self::SupGroups),
+            _ => Err(()),
+        }
+    }
+}
+
+/// For each security context, send `Secctx` with size of security context
+/// `Secctx` will be followed by security context name and this in turn
+/// will be followed by actual context label.
+/// `Secctx`, name, context
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct Secctx {
+    pub size: u32,
+    pub padding: u32,
+}
+
+unsafe impl ByteValued for Secctx {}
+
+/// Contains the information about how many `Secctx` structures are being
+/// sent and what's the total size of all security contexts (including
+/// size of `SecctxHeader`).
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct SecctxHeader {
+    pub size: u32,
+    pub nr_secctx: u32,
+}
+
+unsafe impl ByteValued for SecctxHeader {}
+
+/// Supplementary groups extension
+/// `nr_groups`: number of supplementary groups
+/// `groups`: flexible array of group IDs
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct SuppGroups {
+    pub nr_groups: u32,
+    // uint32_t	groups[];
+}
+
+unsafe impl ByteValued for SuppGroups {}

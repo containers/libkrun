@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 use std::convert::TryInto;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
 use std::mem;
@@ -316,6 +316,23 @@ impl From<fuse::InHeader> for Context {
     }
 }
 
+/// Request extensions
+#[derive(Clone, Default, Debug)]
+pub struct Extensions {
+    pub secctx: Option<SecContext>,
+    pub sup_gid: Option<u32>,
+}
+
+/// Additional security context associated with requests.
+#[derive(Clone, Debug, Default)]
+pub struct SecContext {
+    /// Name of security context
+    pub name: CString,
+
+    /// Actual security context
+    pub secctx: Vec<u8>,
+}
+
 /// The main trait that connects a file system with a transport.
 #[allow(unused_variables)]
 pub trait FileSystem {
@@ -459,6 +476,7 @@ pub trait FileSystem {
         linkname: &CStr,
         parent: Self::Inode,
         name: &CStr,
+        extensions: Extensions,
     ) -> io::Result<Entry> {
         Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
@@ -474,6 +492,7 @@ pub trait FileSystem {
     ///
     /// If this call is successful then the lookup count of the `Inode` associated with the returned
     /// `Entry` must be increased by 1.
+    #[allow(clippy::too_many_arguments)]
     fn mknod(
         &self,
         ctx: Context,
@@ -482,6 +501,7 @@ pub trait FileSystem {
         mode: u32,
         rdev: u32,
         umask: u32,
+        extensions: Extensions,
     ) -> io::Result<Entry> {
         Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
@@ -501,6 +521,7 @@ pub trait FileSystem {
         name: &CStr,
         mode: u32,
         umask: u32,
+        extensions: Extensions,
     ) -> io::Result<Entry> {
         Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }
@@ -627,6 +648,7 @@ pub trait FileSystem {
     /// addition to the optional `Handle` and the `OpenOptions`, the file system must also return an
     /// `Entry` for the file. This increases the lookup count for the `Inode` associated with the
     /// file by 1.
+    #[allow(clippy::too_many_arguments)]
     fn create(
         &self,
         ctx: Context,
@@ -635,6 +657,7 @@ pub trait FileSystem {
         mode: u32,
         flags: u32,
         umask: u32,
+        extensions: Extensions,
     ) -> io::Result<(Entry, Option<Self::Handle>, OpenOptions)> {
         Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }

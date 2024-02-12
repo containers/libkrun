@@ -21,11 +21,13 @@ use std::{io, io::Read};
 use lru::LruCache;
 use vm_memory::ByteValued;
 
+use crate::virtio::fs::filesystem::SecContext;
+
 use super::super::super::linux_errno::{linux_error, LINUX_ERANGE};
 use super::super::bindings;
 use super::super::filesystem::{
-    Context, DirEntry, Entry, FileSystem, FsOptions, GetxattrReply, ListxattrReply, OpenOptions,
-    SetattrValid, ZeroCopyReader, ZeroCopyWriter,
+    Context, DirEntry, Entry, Extensions, FileSystem, FsOptions, GetxattrReply, ListxattrReply,
+    OpenOptions, SetattrValid, ZeroCopyReader, ZeroCopyWriter,
 };
 use super::super::fuse;
 use super::super::multikey::MultikeyBTreeMap;
@@ -960,6 +962,42 @@ impl PassthroughFs {
     }
 }
 
+fn set_secctx(file: StatFile, secctx: SecContext, symlink: bool) -> io::Result<()> {
+    let options = if symlink { libc::XATTR_NOFOLLOW } else { 0 };
+    let ret = match file {
+        StatFile::Path(path) => {
+            let cpath = CString::new(path).unwrap();
+
+            unsafe {
+                libc::setxattr(
+                    cpath.as_ptr(),
+                    secctx.name.as_ptr(),
+                    secctx.secctx.as_ptr() as *const libc::c_void,
+                    secctx.secctx.len(),
+                    0,
+                    options,
+                )
+            }
+        }
+        StatFile::Fd(fd) => unsafe {
+            libc::fsetxattr(
+                fd,
+                secctx.name.as_ptr(),
+                secctx.secctx.as_ptr() as *const libc::c_void,
+                secctx.secctx.len(),
+                0,
+                options,
+            )
+        },
+    };
+
+    if ret != 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
 fn forget_one(
     inodes: &mut MultikeyBTreeMap<Inode, InodeAltKey, Arc<InodeData>>,
     file_cache: &mut LruCache<Inode, Arc<File>>,
@@ -1243,6 +1281,7 @@ impl FileSystem for PassthroughFs {
         name: &CStr,
         mode: u32,
         umask: u32,
+        extensions: Extensions,
     ) -> io::Result<Entry> {
         let file = self.get_file(parent)?;
         // Safe because this doesn't modify any memory and we check the return value.
@@ -1253,6 +1292,11 @@ impl FileSystem for PassthroughFs {
                 get_path(&mut self.path_cache.lock().unwrap(), parent)?,
                 name.to_str().unwrap(),
             );
+            // Set security context
+            if let Some(secctx) = extensions.secctx {
+                set_secctx(StatFile::Path(filepath.clone()), secctx, false)?
+            };
+
             set_xattr_stat(
                 StatFile::Path(filepath),
                 Some((ctx.uid, ctx.gid)),
@@ -1343,6 +1387,7 @@ impl FileSystem for PassthroughFs {
         mode: u32,
         flags: u32,
         umask: u32,
+        extensions: Extensions,
     ) -> io::Result<(Entry, Option<Handle>, OpenOptions)> {
         let file = self.get_file(parent)?;
         let flags = self.parse_open_flags(flags as i32);
@@ -1372,6 +1417,11 @@ impl FileSystem for PassthroughFs {
             Some((ctx.uid, ctx.gid)),
             Some(libc::S_IFREG as u32 | (mode & !(umask & 0o777))),
         );
+
+        // Set security context
+        if let Some(secctx) = extensions.secctx {
+            set_secctx(StatFile::Fd(fd), secctx, false)?
+        };
 
         // Safe because we just opened this fd.
         let file = RwLock::new(unsafe { File::from_raw_fd(fd) });
@@ -1685,6 +1735,7 @@ impl FileSystem for PassthroughFs {
         mode: u32,
         _rdev: u32,
         umask: u32,
+        extensions: Extensions,
     ) -> io::Result<Entry> {
         let file = self.get_file(parent)?;
 
@@ -1699,6 +1750,11 @@ impl FileSystem for PassthroughFs {
         if fd < 0 {
             Err(linux_error(io::Error::last_os_error()))
         } else {
+            // Set security context
+            if let Some(secctx) = extensions.secctx {
+                set_secctx(StatFile::Fd(fd), secctx, false)?
+            };
+
             set_xattr_stat(
                 StatFile::Fd(fd),
                 Some((ctx.uid, ctx.gid)),
@@ -1742,11 +1798,23 @@ impl FileSystem for PassthroughFs {
         linkname: &CStr,
         parent: Inode,
         name: &CStr,
+        extensions: Extensions,
     ) -> io::Result<Entry> {
         let file = self.get_file(parent)?;
         // Safe because this doesn't modify any memory and we check the return value.
         let res = unsafe { libc::symlinkat(linkname.as_ptr(), file.as_raw_fd(), name.as_ptr()) };
         if res == 0 {
+            let filepath = format!(
+                "{}/{}",
+                get_path(&mut self.path_cache.lock().unwrap(), parent)?,
+                name.to_str().unwrap(),
+            );
+
+            // Set security context
+            if let Some(secctx) = extensions.secctx {
+                set_secctx(StatFile::Path(filepath), secctx, true)?
+            };
+
             let mut entry = self.do_lookup(parent, name)?;
             let mode = libc::S_IFLNK | 0o777;
             set_xattr_stat(
