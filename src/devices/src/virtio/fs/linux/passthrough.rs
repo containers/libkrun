@@ -19,8 +19,8 @@ use std::time::Duration;
 use vm_memory::ByteValued;
 
 use super::super::filesystem::{
-    Context, DirEntry, Entry, FileSystem, FsOptions, GetxattrReply, ListxattrReply, OpenOptions,
-    SetattrValid, ZeroCopyReader, ZeroCopyWriter,
+    Context, DirEntry, Entry, Extensions, FileSystem, FsOptions, GetxattrReply, ListxattrReply,
+    OpenOptions, SetattrValid, ZeroCopyReader, ZeroCopyWriter,
 };
 use super::super::fuse;
 use super::super::multikey::MultikeyBTreeMap;
@@ -821,7 +821,12 @@ impl FileSystem for PassthroughFs {
         name: &CStr,
         mode: u32,
         umask: u32,
+        extensions: Extensions,
     ) -> io::Result<Entry> {
+        if extensions.secctx.is_some() {
+            unimplemented!("SECURITY_CTX is not supported and should not be used by the guest");
+        }
+
         let (_uid, _gid) = set_creds(ctx.uid, ctx.gid)?;
         let data = self
             .inodes
@@ -919,7 +924,12 @@ impl FileSystem for PassthroughFs {
         mode: u32,
         flags: u32,
         umask: u32,
+        extensions: Extensions,
     ) -> io::Result<(Entry, Option<Handle>, OpenOptions)> {
+        if extensions.secctx.is_some() {
+            unimplemented!("SECURITY_CTX is not supported and should not be used by the guest");
+        }
+
         let (_uid, _gid) = set_creds(ctx.uid, ctx.gid)?;
         let data = self
             .inodes
@@ -1248,7 +1258,12 @@ impl FileSystem for PassthroughFs {
         mode: u32,
         rdev: u32,
         umask: u32,
+        extensions: Extensions,
     ) -> io::Result<Entry> {
+        if extensions.secctx.is_some() {
+            unimplemented!("SECURITY_CTX is not supported and should not be used by the guest");
+        }
+
         let (_uid, _gid) = set_creds(ctx.uid, ctx.gid)?;
         let data = self
             .inodes
@@ -1323,7 +1338,13 @@ impl FileSystem for PassthroughFs {
         linkname: &CStr,
         parent: Inode,
         name: &CStr,
+        extensions: Extensions,
     ) -> io::Result<Entry> {
+        // Set security context on symlink.
+        if extensions.secctx.is_some() {
+            unimplemented!("SECURITY_CTX is not supported and should not be used by the guest");
+        }
+
         let (_uid, _gid) = set_creds(ctx.uid, ctx.gid)?;
         let data = self
             .inodes
