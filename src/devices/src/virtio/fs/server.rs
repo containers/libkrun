@@ -780,12 +780,20 @@ impl<F: FileSystem + Sync> Server<F> {
     }
 
     fn init(&self, in_header: InHeader, mut r: Reader, w: Writer) -> Result<usize> {
-        let InitIn {
+        let InitInCompat {
             major,
             minor,
             max_readahead,
             flags,
         } = r.read_obj().map_err(Error::DecodeMessage)?;
+
+        let options = FsOptions::from_bits_truncate(flags as u64);
+
+        let InitInExt { flags2, .. } = if options.contains(FsOptions::INIT_EXT) {
+            r.read_obj().map_err(Error::DecodeMessage)?
+        } else {
+            InitInExt::default()
+        };
 
         if major < KERNEL_VERSION {
             error!("Unsupported fuse protocol version: {}.{}", major, minor);
@@ -830,25 +838,28 @@ impl<F: FileSystem + Sync> Server<F> {
             | FsOptions::ATOMIC_O_TRUNC
             | FsOptions::MAX_PAGES;
 
-        let capable = FsOptions::from_bits_truncate(flags);
+        let flags_64 = ((flags2 as u64) << 32) | (flags as u64);
+        let capable = FsOptions::from_bits_truncate(flags_64);
 
         let page_size: u32 = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
         let max_pages = ((MAX_BUFFER_SIZE - 1) / page_size) + 1;
 
         match self.fs.init(capable) {
             Ok(want) => {
-                let enabled = capable & (want | supported);
+                let enabled = (capable & (want | supported)).bits();
 
                 let out = InitOut {
                     major: KERNEL_VERSION,
                     minor: KERNEL_MINOR_VERSION,
                     max_readahead,
-                    flags: enabled.bits(),
+                    flags: enabled as u32,
                     max_background: ::std::u16::MAX,
                     congestion_threshold: (::std::u16::MAX / 4) * 3,
                     max_write: MAX_BUFFER_SIZE,
                     time_gran: 1, // nanoseconds
                     max_pages: max_pages.try_into().unwrap(),
+                    map_alignment: 0,
+                    flags2: (enabled >> 32) as u32,
                     ..Default::default()
                 };
 
