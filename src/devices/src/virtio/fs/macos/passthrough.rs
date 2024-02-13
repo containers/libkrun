@@ -470,7 +470,7 @@ impl Default for Config {
             cache_policy: Default::default(),
             writeback: false,
             root_dir: String::from("/"),
-            xattr: false,
+            xattr: true,
             proc_sfd_rawfd: None,
             mapped_volumes: None,
         }
