@@ -121,6 +121,18 @@ int32_t krun_set_mapped_volumes(uint32_t ctx_id, char *const mapped_volumes[]);
 int32_t krun_set_passt_fd(uint32_t ctx_id, int fd);
 
 /*
+ * Sets the MAC address for the virtio-net device when using the passt backend.
+ *
+ * Arguments:
+ *  "ctx_id"         - the configuration context ID.
+ *  "mac"            - MAC address as an array of 6 uint8_t entries.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_net_mac(uint32_t ctx_id, uint8_t *const c_mac);
+
+/*
  * Configures a map of host to guest TCP ports for the microVM.
  *
  * Arguments:

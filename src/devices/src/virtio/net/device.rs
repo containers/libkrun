@@ -12,6 +12,7 @@ use crate::virtio::{
     ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_NET, VIRTIO_MMIO_INT_VRING,
 };
 use crate::Error as DeviceError;
+use std::io::Write;
 use std::os::fd::RawFd;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -20,9 +21,9 @@ use std::{cmp, mem, result};
 use utils::eventfd::{EventFd, EFD_NONBLOCK};
 use virtio_bindings::virtio_net::{
     virtio_net_hdr_v1, VIRTIO_NET_F_CSUM, VIRTIO_NET_F_GUEST_CSUM, VIRTIO_NET_F_GUEST_TSO4,
-    VIRTIO_NET_F_GUEST_UFO, VIRTIO_NET_F_HOST_TSO4, VIRTIO_NET_F_HOST_UFO,
+    VIRTIO_NET_F_GUEST_UFO, VIRTIO_NET_F_HOST_TSO4, VIRTIO_NET_F_HOST_UFO, VIRTIO_NET_F_MAC,
 };
-use vm_memory::{Bytes, GuestAddress, GuestMemoryError, GuestMemoryMmap};
+use vm_memory::{ByteValued, Bytes, GuestAddress, GuestMemoryError, GuestMemoryMmap};
 
 const VIRTIO_F_VERSION_1: u32 = 32;
 
@@ -45,6 +46,17 @@ enum TxError {
     Passt(passt::WriteError),
     DeviceError(DeviceError),
 }
+
+#[derive(Copy, Clone, Debug, Default)]
+#[repr(C, packed)]
+struct VirtioNetConfig {
+    mac: [u8; 6],
+    status: u16,
+    max_virtqueue_pairs: u16,
+}
+
+// Safe because it only has data and has no implicit padding.
+unsafe impl ByteValued for VirtioNetConfig {}
 
 pub(crate) fn vnet_hdr_len() -> usize {
     mem::size_of::<virtio_net_hdr_v1>()
@@ -84,11 +96,13 @@ pub struct Net {
 
     intc: Option<Arc<Mutex<Gic>>>,
     irq_line: Option<u32>,
+
+    config: VirtioNetConfig,
 }
 
 impl Net {
     /// Create a new virtio network device using passt
-    pub fn new(id: String, passt_fd: RawFd) -> Result<Self> {
+    pub fn new(id: String, passt_fd: RawFd, mac: [u8; 6]) -> Result<Self> {
         let passt = Passt::new(passt_fd);
         let avail_features = 1 << VIRTIO_NET_F_GUEST_CSUM
             | 1 << VIRTIO_NET_F_CSUM
@@ -96,6 +110,7 @@ impl Net {
             | 1 << VIRTIO_NET_F_HOST_TSO4
             | 1 << VIRTIO_NET_F_GUEST_UFO
             | 1 << VIRTIO_NET_F_HOST_UFO
+            | 1 << VIRTIO_NET_F_MAC
             | 1 << VIRTIO_F_VERSION_1;
 
         let mut queue_evts = Vec::new();
@@ -104,6 +119,12 @@ impl Net {
         }
 
         let queues = QUEUE_SIZES.iter().map(|&s| Queue::new(s)).collect();
+
+        let config = VirtioNetConfig {
+            mac,
+            status: 0,
+            max_virtqueue_pairs: 0,
+        };
 
         Ok(Net {
             id,
@@ -131,6 +152,8 @@ impl Net {
 
             intc: None,
             irq_line: None,
+
+            config,
         })
     }
 
@@ -471,12 +494,18 @@ impl VirtioDevice for Net {
         self.irq_line = Some(irq);
     }
 
-    fn read_config(&self, offset: u64, data: &mut [u8]) {
-        log::warn!(
-            "Net: guest driver attempted to read device config (offset={:x}, len={:x})",
-            offset,
-            data.len()
-        );
+    fn read_config(&self, offset: u64, mut data: &mut [u8]) {
+        let config_slice = self.config.as_slice();
+        let config_len = config_slice.len() as u64;
+        if offset >= config_len {
+            error!("Failed to read config space");
+            return;
+        }
+        if let Some(end) = offset.checked_add(data.len() as u64) {
+            // This write can't fail, offset and end are checked against config_len.
+            data.write_all(&config_slice[offset as usize..cmp::min(end, config_len) as usize])
+                .unwrap();
+        }
     }
 
     fn write_config(&mut self, offset: u64, data: &[u8]) {

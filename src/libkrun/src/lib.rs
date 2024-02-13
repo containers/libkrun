@@ -83,6 +83,7 @@ struct ContextConfig {
     args: Option<String>,
     rlimits: Option<String>,
     net_cfg: NetworkConfig,
+    mac: Option<[u8; 6]>,
     #[cfg(not(feature = "tee"))]
     fs_cfg: Option<FsDeviceConfig>,
     #[cfg(feature = "blk")]
@@ -183,6 +184,10 @@ impl ContextConfig {
 
     fn set_net_cfg(&mut self, net_cfg: NetworkConfig) {
         self.net_cfg = net_cfg;
+    }
+
+    fn set_net_mac(&mut self, mac: [u8; 6]) {
+        self.mac = Some(mac);
     }
 
     fn set_port_map(&mut self, new_port_map: HashMap<u16, u16>) -> Result<(), ()> {
@@ -540,6 +545,28 @@ pub unsafe extern "C" fn krun_set_passt_fd(ctx_id: u32, fd: c_int) -> i32 {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             cfg.set_net_cfg(NetworkConfig::Passt(PasstConfig { _fd: fd }));
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_net_mac(ctx_id: u32, c_mac: *const u8) -> i32 {
+    if cfg!(not(feature = "net")) {
+        return -libc::ENOTSUP;
+    }
+
+    let mac: [u8; 6] = match slice::from_raw_parts(c_mac, 6).try_into() {
+        Ok(m) => m,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.set_net_mac(mac);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -917,9 +944,17 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         NetworkConfig::Passt(_passt_cfg) => {
             #[cfg(feature = "net")]
             {
+                let mac = if let Some(mac) = ctx_cfg.mac {
+                    mac
+                } else {
+                    // By default, use podman-machine's well-known MAC address
+                    [0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee]
+                };
+
                 let network_interface_config = NetworkInterfaceConfig {
                     iface_id: "eth0".to_string(),
                     passt_fd: _passt_cfg._fd,
+                    mac,
                 };
                 ctx_cfg
                     .vmr
