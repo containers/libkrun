@@ -15,6 +15,8 @@ pub struct NetworkInterfaceConfig {
     pub iface_id: String,
     /// File descriptor of passt socket to connect this interface to
     pub passt_fd: RawFd,
+    /// MAC address.
+    pub mac: [u8; 6],
 }
 
 /// Errors associated with `NetworkInterfaceConfig`.
@@ -85,6 +87,7 @@ impl NetBuilder {
     /// Creates a Net device from a NetworkInterfaceConfig.
     pub fn create_net(cfg: NetworkInterfaceConfig) -> Result<Net> {
         // Create and return the Net device
-        Net::new(cfg.iface_id, cfg.passt_fd).map_err(NetworkInterfaceError::CreateNetworkDevice)
+        Net::new(cfg.iface_id, cfg.passt_fd, cfg.mac)
+            .map_err(NetworkInterfaceError::CreateNetworkDevice)
     }
 }
