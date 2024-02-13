@@ -104,6 +104,21 @@ int32_t krun_set_data_disk(uint32_t ctx_id, const char *disk_path);
 int32_t krun_set_mapped_volumes(uint32_t ctx_id, char *const mapped_volumes[]);
 
 /*
+ * Adds an independent virtio-fs device pointing to a host's directory with a tag.
+ *
+ * Arguments:
+ *  "ctx_id"         - the configuration context ID.
+ *  "c_tag"          - tag to identify the filesystem in the guest.
+ *  "c_path"         - full path to the directory in the host to be exposed to the guest.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_virtiofs(uint32_t ctx_id,
+                          const char *c_tag,
+                          const char *c_path);
+
+/*
  * Configures the networking to use passt.
  * Call to this function disables TSI backend to use passt instead.
  *

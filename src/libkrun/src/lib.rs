@@ -84,7 +84,7 @@ struct ContextConfig {
     rlimits: Option<String>,
     net_cfg: NetworkConfig,
     #[cfg(not(feature = "tee"))]
-    fs_cfg: Option<FsDeviceConfig>,
+    fs_devs: Vec<FsDeviceConfig>,
     #[cfg(feature = "blk")]
     root_block_cfg: Option<BlockDeviceConfig>,
     #[cfg(feature = "blk")]
@@ -152,13 +152,8 @@ impl ContextConfig {
     }
 
     #[cfg(not(feature = "tee"))]
-    fn set_fs_cfg(&mut self, fs_cfg: FsDeviceConfig) {
-        self.fs_cfg = Some(fs_cfg);
-    }
-
-    #[cfg(not(feature = "tee"))]
-    fn get_fs_cfg(&self) -> Option<FsDeviceConfig> {
-        self.fs_cfg.clone()
+    fn add_fs_dev(&mut self, fs_cfg: FsDeviceConfig) {
+        self.fs_devs.push(fs_cfg)
     }
 
     #[cfg(feature = "blk")]
@@ -386,19 +381,46 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            let fs_device_config = match cfg.get_fs_cfg() {
-                Some(fs_cfg) => FsDeviceConfig {
-                    fs_id,
-                    shared_dir,
-                    mapped_volumes: fs_cfg.mapped_volumes,
-                },
-                None => FsDeviceConfig {
-                    fs_id,
-                    shared_dir,
-                    mapped_volumes: None,
-                },
-            };
-            cfg.set_fs_cfg(fs_device_config);
+            if !cfg.fs_devs.is_empty() {
+                return -libc::EINVAL;
+            }
+            cfg.add_fs_dev(FsDeviceConfig {
+                fs_id,
+                shared_dir,
+                mapped_volumes: None,
+            });
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(not(feature = "tee"))]
+pub unsafe extern "C" fn krun_add_virtiofs(
+    ctx_id: u32,
+    c_tag: *const c_char,
+    c_path: *const c_char,
+) -> i32 {
+    let tag = match CStr::from_ptr(c_tag).to_str() {
+        Ok(tag) => tag,
+        Err(_) => return -libc::EINVAL,
+    };
+    let path = match CStr::from_ptr(c_path).to_str() {
+        Ok(path) => path,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.add_fs_dev(FsDeviceConfig {
+                fs_id: tag.to_string(),
+                shared_dir: path.to_string(),
+                mapped_volumes: None,
+            });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -445,19 +467,11 @@ pub unsafe extern "C" fn krun_set_mapped_volumes(
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            let fs_device_config = match cfg.get_fs_cfg() {
-                Some(fs_cfg) => FsDeviceConfig {
-                    fs_id: fs_cfg.fs_id.clone(),
-                    shared_dir: fs_cfg.shared_dir,
-                    mapped_volumes: Some(mapped_volumes),
-                },
-                None => FsDeviceConfig {
-                    fs_id: String::new(),
-                    shared_dir: String::new(),
-                    mapped_volumes: Some(mapped_volumes),
-                },
-            };
-            cfg.set_fs_cfg(fs_device_config);
+            for fs in &mut cfg.fs_devs {
+                if fs.fs_id == "/dev/root" {
+                    fs.mapped_volumes = Some(mapped_volumes.clone());
+                }
+            }
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -839,8 +853,8 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     };
 
     #[cfg(not(feature = "tee"))]
-    if let Some(fs_cfg) = ctx_cfg.get_fs_cfg() {
-        if ctx_cfg.vmr.set_fs_device(fs_cfg).is_err() {
+    for fs in &ctx_cfg.fs_devs {
+        if ctx_cfg.vmr.add_fs_device(fs.clone()).is_err() {
             error!("Error configuring virtio-fs");
             return -libc::EINVAL;
         }

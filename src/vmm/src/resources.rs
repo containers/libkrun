@@ -228,7 +228,7 @@ impl VmResources {
     }
 
     #[cfg(not(feature = "tee"))]
-    pub fn set_fs_device(&mut self, config: FsDeviceConfig) -> Result<FsConfigError> {
+    pub fn add_fs_device(&mut self, config: FsDeviceConfig) -> Result<FsConfigError> {
         self.fs.insert(config)
     }
 
