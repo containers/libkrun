@@ -10,7 +10,6 @@ use std::ffi::CStr;
 use std::ffi::CString;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
-#[cfg(feature = "net")]
 use std::os::fd::RawFd;
 #[cfg(not(feature = "tee"))]
 use std::path::Path;
@@ -59,14 +58,12 @@ struct TsiConfig {
     port_map: Option<HashMap<u16, u16>>,
 }
 
-#[cfg(feature = "net")]
 struct PasstConfig {
-    fd: RawFd,
+    _fd: RawFd,
 }
 
 enum NetworkConfig {
     Tsi(TsiConfig),
-    #[cfg(feature = "net")]
     Passt(PasstConfig),
 }
 
@@ -184,7 +181,6 @@ impl ContextConfig {
         self.data_block_cfg.clone()
     }
 
-    #[cfg(feature = "net")]
     fn set_net_cfg(&mut self, net_cfg: NetworkConfig) {
         self.net_cfg = net_cfg;
     }
@@ -195,7 +191,6 @@ impl ContextConfig {
                 tsi_config.port_map.replace(new_port_map);
                 Ok(())
             }
-            #[cfg(feature = "net")]
             NetworkConfig::Passt(_) => Err(()),
         }
     }
@@ -537,24 +532,18 @@ pub unsafe extern "C" fn krun_set_passt_fd(ctx_id: u32, fd: c_int) -> i32 {
         return -libc::EINVAL;
     }
 
-    #[cfg(not(feature = "net"))]
-    {
-        let _ = ctx_id;
-        let _ = fd;
-        -libc::ENOTSUP
+    if cfg!(not(feature = "net")) {
+        return -libc::ENOTSUP;
     }
 
-    #[cfg(feature = "net")]
-    {
-        match CTX_MAP.lock().unwrap().entry(ctx_id) {
-            Entry::Occupied(mut ctx_cfg) => {
-                let cfg = ctx_cfg.get_mut();
-                cfg.set_net_cfg(NetworkConfig::Passt(PasstConfig { fd }));
-            }
-            Entry::Vacant(_) => return -libc::ENOENT,
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.set_net_cfg(NetworkConfig::Passt(PasstConfig { _fd: fd }));
         }
-        KRUN_SUCCESS
+        Entry::Vacant(_) => return -libc::ENOENT,
     }
+    KRUN_SUCCESS
 }
 
 #[allow(clippy::missing_safety_doc)]
@@ -925,16 +914,18 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             vsock_config.host_port_map = tsi_cfg.port_map;
             vsock_set = true;
         }
-        #[cfg(feature = "net")]
-        NetworkConfig::Passt(passt_cfg) => {
-            let network_interface_config = NetworkInterfaceConfig {
-                iface_id: "eth0".to_string(),
-                passt_fd: passt_cfg.fd,
-            };
-            ctx_cfg
-                .vmr
-                .add_network_interface(network_interface_config)
-                .expect("Failed to create network interface");
+        NetworkConfig::Passt(_passt_cfg) => {
+            #[cfg(feature = "net")]
+            {
+                let network_interface_config = NetworkInterfaceConfig {
+                    iface_id: "eth0".to_string(),
+                    passt_fd: _passt_cfg._fd,
+                };
+                ctx_cfg
+                    .vmr
+                    .add_network_interface(network_interface_config)
+                    .expect("Failed to create network interface");
+            }
         }
     }
 
