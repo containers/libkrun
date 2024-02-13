@@ -1057,8 +1057,8 @@ fn attach_fs_devices(
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
-    for fs in fs_devs.list.iter() {
-        let id = String::from(fs.lock().unwrap().id());
+    for (i, fs) in fs_devs.list.iter().enumerate() {
+        let id = format!("{}{}", String::from(fs.lock().unwrap().id()), i);
 
         if let Some(ref intc) = intc {
             fs.lock().unwrap().set_intc(intc.clone());
