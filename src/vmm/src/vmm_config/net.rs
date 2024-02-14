@@ -6,6 +6,7 @@ use std::os::fd::RawFd;
 use std::result;
 use std::sync::{Arc, Mutex};
 
+use devices::virtio::net::device::VirtioNetBackend;
 use devices::virtio::Net;
 
 #[derive(Debug, PartialEq)]
@@ -87,7 +88,7 @@ impl NetBuilder {
     /// Creates a Net device from a NetworkInterfaceConfig.
     pub fn create_net(cfg: NetworkInterfaceConfig) -> Result<Net> {
         // Create and return the Net device
-        Net::new(cfg.iface_id, cfg.passt_fd, cfg.mac)
+        Net::new(cfg.iface_id, VirtioNetBackend::Passt(cfg.passt_fd), cfg.mac)
             .map_err(NetworkInterfaceError::CreateNetworkDevice)
     }
 }

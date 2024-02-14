@@ -6,12 +6,15 @@
 // found in the THIRD-PARTY file.
 use crate::legacy::Gic;
 use crate::virtio::net::passt::Passt;
-use crate::virtio::net::{passt, MAX_BUFFER_SIZE, QUEUE_SIZE, QUEUE_SIZES, RX_INDEX, TX_INDEX};
 use crate::virtio::net::{Error, Result};
+use crate::virtio::net::{MAX_BUFFER_SIZE, QUEUE_SIZE, QUEUE_SIZES, RX_INDEX, TX_INDEX};
 use crate::virtio::{
     ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_NET, VIRTIO_MMIO_INT_VRING,
 };
 use crate::Error as DeviceError;
+
+use super::backend::{NetBackend, ReadError, WriteError};
+
 use std::io::Write;
 use std::os::fd::RawFd;
 use std::sync::atomic::AtomicUsize;
@@ -37,13 +40,13 @@ enum FrontendError {
 
 #[derive(Debug)]
 enum RxError {
-    Passt(passt::ReadError),
+    Backend(ReadError),
     DeviceError(DeviceError),
 }
 
 #[derive(Debug)]
 enum TxError {
-    Passt(passt::WriteError),
+    Backend(WriteError),
     DeviceError(DeviceError),
 }
 
@@ -57,6 +60,10 @@ struct VirtioNetConfig {
 
 // Safe because it only has data and has no implicit padding.
 unsafe impl ByteValued for VirtioNetConfig {}
+
+pub enum VirtioNetBackend {
+    Passt(RawFd),
+}
 
 pub(crate) fn vnet_hdr_len() -> usize {
     mem::size_of::<virtio_net_hdr_v1>()
@@ -72,7 +79,7 @@ fn write_virtio_net_hdr(buf: &mut [u8]) -> usize {
 
 pub struct Net {
     id: String,
-    passt: Passt,
+    backend: Box<dyn NetBackend + Send>,
 
     avail_features: u64,
     acked_features: u64,
@@ -101,9 +108,12 @@ pub struct Net {
 }
 
 impl Net {
-    /// Create a new virtio network device using passt
-    pub fn new(id: String, passt_fd: RawFd, mac: [u8; 6]) -> Result<Self> {
-        let passt = Passt::new(passt_fd);
+    /// Create a new virtio network device using the backend
+    pub fn new(id: String, backend: VirtioNetBackend, mac: [u8; 6]) -> Result<Self> {
+        let backend = match backend {
+            VirtioNetBackend::Passt(fd) => Box::new(Passt::new(fd)),
+        };
+
         let avail_features = 1 << VIRTIO_NET_F_GUEST_CSUM
             | 1 << VIRTIO_NET_F_CSUM
             | 1 << VIRTIO_NET_F_GUEST_TSO4
@@ -128,7 +138,7 @@ impl Net {
 
         Ok(Net {
             id,
-            passt,
+            backend,
 
             avail_features,
             acked_features: 0u64,
@@ -188,34 +198,34 @@ impl Net {
         }
     }
 
-    pub(crate) fn process_passt_socket_readable(&mut self) {
+    pub(crate) fn process_backend_socket_readable(&mut self) {
         if let Err(e) = self.process_rx() {
-            log::error!("Failed to process rx: {e:?} (triggered by passt socket readable)");
+            log::error!("Failed to process rx: {e:?} (triggered by backend socket readable)");
         };
     }
 
-    pub(crate) fn process_passt_socket_writeable(&mut self) {
+    pub(crate) fn process_backend_socket_writeable(&mut self) {
         match self
-            .passt
+            .backend
             .try_finish_write(vnet_hdr_len(), &self.tx_frame_buf[..self.tx_frame_len])
         {
             Ok(()) => {
                 if let Err(e) = self.process_tx() {
-                    log::error!("Failed to continue processing tx after passt socket was writable again: {e:?}");
+                    log::error!("Failed to continue processing tx after backend socket was writable again: {e:?}");
                 }
             }
-            Err(passt::WriteError::PartialWrite | passt::WriteError::NothingWritten) => {}
-            Err(e @ passt::WriteError::Internal(_)) => {
+            Err(WriteError::PartialWrite | WriteError::NothingWritten) => {}
+            Err(e @ WriteError::Internal(_)) => {
                 log::error!("Failed to finish write: {e:?}");
             }
-            Err(e @ passt::WriteError::ProcessNotRunning) => {
+            Err(e @ WriteError::ProcessNotRunning) => {
                 log::debug!("Failed to finish write: {e:?}");
             }
         }
     }
 
-    pub(crate) fn raw_passt_socket_fd(&self) -> RawFd {
-        self.passt.raw_socket_fd()
+    pub(crate) fn raw_backend_socket_fd(&self) -> RawFd {
+        self.backend.raw_socket_fd()
     }
 
     fn process_rx(&mut self) -> result::Result<(), RxError> {
@@ -233,7 +243,7 @@ impl Net {
 
         // Read as many frames as possible.
         let result = loop {
-            match self.read_into_rx_frame_buf_from_passt() {
+            match self.read_into_rx_frame_buf_from_backend() {
                 Ok(()) => {
                     if self.write_frame_to_guest() {
                         signal_queue = true;
@@ -242,8 +252,8 @@ impl Net {
                         break Ok(());
                     }
                 }
-                Err(passt::ReadError::NothingRead) => break Ok(()),
-                Err(e @ passt::ReadError::Internal(_)) => break Err(RxError::Passt(e)),
+                Err(ReadError::NothingRead) => break Ok(()),
+                Err(e @ ReadError::Internal(_)) => break Err(RxError::Backend(e)),
             }
         };
 
@@ -265,9 +275,9 @@ impl Net {
 
         let tx_queue = &mut self.queues[TX_INDEX];
 
-        if self.passt.has_unfinished_write()
+        if self.backend.has_unfinished_write()
             && self
-                .passt
+                .backend
                 .try_finish_write(vnet_hdr_len(), &self.tx_frame_buf[..self.tx_frame_len])
                 .is_err()
         {
@@ -314,7 +324,7 @@ impl Net {
 
             self.tx_frame_len = read_count;
             match self
-                .passt
+                .backend
                 .write_frame(vnet_hdr_len(), &mut self.tx_frame_buf[..read_count])
             {
                 Ok(()) => {
@@ -322,30 +332,30 @@ impl Net {
                     tx_queue.add_used(mem, head_index, 0);
                     raise_irq = true;
                 }
-                Err(passt::WriteError::NothingWritten) => {
+                Err(WriteError::NothingWritten) => {
                     tx_queue.undo_pop();
                     break;
                 }
-                Err(passt::WriteError::PartialWrite) => {
+                Err(WriteError::PartialWrite) => {
                     log::trace!("process_tx: partial write");
                     /*
                     This situation should be pretty rare, assuming reasonably sized socket buffers.
-                    We have written only a part of a frame to the passt socket (the socket is full).
+                    We have written only a part of a frame to the backend socket (the socket is full).
 
                     The frame we have read from the guest remains in tx_frame_buf, and will be sent
                     later.
 
-                    Note that we cannot wait for passt to process our sending frames, because passt
-                    could be blocked on sending a remainder of a frame to us - us waiting for passt
-                    would cause a deadlock.
+                    Note that we cannot wait for the backend to process our sending frames, because
+                    the backend could be blocked on sending a remainder of a frame to us - us waiting
+                    for backend would cause a deadlock.
                      */
                     tx_queue.add_used(mem, head_index, 0);
                     raise_irq = true;
                     break;
                 }
-                Err(
-                    e @ passt::WriteError::Internal(_) | e @ passt::WriteError::ProcessNotRunning,
-                ) => return Err(TxError::Passt(e)),
+                Err(e @ WriteError::Internal(_) | e @ WriteError::ProcessNotRunning) => {
+                    return Err(TxError::Backend(e))
+                }
             }
         }
 
@@ -443,11 +453,11 @@ impl Net {
         false
     }
 
-    /// Fills self.rx_frame_buf with an ethernet frame from passt and prepends virtio_net_hdr to it
-    fn read_into_rx_frame_buf_from_passt(&mut self) -> result::Result<(), passt::ReadError> {
+    /// Fills self.rx_frame_buf with an ethernet frame from backend and prepends virtio_net_hdr to it
+    fn read_into_rx_frame_buf_from_backend(&mut self) -> result::Result<(), ReadError> {
         let mut len = 0;
         len += write_virtio_net_hdr(&mut self.rx_frame_buf);
-        len += self.passt.read_frame(&mut self.rx_frame_buf[len..])?;
+        len += self.backend.read_frame(&mut self.rx_frame_buf[len..])?;
         self.rx_frame_buf_len = len;
         Ok(())
     }

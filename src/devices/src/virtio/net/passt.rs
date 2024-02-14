@@ -1,29 +1,11 @@
 use nix::sys::socket::{getsockopt, recv, send, setsockopt, sockopt, MsgFlags};
 use std::os::fd::{AsRawFd, RawFd};
 
+use super::backend::{NetBackend, ReadError, WriteError};
+
 /// Each frame from passt is prepended by a 4 byte "header".
 /// It is interpreted as a big-endian u32 integer and is the length of the following ethernet frame.
 const PASST_HEADER_LEN: usize = 4;
-
-#[derive(Debug)]
-pub enum ReadError {
-    /// Nothing was written
-    NothingRead,
-    /// Another internal error occurred
-    Internal(nix::Error),
-}
-
-#[derive(Debug)]
-pub enum WriteError {
-    /// Nothing was written, you can drop the frame or try to resend it later
-    NothingWritten,
-    /// Part of the buffer was written, the write has to be finished using try_finish_write
-    PartialWrite,
-    /// Passt doesnt seem to be running (received EPIPE)
-    ProcessNotRunning,
-    /// Another internal error occurred
-    Internal(nix::Error),
-}
 
 pub struct Passt {
     fd: RawFd,
@@ -51,79 +33,6 @@ impl Passt {
             expecting_frame_length: 0,
             last_partial_write_length: 0,
         }
-    }
-
-    /// Try to read a frame from passt. If no bytes are available reports ReadError::NothingRead
-    pub fn read_frame(&mut self, buf: &mut [u8]) -> Result<usize, ReadError> {
-        if self.expecting_frame_length == 0 {
-            self.expecting_frame_length = {
-                let mut frame_length_buf = [0u8; PASST_HEADER_LEN];
-                self.read_loop(&mut frame_length_buf, false)?;
-                u32::from_be_bytes(frame_length_buf)
-            };
-        }
-
-        let frame_length = self.expecting_frame_length as usize;
-        self.read_loop(&mut buf[..frame_length], false)?;
-        self.expecting_frame_length = 0;
-        log::trace!("Read eth frame from passt: {} bytes", frame_length);
-        Ok(frame_length)
-    }
-
-    /// Try to write a frame to passt.
-    /// (Will mutate and override parts of buf, with a passt header!)
-    ///
-    /// * `hdr_len` - specifies the size of any existing headers encapsulating the ethernet frame,
-    ///               (such as vnet header), that can be overwritten.
-    ///               must be >= PASST_HEADER_LEN
-    /// * `buf` - the buffer to write to passt, `buf[..hdr_len]` may be overwritten
-    ///
-    /// If this function returns WriteError::PartialWrite, you have to finish the write using
-    /// try_finish_write.
-    pub fn write_frame(&mut self, hdr_len: usize, buf: &mut [u8]) -> Result<(), WriteError> {
-        if self.last_partial_write_length != 0 {
-            panic!("Cannot write a frame to passt, while a partial write is not resolved.");
-        }
-        assert!(
-            hdr_len >= PASST_HEADER_LEN,
-            "Not enough space to write passt header"
-        );
-        assert!(buf.len() > hdr_len);
-        let frame_length = buf.len() - hdr_len;
-
-        buf[hdr_len - PASST_HEADER_LEN..hdr_len]
-            .copy_from_slice(&(frame_length as u32).to_be_bytes());
-
-        self.write_loop(&buf[hdr_len - PASST_HEADER_LEN..])?;
-        Ok(())
-    }
-
-    pub fn has_unfinished_write(&self) -> bool {
-        self.last_partial_write_length != 0
-    }
-
-    /// Try to finish a partial write
-    ///
-    /// If no partial write is required will do nothing and return Ok(())
-    ///
-    /// * `hdr_len` - must be the same value as passed to write_frame, that caused the partial write
-    /// * `buf` - must be same buffer that was given to write_frame, that caused the partial write
-    pub fn try_finish_write(&mut self, hdr_len: usize, buf: &[u8]) -> Result<(), WriteError> {
-        if self.last_partial_write_length != 0 {
-            let already_written = self.last_partial_write_length;
-            log::trace!("Requested to finish partial write");
-            self.write_loop(&buf[hdr_len - PASST_HEADER_LEN + already_written..])?;
-            log::debug!(
-                "Finished partial write ({}bytes written before)",
-                already_written
-            )
-        }
-
-        Ok(())
-    }
-
-    pub fn raw_socket_fd(&self) -> RawFd {
-        self.fd.as_raw_fd()
     }
 
     /// Try to read until filling the whole slice.
@@ -199,5 +108,80 @@ impl Passt {
         }
         self.last_partial_write_length = 0;
         Ok(())
+    }
+}
+
+impl NetBackend for Passt {
+    /// Try to read a frame from passt. If no bytes are available reports ReadError::NothingRead
+    fn read_frame(&mut self, buf: &mut [u8]) -> Result<usize, ReadError> {
+        if self.expecting_frame_length == 0 {
+            self.expecting_frame_length = {
+                let mut frame_length_buf = [0u8; PASST_HEADER_LEN];
+                self.read_loop(&mut frame_length_buf, false)?;
+                u32::from_be_bytes(frame_length_buf)
+            };
+        }
+
+        let frame_length = self.expecting_frame_length as usize;
+        self.read_loop(&mut buf[..frame_length], false)?;
+        self.expecting_frame_length = 0;
+        log::trace!("Read eth frame from passt: {} bytes", frame_length);
+        Ok(frame_length)
+    }
+
+    /// Try to write a frame to passt.
+    /// (Will mutate and override parts of buf, with a passt header!)
+    ///
+    /// * `hdr_len` - specifies the size of any existing headers encapsulating the ethernet frame,
+    ///               (such as vnet header), that can be overwritten.
+    ///               must be >= PASST_HEADER_LEN
+    /// * `buf` - the buffer to write to passt, `buf[..hdr_len]` may be overwritten
+    ///
+    /// If this function returns WriteError::PartialWrite, you have to finish the write using
+    /// try_finish_write.
+    fn write_frame(&mut self, hdr_len: usize, buf: &mut [u8]) -> Result<(), WriteError> {
+        if self.last_partial_write_length != 0 {
+            panic!("Cannot write a frame to passt, while a partial write is not resolved.");
+        }
+        assert!(
+            hdr_len >= PASST_HEADER_LEN,
+            "Not enough space to write passt header"
+        );
+        assert!(buf.len() > hdr_len);
+        let frame_length = buf.len() - hdr_len;
+
+        buf[hdr_len - PASST_HEADER_LEN..hdr_len]
+            .copy_from_slice(&(frame_length as u32).to_be_bytes());
+
+        self.write_loop(&buf[hdr_len - PASST_HEADER_LEN..])?;
+        Ok(())
+    }
+
+    fn has_unfinished_write(&self) -> bool {
+        self.last_partial_write_length != 0
+    }
+
+    /// Try to finish a partial write
+    ///
+    /// If no partial write is required will do nothing and return Ok(())
+    ///
+    /// * `hdr_len` - must be the same value as passed to write_frame, that caused the partial write
+    /// * `buf` - must be same buffer that was given to write_frame, that caused the partial write
+    fn try_finish_write(&mut self, hdr_len: usize, buf: &[u8]) -> Result<(), WriteError> {
+        if self.last_partial_write_length != 0 {
+            let already_written = self.last_partial_write_length;
+            log::trace!("Requested to finish partial write");
+            self.write_loop(&buf[hdr_len - PASST_HEADER_LEN + already_written..])?;
+            log::debug!(
+                "Finished partial write ({}bytes written before)",
+                already_written
+            )
+        }
+
+        Ok(())
+    }
+
+    fn raw_socket_fd(&self) -> RawFd {
+        self.fd.as_raw_fd()
     }
 }
