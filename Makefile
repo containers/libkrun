@@ -85,6 +85,9 @@ endif
 ifeq ($(OS),Linux)
 	patchelf --set-soname $(KRUN_SONAME_$(OS)) --output $(LIBRARY_RELEASE_$(OS)) target/release/$(KRUN_BASE_$(OS))
 else
+ifeq ($(EFI),1)
+	mv target/release/libkrun.dylib target/release/$(KRUN_BASE_$(OS))
+endif
 	cp target/release/$(KRUN_BASE_$(OS)) $(LIBRARY_RELEASE_$(OS))
 endif
 
