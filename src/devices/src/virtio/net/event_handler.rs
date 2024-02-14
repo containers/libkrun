@@ -51,7 +51,7 @@ impl Subscriber for Net {
         if self.is_activated() {
             let virtq_rx_ev_fd = self.queue_evts[RX_INDEX].as_raw_fd();
             let virtq_tx_ev_fd = self.queue_evts[TX_INDEX].as_raw_fd();
-            let passt_socket = self.raw_passt_socket_fd();
+            let backend_socket = self.raw_backend_socket_fd();
             let activate_fd = self.activate_evt.as_raw_fd();
 
             match event_set {
@@ -64,19 +64,21 @@ impl Subscriber for Net {
                 EventSet::IN if source == virtq_tx_ev_fd => {
                     self.process_tx_queue_event();
                 }
-                _ if source == passt_socket => {
+                _ if source == backend_socket => {
                     if event_set.contains(EventSet::HANG_UP)
                         || event_set.contains(EventSet::READ_HANG_UP)
                     {
-                        log::error!("Got {event_set:?} on passt fd, virtio-net will stop working");
-                        eprintln!("LIBKRUN VIRTIO-NET FATAL: Passt process seems to have quit or crashed! Networking is now disabled!");
+                        log::error!(
+                            "Got {event_set:?} on backend fd, virtio-net will stop working"
+                        );
+                        eprintln!("LIBKRUN VIRTIO-NET FATAL: Backend process seems to have quit or crashed! Networking is now disabled!");
                     } else {
                         if event_set.contains(EventSet::IN) {
-                            self.process_passt_socket_readable()
+                            self.process_backend_socket_readable()
                         }
 
                         if event_set.contains(EventSet::OUT) {
-                            self.process_passt_socket_writeable()
+                            self.process_backend_socket_writeable()
                         }
                     }
                 }
@@ -106,7 +108,7 @@ impl Subscriber for Net {
                         | EventSet::OUT
                         | EventSet::EDGE_TRIGGERED
                         | EventSet::READ_HANG_UP,
-                    self.raw_passt_socket_fd() as u64,
+                    self.raw_backend_socket_fd() as u64,
                 ),
             ]
         } else {
