@@ -18,6 +18,8 @@ use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Mutex;
 
+#[cfg(feature = "net")]
+use devices::virtio::net::device::VirtioNetBackend;
 #[cfg(feature = "blk")]
 use devices::virtio::CacheType;
 use env_logger::Env;
@@ -58,13 +60,10 @@ struct TsiConfig {
     port_map: Option<HashMap<u16, u16>>,
 }
 
-struct PasstConfig {
-    _fd: RawFd,
-}
-
 enum NetworkConfig {
     Tsi(TsiConfig),
-    Passt(PasstConfig),
+    VirtioNetPasst(RawFd),
+    VirtioNetGvproxy(PathBuf),
 }
 
 impl Default for NetworkConfig {
@@ -191,7 +190,8 @@ impl ContextConfig {
                 tsi_config.port_map.replace(new_port_map);
                 Ok(())
             }
-            NetworkConfig::Passt(_) => Err(()),
+            NetworkConfig::VirtioNetPasst(_) => Err(()),
+            NetworkConfig::VirtioNetGvproxy(_) => Err(()),
         }
     }
 
@@ -558,7 +558,30 @@ pub unsafe extern "C" fn krun_set_passt_fd(ctx_id: u32, fd: c_int) -> i32 {
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            cfg.set_net_cfg(NetworkConfig::Passt(PasstConfig { _fd: fd }));
+            cfg.set_net_cfg(NetworkConfig::VirtioNetPasst(fd));
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_gvproxy_path(ctx_id: u32, c_path: *const c_char) -> i32 {
+    let path_str = match CStr::from_ptr(c_path).to_str() {
+        Ok(path) => path,
+        Err(e) => {
+            debug!("Error parsing gvproxy_path: {:?}", e);
+            return -libc::EINVAL;
+        }
+    };
+
+    let path = PathBuf::from(path_str);
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.set_net_cfg(NetworkConfig::VirtioNetGvproxy(path));
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -855,6 +878,26 @@ pub extern "C" fn krun_get_shutdown_eventfd(ctx_id: u32) -> i32 {
     }
 }
 
+#[cfg(feature = "net")]
+fn create_virtio_net(ctx_cfg: &mut ContextConfig, backend: VirtioNetBackend) {
+    let mac = if let Some(mac) = ctx_cfg.mac {
+        mac
+    } else {
+        // By default, use podman-machine's well-known MAC address
+        [0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee]
+    };
+
+    let network_interface_config = NetworkInterfaceConfig {
+        iface_id: "eth0".to_string(),
+        backend,
+        mac,
+    };
+    ctx_cfg
+        .vmr
+        .add_network_interface(network_interface_config)
+        .expect("Failed to create network interface");
+}
+
 #[no_mangle]
 pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "linux")]
@@ -945,8 +988,8 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         unix_ipc_port_map: None,
     };
 
-    if let Some(map) = ctx_cfg.unix_ipc_port_map {
-        vsock_config.unix_ipc_port_map = Some(map);
+    if let Some(ref map) = ctx_cfg.unix_ipc_port_map {
+        vsock_config.unix_ipc_port_map = Some(map.clone());
         vsock_set = true;
     }
 
@@ -955,25 +998,18 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             vsock_config.host_port_map = tsi_cfg.port_map;
             vsock_set = true;
         }
-        NetworkConfig::Passt(_passt_cfg) => {
+        NetworkConfig::VirtioNetPasst(_fd) => {
             #[cfg(feature = "net")]
             {
-                let mac = if let Some(mac) = ctx_cfg.mac {
-                    mac
-                } else {
-                    // By default, use podman-machine's well-known MAC address
-                    [0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee]
-                };
-
-                let network_interface_config = NetworkInterfaceConfig {
-                    iface_id: "eth0".to_string(),
-                    passt_fd: _passt_cfg._fd,
-                    mac,
-                };
-                ctx_cfg
-                    .vmr
-                    .add_network_interface(network_interface_config)
-                    .expect("Failed to create network interface");
+                let backend = VirtioNetBackend::Passt(_fd);
+                create_virtio_net(&mut ctx_cfg, backend);
+            }
+        }
+        NetworkConfig::VirtioNetGvproxy(ref _path) => {
+            #[cfg(feature = "net")]
+            {
+                let backend = VirtioNetBackend::Gvproxy(_path.clone());
+                create_virtio_net(&mut ctx_cfg, backend);
             }
         }
     }

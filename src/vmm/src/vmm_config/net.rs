@@ -2,20 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::fmt;
-use std::os::fd::RawFd;
 use std::result;
 use std::sync::{Arc, Mutex};
 
 use devices::virtio::net::device::VirtioNetBackend;
 use devices::virtio::Net;
 
-#[derive(Debug, PartialEq)]
-//#[serde(deny_unknown_fields)]
 pub struct NetworkInterfaceConfig {
     /// ID of the guest network interface.
     pub iface_id: String,
-    /// File descriptor of passt socket to connect this interface to
-    pub passt_fd: RawFd,
+    /// Backend to transport data to/from the host.
+    pub backend: VirtioNetBackend,
     /// MAC address.
     pub mac: [u8; 6],
 }
@@ -88,7 +85,7 @@ impl NetBuilder {
     /// Creates a Net device from a NetworkInterfaceConfig.
     pub fn create_net(cfg: NetworkInterfaceConfig) -> Result<Net> {
         // Create and return the Net device
-        Net::new(cfg.iface_id, VirtioNetBackend::Passt(cfg.passt_fd), cfg.mac)
+        Net::new(cfg.iface_id, cfg.backend, cfg.mac)
             .map_err(NetworkInterfaceError::CreateNetworkDevice)
     }
 }

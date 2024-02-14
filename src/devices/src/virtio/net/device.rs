@@ -5,6 +5,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 use crate::legacy::Gic;
+use crate::virtio::net::gvproxy::Gvproxy;
 use crate::virtio::net::passt::Passt;
 use crate::virtio::net::{Error, Result};
 use crate::virtio::net::{MAX_BUFFER_SIZE, QUEUE_SIZE, QUEUE_SIZES, RX_INDEX, TX_INDEX};
@@ -17,6 +18,7 @@ use super::backend::{NetBackend, ReadError, WriteError};
 
 use std::io::Write;
 use std::os::fd::RawFd;
+use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -63,6 +65,7 @@ unsafe impl ByteValued for VirtioNetConfig {}
 
 pub enum VirtioNetBackend {
     Passt(RawFd),
+    Gvproxy(PathBuf),
 }
 
 pub(crate) fn vnet_hdr_len() -> usize {
@@ -111,7 +114,10 @@ impl Net {
     /// Create a new virtio network device using the backend
     pub fn new(id: String, backend: VirtioNetBackend, mac: [u8; 6]) -> Result<Self> {
         let backend = match backend {
-            VirtioNetBackend::Passt(fd) => Box::new(Passt::new(fd)),
+            VirtioNetBackend::Passt(fd) => Box::new(Passt::new(fd)) as Box<dyn NetBackend + Send>,
+            VirtioNetBackend::Gvproxy(path) => {
+                Box::new(Gvproxy::new(path).unwrap()) as Box<dyn NetBackend + Send>
+            }
         };
 
         let avail_features = 1 << VIRTIO_NET_F_GUEST_CSUM
