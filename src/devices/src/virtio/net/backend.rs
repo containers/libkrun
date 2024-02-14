@@ -1,6 +1,14 @@
 use std::os::fd::RawFd;
 
 #[derive(Debug)]
+pub enum ConnectError {
+    InvalidAddress(nix::Error),
+    CreateSocket(nix::Error),
+    Binding(nix::Error),
+    SendingMagic(nix::Error),
+}
+
+#[derive(Debug)]
 pub enum ReadError {
     /// Nothing was written
     NothingRead,

@@ -136,6 +136,24 @@ int32_t krun_add_virtiofs(uint32_t ctx_id,
 int32_t krun_set_passt_fd(uint32_t ctx_id, int fd);
 
 /*
+ * Configures the networking to use gvproxy in vfkit mode.
+ * Call to this function disables TSI backend to use gvproxy instead.
+ *
+ * Arguments:
+ *  "ctx_id"  - the configuration context ID.
+ *  "c_path"  - a null-terminated string representing the path for
+ *              gvproxy's listen-vfkit unixdgram socket.
+ *
+ * Notes:
+ * If you never call this function, networking uses the TSI backend.
+ * This function should be called before krun_set_port_map.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_gvproxy_path(uint32_t ctx_id, char* c_path);
+
+/*
  * Sets the MAC address for the virtio-net device when using the passt backend.
  *
  * Arguments:
