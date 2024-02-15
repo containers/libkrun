@@ -61,7 +61,13 @@ impl EventFd {
             )
         };
         if ret <= 0 {
-            Err(io::Error::last_os_error())
+            let error = io::Error::last_os_error();
+            match error.kind() {
+                // We may get EAGAIN if the eventfd is overstimulated, but we can safely
+                // ignore it as we can be sure the subscriber will get notified.
+                io::ErrorKind::WouldBlock => Ok(()),
+                _ => Err(error),
+            }
         } else {
             Ok(())
         }
