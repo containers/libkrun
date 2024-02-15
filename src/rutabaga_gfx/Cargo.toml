@@ -9,6 +9,7 @@ license-file = "LICENSE"
 [features]
 gfxstream = []
 gfxstream_stub = []
+gpu = []
 virgl_renderer = []
 virgl_renderer_next = []
 minigbm = []
