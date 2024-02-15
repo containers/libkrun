@@ -10,5 +10,7 @@ task:
   cargo_cache:
     folder: $CARGO_HOME/registry
     fingerprint_script: cat Cargo.lock
+  install_packages_script:
+    - apt-get update && apt-get install -y libvirglrenderer-dev libepoxy-dev libdrm-dev
   test_script: cargo test
   before_cache_script: rm -rf $CARGO_HOME/registry/index
