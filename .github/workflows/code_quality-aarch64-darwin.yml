@@ -35,5 +35,8 @@ jobs:
       - name: Clippy (net feature)
         run: cargo clippy --target aarch64-apple-darwin --features net -- -D warnings
 
-      - name: Clippy (efi feature)
+      - name: Clippy (blk feature)
+        run: cargo clippy --target aarch64-apple-darwin --features blk -- -D warnings
+
+      - name: Clippy (efi(blk+net) feature)
         run: cargo clippy --target aarch64-apple-darwin --features efi -- -D warnings

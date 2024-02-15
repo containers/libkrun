@@ -23,6 +23,9 @@ jobs:
             override: true
             components: rustfmt, clippy
 
+      - name: Install packages
+        run: sudo apt-get update && sudo apt-get install -y libvirglrenderer-dev libepoxy-dev libdrm-dev
+
       - name: Create a fake init
         run: touch init/init
 
@@ -34,3 +37,6 @@ jobs:
       
       - name: Clippy (net feature)
         run: cargo clippy --features net -- -D warnings
+
+      - name: Clippy (blk+gpu feature)
+        run: cargo clippy --features blk,gpu -- -D warnings
