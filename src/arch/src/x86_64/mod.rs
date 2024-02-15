@@ -61,7 +61,7 @@ const MEM_32BIT_GAP_SIZE: u64 = 768 << 20;
 /// The start of the memory area reserved for MMIO devices.
 pub const MMIO_MEM_START: u64 = FIRST_ADDR_PAST_32BITS - MEM_32BIT_GAP_SIZE;
 /// The size of the MMIO shared memory area used by virtio-fs DAX.
-pub const MMIO_SHM_SIZE: u64 = 1 << 29;
+pub const MMIO_SHM_SIZE: u64 = 1 << 33;
 
 /// Returns a Vec of the valid memory addresses.
 /// These should be used to configure the GuestMemoryMmap structure for the platform.

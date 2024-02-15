@@ -36,7 +36,7 @@ pub enum Error {
 /// The start of the memory area reserved for MMIO devices.
 pub const MMIO_MEM_START: u64 = layout::MAPPED_IO_START;
 /// The size of the MMIO shared memory area used by virtio-fs DAX.
-pub const MMIO_SHM_SIZE: u64 = 1 << 29;
+pub const MMIO_SHM_SIZE: u64 = 1 << 33;
 
 pub use self::fdt::DeviceInfoForFDT;
 use crate::DeviceType;
