@@ -63,7 +63,6 @@ use vm_memory::mmap::GuestRegionMmap;
 use vm_memory::mmap::MmapRegion;
 #[cfg(any(target_arch = "aarch64", feature = "tee"))]
 use vm_memory::Bytes;
-#[cfg(target_os = "linux")]
 use vm_memory::GuestMemory;
 use vm_memory::{GuestAddress, GuestMemoryMmap};
 
@@ -537,7 +536,7 @@ pub fn build_microvm(
         )?;
     }
 
-    #[cfg(all(target_os = "linux", not(feature = "tee")))]
+    #[cfg(not(feature = "tee"))]
     let _shm_region = Some(VirtioShmRegion {
         host_addr: guest_memory
             .get_host_address(GuestAddress(arch_memory_info.shm_start_addr))
@@ -545,8 +544,6 @@ pub fn build_microvm(
         guest_addr: arch_memory_info.shm_start_addr,
         size: arch_memory_info.shm_size as usize,
     });
-    #[cfg(target_os = "macos")]
-    let shm_region = None;
 
     let mut vmm = Vmm {
         guest_memory,

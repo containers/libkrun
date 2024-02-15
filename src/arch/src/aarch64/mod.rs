@@ -43,7 +43,6 @@ use crate::DeviceType;
 
 /// Returns a Vec of the valid memory addresses for aarch64.
 /// See [`layout`](layout) module for a drawing of the specific memory model for this platform.
-#[cfg(target_os = "linux")]
 pub fn arch_memory_regions(size: usize) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let dram_size = min(size as u64, layout::DRAM_MEM_MAX_SIZE) as usize;
     let ram_last_addr = layout::DRAM_MEM_START + (dram_size as u64);
@@ -53,30 +52,18 @@ pub fn arch_memory_regions(size: usize) -> (ArchMemoryInfo, Vec<(GuestAddress, u
         shm_start_addr,
         shm_size: MMIO_SHM_SIZE,
     };
-    (
-        info,
-        vec![
-            (GuestAddress(layout::DRAM_MEM_START), dram_size),
-            (GuestAddress(shm_start_addr), MMIO_SHM_SIZE as usize),
-        ],
-    )
-}
-#[cfg(target_os = "macos")]
-pub fn arch_memory_regions(size: usize) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
-    let dram_size = min(size as u64, layout::DRAM_MEM_MAX_SIZE) as usize;
-    let info = ArchMemoryInfo {
-        ram_last_addr: layout::DRAM_MEM_START + dram_size as u64,
-        shm_start_addr: 0,
-        shm_size: 0,
-    };
     let regions = if cfg!(feature = "efi") {
         vec![
             // Space for loading EDK2 and its variables
             (GuestAddress(0u64), 0x800_0000),
             (GuestAddress(layout::DRAM_MEM_START), dram_size),
+            (GuestAddress(shm_start_addr), MMIO_SHM_SIZE as usize),
         ]
     } else {
-        vec![(GuestAddress(layout::DRAM_MEM_START), dram_size)]
+        vec![
+            (GuestAddress(layout::DRAM_MEM_START), dram_size),
+            (GuestAddress(shm_start_addr), MMIO_SHM_SIZE as usize),
+        ]
     };
 
     (info, regions)
