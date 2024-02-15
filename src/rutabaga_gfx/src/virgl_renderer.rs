@@ -52,9 +52,10 @@ fn import_resource(resource: &mut RutabagaResource) -> RutabagaResult<()> {
         return Ok(());
     }
 
-    if let Some(handle) = &resource.handle {
-        if handle.handle_type == RUTABAGA_MEM_HANDLE_TYPE_DMABUF {
-            let dmabuf_fd = handle.os_handle.try_clone()?.into_raw_descriptor();
+    if let Some(_handle) = &resource.handle {
+        #[cfg(target_os = "linux")]
+        if _handle.handle_type == RUTABAGA_MEM_HANDLE_TYPE_DMABUF {
+            let dmabuf_fd = _handle.os_handle.try_clone()?.into_raw_descriptor();
             // Safe because we are being passed a valid fd
             unsafe {
                 let dmabuf_size = libc::lseek64(dmabuf_fd, 0, libc::SEEK_END);
