@@ -376,9 +376,9 @@ impl Default for VirglRendererFlags {
     }
 }
 
-impl From<VirglRendererFlags> for u32 {
-    fn from(flags: VirglRendererFlags) -> u32 {
-        flags.0
+impl From<u32> for VirglRendererFlags {
+    fn from(val: u32) -> Self {
+        VirglRendererFlags(val)
     }
 }
 

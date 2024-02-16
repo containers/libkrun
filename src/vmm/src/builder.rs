@@ -564,7 +564,15 @@ pub fn build_microvm(
     attach_rng_device(&mut vmm, event_manager, intc.clone())?;
     attach_console_devices(&mut vmm, event_manager, intc.clone())?;
     #[cfg(feature = "gpu")]
-    attach_gpu_device(&mut vmm, event_manager, _shm_region, intc.clone())?;
+    if let Some(virgl_flags) = vm_resources.gpu_virgl_flags {
+        attach_gpu_device(
+            &mut vmm,
+            event_manager,
+            _shm_region,
+            intc.clone(),
+            virgl_flags,
+        )?;
+    }
     #[cfg(not(feature = "tee"))]
     attach_fs_devices(
         &mut vmm,
@@ -1344,10 +1352,11 @@ fn attach_gpu_device(
     event_manager: &mut EventManager,
     shm_region: Option<VirtioShmRegion>,
     intc: Option<Arc<Mutex<Gic>>>,
+    virgl_flags: u32,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
-    let gpu = Arc::new(Mutex::new(devices::virtio::Gpu::new().unwrap()));
+    let gpu = Arc::new(Mutex::new(devices::virtio::Gpu::new(virgl_flags).unwrap()));
 
     event_manager
         .add_subscriber(gpu.clone())

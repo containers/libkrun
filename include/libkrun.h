@@ -192,6 +192,30 @@ int32_t krun_set_net_mac(uint32_t ctx_id, uint8_t *const c_mac);
  */
 int32_t krun_set_port_map(uint32_t ctx_id, char *const port_map[]);
 
+/* Flags for virglrenderer.  Copied from virglrenderer bindings. */
+#define VIRGLRENDERER_USE_EGL            1 << 0
+#define VIRGLRENDERER_THREAD_SYNC        1 << 1
+#define VIRGLRENDERER_USE_GLX            1 << 2
+#define VIRGLRENDERER_USE_SURFACELESS    1 << 3
+#define VIRGLRENDERER_USE_GLES           1 << 4
+#define VIRGLRENDERER_USE_EXTERNAL_BLOB  1 << 5
+#define VIRGLRENDERER_VENUS              1 << 6
+#define VIRGLRENDERER_NO_VIRGL           1 << 7
+#define VIRGLRENDERER_USE_ASYNC_FENCE_CB 1 << 8
+#define VIRGLRENDERER_RENDER_SERVER      1 << 9
+#define VIRGLRENDERER_DRM                1 << 10
+/*
+ * Enables and configures a virtio-gpu device.
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "virgl_flags" - flags to pass to virglrenderer.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_gpu_options(uint32_t ctx_id, uint32_t virgl_flags);
+
 /*
  * Configures a map of rlimits to be set in the guest before starting the isolated binary.
  *

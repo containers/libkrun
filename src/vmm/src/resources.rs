@@ -109,6 +109,8 @@ pub struct VmResources {
     /// TEE configuration
     #[cfg(feature = "tee")]
     pub tee_config: TeeConfig,
+    /// Flags for the virtio-gpu device.
+    pub gpu_virgl_flags: Option<u32>,
 }
 
 impl VmResources {
@@ -242,6 +244,10 @@ impl VmResources {
         self.vsock.insert(config)
     }
 
+    pub fn set_gpu_virgl_flags(&mut self, virgl_flags: u32) {
+        self.gpu_virgl_flags = Some(virgl_flags);
+    }
+
     /// Sets a network device to be attached when the VM starts.
     #[cfg(feature = "net")]
     pub fn add_network_interface(
@@ -304,6 +310,7 @@ mod tests {
             vsock: Default::default(),
             #[cfg(feature = "net")]
             net_builder: Default::default(),
+            gpu_virgl_flags: None,
         }
     }
 

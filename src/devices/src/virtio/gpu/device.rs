@@ -44,10 +44,11 @@ pub struct Gpu {
     intc: Option<Arc<Mutex<Gic>>>,
     irq_line: Option<u32>,
     pub(crate) sender: Option<Sender<u64>>,
+    virgl_flags: u32,
 }
 
 impl Gpu {
-    pub(crate) fn with_queues(queues: Vec<VirtQueue>) -> super::Result<Gpu> {
+    pub(crate) fn with_queues(queues: Vec<VirtQueue>, virgl_flags: u32) -> super::Result<Gpu> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
             queue_events
@@ -72,15 +73,16 @@ impl Gpu {
             intc: None,
             irq_line: None,
             sender: None,
+            virgl_flags,
         })
     }
 
-    pub fn new() -> super::Result<Gpu> {
+    pub fn new(virgl_flags: u32) -> super::Result<Gpu> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
             .iter()
             .map(|&max_size| VirtQueue::new(max_size))
             .collect();
-        Self::with_queues(queues)
+        Self::with_queues(queues, virgl_flags)
     }
 
     pub fn id(&self) -> &str {
@@ -265,6 +267,7 @@ impl VirtioDevice for Gpu {
             self.intc.clone(),
             self.irq_line,
             shm_region,
+            self.virgl_flags,
         );
         worker.run();
 

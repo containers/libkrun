@@ -991,17 +991,18 @@ pub struct RutabagaBuilder {
 
 impl RutabagaBuilder {
     /// Create new a RutabagaBuilder.
-    pub fn new(default_component: RutabagaComponentType, capset_mask: u64) -> RutabagaBuilder {
-        let virglrenderer_flags = VirglRendererFlags::new()
-            .use_thread_sync(true)
-            .use_async_fence_cb(true);
+    pub fn new(
+        default_component: RutabagaComponentType,
+        virgl_flags: u32,
+        capset_mask: u64,
+    ) -> RutabagaBuilder {
         let gfxstream_flags = GfxstreamFlags::new();
         RutabagaBuilder {
             display_width: RUTABAGA_DEFAULT_WIDTH,
             display_height: RUTABAGA_DEFAULT_HEIGHT,
             default_component,
             gfxstream_flags,
-            virglrenderer_flags,
+            virglrenderer_flags: virgl_flags.into(),
             capset_mask,
             channels: None,
             debug_handler: None,
@@ -1244,7 +1245,7 @@ mod tests {
     use crate::*;
 
     fn new_2d() -> Rutabaga {
-        RutabagaBuilder::new(RutabagaComponentType::Rutabaga2D, 0)
+        RutabagaBuilder::new(RutabagaComponentType::Rutabaga2D, 0, 0)
             .build(RutabagaHandler::new(|_| {}), None)
             .unwrap()
     }
