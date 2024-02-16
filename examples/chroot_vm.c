@@ -237,7 +237,7 @@ int main(int argc, char *const argv[])
     }
 
     // Configure the number of vCPUs (1) and the amount of RAM (512 MiB).
-    if (err = krun_set_vm_config(ctx_id, 1, 512)) {
+    if (err = krun_set_vm_config(ctx_id, 4, 4096)) {
         errno = -err;
         perror("Error configuring the number of vCPUs and/or the amount of RAM");
         return -1;
@@ -246,6 +246,14 @@ int main(int argc, char *const argv[])
     if (err = krun_set_root(ctx_id, cmdline.new_root)) {
         errno = -err;
         perror("Error configuring root path");
+        return -1;
+    }
+
+    uint32_t virgl_flags = VIRGLRENDERER_USE_EGL | VIRGLRENDERER_DRM |
+	    VIRGLRENDERER_THREAD_SYNC | VIRGLRENDERER_USE_ASYNC_FENCE_CB;
+    if (err = krun_set_gpu_options(ctx_id, virgl_flags)) {
+        errno = -err;
+        perror("Error configuring gpu");
         return -1;
     }
 

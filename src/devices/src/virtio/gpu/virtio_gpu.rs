@@ -156,6 +156,7 @@ impl VirtioGpu {
         interrupt_evt: EventFd,
         intc: Option<Arc<Mutex<Gic>>>,
         irq_line: Option<u32>,
+        virgl_flags: u32,
     ) -> Self {
         let xdg_runtime_dir = match env::var("XDG_RUNTIME_DIR") {
             Ok(dir) => dir,
@@ -173,13 +174,12 @@ impl VirtioGpu {
         }];
         let rutabaga_channels_opt = Some(rutabaga_channels);
 
-        let builder = RutabagaBuilder::new(rutabaga_gfx::RutabagaComponentType::VirglRenderer, 0)
-            .set_rutabaga_channels(rutabaga_channels_opt)
-            .set_use_egl(true)
-            .set_use_gles(true)
-            .set_use_glx(true)
-            .set_use_surfaceless(true)
-            .set_use_drm(true);
+        let builder = RutabagaBuilder::new(
+            rutabaga_gfx::RutabagaComponentType::VirglRenderer,
+            virgl_flags,
+            0,
+        )
+        .set_rutabaga_channels(rutabaga_channels_opt);
 
         let fence_state = Arc::new(Mutex::new(Default::default()));
         let fence = Self::create_fence_handler(

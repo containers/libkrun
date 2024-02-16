@@ -31,6 +31,7 @@ pub struct Worker {
     intc: Option<Arc<Mutex<Gic>>>,
     irq_line: Option<u32>,
     shm_region: VirtioShmRegion,
+    virgl_flags: u32,
 }
 
 impl Worker {
@@ -44,6 +45,7 @@ impl Worker {
         intc: Option<Arc<Mutex<Gic>>>,
         irq_line: Option<u32>,
         shm_region: VirtioShmRegion,
+        virgl_flags: u32,
     ) -> Self {
         Self {
             receiver,
@@ -54,6 +56,7 @@ impl Worker {
             intc,
             irq_line,
             shm_region,
+            virgl_flags,
         }
     }
 
@@ -69,6 +72,7 @@ impl Worker {
             self.interrupt_evt.try_clone().unwrap(),
             self.intc.clone(),
             self.irq_line,
+            self.virgl_flags,
         );
 
         loop {
