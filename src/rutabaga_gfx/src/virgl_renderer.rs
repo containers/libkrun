@@ -356,6 +356,15 @@ impl VirglRenderer {
         Err(RutabagaError::Unsupported)
     }
 
+    #[cfg(target_os = "macos")]
+    fn map_ptr(&self, resource_id: u32) -> RutabagaResult<u64> {
+        let mut map_ptr = 0;
+        let ret = unsafe { virgl_renderer_resource_get_map_ptr(resource_id, &mut map_ptr) };
+        ret_to_res(ret)?;
+
+        Ok(map_ptr)
+    }
+
     fn query(&self, resource_id: u32) -> RutabagaResult<Resource3DInfo> {
         let query = export_query(resource_id)?;
         if query.out_num_fds == 0 {
@@ -497,6 +506,8 @@ impl RutabagaComponent for VirglRenderer {
             blob_mem: 0,
             blob_flags: 0,
             map_info: None,
+            #[cfg(target_os = "macos")]
+            map_ptr: None,
             info_2d: None,
             info_3d: self.query(resource_id).ok(),
             vulkan_info: None,
@@ -667,6 +678,8 @@ impl RutabagaComponent for VirglRenderer {
                 blob_mem: resource_create_blob.blob_mem,
                 blob_flags: resource_create_blob.blob_flags,
                 map_info: self.map_info(resource_id).ok(),
+                #[cfg(target_os = "macos")]
+                map_ptr: self.map_ptr(resource_id).ok(),
                 info_2d: None,
                 info_3d: self.query(resource_id).ok(),
                 vulkan_info: None,

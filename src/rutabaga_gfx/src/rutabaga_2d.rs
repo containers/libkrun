@@ -179,6 +179,8 @@ impl RutabagaComponent for Rutabaga2D {
             blob_mem: 0,
             blob_flags: 0,
             map_info: None,
+            #[cfg(target_os = "macos")]
+            map_ptr: None,
             info_2d: Some(info_2d),
             info_3d: None,
             vulkan_info: None,

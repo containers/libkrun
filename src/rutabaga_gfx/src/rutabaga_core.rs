@@ -43,6 +43,8 @@ pub struct RutabagaResource {
     pub blob_mem: u32,
     pub blob_flags: u32,
     pub map_info: Option<u32>,
+    #[cfg(target_os = "macos")]
+    pub map_ptr: Option<u64>,
     pub info_2d: Option<Rutabaga2DInfo>,
     pub info_3d: Option<Resource3DInfo>,
     pub vulkan_info: Option<VulkanInfo>,
@@ -107,6 +109,8 @@ pub trait RutabagaComponent {
             blob_mem: 0,
             blob_flags: 0,
             map_info: None,
+            #[cfg(target_os = "macos")]
+            map_ptr: None,
             info_2d: None,
             info_3d: None,
             vulkan_info: None,
@@ -440,6 +444,8 @@ impl Rutabaga {
                     blob_mem: 0,
                     blob_flags: 0,
                     map_info: None,
+                    #[cfg(target_os = "macos")]
+                    map_ptr: None,
                     info_2d: Some(Rutabaga2DInfo {
                         width: s.width,
                         height: s.height,
@@ -822,6 +828,19 @@ impl Rutabaga {
         resource
             .map_info
             .ok_or(RutabagaError::SpecViolation("no map info available"))
+    }
+
+    /// Returns the `map_ptr` of the blob resource.
+    #[cfg(target_os = "macos")]
+    pub fn map_ptr(&self, resource_id: u32) -> RutabagaResult<u64> {
+        let resource = self
+            .resources
+            .get(&resource_id)
+            .ok_or(RutabagaError::InvalidResourceId)?;
+
+        resource
+            .map_ptr
+            .ok_or(RutabagaError::SpecViolation("no map ptr available"))
     }
 
     /// Returns the `vulkan_info` of the blob resource, which consists of the physical device
