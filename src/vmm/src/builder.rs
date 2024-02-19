@@ -1137,7 +1137,7 @@ fn attach_console_devices(
             Some(Box::new(sigint_input) as _)
         }
         #[cfg(not(target_os = "linux"))]
-        None
+        Some(port_io::input_empty().unwrap())
     };
 
     let console_output = if stdout_is_terminal {
