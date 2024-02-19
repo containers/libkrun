@@ -37,6 +37,10 @@ pub fn stderr() -> Result<Box<dyn PortOutput + Send>, nix::Error> {
     output_to_raw_fd_dup(STDERR_FILENO)
 }
 
+pub fn input_empty() -> Result<Box<dyn PortInput + Send>, nix::Error> {
+    Ok(Box::new(PortInputEmpty {}))
+}
+
 pub fn output_to_raw_fd_dup(fd: RawFd) -> Result<Box<dyn PortOutput + Send>, nix::Error> {
     let fd = dup_raw_fd_into_owned(fd)?;
     make_non_blocking(&fd)?;
@@ -220,5 +224,29 @@ impl PortInput for PortInputSigInt {
     fn wait_until_readable(&self, _stopfd: Option<&EventFd>) {
         let mut poll_fds = [PollFd::new(self.sigint_evt.as_raw_fd(), PollFlags::POLLIN)];
         poll(&mut poll_fds, -1).expect("Failed to poll");
+    }
+}
+
+pub struct PortInputEmpty {}
+
+impl PortInputEmpty {
+    pub fn new() -> Self {
+        PortInputEmpty {}
+    }
+}
+
+impl Default for PortInputEmpty {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PortInput for PortInputEmpty {
+    fn read_volatile(&mut self, _buf: &mut VolatileSlice) -> Result<usize, io::Error> {
+        Ok(0)
+    }
+
+    fn wait_until_readable(&self, _stopfd: Option<&EventFd>) {
+        std::thread::sleep(std::time::Duration::MAX);
     }
 }
