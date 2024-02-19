@@ -413,8 +413,22 @@ impl Proxy for UnixProxy {
         todo!();
     }
 
-    fn update_peer_credit(&mut self, _pkt: &VsockPacket) -> ProxyUpdate {
-        todo!();
+    fn update_peer_credit(&mut self, pkt: &VsockPacket) -> ProxyUpdate {
+        debug!(
+            "update_credit: buf_alloc={} rx_cnt={} fwd_cnt={}",
+            pkt.buf_alloc(),
+            self.rx_cnt,
+            pkt.fwd_cnt()
+        );
+        self.peer_buf_alloc = pkt.buf_alloc();
+        self.peer_fwd_cnt = Wrapping(pkt.fwd_cnt());
+
+        self.status = ProxyStatus::Connected;
+
+        ProxyUpdate {
+            polling: Some((self.id, self.fd, EventSet::IN)),
+            ..Default::default()
+        }
     }
 
     fn push_op_request(&self) {
