@@ -41,6 +41,7 @@ pub const VIRGL_RENDERER_MAP_CACHE_WC: u32 = 3;
 pub const VIRGL_RENDERER_BLOB_FD_TYPE_DMABUF: u32 = 1;
 pub const VIRGL_RENDERER_BLOB_FD_TYPE_OPAQUE: u32 = 2;
 pub const VIRGL_RENDERER_BLOB_FD_TYPE_SHM: u32 = 3;
+pub const VIRGL_RENDERER_BLOB_FD_TYPE_APPLE: u32 = 4;
 pub const VIRGL_RENDERER_FENCE_FLAG_MERGEABLE: u32 = 1;
 pub type __int32_t = ::std::os::raw::c_int;
 pub type __uint32_t = ::std::os::raw::c_uint;

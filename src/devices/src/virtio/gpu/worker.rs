@@ -4,6 +4,10 @@ use std::sync::{Arc, Mutex};
 use std::{result, thread};
 
 use crossbeam_channel::Receiver;
+#[cfg(target_os = "macos")]
+use crossbeam_channel::Sender;
+#[cfg(target_os = "macos")]
+use hvf::MemoryMapping;
 use rutabaga_gfx::{
     ResourceCreate3D, ResourceCreateBlob, RutabagaFence, Transfer3D,
     RUTABAGA_PIPE_BIND_RENDER_TARGET, RUTABAGA_PIPE_TEXTURE_2D,
@@ -32,6 +36,8 @@ pub struct Worker {
     irq_line: Option<u32>,
     shm_region: VirtioShmRegion,
     virgl_flags: u32,
+    #[cfg(target_os = "macos")]
+    map_sender: Sender<MemoryMapping>,
 }
 
 impl Worker {
@@ -46,6 +52,7 @@ impl Worker {
         irq_line: Option<u32>,
         shm_region: VirtioShmRegion,
         virgl_flags: u32,
+        #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
     ) -> Self {
         Self {
             receiver,
@@ -57,6 +64,8 @@ impl Worker {
             irq_line,
             shm_region,
             virgl_flags,
+            #[cfg(target_os = "macos")]
+            map_sender,
         }
     }
 
@@ -73,6 +82,8 @@ impl Worker {
             self.intc.clone(),
             self.irq_line,
             self.virgl_flags,
+            #[cfg(target_os = "macos")]
+            self.map_sender.clone(),
         );
 
         loop {

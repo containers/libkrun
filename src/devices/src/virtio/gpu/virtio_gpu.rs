@@ -1,16 +1,27 @@
 use std::collections::BTreeMap;
 use std::env;
+#[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+#[cfg(target_os = "macos")]
+use crossbeam_channel::{unbounded, Sender};
+#[cfg(target_os = "macos")]
+use hvf::MemoryMapping;
 use libc::c_void;
+#[cfg(target_os = "macos")]
+use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_APPLE;
 use rutabaga_gfx::{
     ResourceCreate3D, ResourceCreateBlob, Rutabaga, RutabagaBuilder, RutabagaChannel,
     RutabagaFence, RutabagaFenceHandler, RutabagaIovec, Transfer3D, RUTABAGA_CHANNEL_TYPE_WAYLAND,
+    RUTABAGA_MAP_CACHE_MASK,
+};
+#[cfg(target_os = "linux")]
+use rutabaga_gfx::{
     RUTABAGA_MAP_ACCESS_MASK, RUTABAGA_MAP_ACCESS_READ, RUTABAGA_MAP_ACCESS_RW,
-    RUTABAGA_MAP_ACCESS_WRITE, RUTABAGA_MAP_CACHE_MASK, RUTABAGA_MEM_HANDLE_TYPE_OPAQUE_FD,
+    RUTABAGA_MAP_ACCESS_WRITE, RUTABAGA_MEM_HANDLE_TYPE_OPAQUE_FD,
 };
 use utils::eventfd::EventFd;
 use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, VolatileSlice};
@@ -21,6 +32,7 @@ use super::protocol::{
     GpuResponse, GpuResponsePlaneInfo, VirtioGpuResult, VIRTIO_GPU_BLOB_FLAG_CREATE_GUEST_HANDLE,
     VIRTIO_GPU_BLOB_MEM_HOST3D,
 };
+
 use super::{GpuError, Result};
 use crate::legacy::Gic;
 use crate::virtio::gpu::protocol::VIRTIO_GPU_FLAG_INFO_RING_IDX;
@@ -89,6 +101,8 @@ pub struct VirtioGpu {
     rutabaga: Rutabaga,
     resources: BTreeMap<u32, VirtioGpuResource>,
     fence_state: Arc<Mutex<FenceState>>,
+    #[cfg(target_os = "macos")]
+    map_sender: Sender<MemoryMapping>,
 }
 
 impl VirtioGpu {
@@ -149,6 +163,7 @@ impl VirtioGpu {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         mem: GuestMemoryMmap,
         queue_ctl: Arc<Mutex<VirtQueue>>,
@@ -157,6 +172,7 @@ impl VirtioGpu {
         intc: Option<Arc<Mutex<Gic>>>,
         irq_line: Option<u32>,
         virgl_flags: u32,
+        #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
     ) -> Self {
         let xdg_runtime_dir = match env::var("XDG_RUNTIME_DIR") {
             Ok(dir) => dir,
@@ -199,6 +215,8 @@ impl VirtioGpu {
             rutabaga,
             resources: Default::default(),
             fence_state,
+            #[cfg(target_os = "macos")]
+            map_sender,
         }
     }
 
@@ -469,6 +487,7 @@ impl VirtioGpu {
     /// rutabaga as ExternalMapping.
     /// When sandboxing is enabled, external_blob is set and opaque fds must be mapped in the
     /// hypervisor process by Vulkano using metadata provided by Rutabaga::vulkan_info().
+    #[cfg(target_os = "linux")]
     pub fn resource_map_blob(
         &mut self,
         resource_id: u32,
@@ -525,8 +544,62 @@ impl VirtioGpu {
             map_info: map_info & RUTABAGA_MAP_CACHE_MASK,
         })
     }
+    #[cfg(target_os = "macos")]
+    pub fn resource_map_blob(
+        &mut self,
+        resource_id: u32,
+        shm_region: &VirtioShmRegion,
+        offset: u64,
+    ) -> VirtioGpuResult {
+        let resource = self
+            .resources
+            .get_mut(&resource_id)
+            .ok_or(ErrInvalidResourceId)?;
+
+        let map_info = self.rutabaga.map_info(resource_id).map_err(|_| ErrUnspec)?;
+        let map_ptr = self.rutabaga.map_ptr(resource_id).map_err(|_| ErrUnspec)?;
+
+        if let Ok(export) = self.rutabaga.export_blob(resource_id) {
+            if export.handle_type == RUTABAGA_MEM_HANDLE_TYPE_APPLE {
+                if offset + resource.size > shm_region.size as u64 {
+                    error!("mapping DOES NOT FIT");
+                    return Err(ErrUnspec);
+                }
+
+                let guest_addr = shm_region.guest_addr + offset;
+                debug!(
+                    "mapping: map_ptr={:x}, guest_addr={:x}, size={}",
+                    map_ptr, guest_addr, resource.size
+                );
+
+                let (reply_sender, reply_receiver) = unbounded();
+                self.map_sender
+                    .send(MemoryMapping::AddMapping(
+                        reply_sender,
+                        map_ptr,
+                        guest_addr,
+                        resource.size,
+                    ))
+                    .unwrap();
+                if !reply_receiver.recv().unwrap() {
+                    return Err(ErrUnspec);
+                }
+            } else {
+                return Err(ErrUnspec);
+            }
+        } else {
+            return Err(ErrUnspec);
+        }
+
+        resource.shmem_offset = Some(offset);
+        // Access flags not a part of the virtio-gpu spec.
+        Ok(OkMapInfo {
+            map_info: map_info & RUTABAGA_MAP_CACHE_MASK,
+        })
+    }
 
     /// Uses the hypervisor to unmap the blob resource.
+    #[cfg(target_os = "linux")]
     pub fn resource_unmap_blob(
         &mut self,
         resource_id: u32,
@@ -553,6 +626,42 @@ impl VirtioGpu {
         };
         if ret == libc::MAP_FAILED {
             panic!("UNMAP failed");
+        }
+
+        resource.shmem_offset = None;
+
+        Ok(OkNoData)
+    }
+    #[cfg(target_os = "macos")]
+    pub fn resource_unmap_blob(
+        &mut self,
+        resource_id: u32,
+        shm_region: &VirtioShmRegion,
+    ) -> VirtioGpuResult {
+        let resource = self
+            .resources
+            .get_mut(&resource_id)
+            .ok_or(ErrInvalidResourceId)?;
+
+        debug!("resource_unmap_blob");
+        let shmem_offset = resource.shmem_offset.ok_or(ErrUnspec)?;
+
+        let guest_addr = shm_region.guest_addr + shmem_offset;
+        debug!(
+            "unmapping: guest_addr={:x}, size={}",
+            guest_addr, resource.size
+        );
+
+        let (reply_sender, reply_receiver) = unbounded();
+        self.map_sender
+            .send(MemoryMapping::RemoveMapping(
+                reply_sender,
+                guest_addr,
+                resource.size,
+            ))
+            .unwrap();
+        if !reply_receiver.recv().unwrap() {
+            return Err(ErrUnspec);
         }
 
         resource.shmem_offset = None;
