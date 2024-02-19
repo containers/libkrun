@@ -400,6 +400,7 @@ impl VirglRenderer {
                 VIRGL_RENDERER_BLOB_FD_TYPE_DMABUF => RUTABAGA_MEM_HANDLE_TYPE_DMABUF,
                 VIRGL_RENDERER_BLOB_FD_TYPE_SHM => RUTABAGA_MEM_HANDLE_TYPE_SHM,
                 VIRGL_RENDERER_BLOB_FD_TYPE_OPAQUE => RUTABAGA_MEM_HANDLE_TYPE_OPAQUE_FD,
+                VIRGL_RENDERER_BLOB_FD_TYPE_APPLE => RUTABAGA_MEM_HANDLE_TYPE_APPLE,
                 _ => {
                     return Err(RutabagaError::Unsupported);
                 }

@@ -17,6 +17,8 @@ use super::defs::uapi::virtio_gpu_config;
 use super::worker::Worker;
 use crate::legacy::Gic;
 use crate::Error as DeviceError;
+#[cfg(target_os = "macos")]
+use hvf::MemoryMapping;
 
 // Control queue.
 pub(crate) const CTL_INDEX: usize = 0;
@@ -45,10 +47,16 @@ pub struct Gpu {
     irq_line: Option<u32>,
     pub(crate) sender: Option<Sender<u64>>,
     virgl_flags: u32,
+    #[cfg(target_os = "macos")]
+    map_sender: Sender<MemoryMapping>,
 }
 
 impl Gpu {
-    pub(crate) fn with_queues(queues: Vec<VirtQueue>, virgl_flags: u32) -> super::Result<Gpu> {
+    pub(crate) fn with_queues(
+        queues: Vec<VirtQueue>,
+        virgl_flags: u32,
+        #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
+    ) -> super::Result<Gpu> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
             queue_events
@@ -74,15 +82,25 @@ impl Gpu {
             irq_line: None,
             sender: None,
             virgl_flags,
+            #[cfg(target_os = "macos")]
+            map_sender,
         })
     }
 
-    pub fn new(virgl_flags: u32) -> super::Result<Gpu> {
+    pub fn new(
+        virgl_flags: u32,
+        #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
+    ) -> super::Result<Gpu> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
             .iter()
             .map(|&max_size| VirtQueue::new(max_size))
             .collect();
-        Self::with_queues(queues, virgl_flags)
+        Self::with_queues(
+            queues,
+            virgl_flags,
+            #[cfg(target_os = "macos")]
+            map_sender,
+        )
     }
 
     pub fn id(&self) -> &str {
@@ -268,6 +286,8 @@ impl VirtioDevice for Gpu {
             self.irq_line,
             shm_region,
             self.virgl_flags,
+            #[cfg(target_os = "macos")]
+            self.map_sender.clone(),
         );
         worker.run();
 

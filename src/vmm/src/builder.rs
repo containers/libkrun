@@ -293,7 +293,7 @@ pub fn build_microvm(
     vm_resources: &super::resources::VmResources,
     event_manager: &mut EventManager,
     _shutdown_efd: Option<EventFd>,
-    #[cfg(target_os = "macos")] _sender: Sender<MemoryMapping>,
+    #[cfg(target_os = "macos")] _map_sender: Sender<MemoryMapping>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
     // Timestamp for measuring microVM boot duration.
     let request_ts = TimestampUs::default();
@@ -574,6 +574,8 @@ pub fn build_microvm(
             _shm_region,
             intc.clone(),
             virgl_flags,
+            #[cfg(target_os = "macos")]
+            _map_sender,
         )?;
     }
     #[cfg(not(feature = "tee"))]
@@ -1356,10 +1358,18 @@ fn attach_gpu_device(
     shm_region: Option<VirtioShmRegion>,
     intc: Option<Arc<Mutex<Gic>>>,
     virgl_flags: u32,
+    #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
-    let gpu = Arc::new(Mutex::new(devices::virtio::Gpu::new(virgl_flags).unwrap()));
+    let gpu = Arc::new(Mutex::new(
+        devices::virtio::Gpu::new(
+            virgl_flags,
+            #[cfg(target_os = "macos")]
+            map_sender,
+        )
+        .unwrap(),
+    ));
 
     event_manager
         .add_subscriber(gpu.clone())
