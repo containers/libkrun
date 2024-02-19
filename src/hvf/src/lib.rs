@@ -84,6 +84,7 @@ arm64_sys_reg!(SYSREG_ICC_SRE_EL1, 3, 0, 5, 12, 12);
 #[derive(Clone, Debug)]
 pub enum Error {
     MemoryMap,
+    MemoryUnmap,
     VcpuCreate,
     VcpuInitialRegisters,
     VcpuReadRegister,
@@ -103,6 +104,7 @@ impl Display for Error {
 
         match self {
             MemoryMap => write!(f, "Error registering memory region in HVF"),
+            MemoryUnmap => write!(f, "Error unregistering memory region in HVF"),
             VcpuCreate => write!(f, "Error creating HVF vCPU instance"),
             VcpuInitialRegisters => write!(f, "Error setting up initial HVF vCPU registers"),
             VcpuReadRegister => write!(f, "Error reading HVF vCPU register"),
@@ -191,6 +193,15 @@ impl HvfVm {
         };
         if ret != HV_SUCCESS {
             Err(Error::MemoryMap)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn unmap_memory(&self, guest_start_addr: u64, size: u64) -> Result<(), Error> {
+        let ret = unsafe { hv_vm_unmap(guest_start_addr, size) };
+        if ret != HV_SUCCESS {
+            Err(Error::MemoryUnmap)
         } else {
             Ok(())
         }
