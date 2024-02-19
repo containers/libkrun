@@ -14,6 +14,7 @@ use std::convert::TryInto;
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
 
+use crossbeam_channel::Sender;
 use log::debug;
 
 extern "C" {
@@ -118,6 +119,12 @@ impl Display for Error {
             VmCreate => write!(f, "Error creating HVF VM instance"),
         }
     }
+}
+
+/// Messages for requesting memory maps/unmaps.
+pub enum MemoryMapping {
+    AddMapping(Sender<bool>, u64, u64, u64),
+    RemoveMapping(Sender<bool>, u64, u64),
 }
 
 pub enum InterruptType {
