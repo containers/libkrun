@@ -18,11 +18,15 @@ use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Mutex;
 
+#[cfg(target_os = "macos")]
+use crossbeam_channel::unbounded;
 #[cfg(feature = "net")]
 use devices::virtio::net::device::VirtioNetBackend;
 #[cfg(feature = "blk")]
 use devices::virtio::CacheType;
 use env_logger::Env;
+#[cfg(target_os = "macos")]
+use hvf::MemoryMapping;
 #[cfg(not(feature = "efi"))]
 use libc::size_t;
 use libc::{c_char, c_int};
@@ -1041,14 +1045,40 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         ctx_cfg.vmr.set_gpu_virgl_flags(virgl_flags);
     }
 
-    let _vmm =
-        match vmm::builder::build_microvm(&ctx_cfg.vmr, &mut event_manager, ctx_cfg.shutdown_efd) {
-            Ok(vmm) => vmm,
-            Err(e) => {
-                error!("Building the microVM failed: {:?}", e);
-                return -libc::EINVAL;
-            }
-        };
+    #[cfg(target_os = "macos")]
+    let (sender, receiver) = unbounded();
+
+    let _vmm = match vmm::builder::build_microvm(
+        &ctx_cfg.vmr,
+        &mut event_manager,
+        ctx_cfg.shutdown_efd,
+        #[cfg(target_os = "macos")]
+        sender,
+    ) {
+        Ok(vmm) => vmm,
+        Err(e) => {
+            error!("Building the microVM failed: {:?}", e);
+            return -libc::EINVAL;
+        }
+    };
+
+    #[cfg(target_os = "macos")]
+    let mapper_vmm = _vmm.clone();
+
+    #[cfg(target_os = "macos")]
+    std::thread::spawn(move || loop {
+        match receiver.recv() {
+            Err(e) => error!("Error in receiver: {:?}", e),
+            Ok(m) => match m {
+                MemoryMapping::AddMapping(s, h, g, l) => {
+                    mapper_vmm.lock().unwrap().add_mapping(s, h, g, l)
+                }
+                MemoryMapping::RemoveMapping(s, g, l) => {
+                    mapper_vmm.lock().unwrap().remove_mapping(s, g, l)
+                }
+            },
+        }
+    });
 
     loop {
         match event_manager.run() {

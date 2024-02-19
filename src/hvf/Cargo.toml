@@ -5,5 +5,6 @@ authors = ["Sergio Lopez <slp@sinrega.org>"]
 edition = "2021"
 
 [dependencies]
+crossbeam-channel = "0.5"
 log = "0.4.0"
 env_logger = "0.9.0"

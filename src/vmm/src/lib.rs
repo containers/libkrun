@@ -33,6 +33,8 @@ mod macos;
 mod terminal;
 
 #[cfg(target_os = "macos")]
+pub use hvf::MemoryMapping;
+#[cfg(target_os = "macos")]
 use macos::vstate;
 
 use std::fmt::{Display, Formatter};
@@ -49,9 +51,12 @@ use crate::terminal::term_set_canonical_mode;
 #[cfg(target_os = "linux")]
 use crate::vstate::VcpuEvent;
 use crate::vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
+
 use arch::ArchMemoryInfo;
 use arch::DeviceType;
 use arch::InitrdConfig;
+#[cfg(target_os = "macos")]
+use crossbeam_channel::Sender;
 use devices::virtio::VmmExitObserver;
 use devices::BusDevice;
 use kernel::cmdline::Cmdline as KernelCmdline;
@@ -364,6 +369,23 @@ impl Vmm {
     /// Returns a reference to the inner KVM Vm object.
     pub fn kvm_vm(&self) -> &Vm {
         &self.vm
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn add_mapping(
+        &self,
+        reply_sender: Sender<bool>,
+        host_addr: u64,
+        guest_addr: u64,
+        len: u64,
+    ) {
+        self.vm
+            .add_mapping(reply_sender, host_addr, guest_addr, len);
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn remove_mapping(&self, reply_sender: Sender<bool>, guest_addr: u64, len: u64) {
+        self.vm.remove_mapping(reply_sender, guest_addr, len);
     }
 }
 

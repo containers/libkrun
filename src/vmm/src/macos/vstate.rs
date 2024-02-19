@@ -151,6 +151,36 @@ impl Vm {
     pub fn get_irqchip(&self) -> &Box<dyn GICDevice> {
         self.irqchip_handle.as_ref().unwrap()
     }
+
+    pub fn add_mapping(
+        &self,
+        reply_sender: Sender<bool>,
+        host_addr: u64,
+        guest_addr: u64,
+        len: u64,
+    ) {
+        debug!("add_mapping: host_addr={host_addr:x}, guest_addr={guest_addr:x}, len={len}");
+        if let Err(e) = self.hvf_vm.unmap_memory(guest_addr, len) {
+            error!("Error removing memory map: {:?}", e);
+        }
+
+        if let Err(e) = self.hvf_vm.map_memory(host_addr, guest_addr, len) {
+            error!("Error adding memory map: {:?}", e);
+            reply_sender.send(false).unwrap();
+        } else {
+            reply_sender.send(true).unwrap();
+        }
+    }
+
+    pub fn remove_mapping(&self, reply_sender: Sender<bool>, guest_addr: u64, len: u64) {
+        debug!("remove_mapping: guest_addr={guest_addr:x}, len={len}");
+        if let Err(e) = self.hvf_vm.unmap_memory(guest_addr, len) {
+            error!("Error removing memory map: {:?}", e);
+            reply_sender.send(false).unwrap();
+        } else {
+            reply_sender.send(true).unwrap();
+        }
+    }
 }
 
 /// Encapsulates configuration parameters for the guest vCPUS.

@@ -125,12 +125,12 @@ pub trait VirtioDevice: AsAny + Send {
     }
 }
 
-pub trait VmmExitObserver {
+pub trait VmmExitObserver: Send {
     /// Callback to finish processing or cleanup the device resources
     fn on_vmm_exit(&mut self) {}
 }
 
-impl<F: Fn()> VmmExitObserver for F {
+impl<F: Fn() + Send> VmmExitObserver for F {
     fn on_vmm_exit(&mut self) {
         self()
     }

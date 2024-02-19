@@ -4,7 +4,7 @@
 //! Enables pre-boot setup, instantiation and booting of a Firecracker VMM.
 
 #[cfg(target_os = "macos")]
-use crossbeam_channel::unbounded;
+use crossbeam_channel::{unbounded, Sender};
 use std::fmt::{Display, Formatter};
 use std::io;
 #[cfg(target_os = "linux")]
@@ -23,6 +23,8 @@ use devices::virtio::Net;
 #[cfg(not(feature = "tee"))]
 use devices::virtio::VirtioShmRegion;
 use devices::virtio::{port_io, MmioTransport, PortDescription, Vsock};
+#[cfg(target_os = "macos")]
+use hvf::MemoryMapping;
 
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
@@ -291,6 +293,7 @@ pub fn build_microvm(
     vm_resources: &super::resources::VmResources,
     event_manager: &mut EventManager,
     _shutdown_efd: Option<EventFd>,
+    #[cfg(target_os = "macos")] _sender: Sender<MemoryMapping>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
     // Timestamp for measuring microVM boot duration.
     let request_ts = TimestampUs::default();

@@ -11,7 +11,7 @@ pub enum Error {}
 type Result<T> = result::Result<T, Error>;
 
 /// Trait for GIC devices.
-pub trait GICDevice {
+pub trait GICDevice: Send {
     /// Returns an array with GIC device properties
     fn device_properties(&self) -> &[u64];
 
