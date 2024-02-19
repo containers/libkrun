@@ -28,6 +28,7 @@ pub(crate) const CUR_INDEX: usize = 1;
 // Supported features.
 pub(crate) const AVAIL_FEATURES: u64 = 1u64 << uapi::VIRTIO_F_VERSION_1
     | 1u64 << uapi::VIRTIO_GPU_F_VIRGL
+    | 1u64 << uapi::VIRTIO_GPU_F_RESOURCE_UUID
     | 1u64 << uapi::VIRTIO_GPU_F_RESOURCE_BLOB
     | 1u64 << uapi::VIRTIO_GPU_F_CONTEXT_INIT;
 
