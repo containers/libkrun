@@ -362,6 +362,7 @@ checksum = "9a3a5bfb195931eeb336b2a7b4d761daec841b97f947d34394601737a7bba5e4"
 name = "hvf"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
  "env_logger",
  "log",
 ]
@@ -466,8 +467,10 @@ checksum = "9c198f91728a82281a64e1f4f9eeb25d82cb32a5de251c6bd1b5154d63a8e7bd"
 name = "libkrun"
 version = "1.7.2"
 dependencies = [
+ "crossbeam-channel",
  "devices",
  "env_logger",
+ "hvf",
  "libc",
  "log",
  "once_cell",
