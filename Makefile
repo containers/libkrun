@@ -32,7 +32,7 @@ ifeq ($(NET),1)
 endif
 ifeq ($(EFI),1)
 	VARIANT = -efi
-	FEATURE_FLAGS := --features efi
+	FEATURE_FLAGS := --features efi,gpu
 	BUILD_INIT = 0
 endif
 
