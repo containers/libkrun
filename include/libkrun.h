@@ -312,6 +312,17 @@ int32_t krun_add_vsock_port(uint32_t ctx_id,
  */
 int32_t krun_get_shutdown_eventfd(uint32_t ctx_id);
 
+
+/*
+ * Configures the console device to ignore stdin and write the output to "c_filepath".
+ *
+ * Arguments:
+ *  "ctx_id"    - the configuration context ID.
+ *  "filepath"  - a null-terminated string representing the path of the file to write the
+ *                console output.
+ */
+int32_t krun_set_console_output(uint32_t ctx_id, const char *c_filepath);
+
 /*
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
  * stdin/stdout to manage them on behalf of the process running inside the isolated environment,

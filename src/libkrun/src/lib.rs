@@ -98,6 +98,7 @@ struct ContextConfig {
     unix_ipc_port_map: Option<HashMap<u32, PathBuf>>,
     shutdown_efd: Option<EventFd>,
     gpu_virgl_flags: Option<u32>,
+    console_output: Option<PathBuf>,
 }
 
 impl ContextConfig {
@@ -901,6 +902,28 @@ pub extern "C" fn krun_get_shutdown_eventfd(ctx_id: u32) -> i32 {
     }
 }
 
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_console_output(ctx_id: u32, c_filepath: *const c_char) -> i32 {
+    let filepath = match CStr::from_ptr(c_filepath).to_str() {
+        Ok(f) => f,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            if cfg.console_output.is_some() {
+                -libc::EINVAL
+            } else {
+                cfg.console_output = Some(PathBuf::from(filepath.to_string()));
+                KRUN_SUCCESS
+            }
+        }
+        Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
 #[cfg(feature = "net")]
 fn create_virtio_net(ctx_cfg: &mut ContextConfig, backend: VirtioNetBackend) {
     let mac = if let Some(mac) = ctx_cfg.mac {
@@ -1043,6 +1066,10 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     if let Some(virgl_flags) = ctx_cfg.gpu_virgl_flags {
         ctx_cfg.vmr.set_gpu_virgl_flags(virgl_flags);
+    }
+
+    if let Some(console_output) = ctx_cfg.console_output {
+        ctx_cfg.vmr.set_console_output(console_output);
     }
 
     #[cfg(target_os = "macos")]

@@ -7,7 +7,6 @@
 use std::fs::File;
 #[cfg(feature = "tee")]
 use std::io::BufReader;
-#[cfg(feature = "tee")]
 use std::path::PathBuf;
 
 #[cfg(feature = "tee")]
@@ -111,6 +110,8 @@ pub struct VmResources {
     pub tee_config: TeeConfig,
     /// Flags for the virtio-gpu device.
     pub gpu_virgl_flags: Option<u32>,
+    /// File to send console output.
+    pub console_output: Option<PathBuf>,
 }
 
 impl VmResources {
@@ -248,6 +249,10 @@ impl VmResources {
         self.gpu_virgl_flags = Some(virgl_flags);
     }
 
+    pub fn set_console_output(&mut self, console_output: PathBuf) {
+        self.console_output = Some(console_output);
+    }
+
     /// Sets a network device to be attached when the VM starts.
     #[cfg(feature = "net")]
     pub fn add_network_interface(
@@ -311,6 +316,7 @@ mod tests {
             #[cfg(feature = "net")]
             net_builder: Default::default(),
             gpu_virgl_flags: None,
+            console_output: None,
         }
     }
 

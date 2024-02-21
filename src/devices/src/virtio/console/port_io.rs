@@ -1,3 +1,4 @@
+use std::fs::File;
 use std::io::{self, ErrorKind};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
@@ -39,6 +40,10 @@ pub fn stderr() -> Result<Box<dyn PortOutput + Send>, nix::Error> {
 
 pub fn input_empty() -> Result<Box<dyn PortInput + Send>, nix::Error> {
     Ok(Box::new(PortInputEmpty {}))
+}
+
+pub fn output_file(file: File) -> Result<Box<dyn PortOutput + Send>, nix::Error> {
+    output_to_raw_fd_dup(file.as_raw_fd())
 }
 
 pub fn output_to_raw_fd_dup(fd: RawFd) -> Result<Box<dyn PortOutput + Send>, nix::Error> {
