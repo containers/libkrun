@@ -422,7 +422,9 @@ pub fn build_microvm(
         Some(setup_serial_device(
             event_manager,
             None,
-            Some(Box::new(io::stdout())),
+            None,
+            // Uncomment this to get EFI output when debugging EDK2.
+            // Some(Box::new(io::stdout())),
         )?)
     } else {
         None
