@@ -90,6 +90,8 @@ int32_t krun_set_root_disk(uint32_t ctx_id, const char *disk_path);
 int32_t krun_set_data_disk(uint32_t ctx_id, const char *disk_path);
 
 /*
+ * NO LONGER SUPPORTED. DO NOT USE.
+ *
  * Configures the mapped volumes for the microVM. Only supported on macOS, on Linux use
  * user_namespaces and bind-mounts instead. Not available in libkrun-SEV.
  *

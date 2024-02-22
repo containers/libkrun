@@ -10,7 +10,6 @@ use std::fs::File;
 use std::io;
 use std::mem::{self, size_of, MaybeUninit};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
@@ -243,12 +242,6 @@ pub struct Config {
     ///
     /// The default is `None`.
     pub proc_sfd_rawfd: Option<RawFd>,
-
-    /// Optional list of tuples of (host_path, guest_path) elements, representing paths from the host
-    /// to be exposed in the guest.
-    ///
-    /// The default in `None`.
-    pub mapped_volumes: Option<Vec<(PathBuf, PathBuf)>>,
 }
 
 impl Default for Config {
@@ -261,7 +254,6 @@ impl Default for Config {
             root_dir: String::from("/"),
             xattr: true,
             proc_sfd_rawfd: None,
-            mapped_volumes: None,
         }
     }
 }

@@ -1,6 +1,5 @@
 use std::cmp;
 use std::io::Write;
-use std::path::PathBuf;
 use std::result;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -64,7 +63,6 @@ impl Fs {
     pub(crate) fn with_queues(
         fs_id: String,
         shared_dir: String,
-        mapped_volumes: Option<Vec<(PathBuf, PathBuf)>>,
         queues: Vec<VirtQueue>,
     ) -> super::Result<Fs> {
         let mut queue_events = Vec::new();
@@ -80,7 +78,6 @@ impl Fs {
 
         let fs_cfg = passthrough::Config {
             root_dir: shared_dir,
-            mapped_volumes,
             ..Default::default()
         };
 
@@ -101,16 +98,12 @@ impl Fs {
         })
     }
 
-    pub fn new(
-        fs_id: String,
-        shared_dir: String,
-        mapped_volumes: Option<Vec<(PathBuf, PathBuf)>>,
-    ) -> super::Result<Fs> {
+    pub fn new(fs_id: String, shared_dir: String) -> super::Result<Fs> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
             .iter()
             .map(|&max_size| VirtQueue::new(max_size))
             .collect();
-        Self::with_queues(fs_id, shared_dir, mapped_volumes, queues)
+        Self::with_queues(fs_id, shared_dir, queues)
     }
 
     pub fn id(&self) -> &str {
