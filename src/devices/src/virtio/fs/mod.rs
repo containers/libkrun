@@ -3,6 +3,7 @@ mod event_handler;
 #[allow(dead_code)]
 mod filesystem;
 pub mod fuse;
+#[allow(dead_code)]
 mod multikey;
 mod server;
 

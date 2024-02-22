@@ -87,7 +87,7 @@ impl<F: FileSystem + Sync> Server<F> {
                 w,
             );
         }
-        //println!("opcode: {}", in_header.opcode);
+        debug!("opcode: {}", in_header.opcode);
         match in_header.opcode {
             x if x == Opcode::Lookup as u32 => self.lookup(in_header, r, w),
             x if x == Opcode::Forget as u32 => self.forget(in_header, r), // No reply.
