@@ -11,8 +11,6 @@ use std::ffi::CString;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::os::fd::RawFd;
-#[cfg(not(feature = "tee"))]
-use std::path::Path;
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -399,11 +397,7 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
             if !cfg.fs_devs.is_empty() {
                 return -libc::EINVAL;
             }
-            cfg.add_fs_dev(FsDeviceConfig {
-                fs_id,
-                shared_dir,
-                mapped_volumes: None,
-            });
+            cfg.add_fs_dev(FsDeviceConfig { fs_id, shared_dir });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -434,7 +428,6 @@ pub unsafe extern "C" fn krun_add_virtiofs(
             cfg.add_fs_dev(FsDeviceConfig {
                 fs_id: tag.to_string(),
                 shared_dir: path.to_string(),
-                mapped_volumes: None,
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -447,51 +440,10 @@ pub unsafe extern "C" fn krun_add_virtiofs(
 #[no_mangle]
 #[cfg(not(feature = "tee"))]
 pub unsafe extern "C" fn krun_set_mapped_volumes(
-    ctx_id: u32,
-    c_mapped_volumes: *const *const c_char,
+    _ctx_id: u32,
+    _c_mapped_volumes: *const *const c_char,
 ) -> i32 {
-    let mut mapped_volumes = Vec::new();
-    let mapped_volumes_array: &[*const c_char] = slice::from_raw_parts(c_mapped_volumes, MAX_ARGS);
-    for item in mapped_volumes_array.iter().take(MAX_ARGS) {
-        if item.is_null() {
-            break;
-        } else {
-            let s = match CStr::from_ptr(*item).to_str() {
-                Ok(s) => s,
-                Err(_) => return -libc::EINVAL,
-            };
-            let vol_tuple: Vec<&str> = s.split(':').collect();
-            if vol_tuple.len() != 2 {
-                return -libc::EINVAL;
-            }
-            let host_vol = Path::new(vol_tuple[0]);
-            let guest_vol = Path::new(vol_tuple[1]);
-
-            if !host_vol.is_absolute()
-                || !host_vol.exists()
-                || !guest_vol.is_absolute()
-                || guest_vol.components().count() != 2
-            {
-                return -libc::EINVAL;
-            }
-
-            mapped_volumes.push((host_vol.to_path_buf(), guest_vol.to_path_buf()));
-        }
-    }
-
-    match CTX_MAP.lock().unwrap().entry(ctx_id) {
-        Entry::Occupied(mut ctx_cfg) => {
-            let cfg = ctx_cfg.get_mut();
-            for fs in &mut cfg.fs_devs {
-                if fs.fs_id == "/dev/root" {
-                    fs.mapped_volumes = Some(mapped_volumes.clone());
-                }
-            }
-        }
-        Entry::Vacant(_) => return -libc::ENOENT,
-    }
-
-    KRUN_SUCCESS
+    -libc::EINVAL
 }
 
 #[allow(clippy::missing_safety_doc)]
