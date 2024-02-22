@@ -36,9 +36,6 @@ ifeq ($(EFI),1)
 	BUILD_INIT = 0
 endif
 
-ifeq ($(ROSETTA),1)
-    INIT_DEFS += -D__ROSETTA__
-endif
 ifeq ($(TIMESYNC),1)
     INIT_DEFS += -D__TIMESYNC__
 endif

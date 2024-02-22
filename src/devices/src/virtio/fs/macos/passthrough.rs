@@ -6,6 +6,7 @@ use std::collections::btree_map;
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
 use std::fs::File;
+use std::io;
 #[cfg(not(feature = "efi"))]
 use std::mem;
 use std::mem::MaybeUninit;
@@ -15,7 +16,6 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
-use std::{io, io::Read};
 
 use vm_memory::ByteValued;
 
@@ -28,9 +28,6 @@ use super::super::filesystem::{
     OpenOptions, SetattrValid, ZeroCopyReader, ZeroCopyWriter,
 };
 use super::super::fuse;
-
-const IOCTL_ROSETTA: u32 = 0x8045_6122;
-const KRUNVM_ROSETTA_FILE: &str = ".krunvm-rosetta";
 
 const INIT_CSTR: &[u8] = b"init.krun\0";
 const XATTR_KEY: &[u8] = b"user.containers.override_stat\0";
@@ -425,27 +422,7 @@ pub struct PassthroughFs {
     // Whether writeback caching is enabled for this directory. This will only be true when
     // `cfg.writeback` is true and `init` was called with `FsOptions::WRITEBACK_CACHE`.
     writeback: AtomicBool,
-
-    rosetta_data: Option<Vec<u8>>,
     cfg: Config,
-}
-
-fn read_rosetta_data() -> io::Result<Vec<u8>> {
-    let home = std::env::var("HOME")
-        .map_err(|_| linux_error(io::Error::from_raw_os_error(libc::EINVAL)))?;
-    let path = format!("{}/{}", home, KRUNVM_ROSETTA_FILE);
-    let mut file =
-        File::open(path).map_err(|_| linux_error(io::Error::from_raw_os_error(libc::EINVAL)))?;
-
-    let metadata = file
-        .metadata()
-        .map_err(|_| linux_error(io::Error::from_raw_os_error(libc::EINVAL)))?;
-
-    let mut data = vec![0u8; metadata.len() as usize];
-    file.read_exact(&mut data)
-        .map_err(|_| linux_error(io::Error::from_raw_os_error(libc::EINVAL)))?;
-
-    Ok(data)
 }
 
 impl PassthroughFs {
@@ -478,8 +455,6 @@ impl PassthroughFs {
             init_handle: 0,
 
             writeback: AtomicBool::new(false),
-
-            rosetta_data: read_rosetta_data().ok(),
             cfg,
         })
     }
@@ -1827,33 +1802,6 @@ impl FileSystem for PassthroughFs {
             Err(linux_error(io::Error::last_os_error()))
         } else {
             Ok(res as u64)
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn ioctl(
-        &self,
-        _ctx: Context,
-        _inode: Self::Inode,
-        _ohandle: Self::Handle,
-        _flags: u32,
-        cmd: u32,
-        _arg: u64,
-        _in_size: u32,
-        out_size: u32,
-    ) -> io::Result<Vec<u8>> {
-        if cmd == IOCTL_ROSETTA {
-            // This is based on the information found in this article:
-            // https://threedots.ovh/blog/2022/06/quick-look-at-rosetta-on-linux/
-
-            if let Some(data) = &self.rosetta_data {
-                if data.len() == out_size as usize {
-                    return Ok(data.clone());
-                }
-            }
-            Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)))
-        } else {
-            Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)))
         }
     }
 }
