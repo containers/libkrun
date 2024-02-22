@@ -676,32 +676,6 @@ cleanup_fd:
 	return ret;
 }
 
-#ifdef __ROSETTA__
-char rosetta_binary[] = "/.rosetta/rosetta\0";
-char binfmt_rosetta[] = ":rosetta:M:0:\\x7fELF\\x02\\x01\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02\\x00\\x3e\\x00:\\xff\\xff\\xff\\xff\\xff\\xfe\\xfe\\x00\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xfe\\xff\\xff\\xff:/.rosetta/rosetta:CF\n";
-
-static void enable_rosetta()
-{
-	int fd;
-
-	if (mount("binfmt_misc", "/proc/sys/fs/binfmt_misc", "binfmt_misc",
-		  MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
-		perror("mount(binfmt_misc)");
-		exit(-1);
-	} else {
-		fd = open("/proc/sys/fs/binfmt_misc/register", O_WRONLY);
-		if (fd >= 0) {
-			if (write(fd, &binfmt_rosetta[0], strlen(binfmt_rosetta)) < 0) {
-				perror("write to binfmt_misc");
-			}
-			close(fd);
-		} else {
-			perror("open binfmt_misc");
-		}
-	}
-}
-#endif
-
 #ifdef __TIMESYNC__
 
 #define TSYNC_PORT 123
@@ -868,12 +842,6 @@ int main(int argc, char **argv)
 	config_workdir = NULL;
 
 	config_parse_file(&config_argv, &config_workdir);
-
-#ifdef __ROSETTA__
-	if (access(rosetta_binary, F_OK) == 0) {
-		enable_rosetta();
-	}
-#endif
 
 	krun_home = getenv("KRUN_HOME");
 	if (krun_home) {

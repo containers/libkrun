@@ -24,7 +24,7 @@ if [ $? != 0 ]; then
 	exit -1
 fi
 
-krunvm start libkrun-builder /usr/bin/make -- ROSETTA=1 init/init
+krunvm start libkrun-builder /usr/bin/make -- init/init
 if [ $? != 0 ]; then
     krunvm delete libkrun-builder
 	echo "Error running command on VM"
