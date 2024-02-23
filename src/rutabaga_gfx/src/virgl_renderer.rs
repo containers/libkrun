@@ -387,7 +387,7 @@ impl VirglRenderer {
         #[cfg(feature = "virgl_renderer_next")]
         {
             let mut fd_type = 0;
-            let mut fd = 0;
+            let mut fd = -1;
             let ret =
                 unsafe { virgl_renderer_resource_export_blob(resource_id, &mut fd_type, &mut fd) };
             ret_to_res(ret)?;
