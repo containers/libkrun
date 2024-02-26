@@ -5,51 +5,51 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 use crate::legacy::Gic;
-use crate::virtio::net::gvproxy::Gvproxy;
-use crate::virtio::net::passt::Passt;
 use crate::virtio::net::{Error, Result};
-use crate::virtio::net::{MAX_BUFFER_SIZE, QUEUE_SIZE, QUEUE_SIZES, RX_INDEX, TX_INDEX};
-use crate::virtio::{
-    ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_NET, VIRTIO_MMIO_INT_VRING,
-};
+use crate::virtio::net::{QUEUE_SIZES, RX_INDEX, TX_INDEX};
+use crate::virtio::queue::Error as QueueError;
+use crate::virtio::{ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_NET};
 use crate::Error as DeviceError;
 
-use super::backend::{NetBackend, ReadError, WriteError};
+use super::backend::{ReadError, WriteError};
+use super::worker::NetWorker;
 
+use std::cmp;
 use std::io::Write;
 use std::os::fd::RawFd;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use std::{cmp, mem, result};
 use utils::eventfd::{EventFd, EFD_NONBLOCK};
 use virtio_bindings::virtio_net::{
-    virtio_net_hdr_v1, VIRTIO_NET_F_CSUM, VIRTIO_NET_F_GUEST_CSUM, VIRTIO_NET_F_GUEST_TSO4,
-    VIRTIO_NET_F_GUEST_UFO, VIRTIO_NET_F_HOST_TSO4, VIRTIO_NET_F_HOST_UFO, VIRTIO_NET_F_MAC,
+    VIRTIO_NET_F_CSUM, VIRTIO_NET_F_GUEST_CSUM, VIRTIO_NET_F_GUEST_TSO4, VIRTIO_NET_F_GUEST_UFO,
+    VIRTIO_NET_F_HOST_TSO4, VIRTIO_NET_F_HOST_UFO, VIRTIO_NET_F_MAC,
 };
-use vm_memory::{ByteValued, Bytes, GuestAddress, GuestMemoryError, GuestMemoryMmap};
+use virtio_bindings::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
+use vm_memory::{ByteValued, GuestMemoryError, GuestMemoryMmap};
 
 const VIRTIO_F_VERSION_1: u32 = 32;
 
 #[derive(Debug)]
-enum FrontendError {
+pub enum FrontendError {
     DescriptorChainTooSmall,
     EmptyQueue,
     GuestMemory(GuestMemoryError),
+    QueueError(QueueError),
     ReadOnlyDescriptor,
 }
 
 #[derive(Debug)]
-enum RxError {
+pub enum RxError {
     Backend(ReadError),
     DeviceError(DeviceError),
 }
 
 #[derive(Debug)]
-enum TxError {
+pub enum TxError {
     Backend(WriteError),
     DeviceError(DeviceError),
+    QueueError(QueueError),
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -63,46 +63,26 @@ struct VirtioNetConfig {
 // Safe because it only has data and has no implicit padding.
 unsafe impl ByteValued for VirtioNetConfig {}
 
+#[derive(Clone)]
 pub enum VirtioNetBackend {
     Passt(RawFd),
     Gvproxy(PathBuf),
 }
 
-pub(crate) fn vnet_hdr_len() -> usize {
-    mem::size_of::<virtio_net_hdr_v1>()
-}
-
-// This initializes to all 0 the virtio_net_hdr part of a buf and return the length of the header
-// https://docs.oasis-open.org/virtio/virtio/v1.1/csprd01/virtio-v1.1-csprd01.html#x1-2050006
-fn write_virtio_net_hdr(buf: &mut [u8]) -> usize {
-    let len = vnet_hdr_len();
-    buf[0..len].fill(0);
-    len
-}
-
 pub struct Net {
     id: String,
-    backend: Box<dyn NetBackend + Send>,
+    cfg_backend: VirtioNetBackend,
 
     avail_features: u64,
     acked_features: u64,
 
-    pub(crate) queues: Vec<Queue>,
-    pub(crate) queue_evts: Vec<EventFd>,
-
-    rx_frame_buf: [u8; MAX_BUFFER_SIZE],
-    rx_frame_buf_len: usize,
-    rx_has_deferred_frame: bool,
-
-    tx_iovec: Vec<(GuestAddress, usize)>,
-    tx_frame_buf: [u8; MAX_BUFFER_SIZE],
-    tx_frame_len: usize,
+    queues: Vec<Queue>,
+    queue_evts: Vec<EventFd>,
 
     interrupt_status: Arc<AtomicUsize>,
     interrupt_evt: EventFd,
 
     pub(crate) device_state: DeviceState,
-    pub(crate) activate_evt: EventFd,
 
     intc: Option<Arc<Mutex<Gic>>>,
     irq_line: Option<u32>,
@@ -112,14 +92,7 @@ pub struct Net {
 
 impl Net {
     /// Create a new virtio network device using the backend
-    pub fn new(id: String, backend: VirtioNetBackend, mac: [u8; 6]) -> Result<Self> {
-        let backend = match backend {
-            VirtioNetBackend::Passt(fd) => Box::new(Passt::new(fd)) as Box<dyn NetBackend + Send>,
-            VirtioNetBackend::Gvproxy(path) => {
-                Box::new(Gvproxy::new(path).unwrap()) as Box<dyn NetBackend + Send>
-            }
-        };
-
+    pub fn new(id: String, cfg_backend: VirtioNetBackend, mac: [u8; 6]) -> Result<Self> {
         let avail_features = 1 << VIRTIO_NET_F_GUEST_CSUM
             | 1 << VIRTIO_NET_F_CSUM
             | 1 << VIRTIO_NET_F_GUEST_TSO4
@@ -127,6 +100,7 @@ impl Net {
             | 1 << VIRTIO_NET_F_GUEST_UFO
             | 1 << VIRTIO_NET_F_HOST_UFO
             | 1 << VIRTIO_NET_F_MAC
+            | 1 << VIRTIO_RING_F_EVENT_IDX
             | 1 << VIRTIO_F_VERSION_1;
 
         let mut queue_evts = Vec::new();
@@ -144,7 +118,7 @@ impl Net {
 
         Ok(Net {
             id,
-            backend,
+            cfg_backend,
 
             avail_features,
             acked_features: 0u64,
@@ -152,19 +126,10 @@ impl Net {
             queues,
             queue_evts,
 
-            rx_frame_buf: [0u8; MAX_BUFFER_SIZE],
-            rx_frame_buf_len: 0,
-            rx_has_deferred_frame: false,
-
-            tx_frame_buf: [0u8; MAX_BUFFER_SIZE],
-            tx_frame_len: 0,
-            tx_iovec: Vec::with_capacity(QUEUE_SIZE as usize),
-
             interrupt_status: Arc::new(AtomicUsize::new(0)),
             interrupt_evt: EventFd::new(EFD_NONBLOCK).map_err(Error::EventFd)?,
 
             device_state: DeviceState::Inactive,
-            activate_evt: EventFd::new(EFD_NONBLOCK).map_err(Error::EventFd)?,
 
             intc: None,
             irq_line: None,
@@ -180,298 +145,6 @@ impl Net {
 
     pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
         self.intc = Some(intc);
-    }
-
-    pub(crate) fn process_rx_queue_event(&mut self) {
-        if let Err(e) = self.queue_evts[RX_INDEX].read() {
-            log::error!("Failed to get rx event from queue: {:?}", e);
-        }
-        if let Err(e) = self.process_rx() {
-            log::error!("Failed to process rx: {e:?} (triggered by queue event)")
-        };
-    }
-
-    pub(crate) fn process_tx_queue_event(&mut self) {
-        match self.queue_evts[TX_INDEX].read() {
-            Ok(_) => {
-                if let Err(e) = self.process_tx() {
-                    log::error!("Failed to process tx event: {e:?}");
-                };
-            }
-            Err(e) => {
-                log::error!("Failed to get tx queue event from queue: {e:?}");
-            }
-        }
-    }
-
-    pub(crate) fn process_backend_socket_readable(&mut self) {
-        if let Err(e) = self.process_rx() {
-            log::error!("Failed to process rx: {e:?} (triggered by backend socket readable)");
-        };
-    }
-
-    pub(crate) fn process_backend_socket_writeable(&mut self) {
-        match self
-            .backend
-            .try_finish_write(vnet_hdr_len(), &self.tx_frame_buf[..self.tx_frame_len])
-        {
-            Ok(()) => {
-                if let Err(e) = self.process_tx() {
-                    log::error!("Failed to continue processing tx after backend socket was writable again: {e:?}");
-                }
-            }
-            Err(WriteError::PartialWrite | WriteError::NothingWritten) => {}
-            Err(e @ WriteError::Internal(_)) => {
-                log::error!("Failed to finish write: {e:?}");
-            }
-            Err(e @ WriteError::ProcessNotRunning) => {
-                log::debug!("Failed to finish write: {e:?}");
-            }
-        }
-    }
-
-    pub(crate) fn raw_backend_socket_fd(&self) -> RawFd {
-        self.backend.raw_socket_fd()
-    }
-
-    fn process_rx(&mut self) -> result::Result<(), RxError> {
-        // if we have a deferred frame we try to process it first,
-        // if that is not possible, we don't continue processing other frames
-        if self.rx_has_deferred_frame {
-            if self.write_frame_to_guest() {
-                self.rx_has_deferred_frame = false;
-            } else {
-                return Ok(());
-            }
-        }
-
-        let mut signal_queue = false;
-
-        // Read as many frames as possible.
-        let result = loop {
-            match self.read_into_rx_frame_buf_from_backend() {
-                Ok(()) => {
-                    if self.write_frame_to_guest() {
-                        signal_queue = true;
-                    } else {
-                        self.rx_has_deferred_frame = true;
-                        break Ok(());
-                    }
-                }
-                Err(ReadError::NothingRead) => break Ok(()),
-                Err(e @ ReadError::Internal(_)) => break Err(RxError::Backend(e)),
-            }
-        };
-
-        // At this point we processed as many Rx frames as possible.
-        // We have to wake the guest if at least one descriptor chain has been used.
-        if signal_queue {
-            self.signal_used_queue().map_err(RxError::DeviceError)?;
-        }
-
-        result
-    }
-
-    fn process_tx(&mut self) -> result::Result<(), TxError> {
-        let mem = match self.device_state {
-            DeviceState::Activated(ref mem) => mem,
-            // This should never happen, it's been already validated in the event handler.
-            DeviceState::Inactive => unreachable!(),
-        };
-
-        let tx_queue = &mut self.queues[TX_INDEX];
-
-        if self.backend.has_unfinished_write()
-            && self
-                .backend
-                .try_finish_write(vnet_hdr_len(), &self.tx_frame_buf[..self.tx_frame_len])
-                .is_err()
-        {
-            log::trace!("Cannot process tx because of unfinished partial write!");
-            return Ok(());
-        }
-
-        let mut raise_irq = false;
-
-        while let Some(head) = tx_queue.pop(mem) {
-            let head_index = head.index;
-            let mut read_count = 0;
-            let mut next_desc = Some(head);
-
-            self.tx_iovec.clear();
-            while let Some(desc) = next_desc {
-                if desc.is_write_only() {
-                    self.tx_iovec.clear();
-                    break;
-                }
-                self.tx_iovec.push((desc.addr, desc.len as usize));
-                read_count += desc.len as usize;
-                next_desc = desc.next_descriptor();
-            }
-
-            // Copy buffer from across multiple descriptors.
-            read_count = 0;
-            for (desc_addr, desc_len) in self.tx_iovec.drain(..) {
-                let limit = cmp::min(read_count + desc_len, self.tx_frame_buf.len());
-
-                let read_result =
-                    mem.read_slice(&mut self.tx_frame_buf[read_count..limit], desc_addr);
-                match read_result {
-                    Ok(()) => {
-                        read_count += limit - read_count;
-                    }
-                    Err(e) => {
-                        log::error!("Failed to read slice: {:?}", e);
-                        read_count = 0;
-                        break;
-                    }
-                }
-            }
-
-            self.tx_frame_len = read_count;
-            match self
-                .backend
-                .write_frame(vnet_hdr_len(), &mut self.tx_frame_buf[..read_count])
-            {
-                Ok(()) => {
-                    self.tx_frame_len = 0;
-                    if let Err(e) = tx_queue.add_used(mem, head_index, 0) {
-                        error!("failed to add used elements to the queue: {:?}", e);
-                    }
-                    raise_irq = true;
-                }
-                Err(WriteError::NothingWritten) => {
-                    tx_queue.undo_pop();
-                    break;
-                }
-                Err(WriteError::PartialWrite) => {
-                    log::trace!("process_tx: partial write");
-                    /*
-                    This situation should be pretty rare, assuming reasonably sized socket buffers.
-                    We have written only a part of a frame to the backend socket (the socket is full).
-
-                    The frame we have read from the guest remains in tx_frame_buf, and will be sent
-                    later.
-
-                    Note that we cannot wait for the backend to process our sending frames, because
-                    the backend could be blocked on sending a remainder of a frame to us - us waiting
-                    for backend would cause a deadlock.
-                     */
-                    if let Err(e) = tx_queue.add_used(mem, head_index, 0) {
-                        error!("failed to add used elements to the queue: {:?}", e);
-                    }
-                    raise_irq = true;
-                    break;
-                }
-                Err(e @ WriteError::Internal(_) | e @ WriteError::ProcessNotRunning) => {
-                    return Err(TxError::Backend(e))
-                }
-            }
-        }
-
-        if raise_irq {
-            self.signal_used_queue().map_err(TxError::DeviceError)?;
-        }
-
-        Ok(())
-    }
-
-    fn signal_used_queue(&mut self) -> result::Result<(), DeviceError> {
-        self.interrupt_status
-            .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-        if let Some(intc) = &self.intc {
-            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
-            Ok(())
-        } else {
-            self.interrupt_evt.write(1).map_err(|e| {
-                error!("Failed to signal used queue: {:?}", e);
-                DeviceError::FailedSignalingUsedQueue(e)
-            })
-        }
-    }
-
-    // Copies a single frame from `self.rx_frame_buf` into the guest.
-    fn write_frame_to_guest_impl(&mut self) -> result::Result<(), FrontendError> {
-        let mut result: std::result::Result<(), FrontendError> = Ok(());
-        let mem = match self.device_state {
-            DeviceState::Activated(ref mem) => mem,
-            // This should never happen, it's been already validated in the event handler.
-            DeviceState::Inactive => unreachable!(),
-        };
-
-        let queue = &mut self.queues[RX_INDEX];
-        let head_descriptor = queue.pop(mem).ok_or_else(|| FrontendError::EmptyQueue)?;
-        let head_index = head_descriptor.index;
-
-        let mut frame_slice = &self.rx_frame_buf[..self.rx_frame_buf_len];
-
-        let frame_len = frame_slice.len();
-        let mut maybe_next_descriptor = Some(head_descriptor);
-        while let Some(descriptor) = &maybe_next_descriptor {
-            if frame_slice.is_empty() {
-                break;
-            }
-
-            if !descriptor.is_write_only() {
-                result = Err(FrontendError::ReadOnlyDescriptor);
-                break;
-            }
-
-            let len = std::cmp::min(frame_slice.len(), descriptor.len as usize);
-            match mem.write_slice(&frame_slice[..len], descriptor.addr) {
-                Ok(()) => {
-                    frame_slice = &frame_slice[len..];
-                }
-                Err(e) => {
-                    log::error!("Failed to write slice: {:?}", e);
-                    result = Err(FrontendError::GuestMemory(e));
-                    break;
-                }
-            };
-
-            maybe_next_descriptor = descriptor.next_descriptor();
-        }
-        if result.is_ok() && !frame_slice.is_empty() {
-            log::warn!("Receiving buffer is too small to hold frame of current size");
-            result = Err(FrontendError::DescriptorChainTooSmall);
-        }
-
-        // Mark the descriptor chain as used. If an error occurred, skip the descriptor chain.
-        let used_len = if result.is_err() { 0 } else { frame_len as u32 };
-        if let Err(e) = queue.add_used(mem, head_index, used_len) {
-            error!("failed to add used elements to the queue: {:?}", e);
-        }
-
-        result
-    }
-
-    // Copies a single frame from `self.rx_frame_buf` into the guest. In case of an error retries
-    // the operation if possible. Returns true if the operation was successfull.
-    fn write_frame_to_guest(&mut self) -> bool {
-        let max_iterations = self.queues[RX_INDEX].actual_size();
-        for _ in 0..max_iterations {
-            match self.write_frame_to_guest_impl() {
-                Ok(()) => return true,
-                Err(FrontendError::EmptyQueue) => {
-                    return false;
-                }
-                Err(_) => {
-                    // retry
-                    continue;
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Fills self.rx_frame_buf with an ethernet frame from backend and prepends virtio_net_hdr to it
-    fn read_into_rx_frame_buf_from_backend(&mut self) -> result::Result<(), ReadError> {
-        let mut len = 0;
-        len += write_virtio_net_hdr(&mut self.rx_frame_buf);
-        len += self.backend.read_frame(&mut self.rx_frame_buf[len..])?;
-        self.rx_frame_buf_len = len;
-        Ok(())
     }
 }
 
@@ -539,10 +212,27 @@ impl VirtioDevice for Net {
     }
 
     fn activate(&mut self, mem: GuestMemoryMmap) -> ActivateResult {
-        if self.activate_evt.write(1).is_err() {
-            log::error!("Net: Cannot write to activate_evt");
-            return Err(super::super::ActivateError::BadActivate);
-        }
+        let event_idx: bool = (self.acked_features & (1 << VIRTIO_RING_F_EVENT_IDX)) != 0;
+        self.queues[RX_INDEX].set_event_idx(event_idx);
+        self.queues[TX_INDEX].set_event_idx(event_idx);
+
+        let queue_evts = self
+            .queue_evts
+            .iter()
+            .map(|e| e.try_clone().unwrap())
+            .collect();
+        let worker = NetWorker::new(
+            self.queues.clone(),
+            queue_evts,
+            self.interrupt_status.clone(),
+            self.interrupt_evt.try_clone().unwrap(),
+            self.intc.clone(),
+            self.irq_line,
+            mem.clone(),
+            self.cfg_backend.clone(),
+        );
+        worker.run();
+
         self.device_state = DeviceState::Activated(mem);
         Ok(())
     }
