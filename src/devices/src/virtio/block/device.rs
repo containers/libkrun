@@ -15,8 +15,9 @@ use std::os::linux::fs::MetadataExt;
 use std::os::macos::fs::MetadataExt;
 use std::path::PathBuf;
 use std::result;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 use log::{error, warn};
 use utils::eventfd::{EventFd, EFD_NONBLOCK};
@@ -25,55 +26,14 @@ use virtio_bindings::{
 };
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
-use super::super::descriptor_utils::{Reader, Writer};
+use super::worker::BlockWorker;
 use super::{
-    super::{ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_BLOCK, VIRTIO_MMIO_INT_VRING},
-    Error, CONFIG_SPACE_SIZE, QUEUE_SIZES, SECTOR_SHIFT, SECTOR_SIZE,
+    super::{ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_BLOCK},
+    Error, QUEUE_SIZES, SECTOR_SHIFT, SECTOR_SIZE,
 };
 
 use crate::legacy::Gic;
-use crate::virtio::VIRTIO_MMIO_INT_CONFIG;
-use crate::Error as DeviceError;
-
-#[derive(Debug)]
-pub enum RequestError {
-    FlushingToDisk(io::Error),
-    InvalidDataLength,
-    ReadingFromDescriptor(io::Error),
-    WritingToDescriptor(io::Error),
-    UnknownRequest,
-}
-
-/// The request header represents the mandatory fields of each block device request.
-///
-/// A request header contains the following fields:
-///   * request_type: an u32 value mapping to a read, write or flush operation.
-///   * reserved: 32 bits are reserved for future extensions of the Virtio Spec.
-///   * sector: an u64 value representing the offset where a read/write is to occur.
-///
-/// The header simplifies reading the request from memory as all request follow
-/// the same memory layout.
-#[derive(Copy, Clone, Default)]
-#[repr(C)]
-pub struct RequestHeader {
-    request_type: u32,
-    _reserved: u32,
-    sector: u64,
-}
-
-// Safe because RequestHeader only contains plain data.
-unsafe impl ByteValued for RequestHeader {}
-
-#[derive(Copy, Clone, Debug, Default)]
-#[repr(C, packed)]
-struct VirtioBlkConfig {
-    capacity: u64,
-    size_max: u32,
-    seg_max: u32,
-}
-
-// Safe because it only has data and has no implicit padding.
-unsafe impl ByteValued for VirtioBlkConfig {}
+use crate::virtio::ActivateError;
 
 /// Configuration options for disk caching.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -91,7 +51,7 @@ pub enum CacheType {
 /// Helper object for setting up all `Block` fields derived from its backing file.
 pub(crate) struct DiskProperties {
     cache_type: CacheType,
-    file: File,
+    pub(crate) file: File,
     nsectors: u64,
     image_id: Vec<u8>,
 }
@@ -167,18 +127,6 @@ impl DiskProperties {
         default_id
     }
 
-    /// Provides vec containing the virtio block configuration space
-    /// buffer. The config space is populated with the disk size based
-    /// on the backing file size.
-    pub fn virtio_block_config_space(&self) -> Vec<u8> {
-        // The config space is little endian.
-        let mut config = Vec::with_capacity(CONFIG_SPACE_SIZE);
-        for i in 0..CONFIG_SPACE_SIZE {
-            config.push((self.nsectors >> (8 * i)) as u8);
-        }
-        config
-    }
-
     pub fn cache_type(&self) -> CacheType {
         self.cache_type
     }
@@ -204,16 +152,31 @@ impl Drop for DiskProperties {
     }
 }
 
+#[derive(Copy, Clone, Debug, Default)]
+#[repr(C, packed)]
+struct VirtioBlkConfig {
+    capacity: u64,
+    size_max: u32,
+    seg_max: u32,
+}
+
+// Safe because it only has data and has no implicit padding.
+unsafe impl ByteValued for VirtioBlkConfig {}
+
 /// Virtio device for exposing block level read/write operations on a host file.
 pub struct Block {
     // Host file and properties.
-    pub(crate) disk: DiskProperties,
+    disk: Option<DiskProperties>,
+    cache_type: CacheType,
+    disk_image_path: String,
+    is_disk_read_only: bool,
+    worker_thread: Option<JoinHandle<()>>,
+    worker_stopfd: EventFd,
 
     // Virtio fields.
     pub(crate) avail_features: u64,
     pub(crate) acked_features: u64,
     config: VirtioBlkConfig,
-    pub(crate) activate_evt: EventFd,
 
     // Transport related fields.
     pub(crate) queues: Vec<Queue>,
@@ -225,7 +188,6 @@ pub struct Block {
     // Implementation specific fields.
     pub(crate) id: String,
     pub(crate) partuuid: Option<String>,
-    pub(crate) root_device: bool,
 
     // Interrupt specific fields.
     intc: Option<Arc<Mutex<Gic>>>,
@@ -242,9 +204,9 @@ impl Block {
         cache_type: CacheType,
         disk_image_path: String,
         is_disk_read_only: bool,
-        is_disk_root: bool,
     ) -> io::Result<Block> {
-        let disk_properties = DiskProperties::new(disk_image_path, is_disk_read_only, cache_type)?;
+        let disk_properties =
+            DiskProperties::new(disk_image_path.clone(), is_disk_read_only, cache_type)?;
 
         let mut avail_features = (1u64 << VIRTIO_F_VERSION_1)
             | (1u64 << VIRTIO_BLK_F_FLUSH)
@@ -268,10 +230,12 @@ impl Block {
 
         Ok(Block {
             id,
-            root_device: is_disk_root,
             partuuid,
             config,
-            disk: disk_properties,
+            disk: Some(disk_properties),
+            cache_type,
+            disk_image_path,
+            is_disk_read_only,
             avail_features,
             acked_features: 0u64,
             interrupt_status: Arc::new(AtomicUsize::new(0)),
@@ -279,179 +243,11 @@ impl Block {
             queue_evts,
             queues,
             device_state: DeviceState::Inactive,
-            activate_evt: EventFd::new(EFD_NONBLOCK)?,
             intc: None,
             irq_line: None,
+            worker_thread: None,
+            worker_stopfd: EventFd::new(EFD_NONBLOCK)?,
         })
-    }
-
-    pub(crate) fn process_queue_event(&mut self) {
-        if let Err(e) = self.queue_evts[0].read() {
-            error!("Failed to get queue event: {:?}", e);
-        } else {
-            self.process_virtio_queues();
-        }
-    }
-
-    /// Process device virtio queue(s).
-    pub fn process_virtio_queues(&mut self) {
-        let mem = match self.device_state {
-            DeviceState::Activated(ref mem) => mem.clone(),
-            // This should never happen, it's been already validated in the event handler.
-            DeviceState::Inactive => unreachable!(),
-        };
-
-        loop {
-            self.queues[0].disable_notification(&mem).unwrap();
-
-            self.process_queue(&mem, 0);
-
-            if !self.queues[0].enable_notification(&mem).unwrap() {
-                break;
-            }
-        }
-    }
-
-    pub fn process_queue(&mut self, mem: &GuestMemoryMmap, queue_index: usize) {
-        while let Some(head) = self.queues[queue_index].pop(mem) {
-            let mut reader = match Reader::new(mem, head.clone()) {
-                Ok(r) => r,
-                Err(e) => {
-                    error!("invalid descriptor chain: {:?}", e);
-                    continue;
-                }
-            };
-            let mut writer = match Writer::new(mem, head.clone()) {
-                Ok(r) => r,
-                Err(e) => {
-                    error!("invalid descriptor chain: {:?}", e);
-                    continue;
-                }
-            };
-            let request_header: RequestHeader = match reader.read_obj() {
-                Ok(h) => h,
-                Err(e) => {
-                    error!("invalid request header: {:?}", e);
-                    continue;
-                }
-            };
-
-            let (status, len): (u8, usize) =
-                match self.process_request(request_header, &mut reader, &mut writer) {
-                    Ok(l) => (VIRTIO_BLK_S_OK.try_into().unwrap(), l),
-                    Err(e) => {
-                        error!("error processing request: {:?}", e);
-                        (VIRTIO_BLK_S_IOERR.try_into().unwrap(), 0)
-                    }
-                };
-
-            if let Err(e) = writer.write_obj(status) {
-                error!("Failed to write virtio block status: {:?}", e)
-            }
-
-            if let Err(e) = self.queues[queue_index].add_used(mem, head.index, len as u32) {
-                error!("failed to add used elements to the queue: {:?}", e);
-            }
-
-            if self.queues[queue_index].needs_notification(mem).unwrap() {
-                if let Err(e) = self.signal_used_queue() {
-                    error!("error signalling queue: {:?}", e);
-                }
-            }
-        }
-    }
-
-    fn process_request(
-        &mut self,
-        request_header: RequestHeader,
-        reader: &mut Reader,
-        writer: &mut Writer,
-    ) -> result::Result<usize, RequestError> {
-        match request_header.request_type {
-            VIRTIO_BLK_T_IN => {
-                let data_len = writer.available_bytes() - 1;
-                if data_len % 512 != 0 {
-                    return Err(RequestError::InvalidDataLength);
-                } else {
-                    writer
-                        .write_from_at(
-                            &self.disk.file,
-                            data_len,
-                            (request_header.sector * 512) as u64,
-                        )
-                        .map_err(RequestError::WritingToDescriptor)
-                }
-            }
-            VIRTIO_BLK_T_OUT => {
-                let data_len = reader.available_bytes();
-                if data_len % 512 != 0 {
-                    return Err(RequestError::InvalidDataLength);
-                } else {
-                    reader
-                        .read_to_at(
-                            &self.disk.file,
-                            data_len,
-                            (request_header.sector * 512) as u64,
-                        )
-                        .map_err(RequestError::ReadingFromDescriptor)
-                }
-            }
-            VIRTIO_BLK_T_FLUSH => match self.disk.cache_type() {
-                CacheType::Writeback => {
-                    let diskfile = self.disk.file_mut();
-                    diskfile.flush().map_err(RequestError::FlushingToDisk)?;
-                    diskfile.sync_all().map_err(RequestError::FlushingToDisk)?;
-                    Ok(0)
-                }
-                CacheType::Unsafe => Ok(0),
-            },
-            VIRTIO_BLK_T_GET_ID => {
-                let data_len = writer.available_bytes();
-                let disk_id = self.disk.image_id();
-                if data_len < disk_id.len() {
-                    return Err(RequestError::InvalidDataLength);
-                } else {
-                    writer
-                        .write_all(disk_id)
-                        .map_err(RequestError::WritingToDescriptor)?;
-                    Ok(disk_id.len())
-                }
-            }
-            _ => Err(RequestError::UnknownRequest),
-        }
-    }
-
-    pub(crate) fn signal_used_queue(&self) -> result::Result<(), DeviceError> {
-        self.interrupt_status
-            .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-        if let Some(intc) = &self.intc {
-            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
-        } else {
-            self.interrupt_evt.write(1).map_err(|e| {
-                error!("Failed to signal used queue: {:?}", e);
-                DeviceError::FailedSignalingUsedQueue(e)
-            })?;
-        }
-        Ok(())
-    }
-
-    /// Update the backing file and the config space of the block device.
-    pub fn update_disk_image(&mut self, disk_image_path: String) -> io::Result<()> {
-        let disk_properties =
-            DiskProperties::new(disk_image_path, self.is_read_only(), self.cache_type())?;
-        self.disk = disk_properties;
-        //self.config_space = self.disk.virtio_block_config_space();
-
-        // Kick the driver to pick up the changes.
-        self.interrupt_status
-            .fetch_or(VIRTIO_MMIO_INT_CONFIG as usize, Ordering::SeqCst);
-        if let Some(intc) = &self.intc {
-            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
-        } else {
-            self.interrupt_evt.write(1).unwrap();
-        }
-
-        Ok(())
     }
 
     pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
@@ -471,15 +267,6 @@ impl Block {
     /// Specifies if this block device is read only.
     pub fn is_read_only(&self) -> bool {
         self.avail_features & (1u64 << VIRTIO_BLK_F_RO) != 0
-    }
-
-    /// Specifies if this block device is read only.
-    pub fn is_root_device(&self) -> bool {
-        self.root_device
-    }
-
-    pub fn cache_type(&self) -> CacheType {
-        self.disk.cache_type()
     }
 }
 
@@ -551,22 +338,47 @@ impl VirtioDevice for Block {
     }
 
     fn activate(&mut self, mem: GuestMemoryMmap) -> ActivateResult {
+        if self.worker_thread.is_some() {
+            panic!("virtio_blk: worker thread already exists");
+        }
+
         let event_idx: bool = (self.acked_features & (1 << VIRTIO_RING_F_EVENT_IDX)) != 0;
         self.queues[0].set_event_idx(event_idx);
 
-        if self.activate_evt.write(1).is_err() {
-            error!("Block: Cannot write to activate_evt");
-            return Err(super::super::ActivateError::BadActivate);
-        }
+        let disk = match self.disk.take() {
+            Some(d) => d,
+            None => DiskProperties::new(
+                self.disk_image_path.clone(),
+                self.is_disk_read_only,
+                self.cache_type,
+            )
+            .map_err(|_| ActivateError::BadActivate)?,
+        };
+
+        let worker = BlockWorker::new(
+            self.queues[0].clone(),
+            self.queue_evts[0].try_clone().unwrap(),
+            self.interrupt_status.clone(),
+            self.interrupt_evt.try_clone().unwrap(),
+            self.intc.clone(),
+            self.irq_line,
+            mem.clone(),
+            disk,
+            self.worker_stopfd.try_clone().unwrap(),
+        );
+        self.worker_thread = Some(worker.run());
+
         self.device_state = DeviceState::Activated(mem);
         Ok(())
     }
 
     fn reset(&mut self) -> bool {
-        // Strictly speaking, we should unsubscribe the queue events resubscribe
-        // the activate eventfd and deactivate the device, but we don't support
-        // any scenario in which neither GuestMemory nor the queue events would
-        // change, so let's avoid doing any unnecessary work.
+        if let Some(worker) = self.worker_thread.take() {
+            let _ = self.worker_stopfd.write(1);
+            if let Err(e) = worker.join() {
+                error!("error waiting for worker thread: {:?}", e);
+            }
+        }
         self.device_state = DeviceState::Inactive;
         true
     }
