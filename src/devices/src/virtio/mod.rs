@@ -18,10 +18,8 @@ pub mod bindings;
 #[cfg(feature = "blk")]
 pub mod block;
 pub mod console;
-#[cfg(not(feature = "tee"))]
 pub mod descriptor_utils;
 pub mod device;
-#[cfg(not(feature = "tee"))]
 pub mod file_traits;
 #[cfg(not(feature = "tee"))]
 pub mod fs;

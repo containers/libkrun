@@ -55,7 +55,6 @@ impl BlockBuilder {
             config.cache_type,
             config.disk_image_path,
             config.is_disk_read_only,
-            config.is_disk_root,
         )
         .map_err(BlockConfigError::CreateBlockDevice)
     }

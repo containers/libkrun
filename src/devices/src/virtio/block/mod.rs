@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod device;
-pub mod event_handler;
-pub mod test_utils;
+mod worker;
 
 pub use self::device::{Block, CacheType};
 
