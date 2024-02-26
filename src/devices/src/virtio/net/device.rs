@@ -335,7 +335,9 @@ impl Net {
             {
                 Ok(()) => {
                     self.tx_frame_len = 0;
-                    tx_queue.add_used(mem, head_index, 0);
+                    if let Err(e) = tx_queue.add_used(mem, head_index, 0) {
+                        error!("failed to add used elements to the queue: {:?}", e);
+                    }
                     raise_irq = true;
                 }
                 Err(WriteError::NothingWritten) => {
@@ -355,7 +357,9 @@ impl Net {
                     the backend could be blocked on sending a remainder of a frame to us - us waiting
                     for backend would cause a deadlock.
                      */
-                    tx_queue.add_used(mem, head_index, 0);
+                    if let Err(e) = tx_queue.add_used(mem, head_index, 0) {
+                        error!("failed to add used elements to the queue: {:?}", e);
+                    }
                     raise_irq = true;
                     break;
                 }
@@ -434,7 +438,9 @@ impl Net {
 
         // Mark the descriptor chain as used. If an error occurred, skip the descriptor chain.
         let used_len = if result.is_err() { 0 } else { frame_len as u32 };
-        queue.add_used(mem, head_index, used_len);
+        if let Err(e) = queue.add_used(mem, head_index, used_len) {
+            error!("failed to add used elements to the queue: {:?}", e);
+        }
 
         result
     }

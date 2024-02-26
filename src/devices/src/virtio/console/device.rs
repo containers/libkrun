@@ -167,7 +167,11 @@ impl Console {
                         }
                         raise_irq = true;
                         log::trace!("process_control_rx wrote {n}");
-                        self.queues[CONTROL_RXQ_INDEX].add_used(mem, head.index, n as u32);
+                        if let Err(e) =
+                            self.queues[CONTROL_RXQ_INDEX].add_used(mem, head.index, n as u32)
+                        {
+                            error!("failed to add used elements to the queue: {:?}", e);
+                        }
                     }
                     Err(e) => {
                         log::error!("process_control_rx failed to write: {e}");
@@ -206,7 +210,9 @@ impl Console {
                     continue;
                 }
             };
-            tx_queue.add_used(mem, head.index, size_of_val(&cmd) as u32);
+            if let Err(e) = tx_queue.add_used(mem, head.index, size_of_val(&cmd) as u32) {
+                error!("failed to add used elements to the queue: {:?}", e);
+            }
 
             log::trace!("VirtioConsoleControl cmd: {cmd:?}");
             match cmd.event {

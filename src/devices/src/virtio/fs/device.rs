@@ -175,7 +175,9 @@ impl Fs {
                 //.map_err(FsError::ProcessQueue)
                 .unwrap();
 
-            queue.add_used(mem, head.index, 0);
+            if let Err(e) = queue.add_used(mem, head.index, 0) {
+                error!("failed to add used elements to the queue: {:?}", e);
+            }
             used_any = true;
         }
 

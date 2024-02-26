@@ -311,7 +311,9 @@ impl Block {
                 }
             }
 
-            queue.add_used(mem, head.index, len);
+            if let Err(e) = queue.add_used(mem, head.index, len) {
+                error!("failed to add used elements to the queue: {:?}", e);
+            }
             used_any = true;
         }
 

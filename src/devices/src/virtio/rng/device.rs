@@ -115,7 +115,9 @@ impl Rng {
             }
 
             have_used = true;
-            self.queues[REQ_INDEX].add_used(mem, index, written);
+            if let Err(e) = self.queues[REQ_INDEX].add_used(mem, index, written) {
+                error!("failed to add used elements to the queue: {:?}", e);
+            }
         }
 
         have_used

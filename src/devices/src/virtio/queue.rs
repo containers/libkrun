@@ -6,12 +6,154 @@
 // found in the THIRD-PARTY file.
 
 use std::cmp::min;
+use std::fmt::{self, Debug, Display};
 use std::num::Wrapping;
 use std::sync::atomic::{fence, Ordering};
-use vm_memory::{Address, ByteValued, Bytes, GuestAddress, GuestMemory, GuestMemoryMmap};
+use virtio_bindings::virtio_ring::VRING_USED_F_NO_NOTIFY;
+use vm_memory::{
+    Address, ByteValued, Bytes, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap,
+    VolatileMemoryError,
+};
+
+/// Size of used ring header: flags (u16) + idx (u16)
+pub(crate) const VIRTQ_USED_RING_HEADER_SIZE: u64 = 4;
+
+/// Size of one element in the used ring, id (le32) + len (le32).
+pub(crate) const VIRTQ_USED_ELEMENT_SIZE: u64 = 8;
+
+/// Size of available ring header: flags(u16) + idx(u16)
+pub(crate) const VIRTQ_AVAIL_RING_HEADER_SIZE: u64 = 4;
+
+/// Size of one element in the available ring (le16).
+pub(crate) const VIRTQ_AVAIL_ELEMENT_SIZE: u64 = 2;
 
 pub(super) const VIRTQ_DESC_F_NEXT: u16 = 0x1;
 pub(super) const VIRTQ_DESC_F_WRITE: u16 = 0x2;
+
+/// Virtio Queue related errors.
+#[allow(clippy::enum_variant_names)]
+#[derive(Debug)]
+pub enum Error {
+    /// Address overflow.
+    AddressOverflow,
+    /// Failed to access guest memory.
+    GuestMemory(GuestMemoryError),
+    /// Invalid indirect descriptor.
+    InvalidIndirectDescriptor,
+    /// Invalid indirect descriptor table.
+    InvalidIndirectDescriptorTable,
+    /// Invalid descriptor chain.
+    InvalidChain,
+    /// Invalid descriptor index.
+    InvalidDescriptorIndex,
+    /// Invalid max_size.
+    InvalidMaxSize,
+    /// Invalid Queue Size.
+    InvalidSize,
+    /// Invalid alignment of descriptor table address.
+    InvalidDescTableAlign,
+    /// Invalid alignment of available ring address.
+    InvalidAvailRingAlign,
+    /// Invalid alignment of used ring address.
+    InvalidUsedRingAlign,
+    /// Invalid available ring index.
+    InvalidAvailRingIndex,
+    /// The queue is not ready for operation.
+    QueueNotReady,
+    /// Volatile memory error.
+    VolatileMemoryError(VolatileMemoryError),
+    /// The combined length of all the buffers in a `DescriptorChain` would overflow.
+    DescriptorChainOverflow,
+    /// No memory region for this address range.
+    FindMemoryRegion,
+    /// Descriptor guest memory error.
+    GuestMemoryError(GuestMemoryError),
+    /// DescriptorChain split is out of bounds.
+    SplitOutOfBounds(usize),
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use self::Error::*;
+
+        match self {
+            AddressOverflow => write!(f, "address overflow"),
+            GuestMemory(_) => write!(f, "error accessing guest memory"),
+            InvalidChain => write!(f, "invalid descriptor chain"),
+            InvalidIndirectDescriptor => write!(f, "invalid indirect descriptor"),
+            InvalidIndirectDescriptorTable => write!(f, "invalid indirect descriptor table"),
+            InvalidDescriptorIndex => write!(f, "invalid descriptor index"),
+            InvalidMaxSize => write!(f, "invalid queue maximum size"),
+            InvalidSize => write!(f, "invalid queue size"),
+            InvalidDescTableAlign => write!(
+                f,
+                "virtio queue descriptor table breaks alignment constraints"
+            ),
+            InvalidAvailRingAlign => write!(
+                f,
+                "virtio queue available ring breaks alignment constraints"
+            ),
+            InvalidUsedRingAlign => {
+                write!(f, "virtio queue used ring breaks alignment constraints")
+            }
+            InvalidAvailRingIndex => write!(
+                f,
+                "invalid available ring index (more descriptors to process than queue size)"
+            ),
+            QueueNotReady => write!(f, "trying to process requests on a queue that's not ready"),
+            VolatileMemoryError(e) => write!(f, "volatile memory error: {e}"),
+            DescriptorChainOverflow => write!(
+                f,
+                "the combined length of all the buffers in a `DescriptorChain` would overflow"
+            ),
+            FindMemoryRegion => write!(f, "no memory region for this address range"),
+            GuestMemoryError(e) => write!(f, "descriptor guest memory error: {e}"),
+            SplitOutOfBounds(off) => write!(f, "`DescriptorChain` split is out of bounds: {off}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+/// Represents the contents of an element from the used virtqueue ring.
+// Note that the `ByteValued` implementation of this structure expects the `VirtqUsedElem` to store
+// only plain old data types.
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug)]
+pub struct VirtqUsedElem {
+    id: u32,
+    len: u32,
+}
+
+impl VirtqUsedElem {
+    /// Create a new `VirtqUsedElem` instance.
+    ///
+    /// # Arguments
+    /// * `id` - the index of the used descriptor chain.
+    /// * `len` - the total length of the descriptor chain which was used (written to).
+    pub(crate) fn new(id: u32, len: u32) -> Self {
+        VirtqUsedElem { id, len }
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+#[allow(clippy::len_without_is_empty)]
+impl VirtqUsedElem {
+    /// Get the index of the used descriptor chain.
+    pub fn id(&self) -> u32 {
+        self.id.into()
+    }
+
+    /// Get `length` field of the used ring entry.
+    pub fn len(&self) -> u32 {
+        self.len.into()
+    }
+}
+
+// SAFETY: This is safe because `VirtqUsedElem` contains only wrappers over POD types
+// and all accesses through safe `vm-memory` API will validate any garbage that could be
+// included in there.
+unsafe impl ByteValued for VirtqUsedElem {}
 
 // GuestMemoryMmap::read_obj_from_addr() will be used to fetch the descriptor,
 // which has an explicit constraint that the entire descriptor doesn't
@@ -209,6 +351,13 @@ pub struct Queue {
 
     pub(crate) next_avail: Wrapping<u16>,
     pub(crate) next_used: Wrapping<u16>,
+
+    /// VIRTIO_F_RING_EVENT_IDX negotiated.
+    event_idx_enabled: bool,
+
+    /// The number of descriptor chains placed in the used ring via `add_used`
+    /// since the last time `needs_notification` was called on the associated queue.
+    num_added: Wrapping<u16>,
 }
 
 impl Queue {
@@ -223,6 +372,8 @@ impl Queue {
             used_ring: GuestAddress(0),
             next_avail: Wrapping(0),
             next_used: Wrapping(0),
+            event_idx_enabled: false,
+            num_added: Wrapping(0),
         }
     }
 
@@ -298,7 +449,7 @@ impl Queue {
     /// Returns the number of yet-to-be-popped descriptor chains in the avail ring.
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self, mem: &GuestMemoryMmap) -> u16 {
-        (self.avail_idx(mem) - self.next_avail).0
+        (self.avail_idx(mem, Ordering::Acquire).unwrap() - self.next_avail).0
     }
 
     /// Checks if the driver has made any descriptor chains available in the avail ring.
@@ -361,31 +512,197 @@ impl Queue {
         self.next_avail -= Wrapping(1);
     }
 
-    /// Puts an available descriptor head into the used ring for use by the guest.
-    pub fn add_used(&mut self, mem: &GuestMemoryMmap, desc_index: u16, len: u32) {
-        if desc_index >= self.actual_size() {
+    pub fn add_used(
+        &mut self,
+        mem: &GuestMemoryMmap,
+        head_index: u16,
+        len: u32,
+    ) -> Result<(), Error> {
+        if head_index >= self.size {
             error!(
                 "attempted to add out of bounds descriptor to used ring: {}",
-                desc_index
+                head_index
             );
-            return;
+            return Err(Error::InvalidDescriptorIndex);
         }
 
-        let used_ring = self.used_ring;
-        let next_used = u64::from(self.next_used.0 % self.actual_size());
-        let used_elem = used_ring.unchecked_add(4 + next_used * 8);
-
-        // These writes can't fail as we are guaranteed to be within the descriptor ring.
-        mem.write_obj(u32::from(desc_index), used_elem).unwrap();
-        mem.write_obj(len, used_elem.unchecked_add(4)).unwrap();
+        let next_used_index = u64::from(self.next_used.0 % self.size);
+        // This can not overflow an u64 since it is working with relatively small numbers compared
+        // to u64::MAX.
+        let offset = VIRTQ_USED_RING_HEADER_SIZE + next_used_index * VIRTQ_USED_ELEMENT_SIZE;
+        let addr = self
+            .used_ring
+            .checked_add(offset)
+            .ok_or(Error::AddressOverflow)?;
+        mem.write_obj(VirtqUsedElem::new(head_index.into(), len), addr)
+            .map_err(Error::GuestMemory)?;
 
         self.next_used += Wrapping(1);
+        self.num_added += Wrapping(1);
 
-        // This fence ensures all descriptor writes are visible before the index update is.
-        fence(Ordering::Release);
+        mem.store(
+            self.next_used.0,
+            self.used_ring
+                .checked_add(2)
+                .ok_or(Error::AddressOverflow)?,
+            Ordering::Release,
+        )
+        .map_err(Error::GuestMemory)
+    }
 
-        mem.write_obj(self.next_used.0, used_ring.unchecked_add(2))
-            .unwrap();
+    // Return the value present in the used_event field of the avail ring.
+    //
+    // If the VIRTIO_F_EVENT_IDX feature bit is not negotiated, the flags field in the available
+    // ring offers a crude mechanism for the driver to inform the device that it doesn’t want
+    // interrupts when buffers are used. Otherwise virtq_avail.used_event is a more performant
+    // alternative where the driver specifies how far the device can progress before interrupting.
+    //
+    // Neither of these interrupt suppression methods are reliable, as they are not synchronized
+    // with the device, but they serve as useful optimizations. So we only ensure access to the
+    // virtq_avail.used_event is atomic, but do not need to synchronize with other memory accesses.
+    fn used_event(&self, mem: &GuestMemoryMmap, order: Ordering) -> Result<Wrapping<u16>, Error> {
+        // This can not overflow an u64 since it is working with relatively small numbers compared
+        // to u64::MAX.
+        let used_event_offset =
+            VIRTQ_AVAIL_RING_HEADER_SIZE + u64::from(self.size) * VIRTQ_AVAIL_ELEMENT_SIZE;
+        let used_event_addr = self
+            .avail_ring
+            .checked_add(used_event_offset)
+            .ok_or(Error::AddressOverflow)?;
+
+        mem.load(used_event_addr, order)
+            .map(Wrapping)
+            .map_err(Error::GuestMemory)
+    }
+
+    // Helper method that writes `val` to the `avail_event` field of the used ring, using
+    // the provided ordering.
+    fn set_avail_event(
+        &self,
+        mem: &GuestMemoryMmap,
+        val: u16,
+        order: Ordering,
+    ) -> Result<(), Error> {
+        // This can not overflow an u64 since it is working with relatively small numbers compared
+        // to u64::MAX.
+        let avail_event_offset =
+            VIRTQ_USED_RING_HEADER_SIZE + VIRTQ_USED_ELEMENT_SIZE * u64::from(self.size);
+        let addr = self
+            .used_ring
+            .checked_add(avail_event_offset)
+            .ok_or(Error::AddressOverflow)?;
+
+        mem.store(val, addr, order).map_err(Error::GuestMemory)
+    }
+
+    pub fn set_event_idx(&mut self, enabled: bool) {
+        self.event_idx_enabled = enabled;
+    }
+
+    // Set the value of the `flags` field of the used ring, applying the specified ordering.
+    fn set_used_flags(
+        &mut self,
+        mem: &GuestMemoryMmap,
+        val: u16,
+        order: Ordering,
+    ) -> Result<(), Error> {
+        mem.store(val, self.used_ring, order)
+            .map_err(Error::GuestMemory)
+    }
+
+    // Write the appropriate values to enable or disable notifications from the driver.
+    //
+    // Every access in this method uses `Relaxed` ordering because a fence is added by the caller
+    // when appropriate.
+    fn set_notification(&mut self, mem: &GuestMemoryMmap, enable: bool) -> Result<(), Error> {
+        if enable {
+            if self.event_idx_enabled {
+                // We call `set_avail_event` using the `next_avail` value, instead of reading
+                // and using the current `avail_idx` to avoid missing notifications. More
+                // details in `enable_notification`.
+                self.set_avail_event(mem, self.next_avail.0, Ordering::Relaxed)
+            } else {
+                self.set_used_flags(mem, 0, Ordering::Relaxed)
+            }
+        } else if !self.event_idx_enabled {
+            self.set_used_flags(mem, VRING_USED_F_NO_NOTIFY as u16, Ordering::Relaxed)
+        } else {
+            // Notifications are effectively disabled by default after triggering once when
+            // `VIRTIO_F_EVENT_IDX` is negotiated, so we don't do anything in that case.
+            Ok(())
+        }
+    }
+
+    // TODO: Turn this into a doc comment/example.
+    // With the current implementation, a common way of consuming entries from the available ring
+    // while also leveraging notification suppression is to use a loop, for example:
+    //
+    // loop {
+    //     // We have to explicitly disable notifications if `VIRTIO_F_EVENT_IDX` has not been
+    //     // negotiated.
+    //     self.disable_notification()?;
+    //
+    //     for chain in self.iter()? {
+    //         // Do something with each chain ...
+    //         // Let's assume we process all available chains here.
+    //     }
+    //
+    //     // If `enable_notification` returns `true`, the driver has added more entries to the
+    //     // available ring.
+    //     if !self.enable_notification()? {
+    //         break;
+    //     }
+    // }
+    pub fn enable_notification(&mut self, mem: &GuestMemoryMmap) -> Result<bool, Error> {
+        self.set_notification(mem, true)?;
+        // Ensures the following read is not reordered before any previous write operation.
+        fence(Ordering::SeqCst);
+
+        // We double check here to avoid the situation where the available ring has been updated
+        // just before we re-enabled notifications, and it's possible to miss one. We compare the
+        // current `avail_idx` value to `self.next_avail` because it's where we stopped processing
+        // entries. There are situations where we intentionally avoid processing everything in the
+        // available ring (which will cause this method to return `true`), but in that case we'll
+        // probably not re-enable notifications as we already know there are pending entries.
+        self.avail_idx(mem, Ordering::Relaxed)
+            .map(|idx| idx != self.next_avail)
+    }
+
+    pub fn disable_notification(&mut self, mem: &GuestMemoryMmap) -> Result<(), Error> {
+        self.set_notification(mem, false)
+    }
+
+    pub fn needs_notification(&mut self, mem: &GuestMemoryMmap) -> Result<bool, Error> {
+        let used_idx = self.next_used;
+
+        // Complete all the writes in add_used() before reading the event.
+        fence(Ordering::SeqCst);
+
+        // The VRING_AVAIL_F_NO_INTERRUPT flag isn't supported yet.
+
+        // When the `EVENT_IDX` feature is negotiated, the driver writes into `used_event`
+        // a value that's used by the device to determine whether a notification must
+        // be submitted after adding a descriptor chain to the used ring. According to the
+        // standard, the notification must be sent when `next_used == used_event + 1`, but
+        // various device model implementations rely on an inequality instead, most likely
+        // to also support use cases where a bunch of descriptor chains are added to the used
+        // ring first, and only afterwards the `needs_notification` logic is called. For example,
+        // the approach based on `num_added` below is taken from the Linux Kernel implementation
+        // (i.e. https://elixir.bootlin.com/linux/v5.15.35/source/drivers/virtio/virtio_ring.c#L661)
+
+        // The `old` variable below is used to determine the value of `next_used` from when
+        // `needs_notification` was called last (each `needs_notification` call resets `num_added`
+        // to zero, while each `add_used` called increments it by one). Then, the logic below
+        // uses wrapped arithmetic to see whether `used_event` can be found between `old` and
+        // `next_used` in the circular sequence space of the used ring.
+        if self.event_idx_enabled {
+            let used_event = self.used_event(mem, Ordering::Relaxed)?;
+            let old = used_idx - self.num_added;
+            self.num_added = Wrapping(0);
+            return Ok(used_idx - used_event - Wrapping(1) < used_idx - old);
+        }
+
+        Ok(true)
     }
 
     /// Goes back one position in the available descriptor chain offered by the driver.
@@ -398,14 +715,15 @@ impl Queue {
     /// Fetch the available ring index (`virtq_avail->idx`) from guest memory.
     /// This is written by the driver, to indicate the next slot that will be filled in the avail
     /// ring.
-    fn avail_idx(&self, mem: &GuestMemoryMmap) -> Wrapping<u16> {
-        // Bound checks for queue inner data have already been performed, at device activation time,
-        // via `self.is_valid()`, so it's safe to unwrap and use unchecked offsets here.
-        // Note: the `MmioTransport` code ensures that queue addresses cannot be changed by the guest
-        //       after device activation, so we can be certain that no change has occured since
-        //       the last `self.is_valid()` check.
-        let addr = self.avail_ring.unchecked_add(2);
-        Wrapping(mem.read_obj::<u16>(addr).unwrap())
+    fn avail_idx(&self, mem: &GuestMemoryMmap, order: Ordering) -> Result<Wrapping<u16>, Error> {
+        let addr = self
+            .avail_ring
+            .checked_add(2)
+            .ok_or(Error::AddressOverflow)?;
+
+        mem.load(addr, order)
+            .map(Wrapping)
+            .map_err(Error::GuestMemory)
     }
 }
 

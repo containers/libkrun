@@ -299,7 +299,9 @@ impl TcpProxy {
                     "vsock: tcp: recv_pkt: pushing packet with {} bytes, push_cnt={}",
                     len, self.push_cnt
                 );
-                queue.add_used(&self.mem, head.index, len as u32);
+                if let Err(e) = queue.add_used(&self.mem, head.index, len as u32) {
+                    error!("failed to add used elements to the queue: {:?}", e);
+                }
             }
         }
 

@@ -44,7 +44,9 @@ pub(crate) fn process_tx(
             queue.undo_pop();
         } else {
             log::trace!("Tx add used {bytes_written}");
-            queue.add_used(&mem, head_index, bytes_written as u32);
+            if let Err(e) = queue.add_used(&mem, head_index, bytes_written as u32) {
+                error!("failed to add used elements to the queue: {:?}", e);
+            }
         }
     }
 }
