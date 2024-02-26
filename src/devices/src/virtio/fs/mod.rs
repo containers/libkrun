@@ -1,11 +1,11 @@
 mod device;
-mod event_handler;
 #[allow(dead_code)]
 mod filesystem;
 pub mod fuse;
 #[allow(dead_code)]
 mod multikey;
 mod server;
+mod worker;
 
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -30,10 +30,12 @@ mod defs {
     pub const FS_DEV_ID: &str = "virtio_fs";
     pub const NUM_QUEUES: usize = 2;
     pub const QUEUE_SIZES: &[u16] = &[1024; NUM_QUEUES];
+    // High priority queue.
+    pub const HPQ_INDEX: usize = 0;
+    // Request queue.
+    pub const REQ_INDEX: usize = 1;
 
     pub mod uapi {
-        /// The device conforms to the virtio spec version 1.0.
-        pub const VIRTIO_F_VERSION_1: u32 = 32;
         pub const VIRTIO_ID_FS: u32 = 26;
     }
 }

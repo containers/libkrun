@@ -1,29 +1,20 @@
 use std::cmp;
 use std::io::Write;
-use std::result;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
-use utils::eventfd::EventFd;
+use utils::eventfd::{EventFd, EFD_NONBLOCK};
+use virtio_bindings::{virtio_config::VIRTIO_F_VERSION_1, virtio_ring::VIRTIO_RING_F_EVENT_IDX};
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::super::{
-    ActivateError, ActivateResult, DeviceState, FsError, Queue as VirtQueue, VirtioDevice,
-    VirtioShmRegion, VIRTIO_MMIO_INT_VRING,
+    ActivateResult, DeviceState, FsError, Queue as VirtQueue, VirtioDevice, VirtioShmRegion,
 };
-use super::descriptor_utils::{Reader, Writer};
-use super::passthrough::{self, PassthroughFs};
-use super::server::Server;
+use super::passthrough;
+use super::worker::FsWorker;
 use super::{defs, defs::uapi};
 use crate::legacy::Gic;
-use crate::Error as DeviceError;
-
-// High priority queue.
-pub(crate) const HPQ_INDEX: usize = 0;
-// Request queue.
-pub(crate) const REQ_INDEX: usize = 1;
-
-pub(crate) const AVAIL_FEATURES: u64 = 1 << uapi::VIRTIO_F_VERSION_1 as u64;
 
 #[derive(Copy, Clone)]
 #[repr(C, packed)]
@@ -44,19 +35,20 @@ impl Default for VirtioFsConfig {
 unsafe impl ByteValued for VirtioFsConfig {}
 
 pub struct Fs {
-    pub(crate) queues: Vec<VirtQueue>,
-    pub(crate) queue_events: Vec<EventFd>,
-    pub(crate) avail_features: u64,
-    pub(crate) acked_features: u64,
-    pub(crate) interrupt_status: Arc<AtomicUsize>,
-    pub(crate) interrupt_evt: EventFd,
-    pub(crate) activate_evt: EventFd,
-    pub(crate) device_state: DeviceState,
-    config: VirtioFsConfig,
-    shm_region: Option<VirtioShmRegion>,
-    server: Server<PassthroughFs>,
+    queues: Vec<VirtQueue>,
+    queue_events: Vec<EventFd>,
+    avail_features: u64,
+    acked_features: u64,
+    interrupt_status: Arc<AtomicUsize>,
+    interrupt_evt: EventFd,
     intc: Option<Arc<Mutex<Gic>>>,
     irq_line: Option<u32>,
+    device_state: DeviceState,
+    config: VirtioFsConfig,
+    shm_region: Option<VirtioShmRegion>,
+    passthrough_cfg: passthrough::Config,
+    worker_thread: Option<JoinHandle<()>>,
+    worker_stopfd: EventFd,
 }
 
 impl Fs {
@@ -71,6 +63,8 @@ impl Fs {
                 .push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(FsError::EventFd)?);
         }
 
+        let avail_features = (1u64 << VIRTIO_F_VERSION_1) | (1u64 << VIRTIO_RING_F_EVENT_IDX);
+
         let tag = fs_id.into_bytes();
         let mut config = VirtioFsConfig::default();
         config.tag[..tag.len()].copy_from_slice(tag.as_slice());
@@ -84,17 +78,18 @@ impl Fs {
         Ok(Fs {
             queues,
             queue_events,
-            avail_features: AVAIL_FEATURES,
+            avail_features,
             acked_features: 0,
             interrupt_status: Arc::new(AtomicUsize::new(0)),
             interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(FsError::EventFd)?,
-            activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(FsError::EventFd)?,
+            intc: None,
+            irq_line: None,
             device_state: DeviceState::Inactive,
             config,
             shm_region: None,
-            server: Server::new(PassthroughFs::new(fs_cfg).unwrap()),
-            intc: None,
-            irq_line: None,
+            passthrough_cfg: fs_cfg,
+            worker_thread: None,
+            worker_stopfd: EventFd::new(EFD_NONBLOCK).map_err(FsError::EventFd)?,
         })
     }
 
@@ -116,72 +111,6 @@ impl Fs {
 
     pub fn set_shm_region(&mut self, shm_region: VirtioShmRegion) {
         self.shm_region = Some(shm_region);
-    }
-
-    /// Signal the guest driver that we've used some virtio buffers that it had previously made
-    /// available.
-    pub fn signal_used_queue(&self) -> result::Result<(), DeviceError> {
-        debug!("fs: raising IRQ");
-        self.interrupt_status
-            .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-        if let Some(intc) = &self.intc {
-            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
-            Ok(())
-        } else {
-            self.interrupt_evt.write(1).map_err(|e| {
-                error!("Failed to signal used queue: {:?}", e);
-                DeviceError::FailedSignalingUsedQueue(e)
-            })
-        }
-    }
-
-    pub(crate) fn handle_hpq_event(&mut self) {
-        debug!("Fs: HPQ queue event");
-        if let Err(e) = self.queue_events[0].read() {
-            error!("Failed to get queue event: {:?}", e);
-        } else if self.process_queue(0) {
-            let _ = self.signal_used_queue();
-        }
-    }
-
-    pub(crate) fn handle_req_event(&mut self) {
-        debug!("Fs: REQ queue event");
-        if let Err(e) = self.queue_events[1].read() {
-            error!("Failed to get queue event: {:?}", e);
-        } else if self.process_queue(1) {
-            let _ = self.signal_used_queue();
-        }
-    }
-
-    pub(crate) fn process_queue(&mut self, queue_index: usize) -> bool {
-        let mem = match self.device_state {
-            DeviceState::Activated(ref mem) => mem,
-            // This should never happen, it's been already validated in the event handler.
-            DeviceState::Inactive => unreachable!(),
-        };
-
-        let queue = &mut self.queues[queue_index];
-        let mut used_any = false;
-        while let Some(head) = queue.pop(mem) {
-            let reader = Reader::new(mem, head.clone())
-                .map_err(FsError::QueueReader)
-                .unwrap();
-            let writer = Writer::new(mem, head.clone())
-                .map_err(FsError::QueueWriter)
-                .unwrap();
-
-            self.server
-                .handle_message(reader, writer, self.shm_region.as_ref())
-                //.map_err(FsError::ProcessQueue)
-                .unwrap();
-
-            if let Err(e) = queue.add_used(mem, head.index, 0) {
-                error!("failed to add used elements to the queue: {:?}", e);
-            }
-            used_any = true;
-        }
-
-        used_any
     }
 }
 
@@ -249,22 +178,33 @@ impl VirtioDevice for Fs {
     }
 
     fn activate(&mut self, mem: GuestMemoryMmap) -> ActivateResult {
-        if self.queues.len() != defs::NUM_QUEUES {
-            error!(
-                "Cannot perform activate. Expected {} queue(s), got {}",
-                defs::NUM_QUEUES,
-                self.queues.len()
-            );
-            return Err(ActivateError::BadActivate);
+        if self.worker_thread.is_some() {
+            panic!("virtio_fs: worker thread already exists");
         }
 
-        if self.activate_evt.write(1).is_err() {
-            error!("Cannot write to activate_evt",);
-            return Err(ActivateError::BadActivate);
-        }
+        let event_idx: bool = (self.acked_features & (1 << VIRTIO_RING_F_EVENT_IDX)) != 0;
+        self.queues[defs::HPQ_INDEX].set_event_idx(event_idx);
+        self.queues[defs::REQ_INDEX].set_event_idx(event_idx);
+
+        let queue_evts = self
+            .queue_events
+            .iter()
+            .map(|e| e.try_clone().unwrap())
+            .collect();
+        let worker = FsWorker::new(
+            self.queues.clone(),
+            queue_evts,
+            self.interrupt_status.clone(),
+            self.interrupt_evt.try_clone().unwrap(),
+            self.intc.clone(),
+            self.irq_line,
+            mem.clone(),
+            self.passthrough_cfg.clone(),
+            self.worker_stopfd.try_clone().unwrap(),
+        );
+        self.worker_thread = Some(worker.run());
 
         self.device_state = DeviceState::Activated(mem);
-
         Ok(())
     }
 
@@ -277,5 +217,16 @@ impl VirtioDevice for Fs {
 
     fn shm_region(&self) -> Option<&VirtioShmRegion> {
         self.shm_region.as_ref()
+    }
+
+    fn reset(&mut self) -> bool {
+        if let Some(worker) = self.worker_thread.take() {
+            let _ = self.worker_stopfd.write(1);
+            if let Err(e) = worker.join() {
+                error!("error waiting for worker thread: {:?}", e);
+            }
+        }
+        self.device_state = DeviceState::Inactive;
+        true
     }
 }
