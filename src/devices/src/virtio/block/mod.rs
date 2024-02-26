@@ -3,11 +3,9 @@
 
 pub mod device;
 pub mod event_handler;
-pub mod request;
 pub mod test_utils;
 
 pub use self::device::{Block, CacheType};
-pub use self::request::*;
 
 use vm_memory::GuestMemoryError;
 
