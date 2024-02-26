@@ -144,7 +144,11 @@ impl VirtioGpu {
                         completed_desc.desc_index
                     );
 
-                    queue.add_used(&mem, completed_desc.desc_index, completed_desc.len);
+                    if let Err(e) =
+                        queue.add_used(&mem, completed_desc.desc_index, completed_desc.len)
+                    {
+                        error!("failed to add used elements to the queue: {:?}", e);
+                    }
 
                     interrupt_status.fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
                     if let Some(intc) = &intc {

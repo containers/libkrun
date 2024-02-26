@@ -215,7 +215,9 @@ impl UdpProxy {
             } else {
                 have_used = true;
                 debug!("vsock: udp: recv_pkt: pushing packet with {} bytes", len);
-                queue.add_used(&self.mem, head.index, len as u32);
+                if let Err(e) = queue.add_used(&self.mem, head.index, len as u32) {
+                    error!("failed to add used elements to the queue: {:?}", e);
+                }
             }
         }
 

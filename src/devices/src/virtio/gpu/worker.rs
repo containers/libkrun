@@ -420,10 +420,14 @@ impl Worker {
                 }
 
                 if add_to_queue {
-                    self.queue_ctl
+                    if let Err(e) = self
+                        .queue_ctl
                         .lock()
                         .unwrap()
-                        .add_used(&mem, head.index, len);
+                        .add_used(&mem, head.index, len)
+                    {
+                        error!("failed to add used elements to the queue: {:?}", e);
+                    }
                     used_any = true;
                 }
             } else {

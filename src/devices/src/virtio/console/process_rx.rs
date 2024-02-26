@@ -45,7 +45,9 @@ pub(crate) fn process_rx(
 
         if bytes_read != 0 {
             log::trace!("Rx {bytes_read} bytes queue len{}", queue.len(mem));
-            queue.add_used(mem, head_index, bytes_read as u32);
+            if let Err(e) = queue.add_used(mem, head_index, bytes_read as u32) {
+                error!("failed to add used elements to the queue: {:?}", e);
+            }
         }
 
         // We signal_used_queue only when we get WouldBlock or EOF

@@ -177,7 +177,9 @@ impl Vsock {
 
             debug!("vsock: process_rx: something to queue");
             have_used = true;
-            queue_rx.add_used(mem, head.index, used_len);
+            if let Err(e) = queue_rx.add_used(mem, head.index, used_len) {
+                error!("failed to add used elements to the queue: {:?}", e);
+            }
         }
 
         have_used
@@ -202,7 +204,9 @@ impl Vsock {
                 Err(e) => {
                     error!("vsock: error reading TX packet: {:?}", e);
                     have_used = true;
-                    queue_tx.add_used(mem, head.index, 0);
+                    if let Err(e) = queue_tx.add_used(mem, head.index, 0) {
+                        error!("failed to add used elements to the queue: {:?}", e);
+                    }
                     continue;
                 }
             };
@@ -222,7 +226,9 @@ impl Vsock {
             }
 
             have_used = true;
-            queue_tx.add_used(mem, head.index, 0);
+            if let Err(e) = queue_tx.add_used(mem, head.index, 0) {
+                error!("failed to add used elements to the queue: {:?}", e);
+            }
         }
 
         have_used

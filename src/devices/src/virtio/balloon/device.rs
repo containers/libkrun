@@ -149,7 +149,9 @@ impl Balloon {
             }
 
             have_used = true;
-            self.queues[FRQ_INDEX].add_used(mem, index, 0);
+            if let Err(e) = self.queues[FRQ_INDEX].add_used(mem, index, 0) {
+                error!("failed to add used elements to the queue: {:?}", e);
+            }
         }
 
         have_used

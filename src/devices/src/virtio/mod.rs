@@ -49,8 +49,8 @@ pub use self::fs::*;
 pub use self::gpu::*;
 pub use self::mmio::*;
 #[cfg(feature = "net")]
-pub use self::net::*;
-pub use self::queue::*;
+pub use self::net::Net;
+pub use self::queue::{DescriptorChain, Queue};
 #[cfg(not(feature = "tee"))]
 pub use self::rng::*;
 pub use self::vsock::*;

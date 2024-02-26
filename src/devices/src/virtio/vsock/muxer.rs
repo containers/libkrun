@@ -87,7 +87,9 @@ pub fn push_packet(
     if let Some(head) = queue.pop(mem) {
         if let Ok(mut pkt) = VsockPacket::from_rx_virtq_head(&head) {
             rx_to_pkt(cid, rx, &mut pkt);
-            queue.add_used(mem, head.index, pkt.hdr().len() as u32 + pkt.len());
+            if let Err(e) = queue.add_used(mem, head.index, pkt.hdr().len() as u32 + pkt.len()) {
+                error!("failed to add used elements to the queue: {:?}", e);
+            }
         }
     } else {
         error!("couldn't push pkt to queue, adding it to rxq");
