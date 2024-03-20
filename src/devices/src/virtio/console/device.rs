@@ -234,6 +234,9 @@ impl Console {
                     if self.ports[cmd.id as usize].is_console() {
                         self.control.mark_console_port(mem, cmd.id);
                         self.control.port_open(cmd.id, true);
+                        let (cols, rows) = get_win_size();
+                        self.control
+                            .console_resize(cmd.id, VirtioConsoleResize { cols, rows });
                     } else {
                         // We start with all ports open, this makes sense for now,
                         // because underlying file descriptors STDIN, STDOUT, STDERR are always open too
