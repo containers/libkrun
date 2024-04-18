@@ -199,11 +199,6 @@ int main(int argc, char *const argv[])
         "6=4096:8192",
         0
     };
-    char *mapped_volumes[2];
-    char current_path[MAX_PATH];
-    char volume_tail[] = ":/work\0";
-    char *volume;
-    int volume_len;
     int ctx_id;
     int err;
     int i;
@@ -254,30 +249,6 @@ int main(int argc, char *const argv[])
     if (err = krun_set_gpu_options(ctx_id, virgl_flags)) {
         errno = -err;
         perror("Error configuring gpu");
-        return -1;
-    }
-
-    if (getcwd(&current_path[0], MAX_PATH) == NULL) {
-        errno = -err;
-        perror("Error getting current directory");
-        return -1;
-    }
-
-    volume_len = strlen(current_path) + strlen(volume_tail) + 1;
-    volume = malloc(volume_len);
-    if (volume == NULL) {
-        errno = -err;
-        perror("Error allocating memory for volume string");
-    }
-
-    snprintf(volume, volume_len, "%s%s", current_path, volume_tail);
-    mapped_volumes[0] = volume;
-    mapped_volumes[1] = 0;
-
-    // Map "/tmp" as "/work" inside the VM.
-    if (err = krun_set_mapped_volumes(ctx_id, &mapped_volumes[0])) {
-        errno = -err;
-        perror("Error configuring mapped volumes");
         return -1;
     }
 
