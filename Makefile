@@ -27,6 +27,12 @@ ifeq ($(SEV),1)
     INIT_SRC += $(SNP_INIT_SRC)
 	BUILD_INIT = 0
 endif
+ifeq ($(GPU),1)
+    FEATURE_FLAGS += --features gpu
+endif
+ifeq ($(BLK),1)
+    FEATURE_FLAGS += --features blk
+endif
 ifeq ($(NET),1)
     FEATURE_FLAGS += --features net
 endif
