@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -203,6 +204,7 @@ int main(int argc, char *const argv[])
     int err;
     int i;
     struct cmdline cmdline;
+    struct rlimit rlim;
 
     if (!parse_cmdline(argc, argv, &cmdline)) {
         putchar('\n');
@@ -237,6 +239,11 @@ int main(int argc, char *const argv[])
         perror("Error configuring the number of vCPUs and/or the amount of RAM");
         return -1;
     }
+
+    // Raise RLIMIT_NOFILE to the maximum allowed to create some room for virtio-fs
+    getrlimit(RLIMIT_NOFILE, &rlim);
+    rlim.rlim_cur = rlim.rlim_max;
+    setrlimit(RLIMIT_NOFILE, &rlim);
 
     if (err = krun_set_root(ctx_id, cmdline.new_root)) {
         errno = -err;
