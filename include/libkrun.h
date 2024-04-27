@@ -103,7 +103,7 @@ int32_t krun_set_data_disk(uint32_t ctx_id, const char *disk_path);
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_set_mapped_volumes(uint32_t ctx_id, char *const mapped_volumes[]);
+int32_t krun_set_mapped_volumes(uint32_t ctx_id, const char *const mapped_volumes[]);
 
 /*
  * Adds an independent virtio-fs device pointing to a host's directory with a tag.
@@ -192,7 +192,7 @@ int32_t krun_set_net_mac(uint32_t ctx_id, uint8_t *const c_mac);
  * If past networking mode is used (krun_set_passt_fd was called), port mapping is not supported
  * as an API of libkrun (but you can still do port mapping using command line arguments of passt)
  */
-int32_t krun_set_port_map(uint32_t ctx_id, char *const port_map[]);
+int32_t krun_set_port_map(uint32_t ctx_id, const char *const port_map[]);
 
 /* Flags for virglrenderer.  Copied from virglrenderer bindings. */
 #define VIRGLRENDERER_USE_EGL            1 << 0
@@ -228,7 +228,7 @@ int32_t krun_set_gpu_options(uint32_t ctx_id, uint32_t virgl_flags);
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_set_rlimits(uint32_t ctx_id, char *const rlimits[]);
+int32_t krun_set_rlimits(uint32_t ctx_id, const char *const rlimits[]);
 
 /*
  * Sets the working directory for the executable to be run inside the microVM.
@@ -261,8 +261,8 @@ int32_t krun_set_workdir(uint32_t ctx_id,
  */
 int32_t krun_set_exec(uint32_t ctx_id,
                       const char *exec_path,
-                      char *const argv[],
-                      char *const envp[]);
+                      const char *const argv[],
+                      const char *const envp[]);
 
 /*
  * Sets environment variables to be configured in the context of the executable.
@@ -276,7 +276,7 @@ int32_t krun_set_exec(uint32_t ctx_id,
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_set_env(uint32_t ctx_id, char *const envp[]);
+int32_t krun_set_env(uint32_t ctx_id, const char *const envp[]);
 
 /*
  * Sets the file path to the TEE configuration file. Only available in libkrun-sev.
