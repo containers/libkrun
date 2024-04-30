@@ -559,6 +559,11 @@ impl From<bindings::stat64> for Attr {
             mode: st.st_mode,
             #[cfg(target_os = "macos")]
             mode: st.st_mode as u32,
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            nlink: st.st_nlink as u32,
+            #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+            nlink: st.st_nlink,
+            #[cfg(target_os = "macos")]
             nlink: st.st_nlink as u32,
             uid: st.st_uid,
             gid: st.st_gid,

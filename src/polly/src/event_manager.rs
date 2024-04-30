@@ -96,7 +96,7 @@ impl EventManager {
         self.subscribers
             .get(&fd)
             .ok_or(Error::NotFound(fd))
-            .map(|subscriber| subscriber.clone())
+            .cloned()
     }
 
     /// Register a new subscriber. All events that the subscriber is interested are registered.

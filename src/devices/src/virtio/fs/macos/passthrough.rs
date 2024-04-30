@@ -558,7 +558,7 @@ impl PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         let mut ds = data.dirstream.lock().unwrap();
@@ -862,7 +862,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         let ds = data.dirstream.lock().unwrap();
@@ -1075,7 +1075,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // This is safe because write_from uses preadv64, so the underlying file descriptor
@@ -1103,7 +1103,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // This is safe because read_to uses pwritev64, so the underlying file descriptor
@@ -1132,7 +1132,7 @@ impl FileSystem for PassthroughFs {
         let c_path = self.inode_to_path(inode)?;
 
         enum Data {
-            Handle(Arc<HandleData>, RawFd),
+            Handle(RawFd),
             FilePath,
         }
 
@@ -1144,18 +1144,18 @@ impl FileSystem for PassthroughFs {
                 .unwrap()
                 .get(&handle)
                 .filter(|hd| hd.inode == inode)
-                .map(Arc::clone)
+                .cloned()
                 .ok_or_else(ebadf)?;
 
             let fd = hd.file.write().unwrap().as_raw_fd();
-            Data::Handle(hd, fd)
+            Data::Handle(fd)
         } else {
             Data::FilePath
         };
 
         if valid.contains(SetattrValid::MODE) {
             match data {
-                Data::Handle(_, fd) => {
+                Data::Handle(fd) => {
                     set_xattr_stat(StatFile::Fd(fd), None, Some(attr.st_mode as u32))?
                 }
                 Data::FilePath => {
@@ -1184,7 +1184,7 @@ impl FileSystem for PassthroughFs {
         if valid.contains(SetattrValid::SIZE) {
             // Safe because this doesn't modify any memory and we check the return value.
             let res = match data {
-                Data::Handle(_, fd) => unsafe { libc::ftruncate(fd, attr.st_size) },
+                Data::Handle(fd) => unsafe { libc::ftruncate(fd, attr.st_size) },
                 _ => {
                     // There is no `ftruncateat` so we need to get a new fd and truncate it.
                     let f = self.open_inode(inode, libc::O_NONBLOCK | libc::O_RDWR)?;
@@ -1224,7 +1224,7 @@ impl FileSystem for PassthroughFs {
 
             // Safe because this doesn't modify any memory and we check the return value.
             let res = match data {
-                Data::Handle(_, fd) => unsafe { libc::futimens(fd, tvs.as_ptr()) },
+                Data::Handle(fd) => unsafe { libc::futimens(fd, tvs.as_ptr()) },
                 Data::FilePath => unsafe {
                     let fd = libc::open(c_path.as_ptr(), libc::O_SYMLINK | libc::O_CLOEXEC);
                     let res = libc::futimens(fd, tvs.as_ptr());
@@ -1422,7 +1422,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // Since this method is called whenever an fd is closed in the client, we can emulate that
@@ -1455,7 +1455,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         let fd = data.file.write().unwrap().as_raw_fd();
@@ -1726,7 +1726,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         let fd = data.file.write().unwrap().as_raw_fd();
@@ -1771,7 +1771,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // SEEK_DATA and SEEK_HOLE have slightly different semantics
