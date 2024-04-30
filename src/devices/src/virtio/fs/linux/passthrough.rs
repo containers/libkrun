@@ -339,7 +339,7 @@ impl PassthroughFs {
             .read()
             .unwrap()
             .get(&inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         let pathname = CString::new(format!("{}", data.file.as_raw_fd()))
@@ -389,7 +389,7 @@ impl PassthroughFs {
             .read()
             .unwrap()
             .get(&parent)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // Safe because this doesn't modify any memory and we check the return value.
@@ -413,7 +413,7 @@ impl PassthroughFs {
             ino: st.st_ino,
             dev: st.st_dev,
         };
-        let data = self.inodes.read().unwrap().get_alt(&altkey).map(Arc::clone);
+        let data = self.inodes.read().unwrap().get_alt(&altkey).cloned();
 
         let inode = if let Some(data) = data {
             // Matches with the release store in `forget`.
@@ -472,7 +472,7 @@ impl PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         let mut buf = vec![0; size as usize];
@@ -605,7 +605,7 @@ impl PassthroughFs {
             .read()
             .unwrap()
             .get(&inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         let st = stat(&data.file)?;
@@ -619,7 +619,7 @@ impl PassthroughFs {
             .read()
             .unwrap()
             .get(&parent)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // Safe because this doesn't modify any memory and we check the return value.
@@ -736,7 +736,7 @@ impl FileSystem for PassthroughFs {
             .read()
             .unwrap()
             .get(&inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         let mut out = MaybeUninit::<libc::statvfs64>::zeroed();
@@ -825,7 +825,7 @@ impl FileSystem for PassthroughFs {
             .read()
             .unwrap()
             .get(&parent)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // Safe because this doesn't modify any memory and we check the return value.
@@ -928,7 +928,7 @@ impl FileSystem for PassthroughFs {
             .read()
             .unwrap()
             .get(&parent)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // Safe because this doesn't modify any memory and we check the return value. We don't
@@ -1003,7 +1003,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // This is safe because write_from uses preadv64, so the underlying file descriptor
@@ -1037,7 +1037,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // This is safe because read_to uses pwritev64, so the underlying file descriptor
@@ -1068,11 +1068,11 @@ impl FileSystem for PassthroughFs {
             .read()
             .unwrap()
             .get(&inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         enum Data {
-            Handle(Arc<HandleData>, RawFd),
+            Handle(RawFd),
             ProcPath(CString),
         }
 
@@ -1084,11 +1084,11 @@ impl FileSystem for PassthroughFs {
                 .unwrap()
                 .get(&handle)
                 .filter(|hd| hd.inode == inode)
-                .map(Arc::clone)
+                .cloned()
                 .ok_or_else(ebadf)?;
 
             let fd = hd.file.write().unwrap().as_raw_fd();
-            Data::Handle(hd, fd)
+            Data::Handle(fd)
         } else {
             let pathname = CString::new(format!("{}", inode_data.file.as_raw_fd()))
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -1099,7 +1099,7 @@ impl FileSystem for PassthroughFs {
             // Safe because this doesn't modify any memory and we check the return value.
             let res = unsafe {
                 match data {
-                    Data::Handle(_, fd) => libc::fchmod(fd, attr.st_mode),
+                    Data::Handle(fd) => libc::fchmod(fd, attr.st_mode),
                     Data::ProcPath(ref p) => {
                         libc::fchmodat(self.proc_self_fd.as_raw_fd(), p.as_ptr(), attr.st_mode, 0)
                     }
@@ -1145,7 +1145,7 @@ impl FileSystem for PassthroughFs {
         if valid.contains(SetattrValid::SIZE) {
             // Safe because this doesn't modify any memory and we check the return value.
             let res = match data {
-                Data::Handle(_, fd) => unsafe { libc::ftruncate(fd, attr.st_size) },
+                Data::Handle(fd) => unsafe { libc::ftruncate(fd, attr.st_size) },
                 _ => {
                     // There is no `ftruncateat` so we need to get a new fd and truncate it.
                     let f = self.open_inode(inode, libc::O_NONBLOCK | libc::O_RDWR)?;
@@ -1185,7 +1185,7 @@ impl FileSystem for PassthroughFs {
 
             // Safe because this doesn't modify any memory and we check the return value.
             let res = match data {
-                Data::Handle(_, fd) => unsafe { libc::futimens(fd, tvs.as_ptr()) },
+                Data::Handle(fd) => unsafe { libc::futimens(fd, tvs.as_ptr()) },
                 Data::ProcPath(ref p) => unsafe {
                     libc::utimensat(self.proc_self_fd.as_raw_fd(), p.as_ptr(), tvs.as_ptr(), 0)
                 },
@@ -1212,14 +1212,14 @@ impl FileSystem for PassthroughFs {
             .read()
             .unwrap()
             .get(&olddir)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
         let new_inode = self
             .inodes
             .read()
             .unwrap()
             .get(&newdir)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // Safe because this doesn't modify any memory and we check the return value.
@@ -1262,7 +1262,7 @@ impl FileSystem for PassthroughFs {
             .read()
             .unwrap()
             .get(&parent)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // Safe because this doesn't modify any memory and we check the return value.
@@ -1294,14 +1294,14 @@ impl FileSystem for PassthroughFs {
             .read()
             .unwrap()
             .get(&inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
         let new_inode = self
             .inodes
             .read()
             .unwrap()
             .get(&newparent)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         let procname = CString::new(format!("{}", data.file.as_raw_fd()))
@@ -1343,7 +1343,7 @@ impl FileSystem for PassthroughFs {
             .read()
             .unwrap()
             .get(&parent)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // Safe because this doesn't modify any memory and we check the return value.
@@ -1362,7 +1362,7 @@ impl FileSystem for PassthroughFs {
             .read()
             .unwrap()
             .get(&inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         let mut buf = vec![0; libc::PATH_MAX as usize];
@@ -1400,7 +1400,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // Since this method is called whenever an fd is closed in the client, we can emulate that
@@ -1427,7 +1427,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         let fd = data.file.write().unwrap().as_raw_fd();
@@ -1464,7 +1464,7 @@ impl FileSystem for PassthroughFs {
             .read()
             .unwrap()
             .get(&inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         let st = stat(&data.file)?;
@@ -1647,7 +1647,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         let fd = data.file.write().unwrap().as_raw_fd();
@@ -1681,7 +1681,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle)
             .filter(|hd| hd.inode == inode)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         let fd = data.file.write().unwrap().as_raw_fd();
@@ -1713,7 +1713,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle_in)
             .filter(|hd| hd.inode == inode_in)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // Take just a read lock as we're not going to alter the file descriptor offset.
@@ -1725,7 +1725,7 @@ impl FileSystem for PassthroughFs {
             .unwrap()
             .get(&handle_out)
             .filter(|hd| hd.inode == inode_out)
-            .map(Arc::clone)
+            .cloned()
             .ok_or_else(ebadf)?;
 
         // Take just a read lock as we're not going to alter the file descriptor offset.
