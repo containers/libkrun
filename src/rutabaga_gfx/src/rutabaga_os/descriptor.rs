@@ -41,6 +41,7 @@ pub trait AsRawDescriptors {
     ///
     /// Please refer to the documentation of [`AsRawDescriptor::as_raw_descriptor`] for limitations
     /// and recommended use.
+    #[allow(dead_code)]
     fn as_raw_descriptors(&self) -> Vec<RawDescriptor>;
 }
 
