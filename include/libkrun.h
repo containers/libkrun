@@ -1,6 +1,6 @@
 #include <inttypes.h>
 
-/*
+/**
  * Sets the log level for the library.
  *
  * Arguments:
@@ -17,7 +17,7 @@
  */
 int32_t krun_set_log_level(uint32_t level);
 
-/*
+/**
  * Creates a configuration context.
  *
  * Returns:
@@ -25,7 +25,7 @@ int32_t krun_set_log_level(uint32_t level);
  */
 int32_t krun_create_ctx();
 
-/*
+/**
  * Frees an existing configuration context.
  *
  * Arguments:
@@ -36,7 +36,7 @@ int32_t krun_create_ctx();
  */
 int32_t krun_free_ctx(uint32_t ctx_id);
 
-/*
+/**
  * Sets the basic configuration parameters for the microVM.
  *
  * Arguments:
@@ -49,7 +49,7 @@ int32_t krun_free_ctx(uint32_t ctx_id);
  */
 int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus, uint32_t ram_mib);
 
-/*
+/**
  * Sets the path to be use as root for the microVM. Not available in libkrun-SEV.
  *
  * Arguments:
@@ -61,7 +61,7 @@ int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus, uint32_t ram_mib)
  */
 int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
 
-/*
+/**
  * Sets the path to the disk image that contains the file-system to be used as root for the microVM.
  * The only supported image format is "raw". Only available in libkrun-SEV.
  *
@@ -75,7 +75,7 @@ int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
  */
 int32_t krun_set_root_disk(uint32_t ctx_id, const char *disk_path);
 
-/*
+/**
  * Sets the path to the disk image that contains the file-system to be used as a data partition for the microVM.
  * The only supported image format is "raw". Only available in libkrun-SEV.
  *
@@ -89,7 +89,7 @@ int32_t krun_set_root_disk(uint32_t ctx_id, const char *disk_path);
  */
 int32_t krun_set_data_disk(uint32_t ctx_id, const char *disk_path);
 
-/*
+/**
  * NO LONGER SUPPORTED. DO NOT USE.
  *
  * Configures the mapped volumes for the microVM. Only supported on macOS, on Linux use
@@ -105,7 +105,7 @@ int32_t krun_set_data_disk(uint32_t ctx_id, const char *disk_path);
  */
 int32_t krun_set_mapped_volumes(uint32_t ctx_id, const char *const mapped_volumes[]);
 
-/*
+/**
  * Adds an independent virtio-fs device pointing to a host's directory with a tag.
  *
  * Arguments:
@@ -120,7 +120,7 @@ int32_t krun_add_virtiofs(uint32_t ctx_id,
                           const char *c_tag,
                           const char *c_path);
 
-/*
+/**
  * Configures the networking to use passt.
  * Call to this function disables TSI backend to use passt instead.
  *
@@ -137,7 +137,7 @@ int32_t krun_add_virtiofs(uint32_t ctx_id,
  */
 int32_t krun_set_passt_fd(uint32_t ctx_id, int fd);
 
-/*
+/**
  * Configures the networking to use gvproxy in vfkit mode.
  * Call to this function disables TSI backend to use gvproxy instead.
  *
@@ -155,7 +155,7 @@ int32_t krun_set_passt_fd(uint32_t ctx_id, int fd);
  */
 int32_t krun_set_gvproxy_path(uint32_t ctx_id, char* c_path);
 
-/*
+/**
  * Sets the MAC address for the virtio-net device when using the passt backend.
  *
  * Arguments:
@@ -167,7 +167,7 @@ int32_t krun_set_gvproxy_path(uint32_t ctx_id, char* c_path);
  */
 int32_t krun_set_net_mac(uint32_t ctx_id, uint8_t *const c_mac);
 
-/*
+/**
  * Configures a map of host to guest TCP ports for the microVM.
  *
  * Arguments:
@@ -206,7 +206,7 @@ int32_t krun_set_port_map(uint32_t ctx_id, const char *const port_map[]);
 #define VIRGLRENDERER_USE_ASYNC_FENCE_CB 1 << 8
 #define VIRGLRENDERER_RENDER_SERVER      1 << 9
 #define VIRGLRENDERER_DRM                1 << 10
-/*
+/**
  * Enables and configures a virtio-gpu device.
  *
  * Arguments:
@@ -218,7 +218,7 @@ int32_t krun_set_port_map(uint32_t ctx_id, const char *const port_map[]);
  */
 int32_t krun_set_gpu_options(uint32_t ctx_id, uint32_t virgl_flags);
 
-/*
+/**
  * Configures a map of rlimits to be set in the guest before starting the isolated binary.
  *
  * Arguments:
@@ -230,7 +230,7 @@ int32_t krun_set_gpu_options(uint32_t ctx_id, uint32_t virgl_flags);
  */
 int32_t krun_set_rlimits(uint32_t ctx_id, const char *const rlimits[]);
 
-/*
+/**
  * Sets the working directory for the executable to be run inside the microVM.
  *
  * Arguments:
@@ -244,7 +244,7 @@ int32_t krun_set_rlimits(uint32_t ctx_id, const char *const rlimits[]);
 int32_t krun_set_workdir(uint32_t ctx_id,
                          const char *workdir_path);
 
-/*
+/**
  * Sets the path to the executable to be run inside the microVM, the arguments to be passed to the
  * executable, and the environment variables to be configured in the context of the executable.
  *
@@ -264,7 +264,7 @@ int32_t krun_set_exec(uint32_t ctx_id,
                       const char *const argv[],
                       const char *const envp[]);
 
-/*
+/**
  * Sets environment variables to be configured in the context of the executable.
  *
  * Arguments:
@@ -278,7 +278,7 @@ int32_t krun_set_exec(uint32_t ctx_id,
  */
 int32_t krun_set_env(uint32_t ctx_id, const char *const envp[]);
 
-/*
+/**
  * Sets the file path to the TEE configuration file. Only available in libkrun-sev.
  *
  * Arguments:
@@ -290,7 +290,7 @@ int32_t krun_set_env(uint32_t ctx_id, const char *const envp[]);
  */
 int32_t krun_set_tee_config_file(uint32_t ctx_id, const char *filepath);
 
-/*
+/**
  * Adds a port-path pairing for guest IPC with a process in the host.
  *
  * Arguments:
@@ -302,7 +302,7 @@ int32_t krun_set_tee_config_file(uint32_t ctx_id, const char *filepath);
 int32_t krun_add_vsock_port(uint32_t ctx_id,
                             uint32_t port,
                             const char *c_filepath);
-/*
+/**
  * Returns the eventfd file descriptor to signal the guest to shut down orderly. This must be
  * called before starting the microVM with "krun_start_event". Only available in libkrun-efi.
  *
@@ -315,7 +315,7 @@ int32_t krun_add_vsock_port(uint32_t ctx_id,
 int32_t krun_get_shutdown_eventfd(uint32_t ctx_id);
 
 
-/*
+/**
  * Configures the console device to ignore stdin and write the output to "c_filepath".
  *
  * Arguments:
@@ -325,7 +325,7 @@ int32_t krun_get_shutdown_eventfd(uint32_t ctx_id);
  */
 int32_t krun_set_console_output(uint32_t ctx_id, const char *c_filepath);
 
-/*
+/**
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
  * stdin/stdout to manage them on behalf of the process running inside the isolated environment,
  * simulating that the latter has direct control of the terminal.
