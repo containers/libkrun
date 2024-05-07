@@ -324,21 +324,6 @@ impl TcpProxy {
         push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
     }
 
-    fn push_accept_rsp(&self, result: i32) {
-        debug!(
-            "push_accept_rsp: control_port: {}, result: {}",
-            self.control_port, result
-        );
-
-        // This packet goes to the control port (DGRAM).
-        let rx = MuxerRx::AcceptResponse {
-            local_port: 1030,
-            peer_port: self.control_port,
-            result,
-        };
-        push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
-    }
-
     fn push_reset(&self) {
         debug!(
             "push_reset: id: {}, peer_port: {}, local_port: {}",
@@ -638,6 +623,21 @@ impl Proxy for TcpProxy {
         } else {
             self.pending_accepts += 1;
         }
+    }
+
+    fn push_accept_rsp(&self, result: i32) {
+        debug!(
+            "push_accept_rsp: control_port: {}, result: {}",
+            self.control_port, result
+        );
+
+        // This packet goes to the control port (DGRAM).
+        let rx = MuxerRx::AcceptResponse {
+            local_port: 1030,
+            peer_port: self.control_port,
+            result,
+        };
+        push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
     }
 
     fn shutdown(&mut self, pkt: &VsockPacket) {

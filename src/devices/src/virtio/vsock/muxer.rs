@@ -148,7 +148,7 @@ impl VsockMuxer {
     ) {
         self.queue = Some(queue.clone());
         self.mem = Some(mem.clone());
-        self.intc = intc.clone();
+        self.intc.clone_from(&intc);
         self.irq_line = irq_line;
 
         #[cfg(target_os = "macos")]
