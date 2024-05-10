@@ -198,11 +198,11 @@ impl<'a> Iterator for DescIter<'a> {
 /// A virtio descriptor constraints with C representive.
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
-struct Descriptor {
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
+pub struct Descriptor {
+    pub addr: u64,
+    pub len: u32,
+    pub flags: u16,
+    pub next: u16,
 }
 
 unsafe impl ByteValued for Descriptor {}
@@ -325,6 +325,15 @@ impl<'a> DescriptorChain<'a> {
     #[allow(clippy::should_implement_trait)]
     pub fn into_iter(self) -> DescIter<'a> {
         DescIter { next: Some(self) }
+    }
+
+    pub fn descriptor(&self) -> Descriptor {
+        Descriptor {
+            addr: self.addr.raw_value(),
+            len: self.len,
+            flags: self.flags,
+            next: self.next,
+        }
     }
 }
 
