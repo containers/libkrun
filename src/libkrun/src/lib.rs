@@ -96,6 +96,7 @@ struct ContextConfig {
     unix_ipc_port_map: Option<HashMap<u32, PathBuf>>,
     shutdown_efd: Option<EventFd>,
     gpu_virgl_flags: Option<u32>,
+    enable_snd: bool,
     console_output: Option<PathBuf>,
 }
 
@@ -835,6 +836,20 @@ pub unsafe extern "C" fn krun_set_gpu_options(ctx_id: u32, virgl_flags: u32) -> 
     KRUN_SUCCESS
 }
 
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_snd_device(ctx_id: u32, enable: bool) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.enable_snd = enable;
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
 #[allow(unused_assignments)]
 #[no_mangle]
 pub extern "C" fn krun_get_shutdown_eventfd(ctx_id: u32) -> i32 {
@@ -1019,6 +1034,9 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     if let Some(virgl_flags) = ctx_cfg.gpu_virgl_flags {
         ctx_cfg.vmr.set_gpu_virgl_flags(virgl_flags);
     }
+
+    #[cfg(feature = "snd")]
+    ctx_cfg.vmr.set_snd_device(ctx_cfg.enable_snd);
 
     if let Some(console_output) = ctx_cfg.console_output {
         ctx_cfg.vmr.set_console_output(console_output);
