@@ -123,6 +123,8 @@ pub enum StartMicrovmError {
     RegisterNetDevice(device_manager::mmio::Error),
     /// Cannot initialize a MMIO Rng device or add a device to the MMIO Bus.
     RegisterRngDevice(device_manager::mmio::Error),
+    /// Cannot initialize a MMIO Snd device or add a device to the MMIO Bus.
+    RegisterSndDevice(device_manager::mmio::Error),
     /// Cannot initialize a MMIO Vsock Device or add a device to the MMIO Bus.
     RegisterVsockDevice(device_manager::mmio::Error),
     /// Cannot attest the VM in the Secure Virtualization context.
@@ -256,6 +258,14 @@ impl Display for StartMicrovmError {
                 write!(
                     f,
                     "Cannot initialize a MMIO Rng Device or add a device to the MMIO Bus. {err_msg}"
+                )
+            }
+            RegisterSndDevice(ref err) => {
+                let mut err_msg = format!("{err}");
+                err_msg = err_msg.replace('\"', "");
+                write!(
+                    f,
+                    "Cannot initialize a MMIO Snd Device or add a device to the MMIO Bus. {err_msg}"
                 )
             }
             RegisterVsockDevice(ref err) => {
@@ -603,9 +613,12 @@ pub fn build_microvm(
         attach_unixsock_vsock_device(&mut vmm, vsock, event_manager, intc.clone())?;
         vmm.kernel_cmdline.insert_str("tsi_hijack")?;
     }
-
     #[cfg(feature = "net")]
-    attach_net_devices(&mut vmm, vm_resources.net_builder.iter(), intc)?;
+    attach_net_devices(&mut vmm, vm_resources.net_builder.iter(), intc.clone())?;
+    #[cfg(feature = "snd")]
+    if vm_resources.snd_device {
+        attach_snd_device(&mut vmm, intc.clone())?;
+    }
 
     if let Some(s) = &vm_resources.boot_config.kernel_cmdline_epilog {
         vmm.kernel_cmdline.insert_str(s).unwrap();
@@ -1390,6 +1403,27 @@ fn attach_gpu_device(
     // The device mutex mustn't be locked here otherwise it will deadlock.
     attach_mmio_device(vmm, id, MmioTransport::new(vmm.guest_memory().clone(), gpu))
         .map_err(RegisterGpuDevice)?;
+
+    Ok(())
+}
+
+#[cfg(feature = "snd")]
+fn attach_snd_device(
+    vmm: &mut Vmm,
+    intc: Option<Arc<Mutex<Gic>>>,
+) -> std::result::Result<(), StartMicrovmError> {
+    use self::StartMicrovmError::*;
+
+    let snd = Arc::new(Mutex::new(devices::virtio::Snd::new().unwrap()));
+    let id = String::from(snd.lock().unwrap().id());
+
+    if let Some(intc) = intc {
+        snd.lock().unwrap().set_intc(intc);
+    }
+
+    // The device mutex mustn't be locked here otherwise it will deadlock.
+    attach_mmio_device(vmm, id, MmioTransport::new(vmm.guest_memory().clone(), snd))
+        .map_err(RegisterSndDevice)?;
 
     Ok(())
 }

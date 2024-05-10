@@ -1,4 +1,5 @@
 #include <inttypes.h>
+#include <stdbool.h>
 
 /**
  * Sets the log level for the library.
@@ -217,6 +218,18 @@ int32_t krun_set_port_map(uint32_t ctx_id, const char *const port_map[]);
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_set_gpu_options(uint32_t ctx_id, uint32_t virgl_flags);
+
+/**
+ * Enables or disables a virtio-snd device.
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *  "enable" - boolean indicating whether virtio-snd should be enabled or disabled.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_snd_device(uint32_t ctx_id, bool enable);
 
 /**
  * Configures a map of rlimits to be set in the guest before starting the isolated binary.

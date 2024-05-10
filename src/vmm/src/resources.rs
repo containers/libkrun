@@ -110,6 +110,9 @@ pub struct VmResources {
     pub tee_config: TeeConfig,
     /// Flags for the virtio-gpu device.
     pub gpu_virgl_flags: Option<u32>,
+    #[cfg(feature = "snd")]
+    /// Enable the virtio-snd device.
+    pub snd_device: bool,
     /// File to send console output.
     pub console_output: Option<PathBuf>,
 }
@@ -249,6 +252,11 @@ impl VmResources {
         self.gpu_virgl_flags = Some(virgl_flags);
     }
 
+    #[cfg(feature = "snd")]
+    pub fn set_snd_device(&mut self, enabled: bool) {
+        self.snd_device = enabled;
+    }
+
     pub fn set_console_output(&mut self, console_output: PathBuf) {
         self.console_output = Some(console_output);
     }
@@ -316,6 +324,8 @@ mod tests {
             #[cfg(feature = "net")]
             net_builder: Default::default(),
             gpu_virgl_flags: None,
+            #[cfg(feature = "snd")]
+            enable_snd: False,
             console_output: None,
         }
     }

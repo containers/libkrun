@@ -11,6 +11,7 @@ net = []
 blk = []
 efi = [ "blk", "net" ]
 gpu = []
+snd = []
 
 [dependencies]
 crossbeam-channel = "0.5"
