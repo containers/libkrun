@@ -36,6 +36,9 @@ endif
 ifeq ($(NET),1)
     FEATURE_FLAGS += --features net
 endif
+ifeq ($(SND),1)
+    FEATURE_FLAGS += --features snd
+endif
 ifeq ($(EFI),1)
 	VARIANT = -efi
 	FEATURE_FLAGS := --features efi,gpu
