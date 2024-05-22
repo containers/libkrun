@@ -115,6 +115,8 @@ pub struct VmResources {
     pub snd_device: bool,
     /// File to send console output.
     pub console_output: Option<PathBuf>,
+    /// SMBIOS OEM Strings
+    pub smbios_oem_strings: Option<Vec<String>>,
 }
 
 impl VmResources {
@@ -327,6 +329,7 @@ mod tests {
             #[cfg(feature = "snd")]
             enable_snd: False,
             console_output: None,
+            smbios_oem_strings: None,
         }
     }
 

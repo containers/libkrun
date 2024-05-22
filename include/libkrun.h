@@ -244,6 +244,18 @@ int32_t krun_set_snd_device(uint32_t ctx_id, bool enable);
 int32_t krun_set_rlimits(uint32_t ctx_id, const char *const rlimits[]);
 
 /**
+ * Sets the SMBIOS OEM Strings.
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "oem_strings" - an array of string pointers. Must be terminated with an additional NULL pointer.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_smbios_oem_strings(uint32_t ctx_id, const char *const oem_strings[]);
+
+/**
  * Sets the working directory for the executable to be run inside the microVM.
  *
  * Arguments:

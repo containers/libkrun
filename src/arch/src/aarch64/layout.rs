@@ -89,3 +89,6 @@ pub const GTIMER_PHYS: u32 = 12;
 pub const MAPPED_IO_START: u64 = 1 << 30; // 1 GB
 #[cfg(feature = "efi")]
 pub const MAPPED_IO_START: u64 = 0x0a00_0000;
+
+#[cfg(feature = "efi")]
+pub const SMBIOS_START: u64 = 0x4000_F000;

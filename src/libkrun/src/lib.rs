@@ -891,6 +891,38 @@ pub unsafe extern "C" fn krun_set_console_output(ctx_id: u32, c_filepath: *const
     }
 }
 
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_smbios_oem_strings(
+    ctx_id: u32,
+    oem_strings: *const *const c_char,
+) -> i32 {
+    if oem_strings.is_null() {
+        return -libc::EINVAL;
+    }
+
+    let cstr_ptr_slice = slice::from_raw_parts(oem_strings, MAX_ARGS);
+
+    let mut oem_strings = Vec::new();
+
+    for cstr_ptr in cstr_ptr_slice.iter().take_while(|p| !p.is_null()) {
+        let Ok(s) = CStr::from_ptr(*cstr_ptr).to_str() else {
+            return -libc::EINVAL;
+        };
+        oem_strings.push(s.to_string());
+    }
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            ctx_cfg.get_mut().vmr.smbios_oem_strings =
+                (!oem_strings.is_empty()).then_some(oem_strings)
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
 #[cfg(feature = "net")]
 fn create_virtio_net(ctx_cfg: &mut ContextConfig, backend: VirtioNetBackend) {
     let mac = if let Some(mac) = ctx_cfg.mac {
