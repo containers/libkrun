@@ -261,7 +261,12 @@ impl Vmm {
     }
 
     /// Configures the system for boot.
-    pub fn configure_system(&self, vcpus: &[Vcpu], initrd: &Option<InitrdConfig>) -> Result<()> {
+    pub fn configure_system(
+        &self,
+        vcpus: &[Vcpu],
+        initrd: &Option<InitrdConfig>,
+        _smbios_oem_strings: &Option<Vec<String>>,
+    ) -> Result<()> {
         #[cfg(target_arch = "x86_64")]
         {
             let cmdline_len = if cfg!(feature = "tee") {
@@ -292,6 +297,7 @@ impl Vmm {
                 self.mmio_device_manager.get_device_info(),
                 self.vm.get_irqchip(),
                 initrd,
+                _smbios_oem_strings,
             )
             .map_err(Error::ConfigureSystem)?;
         }
@@ -307,6 +313,7 @@ impl Vmm {
                 self.mmio_device_manager.get_device_info(),
                 self.vm.get_irqchip(),
                 initrd,
+                _smbios_oem_strings,
             )
             .map_err(Error::ConfigureSystem)?;
         }

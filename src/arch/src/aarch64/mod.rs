@@ -24,6 +24,9 @@ use self::gic::GICDevice;
 use crate::ArchMemoryInfo;
 use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMmap};
 
+#[cfg(feature = "efi")]
+use smbios;
+
 /// Errors thrown while configuring aarch64 system.
 #[derive(Debug)]
 pub enum Error {
@@ -31,6 +34,10 @@ pub enum Error {
     SetupFDT(fdt::Error),
     /// Failed to compute the initrd address.
     InitrdAddress,
+
+    #[cfg(feature = "efi")]
+    /// SMBIOS Error
+    Smbios(smbios::Error),
 }
 
 /// The start of the memory area reserved for MMIO devices.
@@ -80,6 +87,7 @@ pub fn arch_memory_regions(size: usize) -> (ArchMemoryInfo, Vec<(GuestAddress, u
 /// * `device_info` - A hashmap containing the attached devices for building FDT device nodes.
 /// * `gic_device` - The GIC device.
 /// * `initrd` - Information about an optional initrd.
+#[allow(clippy::too_many_arguments)]
 pub fn configure_system<T: DeviceInfoForFDT + Clone + Debug>(
     guest_mem: &GuestMemoryMmap,
     arch_memory_info: &ArchMemoryInfo,
@@ -88,6 +96,7 @@ pub fn configure_system<T: DeviceInfoForFDT + Clone + Debug>(
     device_info: &HashMap<(DeviceType, String), T>,
     gic_device: &Box<dyn GICDevice>,
     initrd: &Option<super::InitrdConfig>,
+    _smbios_oem_strings: &Option<Vec<String>>,
 ) -> super::Result<()> {
     fdt::create_fdt(
         guest_mem,
@@ -99,6 +108,11 @@ pub fn configure_system<T: DeviceInfoForFDT + Clone + Debug>(
         initrd,
     )
     .map_err(Error::SetupFDT)?;
+
+    #[cfg(feature = "efi")]
+    smbios::setup_smbios(guest_mem, layout::SMBIOS_START, _smbios_oem_strings)
+        .map_err(Error::Smbios)?;
+
     Ok(())
 }
 
