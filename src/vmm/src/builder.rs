@@ -611,7 +611,18 @@ pub fn build_microvm(
     attach_block_devices(&mut vmm, &vm_resources.block, intc.clone())?;
     if let Some(vsock) = vm_resources.vsock.get() {
         attach_unixsock_vsock_device(&mut vmm, vsock, event_manager, intc.clone())?;
+        #[cfg(not(feature = "net"))]
         vmm.kernel_cmdline.insert_str("tsi_hijack")?;
+        #[cfg(feature = "net")]
+        if vm_resources
+            .net_builder
+            .iter()
+            .collect::<Vec<_>>()
+            .is_empty()
+        {
+            // Only enable TSI if we don't have any network devices.
+            vmm.kernel_cmdline.insert_str("tsi_hijack")?;
+        }
     }
     #[cfg(feature = "net")]
     attach_net_devices(&mut vmm, vm_resources.net_builder.iter(), intc.clone())?;
