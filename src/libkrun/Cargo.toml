@@ -13,6 +13,7 @@ blk = []
 efi = [ "blk", "net" ]
 gpu = []
 snd = []
+virgl_resource_map2 = []
 
 [dependencies]
 crossbeam-channel = "0.5"

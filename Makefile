@@ -30,6 +30,9 @@ endif
 ifeq ($(GPU),1)
     FEATURE_FLAGS += --features gpu
 endif
+ifeq ($(VIRGL_RESOURCE_MAP2),1)
+	FEATURE_FLAGS += --features virgl_resource_map2
+endif
 ifeq ($(BLK),1)
     FEATURE_FLAGS += --features blk
 endif
