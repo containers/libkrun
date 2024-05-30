@@ -902,6 +902,9 @@ int main(int argc, char **argv)
             exit(-3);
         }
     } else { // parent
+        // tell the kernel we don't want to be notified on SIGCHLD so it'll reap
+        // our children for us
+        signal(SIGCHLD, SIG_IGN);
         // wait for children since we can't exit init
         waitpid(pid, NULL, 0);
     }
