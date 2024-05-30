@@ -13,6 +13,10 @@ use hvf::MemoryMapping;
 use libc::c_void;
 #[cfg(target_os = "macos")]
 use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_APPLE;
+#[cfg(all(not(feature = "virgl_resource_map2"), target_os = "linux"))]
+use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_OPAQUE_FD;
+#[cfg(all(feature = "virgl_resource_map2", target_os = "linux"))]
+use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_SHM;
 use rutabaga_gfx::{
     ResourceCreate3D, ResourceCreateBlob, Rutabaga, RutabagaBuilder, RutabagaChannel,
     RutabagaFence, RutabagaFenceHandler, RutabagaIovec, Transfer3D, RUTABAGA_CHANNEL_TYPE_WAYLAND,
@@ -21,7 +25,7 @@ use rutabaga_gfx::{
 #[cfg(target_os = "linux")]
 use rutabaga_gfx::{
     RUTABAGA_MAP_ACCESS_MASK, RUTABAGA_MAP_ACCESS_READ, RUTABAGA_MAP_ACCESS_RW,
-    RUTABAGA_MAP_ACCESS_WRITE, RUTABAGA_MEM_HANDLE_TYPE_OPAQUE_FD,
+    RUTABAGA_MAP_ACCESS_WRITE,
 };
 use utils::eventfd::EventFd;
 use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, VolatileSlice};
@@ -491,7 +495,7 @@ impl VirtioGpu {
     /// rutabaga as ExternalMapping.
     /// When sandboxing is enabled, external_blob is set and opaque fds must be mapped in the
     /// hypervisor process by Vulkano using metadata provided by Rutabaga::vulkan_info().
-    #[cfg(target_os = "linux")]
+    #[cfg(all(not(feature = "virgl_resource_map2"), target_os = "linux"))]
     pub fn resource_map_blob(
         &mut self,
         resource_id: u32,
@@ -540,6 +544,66 @@ impl VirtioGpu {
             }
         } else {
             return Err(ErrUnspec);
+        }
+
+        resource.shmem_offset = Some(offset);
+        // Access flags not a part of the virtio-gpu spec.
+        Ok(OkMapInfo {
+            map_info: map_info & RUTABAGA_MAP_CACHE_MASK,
+        })
+    }
+    #[cfg(all(feature = "virgl_resource_map2", target_os = "linux"))]
+    pub fn resource_map_blob(
+        &mut self,
+        resource_id: u32,
+        shm_region: &VirtioShmRegion,
+        offset: u64,
+    ) -> VirtioGpuResult {
+        let resource = self
+            .resources
+            .get_mut(&resource_id)
+            .ok_or(ErrInvalidResourceId)?;
+
+        let map_info = self.rutabaga.map_info(resource_id).map_err(|_| ErrUnspec)?;
+
+        let prot = match map_info & RUTABAGA_MAP_ACCESS_MASK {
+            RUTABAGA_MAP_ACCESS_READ => libc::PROT_READ,
+            RUTABAGA_MAP_ACCESS_WRITE => libc::PROT_WRITE,
+            RUTABAGA_MAP_ACCESS_RW => libc::PROT_READ | libc::PROT_WRITE,
+            _ => panic!("unexpected prot mode for mapping"),
+        };
+
+        if offset + resource.size > shm_region.size as u64 {
+            error!("resource map doesn't fit in shm region");
+            return Err(ErrUnspec);
+        }
+        let addr = shm_region.host_addr + offset;
+
+        if let Ok(export) = self.rutabaga.export_blob(resource_id) {
+            if export.handle_type == RUTABAGA_MEM_HANDLE_TYPE_SHM {
+                let ret = unsafe {
+                    libc::mmap(
+                        addr as *mut libc::c_void,
+                        resource.size as usize,
+                        prot,
+                        libc::MAP_SHARED | libc::MAP_FIXED,
+                        export.os_handle.as_raw_fd(),
+                        0 as libc::off_t,
+                    )
+                };
+                if ret == libc::MAP_FAILED {
+                    error!("failed to mmap resource in shm region");
+                    return Err(ErrUnspec);
+                }
+            } else {
+                self.rutabaga.resource_map(
+                    resource_id,
+                    addr,
+                    resource.size,
+                    prot,
+                    libc::MAP_SHARED | libc::MAP_FIXED,
+                )?;
+            }
         }
 
         resource.shmem_offset = Some(offset);

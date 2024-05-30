@@ -12,6 +12,7 @@ blk = []
 efi = ["blk", "net"]
 gpu = ["rutabaga_gfx", "thiserror", "zerocopy", "zerocopy-derive"]
 snd = ["pw", "thiserror"]
+virgl_resource_map2 = []
 
 [dependencies]
 bitflags = "1.2.0"
