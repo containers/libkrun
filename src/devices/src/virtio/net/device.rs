@@ -4,7 +4,7 @@
 // Portions Copyright 2017 The Chromium OS Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
-use crate::legacy::Gic;
+use crate::legacy::GicV3;
 use crate::virtio::net::{Error, Result};
 use crate::virtio::net::{QUEUE_SIZES, RX_INDEX, TX_INDEX};
 use crate::virtio::queue::Error as QueueError;
@@ -19,7 +19,7 @@ use std::io::Write;
 use std::os::fd::RawFd;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use utils::eventfd::{EventFd, EFD_NONBLOCK};
 use virtio_bindings::virtio_net::{
     VIRTIO_NET_F_CSUM, VIRTIO_NET_F_GUEST_CSUM, VIRTIO_NET_F_GUEST_TSO4, VIRTIO_NET_F_GUEST_UFO,
@@ -84,7 +84,7 @@ pub struct Net {
 
     pub(crate) device_state: DeviceState,
 
-    intc: Option<Arc<Mutex<Gic>>>,
+    intc: Option<GicV3>,
     irq_line: Option<u32>,
 
     config: VirtioNetConfig,
@@ -143,7 +143,7 @@ impl Net {
         &self.id
     }
 
-    pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
+    pub fn set_intc(&mut self, intc: GicV3) {
         self.intc = Some(intc);
     }
 }
@@ -186,6 +186,7 @@ impl VirtioDevice for Net {
     }
 
     fn set_irq_line(&mut self, irq: u32) {
+        debug!("SET_IRQ_LINE (NET)={}", irq);
         self.irq_line = Some(irq);
     }
 

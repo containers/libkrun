@@ -182,7 +182,7 @@ pub struct Vring {
     queue: Queue,
     interrupt_evt: EventFd,
     interrupt_status: Arc<AtomicUsize>,
-    intc: Option<Arc<Mutex<Gic>>>,
+    intc: Option<GicV3>,
     irq_line: Option<u32>,
 }
 
@@ -194,7 +194,7 @@ impl Vring {
             std::sync::atomic::Ordering::SeqCst,
         );
         if let Some(intc) = &self.intc {
-            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
+            intc.set_irq(self.irq_line.unwrap());
         } else if let Err(e) = self.interrupt_evt.write(1) {
             error!("Failed to signal used queue: {:?}", e);
         }

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use super::super::super::legacy::Gic;
+use super::super::super::legacy::GicV3;
 use super::super::Queue as VirtQueue;
 use super::super::VIRTIO_MMIO_INT_VRING;
 use super::muxer::{push_packet, MuxerRx, ProxyMap};
@@ -26,7 +26,7 @@ pub struct MuxerThread {
     queue: Arc<Mutex<VirtQueue>>,
     interrupt_evt: EventFd,
     interrupt_status: Arc<AtomicUsize>,
-    intc: Option<Arc<Mutex<Gic>>>,
+    intc: Option<GicV3>,
     irq_line: Option<u32>,
     reaper_sender: Sender<u64>,
 }
@@ -42,7 +42,7 @@ impl MuxerThread {
         queue: Arc<Mutex<VirtQueue>>,
         interrupt_evt: EventFd,
         interrupt_status: Arc<AtomicUsize>,
-        intc: Option<Arc<Mutex<Gic>>>,
+        intc: Option<GicV3>,
         irq_line: Option<u32>,
         reaper_sender: Sender<u64>,
     ) -> Self {
@@ -140,7 +140,7 @@ impl MuxerThread {
             self.interrupt_status
                 .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
             if let Some(intc) = &self.intc {
-                intc.lock().unwrap().set_irq(self.irq_line.unwrap());
+                intc.set_irq(self.irq_line.unwrap());
             } else if let Err(e) = self.interrupt_evt.write(1) {
                 warn!("failed to signal used queue: {:?}", e);
             }

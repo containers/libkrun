@@ -1,6 +1,6 @@
 use std::result;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use rand::{rngs::OsRng, RngCore};
 use utils::eventfd::EventFd;
@@ -11,7 +11,7 @@ use super::super::{
     VIRTIO_MMIO_INT_VRING,
 };
 use super::{defs, defs::uapi};
-use crate::legacy::Gic;
+use crate::legacy::GicV3;
 use crate::Error as DeviceError;
 
 // Request queue.
@@ -33,7 +33,7 @@ pub struct Rng {
     pub(crate) interrupt_evt: EventFd,
     pub(crate) activate_evt: EventFd,
     pub(crate) device_state: DeviceState,
-    intc: Option<Arc<Mutex<Gic>>>,
+    intc: Option<GicV3>,
     irq_line: Option<u32>,
 }
 
@@ -71,7 +71,7 @@ impl Rng {
         defs::RNG_DEV_ID
     }
 
-    pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
+    pub fn set_intc(&mut self, intc: GicV3) {
         self.intc = Some(intc);
     }
 
@@ -80,7 +80,7 @@ impl Rng {
         self.interrupt_status
             .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
         if let Some(intc) = &self.intc {
-            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
+            intc.set_irq(self.irq_line.unwrap());
             Ok(())
         } else {
             self.interrupt_evt.write(1).map_err(|e| {
@@ -162,6 +162,7 @@ impl VirtioDevice for Rng {
     }
 
     fn set_irq_line(&mut self, irq: u32) {
+        debug!("SET_IRQ_LINE (RNG)={}", irq);
         self.irq_line = Some(irq);
     }
 

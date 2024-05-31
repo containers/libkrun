@@ -14,7 +14,7 @@ use arch::aarch64::DeviceInfoForFDT;
 use arch::DeviceType;
 use devices;
 
-use devices::legacy::Gic;
+use devices::legacy::GicV3;
 use devices::BusDevice;
 use kernel::cmdline as kernel_cmdline;
 use polly::event_manager::EventManager;
@@ -85,6 +85,7 @@ impl MMIODeviceManager {
         if cfg!(target_arch = "aarch64") {
             *mmio_base += MMIO_LEN;
         }
+
         MMIODeviceManager {
             mmio_base: *mmio_base,
             irq: irq_interval.0,
@@ -141,7 +142,7 @@ impl MMIODeviceManager {
         &mut self,
         _vm: &Vm,
         cmdline: &mut kernel_cmdline::Cmdline,
-        intc: Option<Arc<Mutex<devices::legacy::Gic>>>,
+        intc: Option<GicV3>,
         serial: Arc<Mutex<devices::legacy::Serial>>,
     ) -> Result<()> {
         if self.irq > self.last_irq {
@@ -183,7 +184,7 @@ impl MMIODeviceManager {
 
     #[cfg(target_arch = "aarch64")]
     /// Register a MMIO RTC device.
-    pub fn register_mmio_rtc(&mut self, _vm: &Vm, _intc: Option<Arc<Mutex<Gic>>>) -> Result<()> {
+    pub fn register_mmio_rtc(&mut self, _vm: &Vm, _intc: Option<GicV3>) -> Result<()> {
         if self.irq > self.last_irq {
             return Err(Error::IrqsExhausted);
         }
@@ -217,7 +218,7 @@ impl MMIODeviceManager {
     pub fn register_mmio_gpio(
         &mut self,
         _vm: &Vm,
-        intc: Option<Arc<Mutex<devices::legacy::Gic>>>,
+        intc: Option<GicV3>,
         event_manager: &mut EventManager,
         shutdown_efd: EventFd,
     ) -> Result<()> {
@@ -262,14 +263,12 @@ impl MMIODeviceManager {
 
     #[cfg(target_arch = "aarch64")]
     /// Register a MMIO GIC device.
-    pub fn register_mmio_gic(&mut self, _vm: &Vm, intc: Option<Arc<Mutex<Gic>>>) -> Result<()> {
+    pub fn register_mmio_gic(&mut self, _vm: &Vm, intc: Option<GicV3>) -> Result<()> {
         if let Some(intc) = intc {
+            let mmio_addr = intc.get_mmio_addr();
+            let mmio_size = intc.get_mmio_size();
             self.bus
-                .insert(
-                    intc,
-                    devices::legacy::Gic::get_addr(),
-                    devices::legacy::Gic::get_size(),
-                )
+                .insert(intc.as_device(), mmio_addr, mmio_size)
                 .map_err(Error::BusError)?;
         }
 
@@ -282,7 +281,7 @@ impl MMIODeviceManager {
         &self.id_to_dev_info
     }
 
-    /// Gets the the specified device.
+    /// Gets the specified device.
     pub fn get_device(
         &self,
         device_type: DeviceType,

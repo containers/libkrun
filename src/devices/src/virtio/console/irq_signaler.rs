@@ -1,16 +1,16 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use utils::eventfd::EventFd;
 
-use crate::legacy::Gic;
+use crate::legacy::GicV3;
 use crate::virtio::{VIRTIO_MMIO_INT_CONFIG, VIRTIO_MMIO_INT_VRING};
 
 #[derive(Clone)]
 pub struct IRQSignaler {
     interrupt_status: Arc<AtomicUsize>,
     interrupt_evt: Arc<EventFd>,
-    intc: Option<Arc<Mutex<Gic>>>,
+    intc: Option<GicV3>,
     irq_line: Option<u32>,
 }
 
@@ -32,7 +32,7 @@ impl IRQSignaler {
         self.interrupt_status
             .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
         if let Some(intc) = &self.intc {
-            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
+            intc.set_irq(self.irq_line.unwrap());
         } else if let Err(e) = self.interrupt_evt.write(1) {
             error!("Failed to signal used queue: {e:?}");
         }
@@ -55,11 +55,12 @@ impl IRQSignaler {
         self.interrupt_status.clone()
     }
 
-    pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
+    pub fn set_intc(&mut self, intc: GicV3) {
         self.intc = Some(intc);
     }
 
     pub fn set_irq_line(&mut self, irq: u32) {
+        debug!("SET_IRQ_LINE (SIGNALER)={}", irq);
         self.irq_line = Some(irq);
     }
 }

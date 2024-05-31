@@ -1,4 +1,4 @@
-use crate::legacy::Gic;
+use crate::legacy::GicV3;
 use crate::virtio::net::gvproxy::Gvproxy;
 use crate::virtio::net::passt::Passt;
 use crate::virtio::net::{MAX_BUFFER_SIZE, QUEUE_SIZE, RX_INDEX, TX_INDEX};
@@ -11,7 +11,7 @@ use super::device::{FrontendError, RxError, TxError, VirtioNetBackend};
 use std::os::fd::AsRawFd;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::{cmp, mem, result};
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
@@ -36,7 +36,7 @@ pub struct NetWorker {
     queue_evts: Vec<EventFd>,
     interrupt_status: Arc<AtomicUsize>,
     interrupt_evt: EventFd,
-    intc: Option<Arc<Mutex<Gic>>>,
+    intc: Option<GicV3>,
     irq_line: Option<u32>,
 
     mem: GuestMemoryMmap,
@@ -58,7 +58,7 @@ impl NetWorker {
         queue_evts: Vec<EventFd>,
         interrupt_status: Arc<AtomicUsize>,
         interrupt_evt: EventFd,
-        intc: Option<Arc<Mutex<Gic>>>,
+        intc: Option<GicV3>,
         irq_line: Option<u32>,
         mem: GuestMemoryMmap,
         cfg_backend: VirtioNetBackend,
@@ -383,7 +383,7 @@ impl NetWorker {
         self.interrupt_status
             .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
         if let Some(intc) = &self.intc {
-            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
+            intc.set_irq(self.irq_line.unwrap());
             Ok(())
         } else {
             self.interrupt_evt.write(1).map_err(|e| {

@@ -15,7 +15,7 @@ use super::defs;
 use super::defs::uapi;
 use super::defs::uapi::virtio_gpu_config;
 use super::worker::Worker;
-use crate::legacy::Gic;
+use crate::legacy::GicV3;
 use crate::Error as DeviceError;
 #[cfg(target_os = "macos")]
 use hvf::MemoryMapping;
@@ -44,7 +44,7 @@ pub struct Gpu {
     pub(crate) activate_evt: EventFd,
     pub(crate) device_state: DeviceState,
     shm_region: Option<VirtioShmRegion>,
-    intc: Option<Arc<Mutex<Gic>>>,
+    intc: Option<GicV3>,
     irq_line: Option<u32>,
     pub(crate) sender: Option<Sender<u64>>,
     virgl_flags: u32,
@@ -110,7 +110,7 @@ impl Gpu {
         defs::GPU_DEV_ID
     }
 
-    pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
+    pub fn set_intc(&mut self, intc: GicV3) {
         self.intc = Some(intc);
     }
 
@@ -128,7 +128,7 @@ impl Gpu {
         self.interrupt_status
             .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
         if let Some(intc) = &self.intc {
-            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
+            intc.set_irq(self.irq_line.unwrap());
             Ok(())
         } else {
             self.interrupt_evt.write(1).map_err(|e| {
@@ -232,6 +232,7 @@ impl VirtioDevice for Gpu {
     }
 
     fn set_irq_line(&mut self, irq: u32) {
+        debug!("SET_IRQ_LINE (GPU)={}", irq);
         self.irq_line = Some(irq);
     }
 
