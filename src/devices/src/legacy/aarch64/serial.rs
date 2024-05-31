@@ -8,7 +8,6 @@
 
 use std::collections::VecDeque;
 use std::fmt;
-use std::sync::{Arc, Mutex};
 use std::{io, result};
 
 use polly::event_manager::{EventManager, Subscriber};
@@ -17,8 +16,7 @@ use utils::epoll::{EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 
 use crate::bus::BusDevice;
-use crate::legacy::Gic;
-use crate::legacy::ReadableFd;
+use crate::legacy::{GicV3, ReadableFd};
 
 /* Registers */
 const UARTDR: u64 = 0;
@@ -91,7 +89,7 @@ pub struct Serial {
     read_trigger: u32,
     out: Option<Box<dyn io::Write + Send>>,
     input: Option<Box<dyn ReadableFd + Send>>,
-    intc: Option<Arc<Mutex<Gic>>>,
+    intc: Option<GicV3>,
     irq_line: Option<u32>,
 }
 
@@ -179,11 +177,12 @@ impl Serial {
         Self::new(interrupt_evt, None, None)
     }
 
-    pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
+    pub fn set_intc(&mut self, intc: GicV3) {
         self.intc = Some(intc);
     }
 
     pub fn set_irq_line(&mut self, irq: u32) {
+        debug!("SET_IRQ_LINE (SERIAL)={}", irq);
         self.irq_line = Some(irq);
     }
 
@@ -308,7 +307,7 @@ impl Serial {
 
     fn trigger_interrupt(&mut self) -> result::Result<(), io::Error> {
         if let Some(intc) = &self.intc {
-            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
+            intc.set_irq(self.irq_line.unwrap());
             Ok(())
         } else {
             self.interrupt_evt.write(1)

@@ -1,4 +1,4 @@
-use crate::legacy::Gic;
+use crate::legacy::GicV3;
 use crate::virtio::descriptor_utils::{Reader, Writer};
 use crate::Error as DeviceError;
 
@@ -9,7 +9,7 @@ use std::io::{self, Write};
 use std::os::fd::AsRawFd;
 use std::result;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 use utils::eventfd::EventFd;
@@ -51,7 +51,7 @@ pub struct BlockWorker {
     queue_evt: EventFd,
     interrupt_status: Arc<AtomicUsize>,
     interrupt_evt: EventFd,
-    intc: Option<Arc<Mutex<Gic>>>,
+    intc: Option<GicV3>,
     irq_line: Option<u32>,
 
     mem: GuestMemoryMmap,
@@ -66,7 +66,7 @@ impl BlockWorker {
         queue_evt: EventFd,
         interrupt_status: Arc<AtomicUsize>,
         interrupt_evt: EventFd,
-        intc: Option<Arc<Mutex<Gic>>>,
+        intc: Option<GicV3>,
         irq_line: Option<u32>,
         mem: GuestMemoryMmap,
         disk: DiskProperties,
@@ -271,7 +271,7 @@ impl BlockWorker {
         self.interrupt_status
             .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
         if let Some(intc) = &self.intc {
-            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
+            intc.set_irq(self.irq_line.unwrap());
         } else {
             self.interrupt_evt.write(1).map_err(|e| {
                 error!("Failed to signal used queue: {:?}", e);

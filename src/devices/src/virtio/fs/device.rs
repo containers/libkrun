@@ -3,7 +3,7 @@ use crossbeam_channel::Sender;
 use std::cmp;
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 #[cfg(target_os = "macos")]
@@ -19,7 +19,7 @@ use super::passthrough;
 use super::worker::FsWorker;
 use super::ExportTable;
 use super::{defs, defs::uapi};
-use crate::legacy::Gic;
+use crate::legacy::GicV3;
 
 #[derive(Copy, Clone)]
 #[repr(C, packed)]
@@ -46,7 +46,7 @@ pub struct Fs {
     acked_features: u64,
     interrupt_status: Arc<AtomicUsize>,
     interrupt_evt: EventFd,
-    intc: Option<Arc<Mutex<Gic>>>,
+    intc: Option<GicV3>,
     irq_line: Option<u32>,
     device_state: DeviceState,
     config: VirtioFsConfig,
@@ -114,7 +114,7 @@ impl Fs {
         defs::FS_DEV_ID
     }
 
-    pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
+    pub fn set_intc(&mut self, intc: GicV3) {
         self.intc = Some(intc);
     }
 
@@ -175,6 +175,7 @@ impl VirtioDevice for Fs {
     }
 
     fn set_irq_line(&mut self, irq: u32) {
+        debug!("SET_IRQ_LINE (FS)={}", irq);
         self.irq_line = Some(irq);
     }
 

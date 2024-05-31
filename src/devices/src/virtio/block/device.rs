@@ -16,7 +16,7 @@ use std::os::macos::fs::MetadataExt;
 use std::path::PathBuf;
 use std::result;
 use std::sync::atomic::AtomicUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use imago::file::File as ImagoFile;
@@ -35,7 +35,7 @@ use super::{
     Error, QUEUE_SIZES, SECTOR_SHIFT, SECTOR_SIZE,
 };
 
-use crate::legacy::Gic;
+use crate::legacy::GicV3;
 use crate::virtio::{block::ImageType, ActivateError};
 
 /// Configuration options for disk caching.
@@ -189,7 +189,7 @@ pub struct Block {
     pub(crate) partuuid: Option<String>,
 
     // Interrupt specific fields.
-    intc: Option<Arc<Mutex<Gic>>>,
+    intc: Option<GicV3>,
     irq_line: Option<u32>,
 }
 
@@ -271,7 +271,7 @@ impl Block {
         })
     }
 
-    pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
+    pub fn set_intc(&mut self, intc: GicV3) {
         self.intc = Some(intc);
     }
 
@@ -318,6 +318,7 @@ impl VirtioDevice for Block {
     }
 
     fn set_irq_line(&mut self, irq: u32) {
+        debug!("SET_IRQ_LINE (BLOCK)={}", irq);
         self.irq_line = Some(irq);
     }
 

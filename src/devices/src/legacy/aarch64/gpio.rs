@@ -10,7 +10,6 @@
 use std::fmt;
 use std::os::fd::AsRawFd;
 use std::result;
-use std::sync::{Arc, Mutex};
 
 use polly::event_manager::{EventManager, Subscriber};
 use utils::byte_order::{read_le_u32, write_le_u32};
@@ -18,7 +17,7 @@ use utils::epoll::{EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 
 use crate::bus::BusDevice;
-use crate::legacy::Gic;
+use crate::legacy::GicV3;
 
 const OFS_DATA: u64 = 0x400; // Data Register
 const GPIODIR: u64 = 0x400; // Direction Register
@@ -74,7 +73,7 @@ pub struct Gpio {
     afsel: u32,
     // GPIO irq_field
     interrupt_evt: EventFd,
-    intc: Option<Arc<Mutex<Gic>>>,
+    intc: Option<GicV3>,
     irq_line: Option<u32>,
     shutdown_efd: EventFd,
 }
@@ -98,11 +97,12 @@ impl Gpio {
         }
     }
 
-    pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
+    pub fn set_intc(&mut self, intc: GicV3) {
         self.intc = Some(intc);
     }
 
     pub fn set_irq_line(&mut self, irq: u32) {
+        debug!("SET_IRQ_LINE (GPIO)={}", irq);
         self.irq_line = Some(irq);
     }
 
@@ -166,7 +166,7 @@ impl Gpio {
 
     fn trigger_gpio_interrupt(&self) {
         if let Some(intc) = &self.intc {
-            intc.lock().unwrap().set_irq(self.irq_line.unwrap());
+            intc.set_irq(self.irq_line.unwrap());
         } else if let Err(e) = self.interrupt_evt.write(1) {
             error!("Failed to signal used queue: {:?}", e);
         }

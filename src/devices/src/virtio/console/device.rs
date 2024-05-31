@@ -4,7 +4,7 @@ use std::iter::zip;
 use std::mem::{size_of, size_of_val};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::atomic::AtomicUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use libc::TIOCGWINSZ;
 use nix::ioctl_read_bad;
@@ -15,7 +15,7 @@ use super::super::{
     ActivateError, ActivateResult, ConsoleError, DeviceState, Queue as VirtQueue, VirtioDevice,
 };
 use super::{defs, defs::control_event, defs::uapi};
-use crate::legacy::Gic;
+use crate::legacy::GicV3;
 use crate::virtio::console::console_control::{
     ConsoleControl, VirtioConsoleControl, VirtioConsoleResize,
 };
@@ -142,7 +142,7 @@ impl Console {
         defs::CONSOLE_DEV_ID
     }
 
-    pub fn set_intc(&mut self, intc: Arc<Mutex<Gic>>) {
+    pub fn set_intc(&mut self, intc: GicV3) {
         self.irq.set_intc(intc)
     }
 

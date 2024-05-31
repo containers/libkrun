@@ -84,6 +84,8 @@ pub const GTIMER_HYP: u32 = 14;
 pub const GTIMER_VIRT: u32 = 11;
 pub const GTIMER_PHYS: u32 = 12;
 
+pub const VTIMER_IRQ: u32 = GTIMER_VIRT + 16;
+
 /// Below this address will reside the GIC, above this address will reside the MMIO devices.
 #[cfg(not(feature = "efi"))]
 pub const MAPPED_IO_START: u64 = 1 << 30; // 1 GB
