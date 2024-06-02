@@ -527,6 +527,11 @@ impl PassthroughFs {
             debug_assert!(namelen <= back.len(), "back is smaller than `namelen`");
 
             let name = &back[..namelen];
+            let term = name
+                .iter()
+                .position(|&a| a == 0)
+                .expect("LinuxDirent64 name not NUL-terminated");
+            let name = &name[..term];
             let res = if name.starts_with(CURRENT_DIR_CSTR) || name.starts_with(PARENT_DIR_CSTR) {
                 // We don't want to report the "." and ".." entries. However, returning `Ok(0)` will
                 // break the loop so return `Ok` with a non-zero value instead.
