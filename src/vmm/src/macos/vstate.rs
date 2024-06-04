@@ -14,7 +14,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use super::super::TimestampUs;
 use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 
@@ -288,13 +287,11 @@ impl Vcpu {
     /// * `id` - Represents the CPU number between [0, max vcpus).
     /// * `vm_fd` - The kvm `VmFd` for the virtual machine this vcpu will get attached to.
     /// * `exit_evt` - An `EventFd` that will be written into when this vcpu exits.
-    /// * `create_ts` - A timestamp used by the vcpu to calculate its lifetime.
     pub fn new_aarch64(
         id: u8,
         boot_entry_addr: GuestAddress,
         boot_receiver: Option<Receiver<u64>>,
         exit_evt: EventFd,
-        _create_ts: TimestampUs,
         intc: Arc<Mutex<Gic>>,
     ) -> Result<Self> {
         let (event_sender, event_receiver) = unbounded();
@@ -676,14 +673,12 @@ mod tests {
                 vm.supported_msrs().clone(),
                 devices::Bus::new(),
                 exit_evt,
-                super::super::TimestampUs::default(),
             )
             .unwrap();
         }
         #[cfg(target_arch = "aarch64")]
         {
-            vcpu = Vcpu::new_aarch64(1, vm.fd(), exit_evt, super::super::TimestampUs::default())
-                .unwrap();
+            vcpu = Vcpu::new_aarch64(1, vm.fd(), exit_evt).unwrap();
             vm.setup_irqchip(1).expect("Cannot setup irqchip");
         }
 
@@ -749,7 +744,6 @@ mod tests {
             vm.supported_msrs().clone(),
             devices::Bus::new(),
             EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-            super::super::TimestampUs::default(),
         )
         .unwrap();
         // Trying to setup irqchip after KVM_VCPU_CREATE was called will result in error.
@@ -767,7 +761,6 @@ mod tests {
             1,
             vm.fd(),
             EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-            super::super::TimestampUs::default(),
         )
         .unwrap();
 
@@ -817,7 +810,6 @@ mod tests {
             0,
             vm.fd(),
             EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-            super::super::TimestampUs::default(),
         )
         .unwrap();
 
@@ -830,7 +822,6 @@ mod tests {
             1,
             vm.fd(),
             EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-            super::super::TimestampUs::default(),
         )
         .unwrap();
 

@@ -20,7 +20,6 @@ use std::sync::atomic::{fence, Ordering};
 use std::sync::Barrier;
 use std::thread;
 
-use super::super::TimestampUs;
 use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 
 #[cfg(feature = "amd-sev")]
@@ -61,12 +60,6 @@ use sev::launch::sev as sev_launch;
 
 #[cfg(feature = "amd-sev")]
 use sev::launch::snp;
-
-#[cfg(target_arch = "x86_64")]
-const MAGIC_IOPORT_SIGNAL_GUEST_BOOT_COMPLETE: u64 = 0x03f0;
-#[cfg(target_arch = "aarch64")]
-const MAGIC_IOPORT_SIGNAL_GUEST_BOOT_COMPLETE: u64 = 0x40000000;
-const MAGIC_VALUE_SIGNAL_GUEST_BOOT_COMPLETE: u8 = 123;
 
 /// Signal number (SIGRTMIN) used to kick Vcpus.
 pub(crate) const VCPU_RTSIG_OFFSET: i32 = 0;
@@ -772,7 +765,6 @@ type VcpuCell = Cell<Option<*const Vcpu>>;
 pub struct Vcpu {
     fd: VcpuFd,
     id: u8,
-    create_ts: TimestampUs,
     mmio_bus: Option<devices::Bus>,
     #[allow(dead_code)]
     #[cfg_attr(all(test, target_arch = "aarch64"), allow(unused))]
@@ -891,7 +883,6 @@ impl Vcpu {
     /// * `msr_list` - The `MsrList` listing the supported MSRs for this vcpu.
     /// * `io_bus` - The io-bus used to access port-io devices.
     /// * `exit_evt` - An `EventFd` that will be written into when this vcpu exits.
-    /// * `create_ts` - A timestamp used by the vcpu to calculate its lifetime.
     #[cfg(target_arch = "x86_64")]
     pub fn new_x86_64(
         id: u8,
@@ -900,7 +891,6 @@ impl Vcpu {
         msr_list: MsrList,
         io_bus: devices::Bus,
         exit_evt: EventFd,
-        create_ts: TimestampUs,
     ) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = unbounded();
@@ -910,7 +900,6 @@ impl Vcpu {
         Ok(Vcpu {
             fd: kvm_vcpu,
             id,
-            create_ts,
             mmio_bus: None,
             exit_evt,
             io_bus,
@@ -932,12 +921,7 @@ impl Vcpu {
     /// * `exit_evt` - An `EventFd` that will be written into when this vcpu exits.
     /// * `create_ts` - A timestamp used by the vcpu to calculate its lifetime.
     #[cfg(target_arch = "aarch64")]
-    pub fn new_aarch64(
-        id: u8,
-        vm_fd: &VmFd,
-        exit_evt: EventFd,
-        create_ts: TimestampUs,
-    ) -> Result<Self> {
+    pub fn new_aarch64(id: u8, vm_fd: &VmFd, exit_evt: EventFd) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = unbounded();
         let (response_sender, response_receiver) = unbounded();
@@ -945,7 +929,6 @@ impl Vcpu {
         Ok(Vcpu {
             fd: kvm_vcpu,
             id,
-            create_ts,
             mmio_bus: None,
             exit_evt,
             mpidr: 0,
@@ -1087,14 +1070,6 @@ impl Vcpu {
         ))
     }
 
-    fn check_boot_complete_signal(&self, addr: u64, data: &[u8]) {
-        if addr == MAGIC_IOPORT_SIGNAL_GUEST_BOOT_COMPLETE
-            && data[0] == MAGIC_VALUE_SIGNAL_GUEST_BOOT_COMPLETE
-        {
-            super::super::Vmm::log_boot_time(&self.create_ts);
-        }
-    }
-
     #[allow(unused)]
     #[cfg(target_arch = "x86_64")]
     fn save_state(&self) -> Result<VcpuState> {
@@ -1224,8 +1199,6 @@ impl Vcpu {
                 }
                 #[cfg(target_arch = "x86_64")]
                 VcpuExit::IoOut(addr, data) => {
-                    self.check_boot_complete_signal(u64::from(addr), data);
-
                     self.io_bus.write(0, u64::from(addr), data);
                     Ok(VcpuEmulation::Handled)
                 }
@@ -1237,9 +1210,6 @@ impl Vcpu {
                 }
                 VcpuExit::MmioWrite(addr, data) => {
                     if let Some(ref mmio_bus) = self.mmio_bus {
-                        #[cfg(target_arch = "aarch64")]
-                        self.check_boot_complete_signal(addr, data);
-
                         mmio_bus.write(0, addr, data);
                     }
                     Ok(VcpuEmulation::Handled)
