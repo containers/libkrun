@@ -60,7 +60,6 @@ use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 use nix::unistd::isatty;
 use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
-use utils::time::TimestampUs;
 #[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "tee")))]
 use vm_memory::mmap::GuestRegionMmap;
 #[cfg(not(feature = "efi"))]
@@ -315,9 +314,6 @@ pub fn build_microvm(
     _shutdown_efd: Option<EventFd>,
     #[cfg(target_os = "macos")] _map_sender: Sender<MemoryMapping>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
-    // Timestamp for measuring microVM boot duration.
-    let request_ts = TimestampUs::default();
-
     #[cfg(not(feature = "efi"))]
     let kernel_bundle = vm_resources
         .kernel_bundle()
@@ -499,7 +495,6 @@ pub fn build_microvm(
             &vcpu_config,
             &guest_memory,
             boot_ip,
-            request_ts,
             &pio_device_manager.io_bus,
             &exit_evt,
         )
@@ -517,7 +512,6 @@ pub fn build_microvm(
             &vcpu_config,
             &guest_memory,
             GuestAddress(kernel_bundle.guest_addr),
-            request_ts,
             &exit_evt,
         )
         .map_err(StartMicrovmError::Internal)?;
@@ -543,7 +537,6 @@ pub fn build_microvm(
             &vcpu_config,
             &guest_memory,
             start_addr,
-            request_ts,
             &exit_evt,
             intc.clone().unwrap(),
         )
@@ -990,7 +983,6 @@ fn create_vcpus_x86_64(
     vcpu_config: &VcpuConfig,
     guest_mem: &GuestMemoryMmap,
     entry_addr: GuestAddress,
-    request_ts: TimestampUs,
     io_bus: &devices::Bus,
     exit_evt: &EventFd,
 ) -> super::Result<Vec<Vcpu>> {
@@ -1003,7 +995,6 @@ fn create_vcpus_x86_64(
             vm.supported_msrs().clone(),
             io_bus.clone(),
             exit_evt.try_clone().map_err(Error::EventFd)?,
-            request_ts.clone(),
         )
         .map_err(Error::Vcpu)?;
 
@@ -1021,7 +1012,6 @@ fn create_vcpus_aarch64(
     vcpu_config: &VcpuConfig,
     guest_mem: &GuestMemoryMmap,
     entry_addr: GuestAddress,
-    request_ts: TimestampUs,
     exit_evt: &EventFd,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
@@ -1030,7 +1020,6 @@ fn create_vcpus_aarch64(
             cpu_index,
             vm.fd(),
             exit_evt.try_clone().map_err(Error::EventFd)?,
-            request_ts.clone(),
         )
         .map_err(Error::Vcpu)?;
 
@@ -1048,7 +1037,6 @@ fn create_vcpus_aarch64(
     vcpu_config: &VcpuConfig,
     guest_mem: &GuestMemoryMmap,
     entry_addr: GuestAddress,
-    request_ts: TimestampUs,
     exit_evt: &EventFd,
     intc: Arc<Mutex<Gic>>,
 ) -> super::Result<Vec<Vcpu>> {
@@ -1069,7 +1057,6 @@ fn create_vcpus_aarch64(
             entry_addr,
             boot_receiver,
             exit_evt.try_clone().map_err(Error::EventFd)?,
-            request_ts.clone(),
             intc.clone(),
         )
         .map_err(Error::Vcpu)?;
@@ -1483,7 +1470,6 @@ pub mod tests {
             &vcpu_config,
             &guest_memory,
             entry_addr,
-            TimestampUs::default(),
             &bus,
             &EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         )
@@ -1511,7 +1497,6 @@ pub mod tests {
             &vcpu_config,
             &guest_memory,
             entry_addr,
-            TimestampUs::default(),
             &EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         )
         .unwrap();
