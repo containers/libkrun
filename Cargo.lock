@@ -71,8 +71,8 @@ name = "arch"
 version = "0.1.0"
 dependencies = [
  "arch_gen",
- "kvm-bindings",
- "kvm-ioctls",
+ "kvm-bindings 0.8.2",
+ "kvm-ioctls 0.17.0",
  "libc",
  "smbios",
  "utils",
@@ -254,8 +254,8 @@ checksum = "06ea2b9bc92be3c2baa9334a323ebca2d6f074ff852cd1d7b11064035cd3868f"
 name = "cpuid"
 version = "0.1.0"
 dependencies = [
- "kvm-bindings",
- "kvm-ioctls",
+ "kvm-bindings 0.8.2",
+ "kvm-ioctls 0.17.0",
  "vmm-sys-util",
 ]
 
@@ -653,13 +653,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "kvm-bindings"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ac3147c9763fd8fa7865a90d6aee87f157b59167145b38e671bbc66b116f1e8"
+dependencies = [
+ "vmm-sys-util",
+]
+
+[[package]]
 name = "kvm-ioctls"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9002dff009755414f22b962ec6ae6980b07d6d8b06e5297b1062019d72bd6a8c"
 dependencies = [
  "bitflags 2.4.2",
- "kvm-bindings",
+ "kvm-bindings 0.7.0",
+ "libc",
+ "vmm-sys-util",
+]
+
+[[package]]
+name = "kvm-ioctls"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bedae2ca4a531bebe311abaf9691f5cc14eaa21475243caa2e39c43bb872947d"
+dependencies = [
+ "bitflags 2.4.2",
+ "kvm-bindings 0.8.2",
  "libc",
  "vmm-sys-util",
 ]
@@ -1215,7 +1236,7 @@ dependencies = [
  "dirs",
  "hex",
  "iocuddle",
- "kvm-ioctls",
+ "kvm-ioctls 0.16.0",
  "openssl",
  "serde",
  "serde-big-array",
@@ -1454,8 +1475,8 @@ dependencies = [
  "hvf",
  "kbs-types",
  "kernel",
- "kvm-bindings",
- "kvm-ioctls",
+ "kvm-bindings 0.8.2",
+ "kvm-ioctls 0.17.0",
  "libc",
  "log",
  "nix 0.24.3",
