@@ -759,7 +759,7 @@ pub struct VcpuConfig {
 }
 
 // Using this for easier explicit type-casting to help IDEs interpret the code.
-type VcpuCell = Cell<Option<*const Vcpu>>;
+type VcpuCell = Cell<Option<*mut Vcpu>>;
 
 /// A wrapper around creating and using a kvm-based VCPU.
 pub struct Vcpu {
@@ -803,7 +803,7 @@ impl Vcpu {
             if cell.get().is_some() {
                 return Err(Error::VcpuTlsInit);
             }
-            cell.set(Some(self as *const Vcpu));
+            cell.set(Some(self as *mut Vcpu));
             Ok(())
         })
     }
@@ -819,7 +819,7 @@ impl Vcpu {
         // _before_ running this, then there is nothing we can do.
         Self::TLS_VCPU_PTR.with(|cell: &VcpuCell| {
             if let Some(vcpu_ptr) = cell.get() {
-                if vcpu_ptr == self as *const Vcpu {
+                if vcpu_ptr == self as *mut Vcpu {
                     Self::TLS_VCPU_PTR.with(|cell: &VcpuCell| cell.take());
                     return Ok(());
                 }
@@ -840,13 +840,13 @@ impl Vcpu {
     /// dereferencing from pointer an already borrowed `Vcpu`.
     unsafe fn run_on_thread_local<F>(func: F) -> Result<()>
     where
-        F: FnOnce(&Vcpu),
+        F: FnOnce(&mut Vcpu),
     {
         Self::TLS_VCPU_PTR.with(|cell: &VcpuCell| {
             if let Some(vcpu_ptr) = cell.get() {
                 // Dereferencing here is safe since `TLS_VCPU_PTR` is populated/non-empty,
                 // and it is being cleared on `Vcpu::drop` so there is no dangling pointer.
-                let vcpu_ref: &Vcpu = &*vcpu_ptr;
+                let vcpu_ref: &mut Vcpu = &mut *vcpu_ptr;
                 func(vcpu_ref);
                 Ok(())
             } else {
@@ -862,7 +862,7 @@ impl Vcpu {
             // This is safe because it's temporarily aliasing the `Vcpu` object, but we are
             // only reading `vcpu.fd` which does not change for the lifetime of the `Vcpu`.
             unsafe {
-                let _ = Vcpu::run_on_thread_local(|vcpu| {
+                let _ = Vcpu::run_on_thread_local(|vcpu: &mut Vcpu| {
                     vcpu.fd.set_kvm_immediate_exit(1);
                     fence(Ordering::Release);
                 });
@@ -1520,19 +1520,12 @@ mod tests {
                 vm.supported_msrs().clone(),
                 devices::Bus::new(),
                 exit_evt,
-                super::super::super::TimestampUs::default(),
             )
             .unwrap();
         }
         #[cfg(target_arch = "aarch64")]
         {
-            vcpu = Vcpu::new_aarch64(
-                1,
-                vm.fd(),
-                exit_evt,
-                super::super::super::TimestampUs::default(),
-            )
-            .unwrap();
+            vcpu = Vcpu::new_aarch64(1, vm.fd(), exit_evt).unwrap();
             vm.setup_irqchip(1).expect("Cannot setup irqchip");
         }
 
@@ -1599,7 +1592,6 @@ mod tests {
             vm.supported_msrs().clone(),
             devices::Bus::new(),
             EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-            super::super::super::TimestampUs::default(),
         )
         .unwrap();
         // Trying to setup irqchip after KVM_VCPU_CREATE was called will result in error.
@@ -1617,7 +1609,6 @@ mod tests {
             1,
             vm.fd(),
             EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-            super::super::TimestampUs::default(),
         )
         .unwrap();
 
@@ -1667,7 +1658,6 @@ mod tests {
             0,
             vm.fd(),
             EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-            super::super::TimestampUs::default(),
         )
         .unwrap();
 
@@ -1680,7 +1670,6 @@ mod tests {
             1,
             vm.fd(),
             EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-            super::super::TimestampUs::default(),
         )
         .unwrap();
 
@@ -1752,7 +1741,7 @@ mod tests {
         Vcpu::register_kick_signal_handler();
         let (vm, mut vcpu, _mem) = setup_vcpu(0x1000);
 
-        let kvm_run =
+        let mut kvm_run =
             KvmRunWrapper::mmap_from_fd(&vcpu.fd, vm.fd.run_size()).expect("cannot mmap kvm-run");
         let success = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let vcpu_success = success.clone();
