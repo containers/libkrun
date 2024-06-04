@@ -320,7 +320,12 @@ impl WaitContext {
 
     pub fn wait(&mut self) -> RutabagaResult<Vec<CrossDomainEvent>> {
         let mut events = [EpollEvent::empty(); WAIT_CONTEXT_MAX];
-        let count = self.epoll_ctx.wait(&mut events, isize::MAX)?;
+        let count = loop {
+            break match self.epoll_ctx.wait(&mut events, isize::MAX) {
+                Err(nix::errno::Errno::EINTR) => continue,
+                a => a,
+            };
+        }?;
         let events = events[0..count]
             .iter()
             .map(|e| CrossDomainEvent {
