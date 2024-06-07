@@ -389,7 +389,8 @@ impl<'a> HvfVcpu<'a> {
                         let ret = match val {
                             0x8400_0000 => Some(2),
                             0x8400_0006 => Some(2),
-                            0x8400_0009 => return Ok(VcpuExit::Shutdown),
+                            0x8400_0008 => return Ok(VcpuExit::Shutdown), // ARM Power State Coordination Interface SYSTEM_OFF
+                            0x8400_0009 => return Ok(VcpuExit::Shutdown), // ARM Power State Coordination Interface SYSTEM_RESET
                             0xc400_0003 => {
                                 let mpidr = self.read_reg(hv_reg_t_HV_REG_X1)?;
                                 let entry = self.read_reg(hv_reg_t_HV_REG_X2)?;
