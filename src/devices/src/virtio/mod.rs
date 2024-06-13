@@ -25,7 +25,6 @@ pub mod file_traits;
 pub mod fs;
 #[cfg(feature = "gpu")]
 pub mod gpu;
-#[cfg(target_os = "macos")]
 pub mod linux_errno;
 mod mmio;
 #[cfg(feature = "net")]

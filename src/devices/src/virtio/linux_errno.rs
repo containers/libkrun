@@ -167,6 +167,7 @@ pub fn linux_errno_raw(errno: i32) -> i32 {
         libc::EIDRM => LINUX_EIDRM,
         libc::ENOMSG => LINUX_ENOMSG,
         libc::EILSEQ => LINUX_EILSEQ,
+        #[cfg(target_os = "macos")]
         libc::ENOATTR => LINUX_ENODATA,
         libc::EBADMSG => LINUX_EBADMSG,
         libc::EMULTIHOP => LINUX_EMULTIHOP,
