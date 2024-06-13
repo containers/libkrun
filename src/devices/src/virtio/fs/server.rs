@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use vm_memory::ByteValued;
 
+use super::super::linux_errno::linux_error;
 use super::bindings;
 use super::descriptor_utils::{Reader, Writer};
 use super::filesystem::{
@@ -82,7 +83,7 @@ impl<F: FileSystem + Sync> Server<F> {
 
         if in_header.len > (MAX_BUFFER_SIZE + BUFFER_HEADER_SIZE) {
             return reply_error(
-                io::Error::from_raw_os_error(libc::ENOMEM),
+                linux_error(io::Error::from_raw_os_error(libc::ENOMEM)),
                 in_header.unique,
                 w,
             );
@@ -143,7 +144,7 @@ impl<F: FileSystem + Sync> Server<F> {
                 self.removemapping(in_header, r, w, shm.host_addr, shm.size as u64)
             }
             _ => reply_error(
-                io::Error::from_raw_os_error(libc::ENOSYS),
+                linux_error(io::Error::from_raw_os_error(libc::ENOSYS)),
                 in_header.unique,
                 w,
             ),
@@ -511,7 +512,7 @@ impl<F: FileSystem + Sync> Server<F> {
 
         if size > MAX_BUFFER_SIZE {
             return reply_error(
-                io::Error::from_raw_os_error(libc::ENOMEM),
+                linux_error(io::Error::from_raw_os_error(libc::ENOMEM)),
                 in_header.unique,
                 w,
             );
@@ -565,7 +566,7 @@ impl<F: FileSystem + Sync> Server<F> {
 
         if size > MAX_BUFFER_SIZE {
             return reply_error(
-                io::Error::from_raw_os_error(libc::ENOMEM),
+                linux_error(io::Error::from_raw_os_error(libc::ENOMEM)),
                 in_header.unique,
                 w,
             );
@@ -713,7 +714,7 @@ impl<F: FileSystem + Sync> Server<F> {
 
         if size > MAX_BUFFER_SIZE {
             return reply_error(
-                io::Error::from_raw_os_error(libc::ENOMEM),
+                linux_error(io::Error::from_raw_os_error(libc::ENOMEM)),
                 in_header.unique,
                 w,
             );
@@ -743,7 +744,7 @@ impl<F: FileSystem + Sync> Server<F> {
 
         if size > MAX_BUFFER_SIZE {
             return reply_error(
-                io::Error::from_raw_os_error(libc::ENOMEM),
+                linux_error(io::Error::from_raw_os_error(libc::ENOMEM)),
                 in_header.unique,
                 w,
             );
@@ -819,7 +820,7 @@ impl<F: FileSystem + Sync> Server<F> {
         if major < KERNEL_VERSION {
             error!("Unsupported fuse protocol version: {}.{}", major, minor);
             return reply_error(
-                io::Error::from_raw_os_error(libc::EPROTO),
+                linux_error(io::Error::from_raw_os_error(libc::EPROTO)),
                 in_header.unique,
                 w,
             );
@@ -842,7 +843,7 @@ impl<F: FileSystem + Sync> Server<F> {
                 major, minor
             );
             return reply_error(
-                io::Error::from_raw_os_error(libc::EPROTO),
+                linux_error(io::Error::from_raw_os_error(libc::EPROTO)),
                 in_header.unique,
                 w,
             );
@@ -929,7 +930,7 @@ impl<F: FileSystem + Sync> Server<F> {
 
         if size > MAX_BUFFER_SIZE {
             return reply_error(
-                io::Error::from_raw_os_error(libc::ENOMEM),
+                linux_error(io::Error::from_raw_os_error(libc::ENOMEM)),
                 in_header.unique,
                 w,
             );
@@ -938,7 +939,7 @@ impl<F: FileSystem + Sync> Server<F> {
         let available_bytes = w.available_bytes();
         if available_bytes < size as usize {
             return reply_error(
-                io::Error::from_raw_os_error(libc::ENOMEM),
+                linux_error(io::Error::from_raw_os_error(libc::ENOMEM)),
                 in_header.unique,
                 w,
             );
@@ -1187,14 +1188,14 @@ impl<F: FileSystem + Sync> Server<F> {
         if let Some(size) = (count as usize).checked_mul(size_of::<ForgetOne>()) {
             if size > MAX_BUFFER_SIZE as usize {
                 return reply_error(
-                    io::Error::from_raw_os_error(libc::ENOMEM),
+                    linux_error(io::Error::from_raw_os_error(libc::ENOMEM)),
                     in_header.unique,
                     w,
                 );
             }
         } else {
             return reply_error(
-                io::Error::from_raw_os_error(libc::EOVERFLOW),
+                linux_error(io::Error::from_raw_os_error(libc::EOVERFLOW)),
                 in_header.unique,
                 w,
             );
@@ -1338,14 +1339,14 @@ impl<F: FileSystem + Sync> Server<F> {
         if let Some(size) = (count as usize).checked_mul(size_of::<RemovemappingOne>()) {
             if size > MAX_BUFFER_SIZE as usize {
                 return reply_error(
-                    io::Error::from_raw_os_error(libc::ENOMEM),
+                    linux_error(io::Error::from_raw_os_error(libc::ENOMEM)),
                     in_header.unique,
                     w,
                 );
             }
         } else {
             return reply_error(
-                io::Error::from_raw_os_error(libc::EOVERFLOW),
+                linux_error(io::Error::from_raw_os_error(libc::EOVERFLOW)),
                 in_header.unique,
                 w,
             );
@@ -1433,24 +1434,24 @@ fn add_dirent(
     entry: Option<Entry>,
 ) -> io::Result<usize> {
     if d.name.len() > u32::MAX as usize {
-        return Err(io::Error::from_raw_os_error(libc::EOVERFLOW));
+        return Err(linux_error(io::Error::from_raw_os_error(libc::EOVERFLOW)));
     }
 
     let dirent_len = size_of::<Dirent>()
         .checked_add(d.name.len())
-        .ok_or_else(|| io::Error::from_raw_os_error(libc::EOVERFLOW))?;
+        .ok_or_else(|| linux_error(io::Error::from_raw_os_error(libc::EOVERFLOW)))?;
 
     // Directory entries must be padded to 8-byte alignment.  If adding 7 causes
     // an overflow then this dirent cannot be properly padded.
     let padded_dirent_len = dirent_len
         .checked_add(7)
         .map(|l| l & !7)
-        .ok_or_else(|| io::Error::from_raw_os_error(libc::EOVERFLOW))?;
+        .ok_or_else(|| linux_error(io::Error::from_raw_os_error(libc::EOVERFLOW)))?;
 
     let total_len = if entry.is_some() {
         padded_dirent_len
             .checked_add(size_of::<EntryOut>())
-            .ok_or_else(|| io::Error::from_raw_os_error(libc::EOVERFLOW))?
+            .ok_or_else(|| linux_error(io::Error::from_raw_os_error(libc::EOVERFLOW)))?
     } else {
         padded_dirent_len
     };
