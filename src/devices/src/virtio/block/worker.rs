@@ -16,6 +16,7 @@ use utils::eventfd::EventFd;
 use virtio_bindings::virtio_blk::*;
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum RequestError {
     FlushingToDisk(io::Error),
