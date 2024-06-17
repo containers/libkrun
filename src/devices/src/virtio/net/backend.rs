@@ -1,5 +1,6 @@
 use std::os::fd::RawFd;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum ConnectError {
     InvalidAddress(nix::Error),
@@ -8,6 +9,7 @@ pub enum ConnectError {
     SendingMagic(nix::Error),
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum ReadError {
     /// Nothing was written
@@ -16,6 +18,7 @@ pub enum ReadError {
     Internal(nix::Error),
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum WriteError {
     /// Nothing was written, you can drop the frame or try to resend it later

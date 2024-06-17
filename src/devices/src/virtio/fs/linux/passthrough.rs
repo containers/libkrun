@@ -1120,13 +1120,13 @@ impl FileSystem for PassthroughFs {
                 attr.st_uid
             } else {
                 // Cannot use -1 here because these are unsigned values.
-                ::std::u32::MAX
+                u32::MAX
             };
             let gid = if valid.contains(SetattrValid::GID) {
                 attr.st_gid
             } else {
                 // Cannot use -1 here because these are unsigned values.
-                ::std::u32::MAX
+                u32::MAX
             };
 
             // Safe because this is a constant value and a valid C string.

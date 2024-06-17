@@ -14,6 +14,7 @@ pub enum RecvPkt {
     WaitForCredit,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum ProxyError {
     CreatingSocket(nix::errno::Errno),

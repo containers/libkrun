@@ -175,7 +175,7 @@ pub trait ZeroCopyReader {
     fn copy_to_end(&mut self, f: &mut File, mut off: u64) -> io::Result<usize> {
         let mut out = 0;
         loop {
-            match self.read_to(f, ::std::usize::MAX, off) {
+            match self.read_to(f, usize::MAX, off) {
                 Ok(0) => return Ok(out),
                 Ok(n) => {
                     off = off.saturating_add(n as u64);
@@ -268,7 +268,7 @@ pub trait ZeroCopyWriter {
     fn copy_to_end(&mut self, f: &mut File, mut off: u64) -> io::Result<usize> {
         let mut out = 0;
         loop {
-            match self.write_from(f, ::std::usize::MAX, off) {
+            match self.write_from(f, usize::MAX, off) {
                 Ok(0) => return Ok(out),
                 Ok(n) => {
                     off = off.saturating_add(n as u64);
