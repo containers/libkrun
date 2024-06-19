@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 
 use libc::TIOCGWINSZ;
+use nix::ioctl_read_bad;
 use utils::eventfd::EventFd;
 use vm_memory::{ByteValued, Bytes, GuestMemoryMmap};
 
@@ -33,22 +34,27 @@ pub(crate) const AVAIL_FEATURES: u64 = 1 << uapi::VIRTIO_CONSOLE_F_SIZE as u64
     | 1 << uapi::VIRTIO_CONSOLE_F_MULTIPORT as u64
     | 1 << uapi::VIRTIO_F_VERSION_1 as u64;
 
+#[repr(C)]
+#[derive(Default)]
+struct WS {
+    rows: u16,
+    cols: u16,
+    xpixel: u16,
+    ypixel: u16,
+}
+ioctl_read_bad!(tiocgwinsz, TIOCGWINSZ, WS);
+
 pub(crate) fn get_win_size() -> (u16, u16) {
-    #[repr(C)]
-    #[derive(Default)]
-    struct WS {
-        rows: u16,
-        cols: u16,
-        xpixel: u16,
-        ypixel: u16,
-    }
-    let ws: WS = WS::default();
+    let mut ws: WS = WS::default();
 
-    unsafe {
-        libc::ioctl(0, TIOCGWINSZ, &ws);
-    }
+    let ret = unsafe { tiocgwinsz(0, &mut ws) };
 
-    (ws.cols, ws.rows)
+    if let Err(err) = ret {
+        error!("Couldn't get terminal dimensions: {}", err);
+        (0, 0)
+    } else {
+        (ws.cols, ws.rows)
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default)]
