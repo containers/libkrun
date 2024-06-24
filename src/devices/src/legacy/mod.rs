@@ -23,7 +23,7 @@ use aarch64::gpio;
 use aarch64::serial;
 
 #[cfg(target_os = "macos")]
-pub use self::gic::Gic;
+pub use self::gic::{Gic, VcpuList};
 #[cfg(target_arch = "aarch64")]
 pub use self::gpio::Gpio;
 pub use self::i8042::Error as I8042DeviceError;
