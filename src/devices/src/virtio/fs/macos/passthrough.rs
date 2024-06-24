@@ -1731,11 +1731,12 @@ impl FileSystem for PassthroughFs {
 
         let fd = data.file.write().unwrap().as_raw_fd();
 
+        let proposed_length = (offset + length) as i64;
         let mut fs = libc::fstore_t {
             fst_flags: libc::F_ALLOCATECONTIG,
             fst_posmode: libc::F_PEOFPOSMODE,
             fst_offset: 0,
-            fst_length: (offset + length) as i64,
+            fst_length: proposed_length,
             fst_bytesalloc: 0,
         };
 
@@ -1748,7 +1749,12 @@ impl FileSystem for PassthroughFs {
             }
         }
 
-        let res = unsafe { libc::ftruncate(fd, (offset + length) as i64) };
+        let st = fstat(fd, true)?;
+        if st.st_size >= proposed_length {
+            // fallocate should not shrink the file. The file is already larger than needed.
+            return Ok(());
+        }
+        let res = unsafe { libc::ftruncate(fd, proposed_length) };
 
         if res == 0 {
             Ok(())
