@@ -18,8 +18,9 @@ use super::{Error, Vmm};
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
-use devices::legacy::Gic;
-use devices::legacy::Serial;
+#[cfg(target_os = "macos")]
+use devices::legacy::VcpuList;
+use devices::legacy::{Gic, Serial};
 #[cfg(feature = "net")]
 use devices::virtio::Net;
 #[cfg(not(feature = "tee"))]
@@ -472,10 +473,13 @@ pub fn build_microvm(
         (arch::IRQ_BASE, arch::IRQ_MAX),
     );
 
+    #[cfg(target_os = "macos")]
+    let vcpu_list = Arc::new(VcpuList::new());
+
     #[cfg(target_os = "linux")]
     let intc = None;
     #[cfg(target_os = "macos")]
-    let intc = Some(Arc::new(Mutex::new(devices::legacy::Gic::new())));
+    let intc = Some(Arc::new(Mutex::new(Gic::new(vcpu_list.clone()))));
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "tee")))]
     let boot_ip: GuestAddress = GuestAddress(kernel_bundle.entry_addr);
@@ -539,6 +543,7 @@ pub fn build_microvm(
             start_addr,
             &exit_evt,
             intc.clone().unwrap(),
+            vcpu_list.clone(),
         )
         .map_err(StartMicrovmError::Internal)?;
 
@@ -1039,6 +1044,7 @@ fn create_vcpus_aarch64(
     entry_addr: GuestAddress,
     exit_evt: &EventFd,
     intc: Arc<Mutex<Gic>>,
+    vcpu_list: Arc<VcpuList>,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
     let mut boot_senders = Vec::with_capacity(vcpu_config.vcpu_count as usize - 1);
@@ -1058,6 +1064,7 @@ fn create_vcpus_aarch64(
             boot_receiver,
             exit_evt.try_clone().map_err(Error::EventFd)?,
             intc.clone(),
+            vcpu_list.clone(),
         )
         .map_err(Error::Vcpu)?;
 

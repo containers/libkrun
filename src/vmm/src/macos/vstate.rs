@@ -20,7 +20,7 @@ use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 use arch;
 use arch::aarch64::gic::GICDevice;
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
-use devices::legacy::Gic;
+use devices::legacy::{Gic, VcpuList};
 use hvf::{HvfVcpu, HvfVm, VcpuExit};
 use utils::eventfd::EventFd;
 use vm_memory::{
@@ -220,6 +220,7 @@ pub struct Vcpu {
     response_sender: Sender<VcpuResponse>,
 
     intc: Arc<Mutex<Gic>>,
+    vcpu_list: Arc<VcpuList>,
 }
 
 impl Vcpu {
@@ -293,6 +294,7 @@ impl Vcpu {
         boot_receiver: Option<Receiver<u64>>,
         exit_evt: EventFd,
         intc: Arc<Mutex<Gic>>,
+        vcpu_list: Arc<VcpuList>,
     ) -> Result<Self> {
         let (event_sender, event_receiver) = unbounded();
         let (response_sender, response_receiver) = unbounded();
@@ -311,6 +313,7 @@ impl Vcpu {
             response_receiver: Some(response_receiver),
             response_sender,
             intc,
+            vcpu_list,
         })
     }
 
@@ -382,11 +385,7 @@ impl Vcpu {
     /// Returns error or enum specifying whether emulation was handled or interrupted.
     fn run_emulation(&mut self, hvf_vcpu: &mut HvfVcpu) -> Result<VcpuEmulation> {
         let vcpuid = hvf_vcpu.id();
-        let pending_irq = self
-            .intc
-            .lock()
-            .unwrap()
-            .vcpu_has_pending_irq(hvf_vcpu.id());
+        let pending_irq = self.vcpu_list.has_pending_irq(vcpuid);
 
         match hvf_vcpu.run(pending_irq) {
             Ok(exit) => match exit {
@@ -441,7 +440,7 @@ impl Vcpu {
                 }
                 VcpuExit::VtimerActivated => {
                     debug!("vCPU {} VtimerActivated", vcpuid);
-                    self.intc.lock().unwrap().set_vtimer_irq(vcpuid);
+                    self.vcpu_list.set_vtimer_irq(vcpuid);
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::WaitForEvent => {
@@ -469,10 +468,8 @@ impl Vcpu {
         let hvf_vcpuid = hvf_vcpu.id();
 
         let (wfe_sender, wfe_receiver) = unbounded();
-        self.intc
-            .lock()
-            .unwrap()
-            .register_vcpu(hvf_vcpuid, wfe_sender);
+        self.vcpu_list.register(hvf_vcpuid, wfe_sender);
+        self.intc.lock().unwrap().add_vcpu();
 
         let entry_addr = if let Some(boot_receiver) = &self.boot_receiver {
             boot_receiver.recv().unwrap()
@@ -518,7 +515,7 @@ impl Vcpu {
         receiver: &Receiver<u32>,
         timeout: Option<Duration>,
     ) {
-        if self.intc.lock().unwrap().vcpu_should_wait(hvf_vcpuid) {
+        if self.vcpu_list.should_wait(hvf_vcpuid) {
             if let Some(timeout) = timeout {
                 match receiver.recv_timeout(timeout) {
                     Ok(_) => {}
