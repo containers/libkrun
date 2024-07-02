@@ -31,6 +31,12 @@ pub struct VcpuList {
     vtimer_irq: u32,
 }
 
+impl Default for VcpuList {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VcpuList {
     pub fn new() -> Self {
         let mut vcpus = Vec::with_capacity(MAX_CPUS as usize);
