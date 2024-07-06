@@ -201,6 +201,7 @@ impl VirtioDevice for Fs {
             mem.clone(),
             self.passthrough_cfg.clone(),
             self.worker_stopfd.try_clone().unwrap(),
+            self.shm_region.clone(),
         );
         self.worker_thread = Some(worker.run());
 
