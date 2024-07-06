@@ -554,13 +554,27 @@ pub fn build_microvm(
         )?;
     }
 
+    // Use half of the shmem region for virtio-gpu and half for DAX
+    let _shm_region_size = arch_memory_info.shm_size >> 1;
+
     #[cfg(not(feature = "tee"))]
-    let _shm_region = Some(VirtioShmRegion {
+    let dax_shm_region = Some(VirtioShmRegion {
         host_addr: guest_memory
             .get_host_address(GuestAddress(arch_memory_info.shm_start_addr))
             .unwrap() as u64,
         guest_addr: arch_memory_info.shm_start_addr,
-        size: arch_memory_info.shm_size as usize,
+        size: _shm_region_size as usize,
+    });
+
+    #[cfg(feature = "gpu")]
+    let gpu_shm_region = Some(VirtioShmRegion {
+        host_addr: guest_memory
+            .get_host_address(GuestAddress(
+                arch_memory_info.shm_start_addr + _shm_region_size,
+            ))
+            .unwrap() as u64,
+        guest_addr: arch_memory_info.shm_start_addr + _shm_region_size,
+        size: _shm_region_size as usize,
     });
 
     let mut vmm = Vmm {
@@ -591,7 +605,7 @@ pub fn build_microvm(
         attach_gpu_device(
             &mut vmm,
             event_manager,
-            _shm_region,
+            gpu_shm_region,
             intc.clone(),
             virgl_flags,
             #[cfg(target_os = "macos")]
@@ -599,7 +613,7 @@ pub fn build_microvm(
         )?;
     }
     #[cfg(not(feature = "tee"))]
-    attach_fs_devices(&mut vmm, &vm_resources.fs, None, intc.clone())?;
+    attach_fs_devices(&mut vmm, &vm_resources.fs, dax_shm_region, intc.clone())?;
     #[cfg(feature = "blk")]
     attach_block_devices(&mut vmm, &vm_resources.block, intc.clone())?;
     if let Some(vsock) = vm_resources.vsock.get() {
