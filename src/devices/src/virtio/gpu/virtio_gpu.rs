@@ -24,8 +24,8 @@ use rutabaga_gfx::{
 };
 #[cfg(target_os = "linux")]
 use rutabaga_gfx::{
-    RUTABAGA_MAP_ACCESS_MASK, RUTABAGA_MAP_ACCESS_READ, RUTABAGA_MAP_ACCESS_RW,
-    RUTABAGA_MAP_ACCESS_WRITE,
+    RUTABAGA_CHANNEL_TYPE_X11, RUTABAGA_MAP_ACCESS_MASK, RUTABAGA_MAP_ACCESS_READ,
+    RUTABAGA_MAP_ACCESS_RW, RUTABAGA_MAP_ACCESS_WRITE,
 };
 use utils::eventfd::EventFd;
 use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, VolatileSlice};
@@ -194,10 +194,22 @@ impl VirtioGpu {
         };
         let path = PathBuf::from(format!("{}/{}", xdg_runtime_dir, wayland_display));
 
-        let rutabaga_channels: Vec<RutabagaChannel> = vec![RutabagaChannel {
+        #[allow(unused_mut)]
+        let mut rutabaga_channels: Vec<RutabagaChannel> = vec![RutabagaChannel {
             base_channel: path,
             channel_type: RUTABAGA_CHANNEL_TYPE_WAYLAND,
         }];
+
+        #[cfg(target_os = "linux")]
+        if let Ok(x_display) = env::var("DISPLAY") {
+            if let Some(x_display) = x_display.strip_prefix(":") {
+                let x_path = PathBuf::from(format!("/tmp/.X11-unix/X{}", x_display));
+                rutabaga_channels.push(RutabagaChannel {
+                    base_channel: x_path,
+                    channel_type: RUTABAGA_CHANNEL_TYPE_X11,
+                });
+            }
+        }
         let rutabaga_channels_opt = Some(rutabaga_channels);
 
         let builder = RutabagaBuilder::new(

@@ -37,3 +37,6 @@ rutabaga_gfx = { path = "../rutabaga_gfx", features = ["virgl_renderer", "virgl_
 [target.'cfg(target_os = "macos")'.dependencies]
 hvf = { path = "../hvf" }
 lru = ">=0.9"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rutabaga_gfx = { path = "../rutabaga_gfx", features = ["x"], optional = true }
