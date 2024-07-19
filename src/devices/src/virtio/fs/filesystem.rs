@@ -37,6 +37,9 @@ pub struct Entry {
     /// If this value is not correct, incorrect data will be returned.
     pub attr: bindings::stat64,
 
+    /// Flags for `fuse::Attr.flags`.
+    pub attr_flags: u32,
+
     /// How long the values in `attr` should be considered valid. If the attributes of the `Entry`
     /// are only modified by the FUSE client, then this should be set to a very large value.
     pub attr_timeout: Duration,
@@ -56,7 +59,7 @@ impl From<Entry> for fuse::EntryOut {
             attr_valid: entry.attr_timeout.as_secs(),
             entry_valid_nsec: entry.entry_timeout.subsec_nanos(),
             attr_valid_nsec: entry.attr_timeout.subsec_nanos(),
-            attr: entry.attr.into(),
+            attr: fuse::Attr::with_flags(entry.attr, entry.attr_flags),
         }
     }
 }
