@@ -27,6 +27,7 @@ use super::super::filesystem::{
     OpenOptions, SetattrValid, ZeroCopyReader, ZeroCopyWriter,
 };
 use super::super::fuse;
+use super::super::multikey::MultikeyBTreeMap;
 
 const INIT_CSTR: &[u8] = b"init.krun\0";
 const XATTR_KEY: &[u8] = b"user.containers.override_stat\0";
@@ -38,6 +39,19 @@ static INIT_BINARY: &[u8] = include_bytes!("../../../../../../init/init");
 
 type Inode = u64;
 type Handle = u64;
+
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+struct InodeAltKey {
+    ino: u64,
+    dev: i32,
+}
+
+struct InodeData {
+    inode: Inode,
+    ino: u64,
+    dev: i32,
+    refcount: AtomicU64,
+}
 
 struct DirStream {
     stream: u64,
@@ -403,8 +417,8 @@ impl Default for Config {
 /// directory ends up as the root of the file system process. One way to accomplish this is via a
 /// combination of mount namespaces and the pivot_root system call.
 pub struct PassthroughFs {
-    root_inode: u64,
-    root_device: i32,
+    inodes: RwLock<MultikeyBTreeMap<Inode, InodeAltKey, Arc<InodeData>>>,
+    next_inode: AtomicU64,
     init_inode: u64,
 
     handles: RwLock<BTreeMap<Handle, Arc<HandleData>>>,
@@ -433,13 +447,11 @@ impl PassthroughFs {
             return Err(linux_error(io::Error::last_os_error()));
         }
 
-        let st = fstat(fd, true)?;
-
         unsafe { libc::close(fd) };
 
         Ok(PassthroughFs {
-            root_inode: st.st_ino,
-            root_device: st.st_dev,
+            inodes: RwLock::new(MultikeyBTreeMap::new()),
+            next_inode: AtomicU64::new(fuse::ROOT_ID + 2),
             init_inode: fuse::ROOT_ID + 1,
 
             handles: RwLock::new(BTreeMap::new()),
@@ -452,33 +464,43 @@ impl PassthroughFs {
     }
 
     fn inode_to_path(&self, inode: Inode) -> io::Result<CString> {
-        let inode = if inode == fuse::ROOT_ID {
-            self.root_inode
-        } else {
-            inode
-        };
+        debug!("inode_to_path: inode={}", inode);
+        let data = self
+            .inodes
+            .read()
+            .unwrap()
+            .get(&inode)
+            .cloned()
+            .ok_or_else(ebadf)?;
 
         let cstr =
-            CString::new(format!("/.vol/{}/{}", self.root_device, inode)).map_err(|_| einval())?;
-        debug!("inode_to_path: {}", cstr.to_string_lossy());
+            CString::new(format!("/.vol/{}/{}", data.dev, data.ino)).map_err(|_| einval())?;
+        debug!("inode_to_path: path={}", cstr.to_string_lossy());
         Ok(cstr)
     }
 
     fn name_to_path(&self, parent: Inode, name: &CStr) -> io::Result<CString> {
-        let parent = if parent == fuse::ROOT_ID {
-            self.root_inode
-        } else {
-            parent
-        };
+        debug!(
+            "name_to_path: parent={} name={}",
+            parent,
+            name.to_string_lossy()
+        );
+        let data = self
+            .inodes
+            .read()
+            .unwrap()
+            .get(&parent)
+            .cloned()
+            .ok_or_else(ebadf)?;
 
         let cstr = CString::new(format!(
             "/.vol/{}/{}/{}",
-            self.root_device,
-            parent,
+            data.dev,
+            data.ino,
             name.to_string_lossy()
         ))
         .map_err(|_| einval())?;
-        debug!("name_to_path: {}", cstr.to_string_lossy());
+        debug!("name_to_path: path={}", cstr.to_string_lossy());
         Ok(cstr)
     }
 
@@ -528,8 +550,40 @@ impl PassthroughFs {
             c_path.to_str().unwrap()
         );
 
+        let altkey = InodeAltKey {
+            ino: st.st_ino,
+            dev: st.st_dev,
+        };
+        let data = self.inodes.read().unwrap().get_alt(&altkey).cloned();
+
+        let inode = if let Some(data) = data {
+            // Matches with the release store in `forget`.
+            data.refcount.fetch_add(1, Ordering::Acquire);
+            data.inode
+        } else {
+            // There is a possible race here where 2 threads end up adding the same file
+            // into the inode list.  However, since each of those will get a unique Inode
+            // value and unique file descriptors this shouldn't be that much of a problem.
+            let inode = self.next_inode.fetch_add(1, Ordering::Relaxed);
+            self.inodes.write().unwrap().insert(
+                inode,
+                InodeAltKey {
+                    ino: st.st_ino,
+                    dev: st.st_dev,
+                },
+                Arc::new(InodeData {
+                    inode,
+                    ino: st.st_ino,
+                    dev: st.st_dev,
+                    refcount: AtomicU64::new(1),
+                }),
+            );
+
+            inode
+        };
+
         Ok(Entry {
-            inode: st.st_ino,
+            inode,
             generation: 0,
             attr: st,
             attr_timeout: self.cfg.attr_timeout,
@@ -774,15 +828,91 @@ fn set_secctx(file: StatFile, secctx: SecContext, symlink: bool) -> io::Result<(
     }
 }
 
+fn forget_one(
+    inodes: &mut MultikeyBTreeMap<Inode, InodeAltKey, Arc<InodeData>>,
+    inode: Inode,
+    count: u64,
+) {
+    if let Some(data) = inodes.get(&inode) {
+        // Acquiring the write lock on the inode map prevents new lookups from incrementing the
+        // refcount but there is the possibility that a previous lookup already acquired a
+        // reference to the inode data and is in the process of updating the refcount so we need
+        // to loop here until we can decrement successfully.
+        loop {
+            let refcount = data.refcount.load(Ordering::Relaxed);
+
+            // Saturating sub because it doesn't make sense for a refcount to go below zero and
+            // we don't want misbehaving clients to cause integer overflow.
+            let new_count = refcount.saturating_sub(count);
+
+            // Synchronizes with the acquire load in `do_lookup`.
+            if data
+                .refcount
+                .compare_exchange(refcount, new_count, Ordering::Release, Ordering::Relaxed)
+                .unwrap()
+                == refcount
+            {
+                if new_count == 0 {
+                    // We just removed the last refcount for this inode. There's no need for an
+                    // acquire fence here because we hold a write lock on the inode map and any
+                    // thread that is waiting to do a forget on the same inode will have to wait
+                    // until we release the lock. So there's is no other release store for us to
+                    // synchronize with before deleting the entry.
+                    inodes.remove(&inode);
+                }
+                break;
+            }
+        }
+    }
+}
+
 impl FileSystem for PassthroughFs {
     type Inode = Inode;
     type Handle = Handle;
 
     fn init(&self, capable: FsOptions) -> io::Result<FsOptions> {
+        let root = CString::new(self.cfg.root_dir.as_str()).expect("CString::new failed");
+
+        // Safe because this doesn't modify any memory and we check the return value.
+        // We use `O_PATH` because we just want this for traversing the directory tree
+        // and not for actually reading the contents.
+        let fd = unsafe {
+            libc::openat(
+                libc::AT_FDCWD,
+                root.as_ptr(),
+                libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        // Safe because we just opened this fd above.
+        let f = unsafe { File::from_raw_fd(fd) };
+
+        let st = fstat(f.as_raw_fd(), true)?;
+
         // Safe because this doesn't modify any memory and there is no need to check the return
         // value because this system call always succeeds. We need to clear the umask here because
         // we want the client to be able to set all the bits in the mode.
         unsafe { libc::umask(0o000) };
+
+        let mut inodes = self.inodes.write().unwrap();
+
+        // Not sure why the root inode gets a refcount of 2 but that's what libfuse does.
+        inodes.insert(
+            fuse::ROOT_ID,
+            InodeAltKey {
+                ino: st.st_ino,
+                dev: st.st_dev,
+            },
+            Arc::new(InodeData {
+                inode: fuse::ROOT_ID,
+                ino: st.st_ino,
+                dev: st.st_dev,
+                refcount: AtomicU64::new(2),
+            }),
+        );
 
         let mut opts = FsOptions::empty();
         if self.cfg.writeback && capable.contains(FsOptions::WRITEBACK_CACHE) {
@@ -794,6 +924,7 @@ impl FileSystem for PassthroughFs {
 
     fn destroy(&self) {
         self.handles.write().unwrap().clear();
+        self.inodes.write().unwrap().clear();
     }
 
     fn statfs(&self, _ctx: Context, inode: Inode) -> io::Result<bindings::statvfs64> {
@@ -836,9 +967,19 @@ impl FileSystem for PassthroughFs {
         self.do_lookup(parent, name)
     }
 
-    fn forget(&self, _ctx: Context, _inode: Inode, _count: u64) {}
+    fn forget(&self, _ctx: Context, inode: Inode, count: u64) {
+        let mut inodes = self.inodes.write().unwrap();
 
-    fn batch_forget(&self, _ctx: Context, _requests: Vec<(Inode, u64)>) {}
+        forget_one(&mut inodes, inode, count)
+    }
+
+    fn batch_forget(&self, _ctx: Context, requests: Vec<(Inode, u64)>) {
+        let mut inodes = self.inodes.write().unwrap();
+
+        for (inode, count) in requests {
+            forget_one(&mut inodes, inode, count)
+        }
+    }
 
     fn opendir(
         &self,
