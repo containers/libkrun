@@ -428,6 +428,7 @@ pub struct PassthroughFs {
     // Whether writeback caching is enabled for this directory. This will only be true when
     // `cfg.writeback` is true and `init` was called with `FsOptions::WRITEBACK_CACHE`.
     writeback: AtomicBool,
+    announce_submounts: AtomicBool,
     cfg: Config,
 }
 
@@ -459,6 +460,7 @@ impl PassthroughFs {
             init_handle: 0,
 
             writeback: AtomicBool::new(false),
+            announce_submounts: AtomicBool::new(false),
             cfg,
         })
     }
@@ -541,6 +543,14 @@ impl PassthroughFs {
     }
 
     fn do_lookup(&self, parent: Inode, name: &CStr) -> io::Result<Entry> {
+        let parent_data = self
+            .inodes
+            .read()
+            .unwrap()
+            .get(&parent)
+            .cloned()
+            .ok_or_else(ebadf)?;
+
         let c_path = self.name_to_path(parent, name)?;
         let st = lstat(&c_path, false)?;
 
@@ -549,6 +559,15 @@ impl PassthroughFs {
             st.st_ino,
             c_path.to_str().unwrap()
         );
+
+        let mut attr_flags: u32 = 0;
+
+        if st.st_mode & libc::S_IFMT == libc::S_IFDIR
+            && self.announce_submounts.load(Ordering::Relaxed)
+            && (st.st_dev != parent_data.dev)
+        {
+            attr_flags |= fuse::ATTR_SUBMOUNT;
+        }
 
         let altkey = InodeAltKey {
             ino: st.st_ino,
@@ -586,7 +605,7 @@ impl PassthroughFs {
             inode,
             generation: 0,
             attr: st,
-            attr_flags: 0,
+            attr_flags,
             attr_timeout: self.cfg.attr_timeout,
             entry_timeout: self.cfg.entry_timeout,
         })
@@ -920,6 +939,12 @@ impl FileSystem for PassthroughFs {
             opts |= FsOptions::WRITEBACK_CACHE;
             self.writeback.store(true, Ordering::Relaxed);
         }
+
+        if capable.contains(FsOptions::SUBMOUNTS) {
+            opts |= FsOptions::SUBMOUNTS;
+            self.announce_submounts.store(true, Ordering::Relaxed);
+        }
+
         Ok(opts)
     }
 
