@@ -290,7 +290,7 @@ impl AmdSev {
             let request = Request {
                 version: "0.0.0".to_string(),
                 tee: tee_config.tee,
-                extra_params: serde_json::json!(sev_request).to_string(),
+                extra_params: serde_json::json!(sev_request),
             };
 
             let response = curl_agent
@@ -302,7 +302,7 @@ impl AmdSev {
 
             let challenge: Challenge =
                 serde_json::from_slice(&response).map_err(Error::ParseSessionResponse)?;
-            let sev_challenge: SevChallenge = serde_json::from_str(&challenge.extra_params)
+            let sev_challenge: SevChallenge = serde_json::from_value(challenge.extra_params)
                 .map_err(Error::ParseSessionResponse)?;
 
             if sev_challenge
@@ -408,8 +408,7 @@ impl AmdSev {
         let measurement = launcher.measurement();
 
         if !self.tee_config.attestation_url.is_empty() {
-            let tee_pubkey = TeePubKey {
-                kty: "".to_string(),
+            let tee_pubkey = TeePubKey::RSA {
                 alg: "".to_string(),
                 k_mod: "".to_string(),
                 k_exp: "".to_string(),
@@ -417,7 +416,7 @@ impl AmdSev {
 
             let attestation = Attestation {
                 tee_pubkey,
-                tee_evidence: serde_json::json!(measurement).to_string(),
+                tee_evidence: serde_json::json!(measurement),
             };
 
             let mut curl_agent = self.curl_agent.lock().unwrap();
