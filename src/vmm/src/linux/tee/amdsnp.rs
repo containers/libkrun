@@ -3,7 +3,7 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use crate::vstate::MeasuredRegion;
 use arch::x86_64::layout::*;
 
-use sev::firmware::host::Firmware;
+use sev::firmware::{guest::GuestPolicy, host::Firmware};
 use sev::launch::snp::*;
 
 use kvm_bindings::{kvm_enc_region, CpuId, KVM_CPUID_FLAG_SIGNIFCANT_INDEX};
@@ -101,15 +101,7 @@ impl AmdSnp {
                 .map_err(|_| Error::MemoryEncryptRegion)?;
         }
 
-        let start = Start::new(
-            None,
-            Policy {
-                flags: PolicyFlags::SMT,
-                ..Default::default()
-            },
-            false,
-            [0; 16],
-        );
+        let start = Start::new(None, GuestPolicy(0), false, [0; 16]);
 
         let launcher = launcher.start(start).map_err(Error::LaunchStart)?;
 
