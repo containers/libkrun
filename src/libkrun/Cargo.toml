@@ -1,6 +1,6 @@
 [package]
 name = "libkrun"
-version = "1.9.3"
+version = "1.9.4"
 authors = ["Sergio Lopez <slp@redhat.com>"]
 edition = "2021"
 build = "build.rs"
