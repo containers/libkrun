@@ -546,7 +546,8 @@ unsafe impl ByteValued for Attr {}
 impl From<bindings::stat64> for Attr {
     fn from(st: bindings::stat64) -> Attr {
         Attr {
-            ino: st.st_ino,
+            #[allow(clippy::unnecessary_cast)]
+            ino: st.st_ino ^ ((st.st_dev as u64) << 32),
             size: st.st_size as u64,
             blocks: st.st_blocks as u64,
             atime: st.st_atime as u64,
