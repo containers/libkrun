@@ -13,6 +13,7 @@ use super::descriptor_utils::{Reader, Writer};
 use super::passthrough::{self, PassthroughFs};
 use super::server::Server;
 use crate::legacy::Gic;
+use crate::virtio::VirtioShmRegion;
 
 pub struct FsWorker {
     queues: Vec<Queue>,
@@ -25,6 +26,7 @@ pub struct FsWorker {
     mem: GuestMemoryMmap,
     server: Server<PassthroughFs>,
     stop_fd: EventFd,
+    shm_region: Option<VirtioShmRegion>,
 }
 
 impl FsWorker {
@@ -39,6 +41,7 @@ impl FsWorker {
         mem: GuestMemoryMmap,
         passthrough_cfg: passthrough::Config,
         stop_fd: EventFd,
+        shm_region: Option<VirtioShmRegion>,
     ) -> Self {
         Self {
             queues,
@@ -51,6 +54,7 @@ impl FsWorker {
             mem,
             server: Server::new(PassthroughFs::new(passthrough_cfg).unwrap()),
             stop_fd,
+            shm_region,
         }
     }
 
@@ -149,7 +153,10 @@ impl FsWorker {
                 .map_err(FsError::QueueWriter)
                 .unwrap();
 
-            if let Err(e) = self.server.handle_message(reader, writer, None) {
+            if let Err(e) = self
+                .server
+                .handle_message(reader, writer, self.shm_region.as_ref())
+            {
                 error!("error handling message: {:?}", e);
             }
 
