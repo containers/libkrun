@@ -859,6 +859,7 @@ impl<F: FileSystem + Sync> Server<F> {
             | FsOptions::HAS_IOCTL_DIR
             | FsOptions::ATOMIC_O_TRUNC
             | FsOptions::MAX_PAGES
+            | FsOptions::SUBMOUNTS
             | FsOptions::INIT_EXT;
 
         if cfg!(target_os = "macos") {

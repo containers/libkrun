@@ -518,6 +518,11 @@ pub const FUSE_COMPAT_STATFS_SIZE: u32 = 48;
 pub const FUSE_COMPAT_INIT_OUT_SIZE: u32 = 8;
 pub const FUSE_COMPAT_22_INIT_OUT_SIZE: u32 = 24;
 
+// Attr.flags flags.
+
+/// Object is a submount root
+pub const ATTR_SUBMOUNT: u32 = 1;
+
 // Message definitions follow.  It is safe to implement ByteValued for all of these
 // because they are POD types.
 
@@ -539,12 +544,18 @@ pub struct Attr {
     pub gid: u32,
     pub rdev: u32,
     pub blksize: u32,
-    pub padding: u32,
+    pub flags: u32,
 }
 unsafe impl ByteValued for Attr {}
 
 impl From<bindings::stat64> for Attr {
     fn from(st: bindings::stat64) -> Attr {
+        Attr::with_flags(st, 0)
+    }
+}
+
+impl Attr {
+    pub fn with_flags(st: bindings::stat64, flags: u32) -> Attr {
         Attr {
             ino: st.st_ino,
             size: st.st_size as u64,
@@ -569,7 +580,7 @@ impl From<bindings::stat64> for Attr {
             gid: st.st_gid,
             rdev: st.st_rdev as u32,
             blksize: st.st_blksize as u32,
-            ..Default::default()
+            flags,
         }
     }
 }
