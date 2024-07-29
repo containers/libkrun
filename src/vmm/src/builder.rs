@@ -901,7 +901,7 @@ pub(crate) fn setup_vm(
     let mut vm = Vm::new(kvm.fd())
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
-    vm.memory_init(guest_memory, kvm.max_memslots())
+    vm.memory_init(guest_memory, kvm.max_memslots(), false)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     Ok(vm)
@@ -915,7 +915,7 @@ pub(crate) fn setup_vm(
     let mut vm = Vm::new(kvm.fd(), tee_config)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
-    vm.memory_init(guest_memory, kvm.max_memslots())
+    vm.memory_init(guest_memory, kvm.max_memslots(), false)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     Ok(vm)
