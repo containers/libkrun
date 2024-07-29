@@ -207,6 +207,9 @@ pub struct Vmm {
     mmio_device_manager: MMIODeviceManager,
     #[cfg(target_arch = "x86_64")]
     pio_device_manager: PortIODeviceManager,
+
+    #[cfg(feature = "tee")]
+    pub guest_memfd_vec: Vec<RawFd>,
 }
 
 impl Vmm {
