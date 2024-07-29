@@ -10,6 +10,7 @@ use libc::{c_int, c_void, siginfo_t};
 use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::io;
+use std::os::fd::RawFd;
 
 #[cfg(feature = "tee")]
 use std::os::unix::io::RawFd;
@@ -45,7 +46,10 @@ use kvm_bindings::{
     Msrs, KVM_CLOCK_TSC_STABLE, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
     KVM_MAX_CPUID_ENTRIES, KVM_PIT_SPEAKER_DUMMY,
 };
-use kvm_bindings::{kvm_userspace_memory_region, KVM_API_VERSION};
+use kvm_bindings::{
+    kvm_create_guest_memfd, kvm_userspace_memory_region, kvm_userspace_memory_region2,
+    KVM_API_VERSION, KVM_MEM_GUEST_MEMFD,
+};
 use kvm_ioctls::*;
 use utils::eventfd::EventFd;
 use utils::signal::{register_signal_handler, sigrtmin, Killable};
@@ -112,6 +116,10 @@ pub enum Error {
     SetUserMemoryRegion(kvm_ioctls::Error),
     /// Error creating memory map for SHM region.
     ShmMmap(io::Error),
+    /// Cannot set the memory regions.
+    SetUserMemoryRegion2(kvm_ioctls::Error),
+    /// Cannot create guest memfd.
+    CreateGuestMemfd(kvm_ioctls::Error),
     #[cfg(feature = "amd-sev")]
     /// Error initializing the Secure Virtualization Backend (SEV).
     SevSecVirtInit(SevError),
@@ -272,6 +280,8 @@ impl Display for Error {
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
             ShmMmap(e) => write!(f, "Error creating memory map for SHM region: {e}"),
+            SetUserMemoryRegion2(e) => write!(f, "Cannot set the memory regions: {e}"),
+            CreateGuestMemfd(e) => write!(f, "Cannot create guest memfd: {e}"),
             #[cfg(feature = "tee")]
             SevSecVirtInit(e) => {
                 write!(
@@ -554,6 +564,7 @@ impl Vm {
         &mut self,
         guest_mem: &GuestMemoryMmap,
         kvm_max_memslots: usize,
+        require_guest_memfd: bool,
     ) -> Result<()> {
         if guest_mem.num_regions() > kvm_max_memslots {
             return Err(Error::NotEnoughMemorySlots);
@@ -561,20 +572,54 @@ impl Vm {
         for region in guest_mem.iter() {
             // It's safe to unwrap because the guest address is valid.
             let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
-            debug!("Guest memory starts at {:x?}", host_addr);
-            let memory_region = kvm_userspace_memory_region {
-                slot: self.next_mem_slot,
-                guest_phys_addr: region.start_addr().raw_value(),
-                memory_size: region.len(),
-                userspace_addr: host_addr as u64,
-                flags: 0,
-            };
-            // Safe because we mapped the memory region, we made sure that the regions
-            // are not overlapping.
-            unsafe {
-                self.fd
-                    .set_user_memory_region(memory_region)
-                    .map_err(Error::SetUserMemoryRegion)?;
+            info!("Guest memory starts at {:x?}", host_addr);
+
+            if require_guest_memfd {
+                let gmem = kvm_create_guest_memfd {
+                    size: region.len(),
+                    flags: 0,
+                    reserved: [0; 6],
+                };
+
+                let id: RawFd = self
+                    .fd
+                    .create_guest_memfd(gmem)
+                    .map_err(Error::CreateGuestMemfd)?;
+
+                let memory_region = kvm_userspace_memory_region2 {
+                    slot: self.next_mem_slot as u32,
+                    flags: KVM_MEM_GUEST_MEMFD,
+                    guest_phys_addr: region.start_addr().raw_value(),
+                    memory_size: region.len(),
+                    userspace_addr: host_addr as u64,
+                    guest_memfd_offset: 0,
+                    guest_memfd: id as u32,
+                    pad1: 0,
+                    pad2: [0; 14],
+                };
+
+                // Safe because we mapped the memory region, we made sure that the regions
+                // are not overlapping.
+                unsafe {
+                    self.fd
+                        .set_user_memory_region2(memory_region)
+                        .map_err(Error::SetUserMemoryRegion2)?;
+                };
+            } else {
+                let memory_region = kvm_userspace_memory_region {
+                    slot: self.next_mem_slot as u32,
+                    guest_phys_addr: region.start_addr().raw_value(),
+                    memory_size: region.len(),
+                    userspace_addr: host_addr as u64,
+                    flags: 0,
+                };
+                // Safe because we mapped the memory region, we made sure that the regions
+                // are not overlapping.
+                unsafe {
+                    self.fd
+                        .set_user_memory_region(memory_region)
+                        .map_err(Error::SetUserMemoryRegion)?;
+                };
             };
             self.next_mem_slot += 1;
         }
@@ -1510,7 +1555,7 @@ mod tests {
         let kvm = KvmContext::new().unwrap();
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), mem_size)]).unwrap();
         let mut vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
-        assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
+        assert!(vm.memory_init(&gm, kvm.max_memslots(), false).is_ok());
 
         let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
 
@@ -1565,7 +1610,7 @@ mod tests {
 
         // Create valid memory region and test that the initialization is successful.
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x1000)]).unwrap();
-        assert!(vm.memory_init(&gm, kvm_context.max_memslots()).is_ok());
+        assert!(vm.memory_init(&gm, kvm_context.max_memslots(), false).is_ok());
 
         // Set the maximum number of memory slots to 1 in KvmContext to check the error
         // path of memory_init. Create 2 non-overlapping memory slots.
@@ -1575,7 +1620,7 @@ mod tests {
             (GuestAddress(0x1001), 0x2000),
         ])
         .unwrap();
-        assert!(vm.memory_init(&gm, kvm_context.max_memslots()).is_err());
+        assert!(vm.memory_init(&gm, kvm_context.max_memslots(), false).is_err());
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -1656,7 +1701,7 @@ mod tests {
         let kvm = KvmContext::new().unwrap();
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
         let mut vm = Vm::new(kvm.fd()).expect("new vm failed");
-        assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
+        assert!(vm.memory_init(&gm, kvm.max_memslots(), false).is_ok());
 
         // Try it for when vcpu id is 0.
         let mut vcpu = Vcpu::new_aarch64(
