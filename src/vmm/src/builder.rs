@@ -765,6 +765,8 @@ pub fn build_microvm(
         mmio_device_manager,
         #[cfg(target_arch = "x86_64")]
         pio_device_manager,
+        #[cfg(feature = "tee")]
+        guest_memfd_vec: guest_memfd,
     };
 
     #[cfg(not(feature = "tee"))]
