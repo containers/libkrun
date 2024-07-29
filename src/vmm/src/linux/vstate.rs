@@ -45,6 +45,12 @@ use kvm_bindings::{
     Msrs, KVM_CLOCK_TSC_STABLE, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
     KVM_MAX_CPUID_ENTRIES, KVM_PIT_SPEAKER_DUMMY,
 };
+#[cfg(feature = "tee")]
+use kvm_bindings::{
+    kvm_create_guest_memfd, kvm_memory_attributes, kvm_userspace_memory_region2, KVM_API_VERSION,
+    KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_MEM_GUEST_MEMFD,
+};
+#[cfg(not(feature = "tee"))]
 use kvm_bindings::{kvm_userspace_memory_region, KVM_API_VERSION};
 use kvm_ioctls::*;
 use utils::eventfd::EventFd;
@@ -112,6 +118,12 @@ pub enum Error {
     SetUserMemoryRegion(kvm_ioctls::Error),
     /// Error creating memory map for SHM region.
     ShmMmap(io::Error),
+    #[cfg(feature = "tee")]
+    /// Cannot set the memory regions.
+    SetUserMemoryRegion2(kvm_ioctls::Error),
+    #[cfg(feature = "tee")]
+    /// Cannot create guest memfd.
+    CreateGuestMemfd(kvm_ioctls::Error),
     #[cfg(feature = "amd-sev")]
     /// Error initializing the Secure Virtualization Backend (SEV).
     SevSecVirtInit(SevError),
@@ -272,6 +284,10 @@ impl Display for Error {
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
             ShmMmap(e) => write!(f, "Error creating memory map for SHM region: {e}"),
+            #[cfg(feature = "tee")]
+            SetUserMemoryRegion2(e) => write!(f, "Cannot set the memory regions: {e}"),
+            #[cfg(feature = "tee")]
+            CreateGuestMemfd(e) => write!(f, "Cannot create guest memfd: {e}"),
             #[cfg(feature = "tee")]
             SevSecVirtInit(e) => {
                 write!(
@@ -553,6 +569,7 @@ impl Vm {
     pub fn memory_init(
         &mut self,
         guest_mem: &GuestMemoryMmap,
+        #[cfg(feature = "tee")] guest_memfd: &mut Vec<RawFd>,
         kvm_max_memslots: usize,
     ) -> Result<()> {
         if guest_mem.num_regions() > kvm_max_memslots {
@@ -561,20 +578,69 @@ impl Vm {
         for region in guest_mem.iter() {
             // It's safe to unwrap because the guest address is valid.
             let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
-            debug!("Guest memory starts at {:x?}", host_addr);
-            let memory_region = kvm_userspace_memory_region {
-                slot: self.next_mem_slot,
-                guest_phys_addr: region.start_addr().raw_value(),
-                memory_size: region.len(),
-                userspace_addr: host_addr as u64,
-                flags: 0,
-            };
-            // Safe because we mapped the memory region, we made sure that the regions
-            // are not overlapping.
-            unsafe {
-                self.fd
-                    .set_user_memory_region(memory_region)
-                    .map_err(Error::SetUserMemoryRegion)?;
+            info!("Guest memory starts at {:x?}", host_addr);
+
+            #[cfg(feature = "tee")]
+            {
+                let gmem = kvm_create_guest_memfd {
+                    size: region.len(),
+                    flags: 0,
+                    reserved: [0; 6],
+                };
+
+                let id: RawFd = self
+                    .fd
+                    .create_guest_memfd(gmem)
+                    .map_err(Error::CreateGuestMemfd)?;
+
+                guest_memfd.push(id);
+
+                let memory_region = kvm_userspace_memory_region2 {
+                    slot: self.next_mem_slot as u32,
+                    flags: KVM_MEM_GUEST_MEMFD,
+                    guest_phys_addr: region.start_addr().raw_value(),
+                    memory_size: region.len(),
+                    userspace_addr: host_addr as u64,
+                    guest_memfd_offset: 0,
+                    guest_memfd: id as u32,
+                    pad1: 0,
+                    pad2: [0; 14],
+                };
+
+                // Safe because we mapped the memory region, we made sure that the regions
+                // are not overlapping.
+                unsafe {
+                    self.fd
+                        .set_user_memory_region2(memory_region)
+                        .map_err(Error::SetUserMemoryRegion2)?;
+                };
+
+                // set private by default when using guestmemfd
+                // this imitates QEMU behavior
+                let attr = kvm_memory_attributes {
+                    address: region.start_addr().raw_value(),
+                    size: region.len(),
+                    attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE as u64,
+                    flags: 0,
+                };
+                self.fd.set_memory_attributes(attr).unwrap();
+            }
+            #[cfg(not(feature = "tee"))]
+            {
+                let memory_region = kvm_userspace_memory_region {
+                    slot: self.next_mem_slot as u32,
+                    guest_phys_addr: region.start_addr().raw_value(),
+                    memory_size: region.len(),
+                    userspace_addr: host_addr as u64,
+                    flags: 0,
+                };
+                // Safe because we mapped the memory region, we made sure that the regions
+                // are not overlapping.
+                unsafe {
+                    self.fd
+                        .set_user_memory_region(memory_region)
+                        .map_err(Error::SetUserMemoryRegion)?;
+                };
             };
             self.next_mem_slot += 1;
         }
