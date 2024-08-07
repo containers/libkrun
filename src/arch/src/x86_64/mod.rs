@@ -17,8 +17,7 @@ pub mod msr;
 /// Logic for configuring x86_64 registers.
 pub mod regs;
 
-use crate::ArchMemoryInfo;
-use crate::InitrdConfig;
+use crate::{round_up, ArchMemoryInfo, InitrdConfig};
 use arch_gen::x86::bootparam::{boot_params, E820_RAM};
 use vm_memory::Bytes;
 use vm_memory::{
@@ -60,8 +59,6 @@ const FIRST_ADDR_PAST_32BITS: u64 = 1 << 32;
 const MEM_32BIT_GAP_SIZE: u64 = 768 << 20;
 /// The start of the memory area reserved for MMIO devices.
 pub const MMIO_MEM_START: u64 = FIRST_ADDR_PAST_32BITS - MEM_32BIT_GAP_SIZE;
-/// The size of the MMIO shared memory area used by virtio-fs DAX.
-pub const MMIO_SHM_SIZE: u64 = 1 << 33;
 
 /// Returns a Vec of the valid memory addresses.
 /// These should be used to configure the GuestMemoryMmap structure for the platform.
@@ -73,6 +70,9 @@ pub fn arch_memory_regions(
     kernel_load_addr: u64,
     kernel_size: usize,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
+    let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
+
+    let size = round_up(size, page_size);
     if size < (kernel_load_addr + kernel_size as u64) as usize {
         panic!("Kernel doesn't fit in RAM");
     }
@@ -90,7 +90,6 @@ pub fn arch_memory_regions(
                 vec![
                     (GuestAddress(0), kernel_load_addr as usize),
                     (GuestAddress(kernel_load_addr + kernel_size as u64), size),
-                    (GuestAddress(FIRST_ADDR_PAST_32BITS), MMIO_SHM_SIZE as usize),
                 ],
             )
         }
@@ -108,7 +107,6 @@ pub fn arch_memory_regions(
                         (MMIO_MEM_START - (kernel_load_addr + kernel_size as u64)) as usize,
                     ),
                     (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
-                    (GuestAddress(shm_start_addr), MMIO_SHM_SIZE as usize),
                 ],
             )
         }
@@ -116,7 +114,7 @@ pub fn arch_memory_regions(
     let info = ArchMemoryInfo {
         ram_last_addr,
         shm_start_addr,
-        shm_size: MMIO_SHM_SIZE,
+        page_size,
     };
     (info, regions)
 }
@@ -132,6 +130,9 @@ pub fn arch_memory_regions(
     kernel_load_addr: u64,
     kernel_size: usize,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
+    let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
+
+    let size = round_up(size, page_size);
     if size < (kernel_load_addr + kernel_size as u64) as usize {
         panic!("Kernel doesn't fit in RAM");
     }
@@ -170,7 +171,7 @@ pub fn arch_memory_regions(
     let info = ArchMemoryInfo {
         ram_last_addr,
         shm_start_addr,
-        shm_size: 0,
+        page_size,
     };
     (info, regions)
 }
@@ -319,7 +320,7 @@ mod tests {
     #[test]
     fn regions_lt_4gb() {
         let (_info, regions) = arch_memory_regions(1usize << 29, KERNEL_LOAD_ADDR, KERNEL_SIZE);
-        assert_eq!(3, regions.len());
+        assert_eq!(2, regions.len());
         assert_eq!(GuestAddress(0), regions[0].0);
         assert_eq!(KERNEL_LOAD_ADDR as usize, regions[0].1);
         assert_eq!(
@@ -333,7 +334,7 @@ mod tests {
     fn regions_gt_4gb() {
         let (_info, regions) =
             arch_memory_regions((1usize << 32) + 0x8000, KERNEL_LOAD_ADDR, KERNEL_SIZE);
-        assert_eq!(4, regions.len());
+        assert_eq!(3, regions.len());
         assert_eq!(GuestAddress(0), regions[0].0);
         assert_eq!(KERNEL_LOAD_ADDR as usize, regions[0].1);
         assert_eq!(

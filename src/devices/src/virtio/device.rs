@@ -21,6 +21,7 @@ pub enum DeviceState {
 
 #[derive(Clone)]
 pub struct VirtioShmRegion {
+    #[cfg(target_os = "linux")]
     pub host_addr: u64,
     pub guest_addr: u64,
     pub size: usize,

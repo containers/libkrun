@@ -137,11 +137,19 @@ impl<F: FileSystem + Sync> Server<F> {
             x if x == Opcode::CopyFileRange as u32 => self.copyfilerange(in_header, r, w),
             x if (x == Opcode::SetupMapping as u32) && shm_region.is_some() => {
                 let shm = shm_region.unwrap();
-                self.setupmapping(in_header, r, w, shm.host_addr, shm.size as u64)
+                #[cfg(target_os = "linux")]
+                let shm_base_addr = shm.host_addr;
+                #[cfg(target_os = "macos")]
+                let shm_base_addr = shm.guest_addr;
+                self.setupmapping(in_header, r, w, shm_base_addr, shm.size as u64)
             }
             x if (x == Opcode::RemoveMapping as u32) && shm_region.is_some() => {
                 let shm = shm_region.unwrap();
-                self.removemapping(in_header, r, w, shm.host_addr, shm.size as u64)
+                #[cfg(target_os = "linux")]
+                let shm_base_addr = shm.host_addr;
+                #[cfg(target_os = "macos")]
+                let shm_base_addr = shm.guest_addr;
+                self.removemapping(in_header, r, w, shm_base_addr, shm.size as u64)
             }
             _ => reply_error(
                 linux_error(io::Error::from_raw_os_error(libc::ENOSYS)),

@@ -17,10 +17,11 @@ use std::time::Duration;
 use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 
-use arch;
 use arch::aarch64::gic::GICDevice;
+use arch::{self, ShmRegion};
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use devices::legacy::{Gic, VcpuList};
+use devices::virtio::VirtioShmRegion;
 use hvf::{HvfVcpu, HvfVm, VcpuExit};
 use utils::eventfd::EventFd;
 use vm_memory::{
@@ -149,6 +150,17 @@ impl Vm {
     #[allow(clippy::borrowed_box)]
     pub fn get_irqchip(&self) -> &Box<dyn GICDevice> {
         self.irqchip_handle.as_ref().unwrap()
+    }
+
+    pub fn add_shm_region(&mut self, region: ShmRegion) -> Result<VirtioShmRegion> {
+        // While on Linux we create a large mmap for the ShmRegion, register it with KVM
+        // and then add submapping on top of it, on macOS we need to map and register
+        // each SHM window independently. As a consequence, we don't need to mmap and
+        // register the whole SHM region.
+        Ok(VirtioShmRegion {
+            guest_addr: region.guest_addr,
+            size: region.size,
+        })
     }
 
     pub fn add_mapping(
