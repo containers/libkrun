@@ -8,6 +8,9 @@
 /// Legacy Device Manager.
 pub mod legacy;
 
+/// Device Shared Memory Region Manager.
+pub mod shm;
+
 /// Memory Mapped I/O Manager.
 #[cfg(target_os = "linux")]
 pub mod kvm;

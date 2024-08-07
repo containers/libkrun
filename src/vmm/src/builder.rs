@@ -18,13 +18,12 @@ use super::{Error, Vmm};
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
+use crate::resources::VmResources;
 #[cfg(target_os = "macos")]
 use devices::legacy::VcpuList;
 use devices::legacy::{Gic, Serial};
 #[cfg(feature = "net")]
 use devices::virtio::Net;
-#[cfg(not(feature = "tee"))]
-use devices::virtio::VirtioShmRegion;
 use devices::virtio::{port_io, MmioTransport, PortDescription, Vsock};
 #[cfg(target_os = "macos")]
 use hvf::MemoryMapping;
@@ -45,8 +44,6 @@ use crate::vmm_config::block::BlockBuilder;
 use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
 #[cfg(not(feature = "tee"))]
 use crate::vmm_config::fs::FsBuilder;
-#[cfg(feature = "tee")]
-use crate::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
 #[cfg(target_os = "linux")]
 use crate::vstate::KvmContext;
 #[cfg(all(target_os = "linux", feature = "tee"))]
@@ -55,6 +52,9 @@ use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
 use arch::ArchMemoryInfo;
 #[cfg(feature = "tee")]
 use arch::InitrdConfig;
+use device_manager::shm::ShmManager;
+#[cfg(not(feature = "tee"))]
+use devices::virtio::VirtioShmRegion;
 #[cfg(feature = "tee")]
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
 use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
@@ -63,6 +63,8 @@ use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
 #[cfg(not(feature = "efi"))]
 use vm_memory::mmap::MmapRegion;
+#[cfg(not(feature = "tee"))]
+use vm_memory::Address;
 #[cfg(any(target_arch = "aarch64", feature = "tee"))]
 use vm_memory::Bytes;
 #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
@@ -130,7 +132,12 @@ pub enum StartMicrovmError {
     SecureVirtAttest(VstateError),
     /// Cannot initialize the Secure Virtualization backend.
     SecureVirtPrepare(VstateError),
-
+    /// Error configuring an SHM region.
+    ShmConfig(device_manager::shm::Error),
+    /// Error creating an SHM region.
+    ShmCreate(device_manager::shm::Error),
+    /// Error obtaining the host address of an SHM region.
+    ShmHostAddr(vm_memory::GuestMemoryError),
     /// The TEE specified is not supported.
     InvalidTee,
 }
@@ -294,6 +301,27 @@ impl Display for StartMicrovmError {
                     "Cannot initialize the Secure Virtualization backend. {err_msg}"
                 )
             }
+            ShmHostAddr(ref err) => {
+                let mut err_msg = format!("{:?}", err);
+                err_msg = err_msg.replace('\"', "");
+
+                write!(
+                    f,
+                    "Error obtaining the host address of an SHM region. {err_msg}"
+                )
+            }
+            ShmConfig(ref err) => {
+                let mut err_msg = format!("{:?}", err);
+                err_msg = err_msg.replace('\"', "");
+
+                write!(f, "Error while configuring an SHM region. {err_msg}")
+            }
+            ShmCreate(ref err) => {
+                let mut err_msg = format!("{:?}", err);
+                err_msg = err_msg.replace('\"', "");
+
+                write!(f, "Error while creating an SHM region. {err_msg}")
+            }
             InvalidTee => {
                 write!(f, "TEE selected is not currently supported")
             }
@@ -310,7 +338,7 @@ enum Payload {
     #[cfg(feature = "efi")]
     Efi,
     #[cfg(feature = "tee")]
-    Tee(MmapRegion, u64, usize, &QbootBundle, &InitrdBundle),
+    Tee(MmapRegion, u64, usize, u64, usize, u64, usize),
 }
 
 /// Builds and starts a microVM based on the current Firecracker VmResources configuration.
@@ -351,8 +379,10 @@ pub fn build_microvm(
         kernel_region,
         kernel_bundle.guest_addr,
         kernel_bundle.size,
-        qboot_bundle,
-        initrd_bundle,
+        qboot_bundle.host_addr,
+        qboot_bundle.size,
+        initrd_bundle.host_addr,
+        initrd_bundle.size,
     );
     #[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "tee")))]
     let payload = Payload::KernelMmap(kernel_region, kernel_bundle.guest_addr, kernel_bundle.size);
@@ -361,11 +391,15 @@ pub fn build_microvm(
     #[cfg(all(target_arch = "aarch64", feature = "efi"))]
     let payload = Payload::Efi;
 
-    let (guest_memory, arch_memory_info) = create_guest_memory(
+    let (guest_memory, arch_memory_info, mut _shm_manager) = create_guest_memory(
         vm_resources
             .vm_config()
             .mem_size_mib
             .ok_or(StartMicrovmError::MissingMemSizeConfig)?,
+        #[cfg(feature = "tee")]
+        None,
+        #[cfg(not(feature = "tee"))]
+        Some(vm_resources),
         payload,
     )?;
     let vcpu_config = vm_resources.vcpu_config();
@@ -576,15 +610,6 @@ pub fn build_microvm(
         )?;
     }
 
-    #[cfg(not(feature = "tee"))]
-    let _shm_region = Some(VirtioShmRegion {
-        host_addr: guest_memory
-            .get_host_address(GuestAddress(arch_memory_info.shm_start_addr))
-            .unwrap() as u64,
-        guest_addr: arch_memory_info.shm_start_addr,
-        size: arch_memory_info.shm_size as usize,
-    });
-
     let mut vmm = Vmm {
         guest_memory,
         arch_memory_info,
@@ -613,7 +638,7 @@ pub fn build_microvm(
         attach_gpu_device(
             &mut vmm,
             event_manager,
-            _shm_region,
+            &mut _shm_manager,
             intc.clone(),
             virgl_flags,
             #[cfg(target_os = "macos")]
@@ -621,7 +646,7 @@ pub fn build_microvm(
         )?;
     }
     #[cfg(not(feature = "tee"))]
-    attach_fs_devices(&mut vmm, &vm_resources.fs, None, intc.clone())?;
+    attach_fs_devices(&mut vmm, &vm_resources.fs, &mut _shm_manager, intc.clone())?;
     #[cfg(feature = "blk")]
     attach_block_devices(&mut vmm, &vm_resources.block, intc.clone())?;
     if let Some(vsock) = vm_resources.vsock.get() {
@@ -729,7 +754,7 @@ fn load_payload(
             Ok(guest_mem)
         }
         #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
-        Payload::KernelMmap(kernel_region, kernel_load_addr, kernel_size) => guest_mem
+        Payload::KernelMmap(kernel_region, kernel_load_addr, _kernel_size) => guest_mem
             .insert_region(Arc::new(
                 GuestRegionMmap::new(kernel_region, GuestAddress(kernel_load_addr))
                     .map_err(StartMicrovmError::GuestMemoryMmap)?,
@@ -738,23 +763,29 @@ fn load_payload(
         #[cfg(test)]
         Payload::Empty => Ok(guest_mem),
         #[cfg(feature = "tee")]
-        Payload::Tee(kernel_region, kernel_load_addr, kernel_size, qboot_bundle, initrd_bundle) => {
+        Payload::Tee(
+            kernel_region,
+            kernel_load_addr,
+            kernel_size,
+            qboot_host_addr,
+            qboot_size,
+            initrd_host_addr,
+            initrd_size,
+        ) => {
             let kernel_data =
                 unsafe { std::slice::from_raw_parts(kernel_region.as_ptr(), kernel_size) };
             guest_mem
                 .write(kernel_data, GuestAddress(kernel_load_addr))
                 .unwrap();
 
-            let qboot_data = unsafe {
-                std::slice::from_raw_parts(qboot_bundle.host_addr as *mut u8, qboot_bundle.size)
-            };
+            let qboot_data =
+                unsafe { std::slice::from_raw_parts(qboot_host_addr as *mut u8, qboot_size) };
             guest_mem
                 .write(qboot_data, GuestAddress(arch::BIOS_START))
                 .unwrap();
 
-            let initrd_data = unsafe {
-                std::slice::from_raw_parts(initrd_bundle.host_addr as *mut u8, initrd_bundle.size)
-            };
+            let initrd_data =
+                unsafe { std::slice::from_raw_parts(initrd_host_addr as *mut u8, initrd_size) };
             guest_mem
                 .write(
                     initrd_data,
@@ -773,34 +804,57 @@ fn load_payload(
 
 fn create_guest_memory(
     mem_size: usize,
+    vm_resources: Option<&VmResources>,
     payload: Payload,
-) -> std::result::Result<(GuestMemoryMmap, ArchMemoryInfo), StartMicrovmError> {
+) -> std::result::Result<(GuestMemoryMmap, ArchMemoryInfo, ShmManager), StartMicrovmError> {
     let mem_size = mem_size << 20;
 
     #[cfg(target_arch = "x86_64")]
-    let (arch_mem_info, arch_mem_regions) = match payload {
+    let (arch_mem_info, mut arch_mem_regions) = match payload {
         #[cfg(not(feature = "tee"))]
-        Payload::KernelMmap(_kernel_region, kernel_load_addr, kernel_size) => {
-            arch::arch_memory_regions(mem_size, payload, kernel_size)
+        Payload::KernelMmap(ref _kernel_region, kernel_load_addr, kernel_size) => {
+            arch::arch_memory_regions(mem_size, kernel_load_addr, kernel_size)
         }
         #[cfg(feature = "tee")]
         Payload::Tee(
-            _kernel_region,
+            ref _kernel_region,
             kernel_load_addr,
             kernel_size,
-            _qboot_bundle,
-            _initrd_bundle,
-        ) => arch::arch_memory_regions(mem_size, payload, kernel_size),
+            _qboot_host_addr,
+            _qboot_size,
+            _initrd_host_addr,
+            _initrd_size,
+        ) => arch::arch_memory_regions(mem_size, kernel_load_addr, kernel_size),
+        #[cfg(test)]
+        Payload::Empty => arch::arch_memory_regions(mem_size, 0, 0),
     };
     #[cfg(target_arch = "aarch64")]
-    let (arch_mem_info, arch_mem_regions) = arch::arch_memory_regions(mem_size);
+    let (arch_mem_info, mut arch_mem_regions) = arch::arch_memory_regions(mem_size);
+
+    let mut shm_manager = ShmManager::new(&arch_mem_info);
+
+    if let Some(vm_resources) = vm_resources {
+        #[cfg(not(feature = "tee"))]
+        for (index, _fs) in vm_resources.fs.list.iter().enumerate() {
+            shm_manager
+                .create_fs_region(index, 1 << 29)
+                .map_err(StartMicrovmError::ShmCreate)?;
+        }
+        if vm_resources.gpu_virgl_flags.is_some() {
+            shm_manager
+                .create_gpu_region(1 << 33)
+                .map_err(StartMicrovmError::ShmCreate)?;
+        }
+
+        arch_mem_regions.extend(shm_manager.regions());
+    }
 
     let guest_mem = GuestMemoryMmap::from_ranges(&arch_mem_regions)
         .map_err(StartMicrovmError::GuestMemoryMmap)?;
 
     let guest_mem = load_payload(guest_mem, payload)?;
 
-    Ok((guest_mem, arch_mem_info))
+    Ok((guest_mem, arch_mem_info, shm_manager))
 }
 
 #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
@@ -1117,7 +1171,7 @@ fn attach_mmio_device(
 fn attach_fs_devices(
     vmm: &mut Vmm,
     fs_devs: &FsBuilder,
-    shm_region: Option<VirtioShmRegion>,
+    shm_manager: &mut ShmManager,
     intc: Option<Arc<Mutex<Gic>>>,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
@@ -1129,8 +1183,15 @@ fn attach_fs_devices(
             fs.lock().unwrap().set_intc(intc.clone());
         }
 
-        if let Some(ref shm) = shm_region {
-            fs.lock().unwrap().set_shm_region(shm.clone());
+        if let Some(shm_region) = shm_manager.fs_region(i) {
+            fs.lock().unwrap().set_shm_region(VirtioShmRegion {
+                host_addr: vmm
+                    .guest_memory
+                    .get_host_address(shm_region.guest_addr)
+                    .map_err(StartMicrovmError::ShmHostAddr)? as u64,
+                guest_addr: shm_region.guest_addr.raw_value(),
+                size: shm_region.size,
+            });
         }
 
         // The device mutex mustn't be locked here otherwise it will deadlock.
@@ -1385,7 +1446,7 @@ fn attach_rng_device(
 fn attach_gpu_device(
     vmm: &mut Vmm,
     event_manager: &mut EventManager,
-    shm_region: Option<VirtioShmRegion>,
+    shm_manager: &mut ShmManager,
     intc: Option<Arc<Mutex<Gic>>>,
     virgl_flags: u32,
     #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
@@ -1411,8 +1472,15 @@ fn attach_gpu_device(
         gpu.lock().unwrap().set_intc(intc);
     }
 
-    if let Some(ref shm) = shm_region {
-        gpu.lock().unwrap().set_shm_region(shm.clone());
+    if let Some(shm_region) = shm_manager.gpu_region() {
+        gpu.lock().unwrap().set_shm_region(VirtioShmRegion {
+            host_addr: vmm
+                .guest_memory
+                .get_host_address(shm_region.guest_addr)
+                .map_err(StartMicrovmError::ShmHostAddr)? as u64,
+            guest_addr: shm_region.guest_addr.raw_value(),
+            size: shm_region.size,
+        });
     }
 
     // The device mutex mustn't be locked here otherwise it will deadlock.
@@ -1449,7 +1517,7 @@ pub mod tests {
 
     fn default_guest_memory(
         mem_size_mib: usize,
-    ) -> std::result::Result<(GuestMemoryMmap, ArchMemoryInfo), StartMicrovmError> {
+    ) -> std::result::Result<(GuestMemoryMmap, ArchMemoryInfo, ShmManager), StartMicrovmError> {
         let kernel_guest_addr: u64 = 0x1000;
         let kernel_size: usize = 0x1000;
         let kernel_host_addr: u64 = 0x1000;
@@ -1460,6 +1528,7 @@ pub mod tests {
 
         create_guest_memory(
             mem_size_mib,
+            None,
             Payload::KernelMmap(kernel_region, kernel_guest_addr, kernel_size),
         )
     }
@@ -1469,7 +1538,7 @@ pub mod tests {
     fn test_create_vcpus_x86_64() {
         let vcpu_count = 2;
 
-        let (guest_memory, _arch_memory_info) = default_guest_memory(128).unwrap();
+        let (guest_memory, _arch_memory_info, _shm_manager) = default_guest_memory(128).unwrap();
         let mut vm = setup_vm(&guest_memory).unwrap();
         setup_interrupt_controller(&mut vm).unwrap();
         let vcpu_config = VcpuConfig {
@@ -1496,7 +1565,8 @@ pub mod tests {
     #[test]
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
     fn test_create_vcpus_aarch64() {
-        let (guest_memory, _arch_memory_info) = create_guest_memory(128, Payload::Empty).unwrap();
+        let (guest_memory, _arch_memory_info) =
+            create_guest_memory(128, None, Payload::Empty).unwrap();
         let vm = setup_vm(&guest_memory).unwrap();
         let vcpu_count = 2;
 
