@@ -52,9 +52,7 @@ use crate::terminal::term_set_canonical_mode;
 use crate::vstate::VcpuEvent;
 use crate::vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
 
-use arch::ArchMemoryInfo;
-use arch::DeviceType;
-use arch::InitrdConfig;
+use arch::{ArchMemoryInfo, DeviceType, InitrdConfig};
 #[cfg(target_os = "macos")]
 use crossbeam_channel::Sender;
 use devices::virtio::VmmExitObserver;

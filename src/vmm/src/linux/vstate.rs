@@ -34,7 +34,6 @@ use kbs_types::Tee;
 #[cfg(feature = "tee")]
 use crate::resources::TeeConfig;
 use crate::vmm_config::machine_config::CpuFeaturesTemplate;
-use arch;
 #[cfg(target_arch = "aarch64")]
 use arch::aarch64::gic::GICDevice;
 #[cfg(target_arch = "x86_64")]
@@ -111,6 +110,8 @@ pub enum Error {
     SetupGIC(arch::aarch64::gic::Error),
     /// Cannot set the memory regions.
     SetUserMemoryRegion(kvm_ioctls::Error),
+    /// Error creating memory map for SHM region.
+    ShmMmap(io::Error),
     #[cfg(feature = "amd-sev")]
     /// Error initializing the Secure Virtualization Backend (SEV).
     SevSecVirtInit(SevError),
@@ -270,6 +271,7 @@ impl Display for Error {
                 "Cannot set the local interruption due to bad configuration: {e:?}"
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
+            ShmMmap(e) => write!(f, "Error creating memory map for SHM region: {e}"),
             #[cfg(feature = "tee")]
             SevSecVirtInit(e) => {
                 write!(
@@ -453,6 +455,7 @@ impl KvmContext {
 /// A wrapper around creating and using a VM.
 pub struct Vm {
     fd: VmFd,
+    next_mem_slot: u32,
 
     // X86 specific fields.
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -492,6 +495,7 @@ impl Vm {
 
         Ok(Vm {
             fd: vm_fd,
+            next_mem_slot: 0,
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             supported_cpuid,
             #[cfg(target_arch = "x86_64")]
@@ -524,6 +528,7 @@ impl Vm {
 
         Ok(Vm {
             fd: vm_fd,
+            next_mem_slot: 0,
             supported_cpuid,
             supported_msrs,
             sev,
@@ -553,12 +558,12 @@ impl Vm {
         if guest_mem.num_regions() > kvm_max_memslots {
             return Err(Error::NotEnoughMemorySlots);
         }
-        for (index, region) in guest_mem.iter().enumerate() {
+        for region in guest_mem.iter() {
             // It's safe to unwrap because the guest address is valid.
             let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
-            info!("Guest memory starts at {:x?}", host_addr);
+            debug!("Guest memory starts at {:x?}", host_addr);
             let memory_region = kvm_userspace_memory_region {
-                slot: index as u32,
+                slot: self.next_mem_slot,
                 guest_phys_addr: region.start_addr().raw_value(),
                 memory_size: region.len(),
                 userspace_addr: host_addr as u64,
@@ -571,6 +576,7 @@ impl Vm {
                     .set_user_memory_region(memory_region)
                     .map_err(Error::SetUserMemoryRegion)?;
             };
+            self.next_mem_slot += 1;
         }
 
         #[cfg(target_arch = "x86_64")]
