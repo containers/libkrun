@@ -77,7 +77,7 @@ impl<F: FileSystem + Sync> Server<F> {
         &self,
         mut r: Reader,
         w: Writer,
-        shm_region: Option<&VirtioShmRegion>,
+        shm_region: &Option<VirtioShmRegion>,
     ) -> Result<usize> {
         let in_header: InHeader = r.read_obj().map_err(Error::DecodeMessage)?;
 
@@ -136,7 +136,7 @@ impl<F: FileSystem + Sync> Server<F> {
             x if x == Opcode::Lseek as u32 => self.lseek(in_header, r, w),
             x if x == Opcode::CopyFileRange as u32 => self.copyfilerange(in_header, r, w),
             x if (x == Opcode::SetupMapping as u32) && shm_region.is_some() => {
-                let shm = shm_region.unwrap();
+                let shm = shm_region.as_ref().unwrap();
                 #[cfg(target_os = "linux")]
                 let shm_base_addr = shm.host_addr;
                 #[cfg(target_os = "macos")]
@@ -144,7 +144,7 @@ impl<F: FileSystem + Sync> Server<F> {
                 self.setupmapping(in_header, r, w, shm_base_addr, shm.size as u64)
             }
             x if (x == Opcode::RemoveMapping as u32) && shm_region.is_some() => {
-                let shm = shm_region.unwrap();
+                let shm = shm_region.as_ref().unwrap();
                 #[cfg(target_os = "linux")]
                 let shm_base_addr = shm.host_addr;
                 #[cfg(target_os = "macos")]

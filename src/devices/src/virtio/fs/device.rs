@@ -199,6 +199,7 @@ impl VirtioDevice for Fs {
             self.intc.clone(),
             self.irq_line,
             mem.clone(),
+            self.shm_region.clone(),
             self.passthrough_cfg.clone(),
             self.worker_stopfd.try_clone().unwrap(),
         );
