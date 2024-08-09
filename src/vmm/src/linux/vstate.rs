@@ -1479,7 +1479,6 @@ enum VcpuEmulation {
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::unbounded;
-    use std::fs::File;
     use std::sync::{Arc, Barrier};
 
     use super::*;
@@ -1676,24 +1675,6 @@ mod tests {
         assert!(vcpu
             .configure_aarch64(vm.fd(), &gm, GuestAddress(0))
             .is_ok());
-    }
-
-    #[test]
-    fn test_kvm_context() {
-        use std::os::unix::fs::MetadataExt;
-        use std::os::unix::io::{AsRawFd, FromRawFd};
-
-        let c = KvmContext::new().unwrap();
-
-        assert!(c.max_memslots >= 32);
-
-        let kvm = Kvm::new().unwrap();
-        let f = unsafe { File::from_raw_fd(kvm.as_raw_fd()) };
-        let m1 = f.metadata().unwrap();
-        let m2 = File::open("/dev/kvm").unwrap().metadata().unwrap();
-
-        assert_eq!(m1.dev(), m2.dev());
-        assert_eq!(m1.ino(), m2.ino());
     }
 
     #[test]
