@@ -14,6 +14,8 @@ use std::fs::File;
 use std::io;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
+#[cfg(feature = "cca")]
+use std::os::fd::RawFd;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -75,6 +77,15 @@ use vm_memory::Bytes;
 #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
 use vm_memory::GuestRegionMmap;
 use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap};
+
+#[cfg(feature = "cca")]
+use kvm_bindings::KVM_ARM_VCPU_REC;
+
+#[cfg(feature = "cca")]
+use vm_memory::Address;
+
+#[cfg(feature = "cca")]
+use cca::Algo;
 
 #[cfg(feature = "efi")]
 static EDK2_BINARY: &[u8] = include_bytes!("../../../edk2/KRUN_EFI.silent.fd");
@@ -406,6 +417,8 @@ pub fn build_microvm(
         None,
         #[cfg(not(feature = "tee"))]
         Some(vm_resources),
+        #[cfg(feature = "cca")]
+        Some(vm_resources),
         payload,
     )?;
     let vcpu_config = vm_resources.vcpu_config();
@@ -418,9 +431,16 @@ pub fn build_microvm(
         Some(s) => kernel_cmdline.insert_str(s).unwrap(),
     };
 
+    #[cfg(feature = "cca")]
+    let mut guest_memfd: Vec<RawFd> = vec![];
+
     #[cfg(not(feature = "tee"))]
     #[allow(unused_mut)]
     let mut vm = setup_vm(&guest_memory)?;
+
+    #[cfg(feature = "cca")]
+    #[allow(unused_mut)]
+    let mut vm = setup_vm(&guest_memory, &mut guest_memfd)?;
 
     #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     let (kvm, mut vm) = {
@@ -484,6 +504,45 @@ pub fn build_microvm(
                     .get_host_address(GuestAddress(arch::x86_64::layout::ZERO_PAGE_START))
                     .unwrap() as u64,
                 size: 4096,
+            },
+        ];
+
+        m
+    };
+
+    #[cfg(feature = "cca")]
+    let measured_regions = {
+        let m = vec![
+            MeasuredRegion {
+                guest_addr: kernel_bundle.guest_addr,
+                // TODO: remove host_addr?
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(kernel_bundle.guest_addr))
+                    .unwrap() as u64,
+                size: kernel_bundle.size,
+                populate: true,
+            },
+            MeasuredRegion {
+                guest_addr: kernel_bundle.guest_addr + kernel_bundle.size as u64,
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(
+                        kernel_bundle.guest_addr + kernel_bundle.size as u64,
+                    ))
+                    .unwrap() as u64,
+                size: vm_resources.vm_config().mem_size_mib.unwrap() << 20 - kernel_bundle.size,
+                populate: false,
+            },
+            // The region used for the FDT must be populated. However, we only know the addr and the size after
+            // configure_system() but at that point guest_memory is already shared. For the moment, hardcore the
+            // fdt addr and size.
+            MeasuredRegion {
+                guest_addr: 0x2BFE00000,
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(0x2BFE00000))
+                    .unwrap() as u64,
+                // size must be page aligned
+                size: 0x1000,
+                populate: true,
             },
         ];
 
@@ -584,12 +643,14 @@ pub fn build_microvm(
         .map_err(StartMicrovmError::Internal)?;
 
         setup_interrupt_controller(&mut vm, vcpu_config.vcpu_count)?;
+        /*
+        This makes the kernel to block in parsing it, I do not know why
         attach_legacy_devices(
             &vm,
             &mut mmio_device_manager,
             &mut kernel_cmdline,
             serial_device,
-        )?;
+        )?; */
     }
 
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -684,7 +745,7 @@ pub fn build_microvm(
     if let Some(vsock) = vm_resources.vsock.get() {
         attach_unixsock_vsock_device(&mut vmm, vsock, event_manager, intc.clone())?;
         #[cfg(not(feature = "net"))]
-        vmm.kernel_cmdline.insert_str("tsi_hijack")?;
+        //vmm.kernel_cmdline.insert_str("tsi_hijack")?;
         #[cfg(feature = "net")]
         if vm_resources
             .net_builder
@@ -693,7 +754,7 @@ pub fn build_microvm(
             .is_empty()
         {
             // Only enable TSI if we don't have any network devices.
-            vmm.kernel_cmdline.insert_str("tsi_hijack")?;
+            //vmm.kernel_cmdline.insert_str("tsi_hijack")?;
         }
     }
     #[cfg(feature = "net")]
@@ -718,7 +779,7 @@ pub fn build_microvm(
         size: initrd_bundle.size,
     });
 
-    #[cfg(not(feature = "tee"))]
+    #[cfg(any(not(feature = "tee"), feature = "cca"))]
     let initrd_config = None;
 
     vmm.configure_system(
@@ -755,6 +816,55 @@ pub fn build_microvm(
         }
 
         println!("Starting TEE/microVM.");
+    }
+
+    // after this point guest memory and regs are not accesible anymore
+    #[cfg(feature = "cca")]
+    {
+        let _ = vmm
+            .kvm_vm()
+            .realm
+            .configure_measurement(&vmm.kvm_vm().fd.lock().unwrap(), Algo::AlgoSha256);
+
+        vmm.kvm_vm()
+            .realm
+            .create_realm_descriptor(&vmm.kvm_vm().fd.lock().unwrap())
+            .unwrap();
+
+        println!("Injecting and measuring memory regions. This may take a while.");
+
+        for region in measured_regions.iter() {
+            if region.populate {
+                vmm.kvm_vm()
+                    .realm
+                    .populate(
+                        &vmm.kvm_vm().fd.lock().unwrap(),
+                        region.guest_addr,
+                        region.size.try_into().unwrap(),
+                    )
+                    .unwrap();
+            } else {
+                vmm.kvm_vm()
+                    .realm
+                    .initiate(
+                        &vmm.kvm_vm().fd.lock().unwrap(),
+                        region.guest_addr,
+                        region.size.try_into().unwrap(),
+                    )
+                    .unwrap();
+            }
+        }
+
+        let feature = KVM_ARM_VCPU_REC as i32;
+
+        for vcpu in vcpus.iter() {
+            vcpu.fd.vcpu_finalize(&feature).unwrap();
+        }
+
+        vmm.kvm_vm()
+            .realm
+            .activate(&vmm.kvm_vm().fd.lock().unwrap())
+            .unwrap();
     }
 
     vmm.start_vcpus(vcpus)
@@ -919,6 +1029,30 @@ pub(crate) fn setup_vm(
         .map_err(StartMicrovmError::Internal)?;
     Ok(vm)
 }
+
+#[cfg(all(target_os = "linux", feature = "tee", target_arch = "aarch64"))]
+pub(crate) fn setup_vm(
+    guest_memory: &GuestMemoryMmap,
+    guest_memfd: &mut Vec<RawFd>,
+) -> std::result::Result<Vm, StartMicrovmError> {
+    let kvm: KvmContext = KvmContext::new()
+        .map_err(Error::KvmContext)
+        .map_err(StartMicrovmError::Internal)?;
+
+    // calculate max_addr for max_ipa
+    let mut vm = Vm::new(
+        kvm.fd(),
+        (guest_memory.last_addr().raw_value() * 2) as usize,
+    )
+    .map_err(Error::Vm)
+    .map_err(StartMicrovmError::Internal)?;
+
+    vm.memory_init(guest_memory, guest_memfd, kvm.max_memslots())
+        .map_err(Error::Vm)
+        .map_err(StartMicrovmError::Internal)?;
+    Ok(vm)
+}
+
 #[cfg(all(target_os = "linux", feature = "tee", target_arch = "x86_64"))]
 pub(crate) fn setup_vm(
     kvm: &KvmContext,
@@ -1117,7 +1251,7 @@ fn create_vcpus_aarch64(
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
     for cpu_index in 0..vcpu_config.vcpu_count {
-        let mut vcpu = Vcpu::new_aarch64(
+        let mut vcpu: Vcpu = Vcpu::new_aarch64(
             cpu_index,
             &vm.fd.lock().unwrap(),
             exit_evt.try_clone().map_err(Error::EventFd)?,

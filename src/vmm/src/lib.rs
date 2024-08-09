@@ -39,6 +39,8 @@ use macos::vstate;
 
 use std::fmt::{Display, Formatter};
 use std::io;
+#[cfg(feature = "cca")]
+use std::os::fd::RawFd;
 use std::os::unix::io::AsRawFd;
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "linux")]

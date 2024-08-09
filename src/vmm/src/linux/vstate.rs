@@ -8,6 +8,8 @@
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use libc::{c_int, c_void, siginfo_t};
 use std::cell::Cell;
+#[cfg(feature = "cca")]
+use std::cmp::max;
 use std::fmt::{Display, Formatter};
 use std::io;
 
@@ -56,6 +58,11 @@ use kvm_bindings::{
     kvm_create_guest_memfd, kvm_memory_attributes, kvm_userspace_memory_region2, KVM_API_VERSION,
     KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_MEMORY_EXIT_FLAG_PRIVATE, KVM_MEM_GUEST_MEMFD, KVM_EXIT_MEMORY_FAULT
 };
+
+#[cfg(feature = "cca")]
+use kvm_bindings::{
+    KVM_VM_TYPE_ARM_IPA_SIZE_MASK, KVM_VM_TYPE_ARM_REALM};
+
 #[cfg(not(feature = "tee"))]
 use kvm_bindings::{kvm_userspace_memory_region, KVM_API_VERSION};
 use kvm_ioctls::*;
@@ -71,6 +78,9 @@ use sev::launch::sev as sev_launch;
 
 #[cfg(feature = "amd-sev")]
 use sev::launch::snp;
+
+#[cfg(feature = "cca")]
+use cca::Realm;
 
 /// Signal number (SIGRTMIN) used to kick Vcpus.
 pub(crate) const VCPU_RTSIG_OFFSET: i32 = 0;
@@ -423,6 +433,8 @@ pub struct MeasuredRegion {
     pub guest_addr: u64,
     pub host_addr: u64,
     pub size: usize,
+    #[cfg(feature = "cca")]
+    pub populate: bool,
 }
 
 /// Describes a KVM context that gets attached to the microVM.
@@ -498,6 +510,9 @@ pub struct Vm {
 
     #[cfg(feature = "amd-sev")]
     pub tee: Tee,
+
+    #[cfg(feature = "cca")]
+    pub realm: Realm,
 }
 
 impl Vm {
@@ -524,6 +539,27 @@ impl Vm {
             supported_msrs,
             #[cfg(target_arch = "aarch64")]
             irqchip_handle: None,
+        })
+    }
+
+    #[cfg(feature = "cca")]
+    pub fn new(kvm: &Kvm, max_ipa: usize) -> Result<Self> {
+        //create fd for interacting with kvm-vm specific functions
+        let ipa_bits = max(64u32 - max_ipa.leading_zeros() - 1, 32) + 1;
+        let vm_fd = kvm
+            .create_vm_with_type(
+                (KVM_VM_TYPE_ARM_REALM | (ipa_bits & KVM_VM_TYPE_ARM_IPA_SIZE_MASK)).into(),
+            )
+            .map_err(Error::VmFd)?;
+
+        let realm = Realm::new();
+
+        Ok(Vm {
+            next_mem_slot: 0,
+            fd: Arc::new(Mutex::new(vm_fd)),
+            #[cfg(target_arch = "aarch64")]
+            irqchip_handle: None,
+            realm,
         })
     }
 
@@ -1123,6 +1159,11 @@ impl Vcpu {
             .map_err(Error::VcpuArmPreferredTarget)?;
         // We already checked that the capability is supported.
         kvi.features[0] |= 1 << kvm_bindings::KVM_ARM_VCPU_PSCI_0_2;
+
+        if cfg!(feature = "cca") {
+            kvi.features[0] |= 1 << kvm_bindings::KVM_ARM_VCPU_REC;
+        }
+
         // Non-boot cpus are powered off initially.
         if self.id > 0 {
             kvi.features[0] |= 1 << kvm_bindings::KVM_ARM_VCPU_POWER_OFF;
