@@ -27,6 +27,9 @@ use utils::eventfd::{EventFd, EFD_NONBLOCK};
 use virtio_bindings::{
     virtio_blk::*, virtio_config::VIRTIO_F_VERSION_1, virtio_ring::VIRTIO_RING_F_EVENT_IDX,
 };
+#[cfg(feature = "cca")]
+use virtio_bindings::virtio_config::VIRTIO_F_ACCESS_PLATFORM;
+
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::worker::BlockWorker;
@@ -240,10 +243,19 @@ impl Block {
         let disk_properties =
             DiskProperties::new(Arc::clone(&disk_image), disk_image_id.clone(), cache_type)?;
 
-        let mut avail_features = (1u64 << VIRTIO_F_VERSION_1)
+
+        let mut avail_features = if cfg!(feature = "cca") {
+            (1u64 << VIRTIO_F_VERSION_1)
             | (1u64 << VIRTIO_BLK_F_FLUSH)
             | (1u64 << VIRTIO_BLK_F_SEG_MAX)
-            | (1u64 << VIRTIO_RING_F_EVENT_IDX);
+            | (1u64 << VIRTIO_RING_F_EVENT_IDX)
+            | (1 << VIRTIO_F_ACCESS_PLATFORM as u64)
+        } else {
+            (1u64 << VIRTIO_F_VERSION_1)
+            | (1u64 << VIRTIO_BLK_F_FLUSH)
+            | (1u64 << VIRTIO_BLK_F_SEG_MAX)
+            | (1u64 << VIRTIO_RING_F_EVENT_IDX)
+        };
 
         if is_disk_read_only {
             avail_features |= 1u64 << VIRTIO_BLK_F_RO;

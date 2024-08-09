@@ -85,8 +85,10 @@ pub struct KrunfwBindings {
         unsafe extern "C" fn(*mut u64, *mut u64, *mut size_t) -> *mut c_char,
     >,
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     get_initrd: libloading::Symbol<'static, unsafe extern "C" fn(*mut size_t) -> *mut c_char>,
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     get_qboot: libloading::Symbol<'static, unsafe extern "C" fn(*mut size_t) -> *mut c_char>,
 }
 
@@ -101,8 +103,10 @@ impl KrunfwBindings {
             KrunfwBindings {
                 get_kernel: krunfw.get(b"krunfw_get_kernel")?,
                 #[cfg(feature = "tee")]
+                #[cfg(target_arch = "x86_64")]
                 get_initrd: krunfw.get(b"krunfw_get_initrd")?,
                 #[cfg(feature = "tee")]
+                #[cfg(target_arch = "x86_64")]
                 get_qboot: krunfw.get(b"krunfw_get_qboot")?,
             }
         })
@@ -255,6 +259,7 @@ impl ContextConfig {
     }
 
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     fn get_tee_config_file(&self) -> Option<PathBuf> {
         self.tee_config_file.clone()
     }
@@ -1591,6 +1596,7 @@ unsafe fn load_krunfw_payload(
     vmr.set_kernel_bundle(kernel_bundle).unwrap();
 
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     {
         let mut qboot_size: usize = 0;
         let qboot_host_addr = unsafe { (krunfw.get_qboot)(&mut qboot_size as *mut usize) };
@@ -1738,6 +1744,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
      * fail.
      */
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     if let Some(tee_config) = ctx_cfg.get_tee_config_file() {
         if let Err(e) = ctx_cfg.vmr.set_tee_config(tee_config) {
             error!("Error setting up TEE config: {e:?}");
@@ -1848,6 +1855,9 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     }
 
     #[cfg(feature = "amd-sev")]
+    vmm::worker::start_worker_thread(_vmm.clone(), _receiver.clone()).unwrap();
+
+    #[cfg(feature = "cca")]
     vmm::worker::start_worker_thread(_vmm.clone(), _receiver.clone()).unwrap();
 
     loop {

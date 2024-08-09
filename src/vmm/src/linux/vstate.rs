@@ -8,6 +8,8 @@
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use libc::{c_int, c_void, siginfo_t};
 use std::cell::Cell;
+#[cfg(feature = "cca")]
+use std::cmp::max;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::ops::Range;
@@ -26,13 +28,17 @@ use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 use super::tee::amdsnp::{AmdSnp, Error as SnpError};
 
 #[cfg(feature = "tee")]
+#[cfg(target_arch = "x86_64")]
 use kbs_types::Tee;
 
 #[cfg(feature = "tee")]
+#[cfg(target_arch = "x86_64")]
 use crate::resources::TeeConfig;
 use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 #[cfg(target_arch = "x86_64")]
 use cpuid::{c3, filter_cpuid, t2, VmSpec};
+#[cfg(feature = "tee")]
+use kvm_bindings::KVM_EXIT_MEMORY_FAULT;
 #[cfg(target_arch = "x86_64")]
 use kvm_bindings::{
     kvm_clock_data, kvm_debugregs, kvm_irqchip, kvm_lapic_state, kvm_mp_state, kvm_pit_state2,
@@ -49,6 +55,10 @@ use kvm_bindings::{kvm_enable_cap, KVM_CAP_EXIT_HYPERCALL, KVM_MEMORY_EXIT_FLAG_
 #[cfg(not(target_arch = "riscv64"))]
 use kvm_bindings::{kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE};
 use kvm_ioctls::{Cap::*, *};
+
+#[cfg(feature = "cca")]
+use kvm_bindings::{KVM_VM_TYPE_ARM_IPA_SIZE_MASK, KVM_VM_TYPE_ARM_REALM};
+
 use utils::eventfd::EventFd;
 use utils::signal::{register_signal_handler, sigrtmin, Killable};
 use utils::sm::StateMachine;
@@ -61,6 +71,9 @@ use vm_memory::{
 
 #[cfg(feature = "amd-sev")]
 use sev::launch::snp;
+
+#[cfg(feature = "cca")]
+use cca::Realm;
 
 /// Signal number (SIGRTMIN) used to kick Vcpus.
 pub(crate) const VCPU_RTSIG_OFFSET: i32 = 0;
@@ -280,18 +293,21 @@ impl Display for Error {
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
             ShmMmap(e) => write!(f, "Error creating memory map for SHM region: {e}"),
             #[cfg(feature = "tee")]
+            #[cfg(target_arch = "x86_64")]
             SnpSecVirtInit(e) => write!(
                 f,
                 "Error initializing the Secure Virtualization Backend (SEV): {e:?}"
             ),
 
             #[cfg(feature = "tee")]
+            #[cfg(target_arch = "x86_64")]
             SnpSecVirtPrepare(e) => write!(
                 f,
                 "Error preparing the VM for Secure Virtualization (SNP): {e:?}"
             ),
 
             #[cfg(feature = "tee")]
+            #[cfg(target_arch = "x86_64")]
             SnpSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SNP): {e:?}"),
 
             SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {e}"),
@@ -398,6 +414,8 @@ pub struct MeasuredRegion {
     pub guest_addr: u64,
     pub host_addr: u64,
     pub size: usize,
+    #[cfg(feature = "cca")]
+    pub populate: bool,
 }
 
 /// Describes a KVM context that gets attached to the microVM.
@@ -469,6 +487,9 @@ pub struct Vm {
     pub tee_config: Tee,
 
     pub guest_memfds: Vec<(Range<u64>, RawFd)>,
+
+    #[cfg(feature = "cca")]
+    pub realm: Realm,
 }
 
 impl Vm {
@@ -493,6 +514,26 @@ impl Vm {
             supported_cpuid,
             #[cfg(target_arch = "x86_64")]
             supported_msrs,
+            guest_memfds: Vec::new(),
+        })
+    }
+
+    #[cfg(feature = "cca")]
+    pub fn new(kvm: &Kvm, max_ipa: usize) -> Result<Self> {
+        //create fd for interacting with kvm-vm specific functions
+        let ipa_bits = max(64u32 - max_ipa.leading_zeros() - 1, 32) + 1;
+        let vm_fd = kvm
+            .create_vm_with_type(
+                (KVM_VM_TYPE_ARM_REALM | (ipa_bits & KVM_VM_TYPE_ARM_IPA_SIZE_MASK)).into(),
+            )
+            .map_err(Error::VmFd)?;
+
+        let realm = Realm::new();
+
+        Ok(Vm {
+            fd: vm_fd,
+            next_mem_slot: 0,
+            realm,
             guest_memfds: Vec::new(),
         })
     }
@@ -946,7 +987,12 @@ impl Vcpu {
     /// * `exit_evt` - An `EventFd` that will be written into when this vcpu exits.
     /// * `create_ts` - A timestamp used by the vcpu to calculate its lifetime.
     #[cfg(target_arch = "aarch64")]
-    pub fn new_aarch64(id: u8, vm_fd: &VmFd, exit_evt: EventFd) -> Result<Self> {
+    pub fn new_aarch64(
+        id: u8,
+        vm_fd: &VmFd,
+        exit_evt: EventFd,
+        #[cfg(feature = "tee")] pm_sender: Sender<WorkerMessage>,
+    ) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = unbounded();
         let (response_sender, response_receiver) = unbounded();
@@ -961,6 +1007,8 @@ impl Vcpu {
             event_sender: Some(event_sender),
             response_receiver: Some(response_receiver),
             response_sender,
+            #[cfg(feature = "tee")]
+            pm_sender,
         })
     }
 
@@ -1076,6 +1124,11 @@ impl Vcpu {
             .map_err(Error::VcpuArmPreferredTarget)?;
         // We already checked that the capability is supported.
         kvi.features[0] |= 1 << kvm_bindings::KVM_ARM_VCPU_PSCI_0_2;
+
+        if cfg!(feature = "cca") {
+            kvi.features[0] |= 1 << kvm_bindings::KVM_ARM_VCPU_REC;
+        }
+
         // Non-boot cpus are powered off initially.
         if self.id > 0 {
             kvi.features[0] |= 1 << kvm_bindings::KVM_ARM_VCPU_POWER_OFF;
@@ -1106,6 +1159,11 @@ impl Vcpu {
     ) -> Result<()> {
         arch::riscv64::regs::setup_regs(&self.fd, self.id, kernel_load_addr.raw_value(), guest_mem)
             .map_err(Error::REGSConfiguration)?;
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    pub fn finalize(&mut self, feature: i32) -> Result<()> {
+        let _ = self.fd.vcpu_finalize(&feature);
         Ok(())
     }
 
