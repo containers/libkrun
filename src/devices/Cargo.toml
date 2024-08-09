@@ -6,6 +6,7 @@ edition = "2021"
 
 [features]
 tee = []
+cca = [ "tee" ]
 amd-sev = ["blk", "tee"]
 net = []
 blk = []

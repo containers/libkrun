@@ -13,12 +13,17 @@ use super::super::{
 use super::{defs, defs::uapi};
 use crate::legacy::IrqChip;
 use crate::Error as DeviceError;
+use virtio_bindings::virtio_config::VIRTIO_F_ACCESS_PLATFORM;
 
 // Request queue.
 pub(crate) const REQ_INDEX: usize = 0;
 
 // Supported features.
-pub(crate) const AVAIL_FEATURES: u64 = 1 << uapi::VIRTIO_F_VERSION_1 as u64;
+pub(crate) const AVAIL_FEATURES: u64 = if cfg!(feature = "cca") {
+    1 << uapi::VIRTIO_F_VERSION_1 as u64 | 1 << VIRTIO_F_ACCESS_PLATFORM as u64
+} else {
+    1 << uapi::VIRTIO_F_VERSION_1 as u64
+};
 
 #[derive(Copy, Clone, Debug, Default)]
 #[repr(C, packed)]
