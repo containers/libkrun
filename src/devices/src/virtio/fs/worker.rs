@@ -1,3 +1,8 @@
+#[cfg(target_os = "macos")]
+use crossbeam_channel::Sender;
+#[cfg(target_os = "macos")]
+use hvf::MemoryMapping;
+
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -27,6 +32,8 @@ pub struct FsWorker {
     shm_region: Option<VirtioShmRegion>,
     server: Server<PassthroughFs>,
     stop_fd: EventFd,
+    #[cfg(target_os = "macos")]
+    map_sender: Option<Sender<MemoryMapping>>,
 }
 
 impl FsWorker {
@@ -42,6 +49,7 @@ impl FsWorker {
         shm_region: Option<VirtioShmRegion>,
         passthrough_cfg: passthrough::Config,
         stop_fd: EventFd,
+        #[cfg(target_os = "macos")] map_sender: Option<Sender<MemoryMapping>>,
     ) -> Self {
         Self {
             queues,
@@ -55,6 +63,8 @@ impl FsWorker {
             shm_region,
             server: Server::new(PassthroughFs::new(passthrough_cfg).unwrap()),
             stop_fd,
+            #[cfg(target_os = "macos")]
+            map_sender,
         }
     }
 
@@ -153,7 +163,13 @@ impl FsWorker {
                 .map_err(FsError::QueueWriter)
                 .unwrap();
 
-            if let Err(e) = self.server.handle_message(reader, writer, &self.shm_region) {
+            if let Err(e) = self.server.handle_message(
+                reader,
+                writer,
+                &self.shm_region,
+                #[cfg(target_os = "macos")]
+                &self.map_sender,
+            ) {
                 error!("error handling message: {:?}", e);
             }
 

@@ -1,9 +1,13 @@
+#[cfg(target_os = "macos")]
+use crossbeam_channel::Sender;
 use std::cmp;
 use std::io::Write;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+#[cfg(target_os = "macos")]
+use hvf::MemoryMapping;
 use utils::eventfd::{EventFd, EFD_NONBLOCK};
 use virtio_bindings::{virtio_config::VIRTIO_F_VERSION_1, virtio_ring::VIRTIO_RING_F_EVENT_IDX};
 use vm_memory::{ByteValued, GuestMemoryMmap};
@@ -49,6 +53,8 @@ pub struct Fs {
     passthrough_cfg: passthrough::Config,
     worker_thread: Option<JoinHandle<()>>,
     worker_stopfd: EventFd,
+    #[cfg(target_os = "macos")]
+    map_sender: Option<Sender<MemoryMapping>>,
 }
 
 impl Fs {
@@ -90,6 +96,8 @@ impl Fs {
             passthrough_cfg: fs_cfg,
             worker_thread: None,
             worker_stopfd: EventFd::new(EFD_NONBLOCK).map_err(FsError::EventFd)?,
+            #[cfg(target_os = "macos")]
+            map_sender: None,
         })
     }
 
@@ -111,6 +119,11 @@ impl Fs {
 
     pub fn set_shm_region(&mut self, shm_region: VirtioShmRegion) {
         self.shm_region = Some(shm_region);
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn set_map_sender(&mut self, map_sender: Sender<MemoryMapping>) {
+        self.map_sender = Some(map_sender);
     }
 }
 
@@ -202,6 +215,8 @@ impl VirtioDevice for Fs {
             self.shm_region.clone(),
             self.passthrough_cfg.clone(),
             self.worker_stopfd.try_clone().unwrap(),
+            #[cfg(target_os = "macos")]
+            self.map_sender.clone(),
         );
         self.worker_thread = Some(worker.run());
 
