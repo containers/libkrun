@@ -3,13 +3,17 @@
 
 //! Enables pre-boot setup, instantiation and booting of a Firecracker VMM.
 
+use crate::vstate::MemProperties;
+use cca::Algo;
 #[cfg(target_os = "macos")]
 use crossbeam_channel::{unbounded, Sender};
+use std::cmp::max;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
+use std::os::fd::RawFd;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -29,9 +33,6 @@ use devices::virtio::{port_io, MmioTransport, PortDescription, Vsock};
 #[cfg(target_os = "macos")]
 use hvf::MemoryMapping;
 
-#[cfg(feature = "tee")]
-use kbs_types::Tee;
-
 use crate::device_manager;
 #[cfg(feature = "tee")]
 use crate::resources::TeeConfig;
@@ -49,12 +50,14 @@ use crate::vmm_config::fs::FsBuilder;
 use crate::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
 #[cfg(target_os = "linux")]
 use crate::vstate::KvmContext;
-#[cfg(all(target_os = "linux", feature = "tee"))]
+#[cfg(all(target_os = "linux", any(feature = "tee", feature = "cca")))]
 use crate::vstate::MeasuredRegion;
 use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
 use arch::ArchMemoryInfo;
 #[cfg(feature = "tee")]
 use arch::InitrdConfig;
+#[cfg(feature = "tee")]
+use kbs_types::Tee;
 #[cfg(feature = "tee")]
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
 use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
@@ -68,7 +71,10 @@ use vm_memory::mmap::MmapRegion;
 #[cfg(any(target_arch = "aarch64", feature = "tee"))]
 use vm_memory::Bytes;
 use vm_memory::GuestMemory;
-use vm_memory::{GuestAddress, GuestMemoryMmap};
+use vm_memory::{Address, GuestAddress, GuestMemoryMmap, GuestMemoryRegion};
+
+use crossbeam_channel::Sender;
+use kvm_bindings::KVM_ARM_VCPU_REC;
 
 #[cfg(feature = "efi")]
 static EDK2_BINARY: &[u8] = include_bytes!("../../../edk2/KRUN_EFI.silent.fd");
@@ -312,6 +318,7 @@ impl Display for StartMicrovmError {
 pub fn build_microvm(
     vm_resources: &super::resources::VmResources,
     event_manager: &mut EventManager,
+    io_sender: Sender<MemProperties>,
     _shutdown_efd: Option<EventFd>,
     #[cfg(target_os = "macos")] _map_sender: Sender<MemoryMapping>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
@@ -361,9 +368,11 @@ pub fn build_microvm(
         Some(s) => kernel_cmdline.insert_str(s).unwrap(),
     };
 
+    let mut guest_memfd: Vec<RawFd> = vec![];
+
     #[cfg(not(feature = "tee"))]
     #[allow(unused_mut)]
-    let mut vm = setup_vm(&guest_memory)?;
+    let mut vm = setup_vm(&guest_memory, &mut guest_memfd)?;
 
     #[cfg(feature = "tee")]
     let (kvm, mut vm) = {
@@ -433,19 +442,58 @@ pub fn build_microvm(
         m
     };
 
+    #[cfg(feature = "cca")]
+    let measured_regions = {
+        let m = vec![
+            MeasuredRegion {
+                guest_addr: kernel_bundle.guest_addr,
+                // TODO: remove host_addr?
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(kernel_bundle.guest_addr))
+                    .unwrap() as u64,
+                size: kernel_bundle.size,
+                populate: true,
+            },
+            MeasuredRegion {
+                guest_addr: kernel_bundle.guest_addr + kernel_bundle.size as u64,
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(
+                        kernel_bundle.guest_addr + kernel_bundle.size as u64,
+                    ))
+                    .unwrap() as u64,
+                size: vm_resources.vm_config().mem_size_mib.unwrap() << 20 - kernel_bundle.size,
+                populate: false,
+            },
+            // The region used for the FDT must be populated. However, we only know the addr and the size after
+            // configure_system() but at that point guest_memory is already shared. For the moment, hardcore the
+            // fdt addr and size.
+            MeasuredRegion {
+                guest_addr: 0x8FE00000,
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(0x8FE00000))
+                    .unwrap() as u64,
+                size: 0x1000,
+                populate: true,
+            },
+        ];
+
+        m
+    };
+
     // On x86_64 always create a serial device,
     // while on aarch64 only create it if 'console=' is specified in the boot args.
-    let serial_device = if cfg!(feature = "efi") {
+    // TODO: to comment this
+    let serial_device = //if cfg!(feature = "efi") {
         Some(setup_serial_device(
             event_manager,
             None,
-            None,
+            //None,
             // Uncomment this to get EFI output when debugging EDK2.
-            // Some(Box::new(io::stdout())),
-        )?)
-    } else {
-        None
-    };
+            Some(Box::new(io::stdout())),
+        )?);
+    //} else {
+    //    None
+    //};
 
     let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
         .map_err(Error::EventFd)
@@ -517,16 +565,19 @@ pub fn build_microvm(
             &guest_memory,
             GuestAddress(kernel_bundle.guest_addr),
             &exit_evt,
+            io_sender,
         )
         .map_err(StartMicrovmError::Internal)?;
 
         setup_interrupt_controller(&mut vm, vcpu_config.vcpu_count)?;
+        /*
+        This makes the kernel to block in parsing it, I do not know why
         attach_legacy_devices(
             &vm,
             &mut mmio_device_manager,
             &mut kernel_cmdline,
             serial_device,
-        )?;
+        )?; */
     }
 
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -559,7 +610,7 @@ pub fn build_microvm(
         )?;
     }
 
-    #[cfg(not(feature = "tee"))]
+    #[cfg(all(not(feature = "tee"), not(feature = "cca")))]
     let _shm_region = Some(VirtioShmRegion {
         host_addr: guest_memory
             .get_host_address(GuestAddress(arch_memory_info.shm_start_addr))
@@ -577,6 +628,7 @@ pub fn build_microvm(
         exit_observers: Vec::new(),
         vm,
         mmio_device_manager,
+        guest_memfd_vec: guest_memfd,
         #[cfg(target_arch = "x86_64")]
         pio_device_manager,
     };
@@ -610,7 +662,7 @@ pub fn build_microvm(
     if let Some(vsock) = vm_resources.vsock.get() {
         attach_unixsock_vsock_device(&mut vmm, vsock, event_manager, intc.clone())?;
         #[cfg(not(feature = "net"))]
-        vmm.kernel_cmdline.insert_str("tsi_hijack")?;
+        //vmm.kernel_cmdline.insert_str("tsi_hijack")?;
         #[cfg(feature = "net")]
         if vm_resources
             .net_builder
@@ -619,7 +671,7 @@ pub fn build_microvm(
             .is_empty()
         {
             // Only enable TSI if we don't have any network devices.
-            vmm.kernel_cmdline.insert_str("tsi_hijack")?;
+            //vmm.kernel_cmdline.insert_str("tsi_hijack")?;
         }
     }
     #[cfg(feature = "net")]
@@ -681,6 +733,55 @@ pub fn build_microvm(
         }
 
         println!("Starting TEE/microVM.");
+    }
+
+    // after this point guest memory and regs are not accesible anymore
+    #[cfg(feature = "cca")]
+    {
+        let _ = vmm
+            .kvm_vm()
+            .realm
+            .configure_measurement(&vmm.kvm_vm().fd.lock().unwrap(), Algo::AlgoSha256);
+
+        vmm.kvm_vm()
+            .realm
+            .create_realm_descriptor(&vmm.kvm_vm().fd.lock().unwrap())
+            .unwrap();
+
+        println!("Injecting and measuring memory regions. This may take a while.");
+
+        for region in measured_regions.iter() {
+            if region.populate {
+                vmm.kvm_vm()
+                    .realm
+                    .populate(
+                        &vmm.kvm_vm().fd.lock().unwrap(),
+                        region.guest_addr,
+                        region.size.try_into().unwrap(),
+                    )
+                    .unwrap();
+            } else {
+                vmm.kvm_vm()
+                    .realm
+                    .initiate(
+                        &vmm.kvm_vm().fd.lock().unwrap(),
+                        region.guest_addr,
+                        region.size.try_into().unwrap(),
+                    )
+                    .unwrap();
+            }
+        }
+
+        let feature = KVM_ARM_VCPU_REC as i32;
+
+        for vcpu in vcpus.iter() {
+            vcpu.fd.vcpu_finalize(&feature).unwrap();
+        }
+
+        vmm.kvm_vm()
+            .realm
+            .activate(&vmm.kvm_vm().fd.lock().unwrap())
+            .unwrap();
     }
 
     vmm.start_vcpus(vcpus)
@@ -809,7 +910,7 @@ fn load_cmdline(vmm: &Vmm) -> std::result::Result<(), StartMicrovmError> {
     .map_err(StartMicrovmError::LoadCommandline)
 }
 
-#[cfg(all(target_os = "linux", not(feature = "tee")))]
+#[cfg(all(target_os = "linux", not(feature = "tee"), not(feature = "cca")))]
 pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
 ) -> std::result::Result<Vm, StartMicrovmError> {
@@ -820,6 +921,30 @@ pub(crate) fn setup_vm(
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     vm.memory_init(guest_memory, kvm.max_memslots(), false)
+        .map_err(Error::Vm)
+        .map_err(StartMicrovmError::Internal)?;
+    Ok(vm)
+}
+#[cfg(all(target_os = "linux", feature = "cca"))]
+pub(crate) fn setup_vm(
+    guest_memory: &GuestMemoryMmap,
+    guest_memfd: &mut Vec<RawFd>,
+) -> std::result::Result<Vm, StartMicrovmError> {
+    let kvm = KvmContext::new()
+        .map_err(Error::KvmContext)
+        .map_err(StartMicrovmError::Internal)?;
+
+    // calculate max_addr for max_ipa
+    let mut max_addr = 0;
+    for region in guest_memory.iter() {
+        max_addr = max(max_addr, region.start_addr().raw_value() + region.len() - 1);
+    }
+
+    let mut vm = Vm::new(kvm.fd(), max_addr as usize)
+        .map_err(Error::Vm)
+        .map_err(StartMicrovmError::Internal)?;
+
+    vm.memory_init(guest_memory, kvm.max_memslots(), guest_memfd, true)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     Ok(vm)
@@ -932,13 +1057,13 @@ fn attach_legacy_devices(
 ) -> std::result::Result<(), StartMicrovmError> {
     if let Some(serial) = serial {
         mmio_device_manager
-            .register_mmio_serial(vm.fd(), kernel_cmdline, serial)
+            .register_mmio_serial(&vm.fd.lock().unwrap(), kernel_cmdline, serial)
             .map_err(Error::RegisterMMIODevice)
             .map_err(StartMicrovmError::Internal)?;
     }
 
     mmio_device_manager
-        .register_mmio_rtc(vm.fd())
+        .register_mmio_rtc(&vm.fd.lock().unwrap())
         .map_err(Error::RegisterMMIODevice)
         .map_err(StartMicrovmError::Internal)?;
 
@@ -1018,17 +1143,19 @@ fn create_vcpus_aarch64(
     guest_mem: &GuestMemoryMmap,
     entry_addr: GuestAddress,
     exit_evt: &EventFd,
+    sender_io: Sender<MemProperties>,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
     for cpu_index in 0..vcpu_config.vcpu_count {
-        let mut vcpu = Vcpu::new_aarch64(
+        let mut vcpu: Vcpu = Vcpu::new_aarch64(
             cpu_index,
-            vm.fd(),
+            &vm.fd.lock().unwrap(),
             exit_evt.try_clone().map_err(Error::EventFd)?,
+            sender_io.clone(),
         )
         .map_err(Error::Vcpu)?;
 
-        vcpu.configure_aarch64(vm.fd(), guest_mem, entry_addr)
+        vcpu.configure_aarch64(&vm.fd.lock().unwrap(), guest_mem, entry_addr)
             .map_err(Error::Vcpu)?;
 
         vcpus.push(vcpu);
@@ -1092,9 +1219,12 @@ fn attach_mmio_device(
     let _cmdline = &mut vmm.kernel_cmdline;
 
     #[cfg(target_os = "linux")]
-    let (_mmio_base, _irq) =
-        vmm.mmio_device_manager
-            .register_mmio_device(vmm.vm.fd(), device, type_id, id)?;
+    let (_mmio_base, _irq) = vmm.mmio_device_manager.register_mmio_device(
+        &vmm.vm.fd.lock().unwrap(),
+        device,
+        type_id,
+        id,
+    )?;
     #[cfg(target_os = "macos")]
     let (_mmio_base, _irq) = vmm
         .mmio_device_manager

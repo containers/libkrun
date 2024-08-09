@@ -1,6 +1,13 @@
 #[macro_use]
 extern crate log;
 
+use crossbeam_channel::unbounded;
+use kvm_bindings::kvm_memory_attributes;
+use libc::fallocate;
+use libc::madvise;
+use libc::FALLOC_FL_KEEP_SIZE;
+use libc::FALLOC_FL_PUNCH_HOLE;
+use libc::MADV_DONTNEED;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -11,10 +18,13 @@ use std::ffi::CString;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::os::fd::RawFd;
+use std::os::raw::c_void;
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Mutex;
+use vm_memory::GuestMemoryRegion;
+use vm_memory::{Address, GuestMemory};
 
 #[cfg(target_os = "macos")]
 use crossbeam_channel::unbounded;
@@ -1077,9 +1087,12 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "macos")]
     let (sender, receiver) = unbounded();
 
+    let (io_sender, receiver) = unbounded();
+
     let _vmm = match vmm::builder::build_microvm(
         &ctx_cfg.vmr,
         &mut event_manager,
+        io_sender,
         ctx_cfg.shutdown_efd,
         #[cfg(target_os = "macos")]
         sender,
@@ -1093,6 +1106,61 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     #[cfg(target_os = "macos")]
     let mapper_vmm = _vmm.clone();
+
+    let vm = _vmm.lock().unwrap().kvm_vm().fd.clone();
+    let guest_mem = _vmm.lock().unwrap().guest_memory().clone();
+    let guest_memfd = _vmm.lock().unwrap().guest_memfd_vec.clone();
+
+    std::thread::spawn(move || loop {
+        match receiver.recv() {
+            Err(e) => error!("Error in receiver: {:?}", e),
+            Ok(m) => {
+                let _ret = vm
+                    .lock()
+                    .unwrap()
+                    .set_memory_attributes(kvm_memory_attributes {
+                        address: m.addr,
+                        size: m.size,
+                        attributes: m.attributes as u64,
+                        flags: 0,
+                    });
+
+                // from private to shared
+                if m.attributes == 0 {
+                    for (index, region) in guest_mem.iter().enumerate() {
+                        // this supposes that m.addr + m.size < region.start + region.size
+                        // which may be false
+                        if (region.start_addr().raw_value() + region.size() as u64) > m.addr {
+                            let offset = m.addr - region.start_addr().raw_value();
+                            unsafe {
+                                let _ret = fallocate(
+                                    *guest_memfd.get(index).unwrap(),
+                                    FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                                    offset as i64,
+                                    m.size as i64,
+                                );
+                            }
+                        }
+                    }
+                // from shared to private
+                } else {
+                    for (_index, region) in guest_mem.iter().enumerate() {
+                        if (region.start_addr().raw_value() + region.size() as u64) > m.addr {
+                            let offset = m.addr - region.start_addr().raw_value();
+                            let host_startaddr = m.addr + offset;
+                            unsafe {
+                                let _ret = madvise(
+                                    host_startaddr as *mut c_void,
+                                    m.size.try_into().unwrap(),
+                                    MADV_DONTNEED,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
 
     #[cfg(target_os = "macos")]
     std::thread::spawn(move || loop {
