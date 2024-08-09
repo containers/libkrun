@@ -16,7 +16,7 @@ use utils::eventfd::EventFd;
 use vm_memory::{GuestAddress, GuestMemoryMmap};
 
 use super::super::descriptor_utils::{Reader, Writer};
-use super::super::{GpuError, Queue as VirtQueue, VirtioShmRegion, VIRTIO_MMIO_INT_VRING};
+use super::super::{GpuError, Queue as VirtQueue, VIRTIO_MMIO_INT_VRING};
 use super::protocol::{
     virtio_gpu_ctrl_hdr, virtio_gpu_mem_entry, GpuCommand, GpuResponse, VirtioGpuResult,
 };
@@ -24,6 +24,7 @@ use super::virtio_gpu::VirtioGpu;
 use crate::legacy::Gic;
 use crate::virtio::gpu::protocol::{VIRTIO_GPU_FLAG_FENCE, VIRTIO_GPU_FLAG_INFO_RING_IDX};
 use crate::virtio::gpu::virtio_gpu::VirtioGpuRing;
+use crate::virtio::VirtioShmRegion;
 use crate::Error as DeviceError;
 
 pub struct Worker {

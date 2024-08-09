@@ -52,12 +52,10 @@ use crate::terminal::term_set_canonical_mode;
 use crate::vstate::VcpuEvent;
 use crate::vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
 
-use arch::ArchMemoryInfo;
-use arch::DeviceType;
-use arch::InitrdConfig;
+use arch::{ArchMemoryInfo, DeviceType, InitrdConfig, ShmRegion};
 #[cfg(target_os = "macos")]
 use crossbeam_channel::Sender;
-use devices::virtio::VmmExitObserver;
+use devices::virtio::{VirtioShmRegion, VmmExitObserver};
 use devices::BusDevice;
 use kernel::cmdline::Cmdline as KernelCmdline;
 use polly::event_manager::{self, EventManager, Subscriber};
@@ -360,6 +358,13 @@ impl Vmm {
     /// Returns a reference to the inner KVM Vm object.
     pub fn kvm_vm(&self) -> &Vm {
         &self.vm
+    }
+
+    pub fn add_shm_region(
+        &mut self,
+        region: ShmRegion,
+    ) -> std::result::Result<VirtioShmRegion, vstate::Error> {
+        self.vm.add_shm_region(region)
     }
 
     #[cfg(target_os = "macos")]

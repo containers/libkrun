@@ -23,8 +23,6 @@ use devices::legacy::VcpuList;
 use devices::legacy::{Gic, Serial};
 #[cfg(feature = "net")]
 use devices::virtio::Net;
-#[cfg(not(feature = "tee"))]
-use devices::virtio::VirtioShmRegion;
 use devices::virtio::{port_io, MmioTransport, PortDescription, Vsock};
 #[cfg(target_os = "macos")]
 use hvf::MemoryMapping;
@@ -55,6 +53,8 @@ use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
 use arch::ArchMemoryInfo;
 #[cfg(feature = "tee")]
 use arch::InitrdConfig;
+#[cfg(not(feature = "tee"))]
+use arch::ShmManager;
 #[cfg(feature = "tee")]
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
 use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
@@ -67,6 +67,7 @@ use vm_memory::mmap::GuestRegionMmap;
 use vm_memory::mmap::MmapRegion;
 #[cfg(any(target_arch = "aarch64", feature = "tee"))]
 use vm_memory::Bytes;
+#[cfg(feature = "tee")]
 use vm_memory::GuestMemory;
 use vm_memory::{GuestAddress, GuestMemoryMmap};
 
@@ -131,7 +132,10 @@ pub enum StartMicrovmError {
     SecureVirtAttest(VstateError),
     /// Cannot initialize the Secure Virtualization backend.
     SecureVirtPrepare(VstateError),
-
+    /// Error adding an SHM region.
+    ShmAdd(VstateError),
+    /// Error configuring an SHM region.
+    ShmCreate(arch::shm::Error),
     /// The TEE specified is not supported.
     InvalidTee,
 }
@@ -294,6 +298,18 @@ impl Display for StartMicrovmError {
                     f,
                     "Cannot initialize the Secure Virtualization backend. {err_msg}"
                 )
+            }
+            ShmAdd(ref err) => {
+                let mut err_msg = format!("{:?}", err);
+                err_msg = err_msg.replace('\"', "");
+
+                write!(f, "Error while adding an SHM region. {err_msg}")
+            }
+            ShmCreate(ref err) => {
+                let mut err_msg = format!("{:?}", err);
+                err_msg = err_msg.replace('\"', "");
+
+                write!(f, "Error while creating an SHM region. {err_msg}")
             }
             InvalidTee => {
                 write!(f, "TEE selected is not currently supported")
@@ -560,13 +576,7 @@ pub fn build_microvm(
     }
 
     #[cfg(not(feature = "tee"))]
-    let _shm_region = Some(VirtioShmRegion {
-        host_addr: guest_memory
-            .get_host_address(GuestAddress(arch_memory_info.shm_start_addr))
-            .unwrap() as u64,
-        guest_addr: arch_memory_info.shm_start_addr,
-        size: arch_memory_info.shm_size as usize,
-    });
+    let mut shm_manager = ShmManager::new(&arch_memory_info);
 
     let mut vmm = Vmm {
         guest_memory,
@@ -596,15 +606,22 @@ pub fn build_microvm(
         attach_gpu_device(
             &mut vmm,
             event_manager,
-            _shm_region,
+            &mut shm_manager,
             intc.clone(),
             virgl_flags,
             #[cfg(target_os = "macos")]
-            _map_sender,
+            _map_sender.clone(),
         )?;
     }
     #[cfg(not(feature = "tee"))]
-    attach_fs_devices(&mut vmm, &vm_resources.fs, None, intc.clone())?;
+    attach_fs_devices(
+        &mut vmm,
+        &vm_resources.fs,
+        &mut shm_manager,
+        intc.clone(),
+        #[cfg(target_os = "macos")]
+        _map_sender,
+    )?;
     #[cfg(feature = "blk")]
     attach_block_devices(&mut vmm, &vm_resources.block, intc.clone())?;
     if let Some(vsock) = vm_resources.vsock.get() {
@@ -1111,8 +1128,9 @@ fn attach_mmio_device(
 fn attach_fs_devices(
     vmm: &mut Vmm,
     fs_devs: &FsBuilder,
-    shm_region: Option<VirtioShmRegion>,
+    shm_manager: &mut ShmManager,
     intc: Option<Arc<Mutex<Gic>>>,
+    #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
@@ -1123,9 +1141,16 @@ fn attach_fs_devices(
             fs.lock().unwrap().set_intc(intc.clone());
         }
 
-        if let Some(ref shm) = shm_region {
-            fs.lock().unwrap().set_shm_region(shm.clone());
-        }
+        let shm_region = shm_manager
+            .get_region(1 << 30)
+            .map_err(StartMicrovmError::ShmCreate)?;
+        let virtio_shm_region = vmm
+            .add_shm_region(shm_region)
+            .map_err(StartMicrovmError::ShmAdd)?;
+        fs.lock().unwrap().set_shm_region(virtio_shm_region);
+
+        #[cfg(target_os = "macos")]
+        fs.lock().unwrap().set_map_sender(map_sender.clone());
 
         // The device mutex mustn't be locked here otherwise it will deadlock.
         attach_mmio_device(
@@ -1379,7 +1404,7 @@ fn attach_rng_device(
 fn attach_gpu_device(
     vmm: &mut Vmm,
     event_manager: &mut EventManager,
-    shm_region: Option<VirtioShmRegion>,
+    shm_manager: &mut ShmManager,
     intc: Option<Arc<Mutex<Gic>>>,
     virgl_flags: u32,
     #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
@@ -1405,9 +1430,13 @@ fn attach_gpu_device(
         gpu.lock().unwrap().set_intc(intc);
     }
 
-    if let Some(ref shm) = shm_region {
-        gpu.lock().unwrap().set_shm_region(shm.clone());
-    }
+    let shm_region = shm_manager
+        .get_region(1 << 33)
+        .map_err(StartMicrovmError::ShmCreate)?;
+    let virtio_shm_region = vmm
+        .add_shm_region(shm_region)
+        .map_err(StartMicrovmError::ShmAdd)?;
+    gpu.lock().unwrap().set_shm_region(virtio_shm_region);
 
     // The device mutex mustn't be locked here otherwise it will deadlock.
     attach_mmio_device(vmm, id, MmioTransport::new(vmm.guest_memory().clone(), gpu))
@@ -1487,7 +1516,7 @@ pub mod tests {
     #[test]
     #[cfg(target_arch = "aarch64")]
     fn test_create_vcpus_aarch64() {
-        let guest_memory = create_guest_memory(128).unwrap();
+        let (guest_memory, _info) = default_guest_memory(128).unwrap();
         let vm = setup_vm(&guest_memory).unwrap();
         let vcpu_count = 2;
 

@@ -16,12 +16,11 @@ pub mod macos;
 #[cfg(target_os = "macos")]
 pub use self::macos::*;
 
-use std::cmp::min;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
 use self::gic::GICDevice;
-use crate::ArchMemoryInfo;
+use crate::{round_up, ArchMemoryInfo};
 use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMmap};
 
 #[cfg(feature = "efi")]
@@ -42,8 +41,6 @@ pub enum Error {
 
 /// The start of the memory area reserved for MMIO devices.
 pub const MMIO_MEM_START: u64 = layout::MAPPED_IO_START;
-/// The size of the MMIO shared memory area used by virtio-fs DAX.
-pub const MMIO_SHM_SIZE: u64 = 1 << 33;
 
 pub use self::fdt::DeviceInfoForFDT;
 use crate::DeviceType;
@@ -51,26 +48,24 @@ use crate::DeviceType;
 /// Returns a Vec of the valid memory addresses for aarch64.
 /// See [`layout`](layout) module for a drawing of the specific memory model for this platform.
 pub fn arch_memory_regions(size: usize) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
-    let dram_size = min(size as u64, layout::DRAM_MEM_MAX_SIZE) as usize;
+    let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
+    let dram_size = round_up(size, page_size);
     let ram_last_addr = layout::DRAM_MEM_START + (dram_size as u64);
     let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
+
     let info = ArchMemoryInfo {
         ram_last_addr,
         shm_start_addr,
-        shm_size: MMIO_SHM_SIZE,
+        page_size,
     };
     let regions = if cfg!(feature = "efi") {
         vec![
             // Space for loading EDK2 and its variables
             (GuestAddress(0u64), 0x800_0000),
             (GuestAddress(layout::DRAM_MEM_START), dram_size),
-            (GuestAddress(shm_start_addr), MMIO_SHM_SIZE as usize),
         ]
     } else {
-        vec![
-            (GuestAddress(layout::DRAM_MEM_START), dram_size),
-            (GuestAddress(shm_start_addr), MMIO_SHM_SIZE as usize),
-        ]
+        vec![(GuestAddress(layout::DRAM_MEM_START), dram_size)]
     };
 
     (info, regions)
