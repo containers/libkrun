@@ -285,7 +285,10 @@ fn create_psci_node(fdt: &mut FdtWriter) -> Result<()> {
     // Two methods available: hvc and smc.
     // As per documentation, PSCI calls between a guest and hypervisor may use the HVC conduit instead of SMC.
     // So, since we are using kvm, we need to use hvc.
+    #[cfg(not(feature = "cca"))]
     fdt.property_string("method", "hvc")?;
+    #[cfg(feature = "cca")]
+    fdt.property_string("method", "smc")?;
     fdt.end_node(node)?;
 
     Ok(())

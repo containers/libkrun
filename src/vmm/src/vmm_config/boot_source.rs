@@ -16,8 +16,10 @@ use std::fmt::{Display, Formatter, Result};
 //pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=1 pci=off nomodule 8250.nr_uarts=0 \
 //                                          i8042.noaux i8042.nomux i8042.nopnp i8042.dumbkbd";
 
+// TODO: to unchange this
 #[cfg(all(target_os = "linux", not(feature = "tee")))]
-pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 \
+pub const DEFAULT_KERNEL_CMDLINE: &str =
+    "reboot=k panic=-1 panic_print=0 nomodule console=pl011,mmio,0x40001000 \
                                           rootfstype=virtiofs rw quiet no-kvmapf";
 
 #[cfg(feature = "amd-sev")]
