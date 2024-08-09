@@ -642,11 +642,18 @@ pub fn build_microvm(
             intc.clone(),
             virgl_flags,
             #[cfg(target_os = "macos")]
-            _map_sender,
+            _map_sender.clone(),
         )?;
     }
     #[cfg(not(feature = "tee"))]
-    attach_fs_devices(&mut vmm, &vm_resources.fs, &mut _shm_manager, intc.clone())?;
+    attach_fs_devices(
+        &mut vmm,
+        &vm_resources.fs,
+        &mut _shm_manager,
+        intc.clone(),
+        #[cfg(target_os = "macos")]
+        _map_sender,
+    )?;
     #[cfg(feature = "blk")]
     attach_block_devices(&mut vmm, &vm_resources.block, intc.clone())?;
     if let Some(vsock) = vm_resources.vsock.get() {
@@ -1173,6 +1180,7 @@ fn attach_fs_devices(
     fs_devs: &FsBuilder,
     shm_manager: &mut ShmManager,
     intc: Option<Arc<Mutex<Gic>>>,
+    #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
@@ -1193,6 +1201,9 @@ fn attach_fs_devices(
                 size: shm_region.size,
             });
         }
+
+        #[cfg(target_os = "macos")]
+        fs.lock().unwrap().set_map_sender(map_sender.clone());
 
         // The device mutex mustn't be locked here otherwise it will deadlock.
         attach_mmio_device(
