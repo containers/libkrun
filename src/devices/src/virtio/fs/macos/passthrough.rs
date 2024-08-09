@@ -4,6 +4,7 @@
 
 use std::collections::btree_map;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
@@ -11,11 +12,14 @@ use std::io;
 use std::mem;
 use std::mem::MaybeUninit;
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::ptr::null_mut;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
+use crossbeam_channel::{unbounded, Sender};
+use hvf::MemoryMapping;
 use vm_memory::ByteValued;
 
 use crate::virtio::fs::filesystem::SecContext;
@@ -425,6 +429,8 @@ pub struct PassthroughFs {
     next_handle: AtomicU64,
     init_handle: u64,
 
+    map_windows: Mutex<HashMap<u64, u64>>,
+
     // Whether writeback caching is enabled for this directory. This will only be true when
     // `cfg.writeback` is true and `init` was called with `FsOptions::WRITEBACK_CACHE`.
     writeback: AtomicBool,
@@ -458,6 +464,8 @@ impl PassthroughFs {
             handles: RwLock::new(BTreeMap::new()),
             next_handle: AtomicU64::new(1),
             init_handle: 0,
+
+            map_windows: Mutex::new(HashMap::new()),
 
             writeback: AtomicBool::new(false),
             announce_submounts: AtomicBool::new(false),
@@ -1969,5 +1977,136 @@ impl FileSystem for PassthroughFs {
         } else {
             Ok(res as u64)
         }
+    }
+
+    fn setupmapping(
+        &self,
+        _ctx: Context,
+        inode: Inode,
+        _handle: Handle,
+        foffset: u64,
+        len: u64,
+        flags: u64,
+        moffset: u64,
+        guest_shm_base: u64,
+        shm_size: u64,
+        map_sender: &Option<Sender<MemoryMapping>>,
+    ) -> io::Result<()> {
+        if map_sender.is_none() {
+            return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
+        }
+
+        let prot_flags = if (flags & fuse::SetupmappingFlags::WRITE.bits()) != 0 {
+            libc::PROT_READ | libc::PROT_WRITE
+        } else {
+            libc::PROT_READ
+        };
+
+        if (moffset + len) > shm_size {
+            return Err(linux_error(io::Error::from_raw_os_error(libc::EINVAL)));
+        }
+
+        let guest_addr = guest_shm_base + moffset;
+
+        debug!(
+            "setupmapping: ino {:?} guest_addr={:x} len={}",
+            inode, guest_addr, len
+        );
+
+        let file = self.open_inode(inode, libc::O_RDWR)?;
+        let fd = file.as_raw_fd();
+
+        let host_addr = unsafe {
+            libc::mmap(
+                null_mut(),
+                len as usize,
+                prot_flags,
+                libc::MAP_SHARED,
+                fd,
+                foffset as libc::off_t,
+            )
+        };
+        if host_addr == libc::MAP_FAILED {
+            return Err(linux_error(io::Error::last_os_error()));
+        }
+
+        let ret = unsafe { libc::close(fd) };
+        if ret == -1 {
+            return Err(linux_error(io::Error::last_os_error()));
+        }
+
+        // We've checked that map_sender is something above.
+        let sender = map_sender.as_ref().unwrap();
+        let (reply_sender, reply_receiver) = unbounded();
+        sender
+            .send(MemoryMapping::AddMapping(
+                reply_sender,
+                host_addr as u64,
+                guest_addr,
+                len,
+            ))
+            .unwrap();
+        if !reply_receiver.recv().unwrap() {
+            error!("Error requesting HVF the addition of a DAX window");
+            unsafe { libc::munmap(host_addr, len as usize) };
+            return Err(linux_error(io::Error::from_raw_os_error(libc::EINVAL)));
+        }
+
+        self.map_windows
+            .lock()
+            .unwrap()
+            .insert(guest_addr, host_addr as u64);
+
+        Ok(())
+    }
+
+    fn removemapping(
+        &self,
+        _ctx: Context,
+        requests: Vec<fuse::RemovemappingOne>,
+        guest_shm_base: u64,
+        shm_size: u64,
+        map_sender: &Option<Sender<MemoryMapping>>,
+    ) -> io::Result<()> {
+        if map_sender.is_none() {
+            return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
+        }
+
+        for req in requests {
+            let guest_addr = guest_shm_base + req.moffset;
+            if (req.moffset + req.len) > shm_size {
+                return Err(linux_error(io::Error::from_raw_os_error(libc::EINVAL)));
+            }
+            let host_addr = match self.map_windows.lock().unwrap().remove(&guest_addr) {
+                Some(a) => a,
+                None => return Err(linux_error(io::Error::from_raw_os_error(libc::EINVAL))),
+            };
+            debug!(
+                "removemapping: guest_addr={:x} len={:?}",
+                guest_addr, req.len
+            );
+
+            let sender = map_sender.as_ref().unwrap();
+            let (reply_sender, reply_receiver) = unbounded();
+            sender
+                .send(MemoryMapping::RemoveMapping(
+                    reply_sender,
+                    guest_addr,
+                    req.len,
+                ))
+                .unwrap();
+            if !reply_receiver.recv().unwrap() {
+                error!("Error requesting HVF the removal of a DAX window");
+                return Err(linux_error(io::Error::from_raw_os_error(libc::EINVAL)));
+            }
+
+            let ret = unsafe { libc::munmap(host_addr as *mut libc::c_void, req.len as usize) };
+            if ret == -1 {
+                error!("Error unmapping DAX window");
+                return Err(linux_error(io::Error::last_os_error()));
+            }
+        }
+
+        Ok(())
     }
 }
