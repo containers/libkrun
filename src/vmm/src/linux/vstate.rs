@@ -8,13 +8,17 @@
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use libc::{c_int, c_void, siginfo_t};
 use std::cell::Cell;
+use std::cmp::max;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::os::fd::RawFd;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 #[cfg(feature = "tee")]
 use std::os::unix::io::RawFd;
 
+use kvm_ioctls::VcpuExit::Unsupported;
 use std::result;
 use std::sync::atomic::{fence, Ordering};
 #[cfg(not(test))]
@@ -47,8 +51,10 @@ use kvm_bindings::{
     KVM_MAX_CPUID_ENTRIES, KVM_PIT_SPEAKER_DUMMY,
 };
 use kvm_bindings::{
-    kvm_create_guest_memfd, kvm_userspace_memory_region, kvm_userspace_memory_region2,
-    KVM_API_VERSION, KVM_MEM_GUEST_MEMFD,
+    kvm_create_guest_memfd, kvm_memory_attributes, kvm_userspace_memory_region,
+    kvm_userspace_memory_region2, KVM_API_VERSION, KVM_MEMORY_ATTRIBUTE_PRIVATE,
+    KVM_MEMORY_EXIT_FLAG_PRIVATE, KVM_MEM_GUEST_MEMFD, KVM_VM_TYPE_ARM_IPA_SIZE_MASK,
+    KVM_VM_TYPE_ARM_REALM,
 };
 use kvm_ioctls::*;
 use utils::eventfd::EventFd;
@@ -63,6 +69,9 @@ use sev::launch::sev as sev_launch;
 
 #[cfg(feature = "amd-sev")]
 use sev::launch::snp;
+
+#[cfg(feature = "cca")]
+use cca::Realm;
 
 /// Signal number (SIGRTMIN) used to kick Vcpus.
 pub(crate) const VCPU_RTSIG_OFFSET: i32 = 0;
@@ -405,12 +414,13 @@ impl Display for Error {
 
 pub type Result<T> = result::Result<T, Error>;
 
-#[cfg(feature = "tee")]
+#[cfg(any(feature = "tee", feature = "cca"))]
 #[derive(Debug)]
 pub struct MeasuredRegion {
     pub guest_addr: u64,
     pub host_addr: u64,
     pub size: usize,
+    pub populate: bool,
 }
 
 /// Describes a KVM context that gets attached to the microVM.
@@ -464,7 +474,7 @@ impl KvmContext {
 
 /// A wrapper around creating and using a VM.
 pub struct Vm {
-    fd: VmFd,
+    pub fd: Arc<Mutex<VmFd>>,
     next_mem_slot: u32,
 
     // X86 specific fields.
@@ -486,11 +496,14 @@ pub struct Vm {
 
     #[cfg(feature = "amd-sev")]
     pub tee: Tee,
+
+    #[cfg(feature = "cca")]
+    pub realm: Realm,
 }
 
 impl Vm {
     /// Constructs a new `Vm` using the given `Kvm` instance.
-    #[cfg(not(feature = "tee"))]
+    #[cfg(all(not(feature = "tee"), not(feature = "cca")))]
     pub fn new(kvm: &Kvm) -> Result<Self> {
         //create fd for interacting with kvm-vm specific functions
         let vm_fd = kvm.create_vm().map_err(Error::VmFd)?;
@@ -512,6 +525,27 @@ impl Vm {
             supported_msrs,
             #[cfg(target_arch = "aarch64")]
             irqchip_handle: None,
+        })
+    }
+
+    #[cfg(feature = "cca")]
+    pub fn new(kvm: &Kvm, max_ipa: usize) -> Result<Self> {
+        //create fd for interacting with kvm-vm specific functions
+        let ipa_bits = max(64u32 - max_ipa.leading_zeros() - 1, 32) + 1;
+        let vm_fd = kvm
+            .create_vm_with_type(
+                (KVM_VM_TYPE_ARM_REALM | (ipa_bits & KVM_VM_TYPE_ARM_IPA_SIZE_MASK)).into(),
+            )
+            .map_err(Error::VmFd)?;
+
+        let realm = Realm::new();
+
+        Ok(Vm {
+            next_mem_slot: 0,
+            fd: Arc::new(Mutex::new(vm_fd)),
+            #[cfg(target_arch = "aarch64")]
+            irqchip_handle: None,
+            realm,
         })
     }
 
@@ -564,6 +598,7 @@ impl Vm {
         &mut self,
         guest_mem: &GuestMemoryMmap,
         kvm_max_memslots: usize,
+        guest_memfd: &mut Vec<RawFd>,
         require_guest_memfd: bool,
     ) -> Result<()> {
         if guest_mem.num_regions() > kvm_max_memslots {
@@ -583,8 +618,12 @@ impl Vm {
 
                 let id: RawFd = self
                     .fd
+                    .lock()
+                    .unwrap()
                     .create_guest_memfd(gmem)
                     .map_err(Error::CreateGuestMemfd)?;
+
+                guest_memfd.push(id);
 
                 let memory_region = kvm_userspace_memory_region2 {
                     slot: self.next_mem_slot as u32,
@@ -602,9 +641,22 @@ impl Vm {
                 // are not overlapping.
                 unsafe {
                     self.fd
+                        .lock()
+                        .unwrap()
                         .set_user_memory_region2(memory_region)
                         .map_err(Error::SetUserMemoryRegion2)?;
                 };
+
+                // set private by default when using guestmemfd
+                // this imitates QEMU behavior
+                let attr = kvm_memory_attributes {
+                    address: region.start_addr().raw_value(),
+                    size: region.len(),
+                    attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE as u64,
+                    flags: 0,
+                };
+
+                self.fd.lock().unwrap().set_memory_attributes(attr).unwrap();
             } else {
                 let memory_region = kvm_userspace_memory_region {
                     slot: self.next_mem_slot as u32,
@@ -617,6 +669,8 @@ impl Vm {
                 // are not overlapping.
                 unsafe {
                     self.fd
+                        .lock()
+                        .unwrap()
                         .set_user_memory_region(memory_region)
                         .map_err(Error::SetUserMemoryRegion)?;
                 };
@@ -706,7 +760,8 @@ impl Vm {
     #[cfg(target_arch = "aarch64")]
     pub fn setup_irqchip(&mut self, vcpu_count: u8) -> Result<()> {
         self.irqchip_handle = Some(
-            arch::aarch64::gic::create_gic(&self.fd, vcpu_count.into()).map_err(Error::SetupGIC)?,
+            arch::aarch64::gic::create_gic(&self.fd.lock().unwrap(), vcpu_count.into())
+                .map_err(Error::SetupGIC)?,
         );
         Ok(())
     }
@@ -719,9 +774,9 @@ impl Vm {
     }
 
     /// Gets a reference to the kvm file descriptor owned by this VM.
-    pub fn fd(&self) -> &VmFd {
-        &self.fd
-    }
+    //pub fn fd(&self) -> &VmFd {
+    //    &self.fd
+    // }
 
     #[allow(unused)]
     #[cfg(target_arch = "x86_64")]
@@ -812,9 +867,14 @@ pub struct VcpuConfig {
 // Using this for easier explicit type-casting to help IDEs interpret the code.
 type VcpuCell = Cell<Option<*mut Vcpu>>;
 
+pub struct MemProperties {
+    pub addr: u64,
+    pub size: u64,
+    pub attributes: u32,
+}
 /// A wrapper around creating and using a kvm-based VCPU.
 pub struct Vcpu {
-    fd: VcpuFd,
+    pub fd: VcpuFd,
     id: u8,
     mmio_bus: Option<devices::Bus>,
     #[allow(dead_code)]
@@ -830,6 +890,9 @@ pub struct Vcpu {
 
     #[cfg(target_arch = "aarch64")]
     mpidr: u64,
+
+    #[cfg(feature = "cca")]
+    sender_io: Sender<MemProperties>,
 
     // The receiving end of events channel owned by the vcpu side.
     event_receiver: Receiver<VcpuEvent>,
@@ -972,7 +1035,12 @@ impl Vcpu {
     /// * `exit_evt` - An `EventFd` that will be written into when this vcpu exits.
     /// * `create_ts` - A timestamp used by the vcpu to calculate its lifetime.
     #[cfg(target_arch = "aarch64")]
-    pub fn new_aarch64(id: u8, vm_fd: &VmFd, exit_evt: EventFd) -> Result<Self> {
+    pub fn new_aarch64(
+        id: u8,
+        vm_fd: &VmFd,
+        exit_evt: EventFd,
+        sender_io: Sender<MemProperties>,
+    ) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = unbounded();
         let (response_sender, response_receiver) = unbounded();
@@ -987,6 +1055,7 @@ impl Vcpu {
             event_sender: Some(event_sender),
             response_receiver: Some(response_receiver),
             response_sender,
+            sender_io,
         })
     }
 
@@ -1076,6 +1145,11 @@ impl Vcpu {
             .map_err(Error::VcpuArmPreferredTarget)?;
         // We already checked that the capability is supported.
         kvi.features[0] |= 1 << kvm_bindings::KVM_ARM_VCPU_PSCI_0_2;
+
+        if cfg!(feature = "cca") {
+            kvi.features[0] |= 1 << kvm_bindings::KVM_ARM_VCPU_REC;
+        }
+
         // Non-boot cpus are powered off initially.
         if self.id > 0 {
             kvi.features[0] |= 1 << kvm_bindings::KVM_ARM_VCPU_POWER_OFF;
@@ -1273,12 +1347,36 @@ impl Vcpu {
                     info!("Received KVM_EXIT_SHUTDOWN signal");
                     Ok(VcpuEmulation::Stopped)
                 }
+                VcpuExit::MemoryFault { flags, gpa, size } => {
+                    if flags & !KVM_MEMORY_EXIT_FLAG_PRIVATE as u64 != 0 {
+                        error!("KVM_EXIT_MEMORY_FAULT: Unknown flag {}", flags);
+                        Err(Error::VcpuUnhandledKvmExit)
+                    } else {
+                        // from private to shared
+                        let mut attr = 0;
+                        // from shared to private
+                        if flags & KVM_MEMORY_EXIT_FLAG_PRIVATE as u64
+                            == KVM_MEMORY_EXIT_FLAG_PRIVATE as u64
+                        {
+                            attr = KVM_MEMORY_ATTRIBUTE_PRIVATE;
+                        };
+
+                        let _ = self.sender_io.try_send(MemProperties {
+                            addr: gpa,
+                            size,
+                            attributes: attr,
+                        });
+                        Ok(VcpuEmulation::Handled)
+                    }
+                }
                 // Documentation specifies that below kvm exits are considered
                 // errors.
                 VcpuExit::FailEntry(reason, vcpu) => {
                     error!("Received KVM_EXIT_FAIL_ENTRY signal: reason={reason}, vcpu={vcpu}");
                     Err(Error::VcpuUnhandledKvmExit)
                 }
+                // TODO: to remove this
+                Unsupported(39) => Ok(VcpuEmulation::Handled),
                 VcpuExit::InternalError => {
                     error!("Received KVM_EXIT_INTERNAL_ERROR signal");
                     Err(Error::VcpuUnhandledKvmExit)
@@ -1610,7 +1708,9 @@ mod tests {
 
         // Create valid memory region and test that the initialization is successful.
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x1000)]).unwrap();
-        assert!(vm.memory_init(&gm, kvm_context.max_memslots(), false).is_ok());
+        assert!(vm
+            .memory_init(&gm, kvm_context.max_memslots(), false)
+            .is_ok());
 
         // Set the maximum number of memory slots to 1 in KvmContext to check the error
         // path of memory_init. Create 2 non-overlapping memory slots.
@@ -1620,7 +1720,9 @@ mod tests {
             (GuestAddress(0x1001), 0x2000),
         ])
         .unwrap();
-        assert!(vm.memory_init(&gm, kvm_context.max_memslots(), false).is_err());
+        assert!(vm
+            .memory_init(&gm, kvm_context.max_memslots(), false)
+            .is_err());
     }
 
     #[cfg(target_arch = "x86_64")]
