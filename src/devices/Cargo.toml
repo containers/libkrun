@@ -5,7 +5,9 @@ authors = ["The Chromium OS Authors"]
 edition = "2021"
 
 [features]
+default = ["cca"]
 tee = []
+cca = []
 amd-sev = ["blk", "tee"]
 net = []
 blk = []
