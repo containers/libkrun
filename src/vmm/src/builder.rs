@@ -12,6 +12,7 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::cmp::max;
 
 use super::{Error, Vmm};
 
@@ -68,7 +69,7 @@ use vm_memory::mmap::MmapRegion;
 #[cfg(any(target_arch = "aarch64", feature = "tee"))]
 use vm_memory::Bytes;
 use vm_memory::GuestMemory;
-use vm_memory::{GuestAddress, GuestMemoryMmap};
+use vm_memory::{GuestAddress, GuestMemoryMmap, GuestMemoryRegion, Address};
 
 #[cfg(feature = "efi")]
 static EDK2_BINARY: &[u8] = include_bytes!("../../../edk2/KRUN_EFI.silent.fd");
@@ -809,7 +810,7 @@ fn load_cmdline(vmm: &Vmm) -> std::result::Result<(), StartMicrovmError> {
     .map_err(StartMicrovmError::LoadCommandline)
 }
 
-#[cfg(all(target_os = "linux", not(feature = "tee")))]
+#[cfg(all(target_os = "linux", not(feature = "tee"), not(feature = "cca")))]
 pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
 ) -> std::result::Result<Vm, StartMicrovmError> {
@@ -820,6 +821,29 @@ pub(crate) fn setup_vm(
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     vm.memory_init(guest_memory, kvm.max_memslots(), false)
+        .map_err(Error::Vm)
+        .map_err(StartMicrovmError::Internal)?;
+    Ok(vm)
+}
+#[cfg(all(target_os = "linux", feature = "cca"))]
+pub(crate) fn setup_vm(
+    guest_memory: &GuestMemoryMmap,
+) -> std::result::Result<Vm, StartMicrovmError> {
+    let kvm = KvmContext::new()
+        .map_err(Error::KvmContext)
+        .map_err(StartMicrovmError::Internal)?;
+
+    // calculate max_addr for max_ipa
+    let mut max_addr = 0;
+    for (_index, region) in guest_memory.iter().enumerate() {
+        max_addr = max(max_addr, region.start_addr().raw_value() + region.len());
+    }
+
+    let mut vm = Vm::new(kvm.fd(), max_addr as usize)
+        .map_err(Error::Vm)
+        .map_err(StartMicrovmError::Internal)?;
+
+    vm.memory_init(guest_memory, kvm.max_memslots(), true)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     Ok(vm)

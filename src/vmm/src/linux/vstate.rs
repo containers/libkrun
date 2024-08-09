@@ -11,6 +11,7 @@ use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::os::fd::RawFd;
+use std::cmp::max;
 
 #[cfg(feature = "tee")]
 use std::os::unix::io::RawFd;
@@ -49,7 +50,7 @@ use kvm_bindings::{
 };
 use kvm_bindings::{
     kvm_create_guest_memfd, kvm_userspace_memory_region, kvm_userspace_memory_region2,
-    KVM_API_VERSION, KVM_MEM_GUEST_MEMFD,
+    KVM_API_VERSION, KVM_MEM_GUEST_MEMFD, KVM_VM_TYPE_ARM_REALM, KVM_VM_TYPE_ARM_IPA_SIZE_MASK
 };
 use kvm_ioctls::*;
 use utils::eventfd::EventFd;
@@ -487,7 +488,7 @@ pub struct Vm {
 
 impl Vm {
     /// Constructs a new `Vm` using the given `Kvm` instance.
-    #[cfg(not(feature = "tee"))]
+    #[cfg(all(not(feature = "tee"), not(feature = "cca")))]
     pub fn new(kvm: &Kvm) -> Result<Self> {
         //create fd for interacting with kvm-vm specific functions
         let vm_fd = kvm.create_vm().map_err(Error::VmFd)?;
@@ -506,6 +507,19 @@ impl Vm {
             supported_cpuid,
             #[cfg(target_arch = "x86_64")]
             supported_msrs,
+            #[cfg(target_arch = "aarch64")]
+            irqchip_handle: None,
+        })
+    }
+
+    #[cfg(feature = "cca")]
+    pub fn new(kvm: &Kvm, max_ipa: usize) -> Result<Self> {
+        //create fd for interacting with kvm-vm specific functions
+        let ipa_bits = max(1 << max_ipa.trailing_zeros(), 32) + 1;
+        let vm_fd = kvm.create_vm_with_type((KVM_VM_TYPE_ARM_REALM | (ipa_bits & KVM_VM_TYPE_ARM_IPA_SIZE_MASK)).into()).map_err(Error::VmFd)?;
+
+        Ok(Vm {
+            fd: vm_fd,
             #[cfg(target_arch = "aarch64")]
             irqchip_handle: None,
         })
