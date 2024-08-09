@@ -7,6 +7,7 @@ build = "build.rs"
 
 [features]
 tee = []
+cca = [ "tee" ]
 amd-sev = [ "blk", "tee" ]
 net = []
 blk = []
@@ -19,6 +20,7 @@ nitro = [ "dep:nitro", "dep:nitro-enclaves" ]
 [dependencies]
 crossbeam-channel = ">=0.5.15"
 env_logger = "0.11"
+vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
 libc = ">=0.2.39"
 libloading = "0.8"
 log = "0.4.0"

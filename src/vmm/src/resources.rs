@@ -4,15 +4,19 @@
 //#![deny(warnings)]
 
 #[cfg(feature = "tee")]
+#[cfg(target_arch = "x86_64")]
 use std::fs::File;
 #[cfg(feature = "tee")]
+#[cfg(target_arch = "x86_64")]
 use std::io::BufReader;
 use std::path::PathBuf;
 
 #[cfg(feature = "tee")]
+#[cfg(target_arch = "x86_64")]
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "tee")]
+#[cfg(target_arch = "x86_64")]
 use kbs_types::Tee;
 
 #[cfg(feature = "blk")]
@@ -41,9 +45,11 @@ pub enum Error {
     BootSource(BootSourceConfigError),
     /// Error opening TEE config file.
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     OpenTeeConfig(std::io::Error),
     /// Error parsing TEE config file.
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     ParseTeeConfig(serde_json::Error),
     /// microVM vCpus or memory configuration error.
     VmConfig(VmConfigError),
@@ -52,6 +58,7 @@ pub enum Error {
 }
 
 #[cfg(feature = "tee")]
+#[cfg(target_arch = "x86_64")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeeConfig {
     pub workload_id: String,
@@ -63,6 +70,7 @@ pub struct TeeConfig {
 }
 
 #[cfg(feature = "tee")]
+#[cfg(target_arch = "x86_64")]
 impl Default for TeeConfig {
     fn default() -> Self {
         Self {
@@ -107,6 +115,7 @@ pub struct VmResources {
     pub net: NetBuilder,
     /// TEE configuration
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     pub tee_config: TeeConfig,
     /// Flags for the virtio-gpu device.
     pub gpu_virgl_flags: Option<u32>,
@@ -286,11 +295,13 @@ impl VmResources {
     }
 
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     pub fn tee_config(&self) -> &TeeConfig {
         &self.tee_config
     }
 
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     pub fn set_tee_config(&mut self, filepath: PathBuf) -> Result<Error> {
         let file = File::open(filepath.as_path()).map_err(Error::OpenTeeConfig)?;
         let reader = BufReader::new(file);

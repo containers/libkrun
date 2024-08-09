@@ -5,6 +5,7 @@ authors = ["The Chromium OS Authors"]
 edition = "2021"
 
 [features]
+cca = [ "tee" ]
 tee = []
 amd-sev = [ "tee" ]
 efi = []

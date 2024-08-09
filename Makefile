@@ -27,6 +27,9 @@ ifeq ($(SEV),1)
     INIT_SRC += $(SNP_INIT_SRC)
 	BUILD_INIT = 0
 endif
+ifeq ($(CCA), 1)
+    FEATURE_FLAGS := --features cca
+endif
 ifeq ($(VIRGL_RESOURCE_MAP2),1)
 	FEATURE_FLAGS += --features virgl_resource_map2
 endif

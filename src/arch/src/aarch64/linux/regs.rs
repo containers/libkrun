@@ -110,6 +110,9 @@ arm64_sys_reg!(MPIDR_EL1, 3, 0, 0, 0, 5);
 /// * `boot_ip` - Starting instruction pointer.
 /// * `mem` - Reserved DRAM for current VM.
 pub fn setup_regs(vcpu: &VcpuFd, cpu_id: u8, boot_ip: u64, mem: &GuestMemoryMmap) -> Result<()> {
+    // PSTATE cannot be accesed from the host in CCA
+    #[cfg(not(feature = "cca"))]
+    #[allow(deref_nullptr)]
     // Get the register index of the PSTATE (Processor State) register.
     vcpu.set_one_reg(arm64_core_reg!(pstate), &PSTATE_FAULT_BITS_64.to_le_bytes())
         .map_err(Error::SetCoreRegister)?;
