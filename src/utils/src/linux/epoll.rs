@@ -179,11 +179,11 @@ impl Epoll {
     /// # Arguments
     ///
     /// * `max_events` is the maximum number of events that we want to be returned in
-    /// `events` buffer.
+    ///   `events` buffer.
     /// * `timeout` specifies for how long the `epoll_wait` system call will block
-    /// (measured in milliseconds).
+    ///   (measured in milliseconds).
     /// * `events` points to a memory area that will be used for storing the events
-    /// returned by `epoll_wait()` call.
+    ///   returned by `epoll_wait()` call.
     pub fn wait(
         &self,
         max_events: usize,
