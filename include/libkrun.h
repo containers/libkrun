@@ -122,6 +122,24 @@ int32_t krun_add_virtiofs(uint32_t ctx_id,
                           const char *c_path);
 
 /**
+ * Adds an independent virtio-fs device pointing to a host's directory with a tag. This
+ * variant allows specifying the size of the DAX window.
+ *
+ * Arguments:
+ *  "ctx_id"         - the configuration context ID.
+ *  "c_tag"          - tag to identify the filesystem in the guest.
+ *  "c_path"         - full path to the directory in the host to be exposed to the guest.
+ *  "shm_size"       - size of the DAX SHM window in bytes.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_virtiofs2(uint32_t ctx_id,
+                           const char *c_tag,
+                           const char *c_path,
+                           uint64_t shm_size);
+
+/**
  * Configures the networking to use passt.
  * Call to this function disables TSI backend to use passt instead.
  *
@@ -154,7 +172,7 @@ int32_t krun_set_passt_fd(uint32_t ctx_id, int fd);
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_set_gvproxy_path(uint32_t ctx_id, char* c_path);
+int32_t krun_set_gvproxy_path(uint32_t ctx_id, char *c_path);
 
 /**
  * Sets the MAC address for the virtio-net device when using the passt backend.
@@ -196,17 +214,17 @@ int32_t krun_set_net_mac(uint32_t ctx_id, uint8_t *const c_mac);
 int32_t krun_set_port_map(uint32_t ctx_id, const char *const port_map[]);
 
 /* Flags for virglrenderer.  Copied from virglrenderer bindings. */
-#define VIRGLRENDERER_USE_EGL            1 << 0
-#define VIRGLRENDERER_THREAD_SYNC        1 << 1
-#define VIRGLRENDERER_USE_GLX            1 << 2
-#define VIRGLRENDERER_USE_SURFACELESS    1 << 3
-#define VIRGLRENDERER_USE_GLES           1 << 4
-#define VIRGLRENDERER_USE_EXTERNAL_BLOB  1 << 5
-#define VIRGLRENDERER_VENUS              1 << 6
-#define VIRGLRENDERER_NO_VIRGL           1 << 7
+#define VIRGLRENDERER_USE_EGL 1 << 0
+#define VIRGLRENDERER_THREAD_SYNC 1 << 1
+#define VIRGLRENDERER_USE_GLX 1 << 2
+#define VIRGLRENDERER_USE_SURFACELESS 1 << 3
+#define VIRGLRENDERER_USE_GLES 1 << 4
+#define VIRGLRENDERER_USE_EXTERNAL_BLOB 1 << 5
+#define VIRGLRENDERER_VENUS 1 << 6
+#define VIRGLRENDERER_NO_VIRGL 1 << 7
 #define VIRGLRENDERER_USE_ASYNC_FENCE_CB 1 << 8
-#define VIRGLRENDERER_RENDER_SERVER      1 << 9
-#define VIRGLRENDERER_DRM                1 << 10
+#define VIRGLRENDERER_RENDER_SERVER 1 << 9
+#define VIRGLRENDERER_DRM 1 << 10
 /**
  * Enables and configures a virtio-gpu device.
  *
@@ -218,6 +236,22 @@ int32_t krun_set_port_map(uint32_t ctx_id, const char *const port_map[]);
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_set_gpu_options(uint32_t ctx_id, uint32_t virgl_flags);
+
+/**
+ * Enables and configures a virtio-gpu device. This variant allows specifying
+ * the size of the host window (acting as vRAM in the guest).
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "virgl_flags" - flags to pass to virglrenderer.
+ *  "shm_size"    - size of the SHM host window in bytes.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_gpu_options2(uint32_t ctx_id,
+                              uint32_t virgl_flags,
+                              uint64_t shm_size);
 
 /**
  * Enables or disables a virtio-snd device.
@@ -338,7 +372,6 @@ int32_t krun_add_vsock_port(uint32_t ctx_id,
  *  The eventfd file descriptor or a negative error number on failure.
  */
 int32_t krun_get_shutdown_eventfd(uint32_t ctx_id);
-
 
 /**
  * Configures the console device to ignore stdin and write the output to "c_filepath".

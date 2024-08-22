@@ -85,8 +85,6 @@ struct ContextConfig {
     rlimits: Option<String>,
     net_cfg: NetworkConfig,
     mac: Option<[u8; 6]>,
-    #[cfg(not(feature = "tee"))]
-    fs_devs: Vec<FsDeviceConfig>,
     #[cfg(feature = "blk")]
     root_block_cfg: Option<BlockDeviceConfig>,
     #[cfg(feature = "blk")]
@@ -96,6 +94,7 @@ struct ContextConfig {
     unix_ipc_port_map: Option<HashMap<u32, PathBuf>>,
     shutdown_efd: Option<EventFd>,
     gpu_virgl_flags: Option<u32>,
+    gpu_shm_size: Option<usize>,
     enable_snd: bool,
     console_output: Option<PathBuf>,
 }
@@ -154,11 +153,6 @@ impl ContextConfig {
             Some(rlimits) => format!("KRUN_RLIMITS={rlimits}"),
             None => "".to_string(),
         }
-    }
-
-    #[cfg(not(feature = "tee"))]
-    fn add_fs_dev(&mut self, fs_cfg: FsDeviceConfig) {
-        self.fs_devs.push(fs_cfg)
     }
 
     #[cfg(feature = "blk")]
@@ -222,6 +216,10 @@ impl ContextConfig {
 
     fn set_gpu_virgl_flags(&mut self, virgl_flags: u32) {
         self.gpu_virgl_flags = Some(virgl_flags);
+    }
+
+    fn set_gpu_shm_size(&mut self, shm_size: usize) {
+        self.gpu_shm_size = Some(shm_size);
     }
 }
 
@@ -395,10 +393,12 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            if !cfg.fs_devs.is_empty() {
-                return -libc::EINVAL;
-            }
-            cfg.add_fs_dev(FsDeviceConfig { fs_id, shared_dir });
+            cfg.vmr.add_fs_device(FsDeviceConfig {
+                fs_id,
+                shared_dir,
+                // Default to a conservative 512 MB window.
+                shm_size: Some(1 << 29),
+            });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -426,9 +426,43 @@ pub unsafe extern "C" fn krun_add_virtiofs(
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            cfg.add_fs_dev(FsDeviceConfig {
+            cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id: tag.to_string(),
                 shared_dir: path.to_string(),
+                shm_size: None,
+            });
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(not(feature = "tee"))]
+pub unsafe extern "C" fn krun_add_virtiofs2(
+    ctx_id: u32,
+    c_tag: *const c_char,
+    c_path: *const c_char,
+    shm_size: u64,
+) -> i32 {
+    let tag = match CStr::from_ptr(c_tag).to_str() {
+        Ok(tag) => tag,
+        Err(_) => return -libc::EINVAL,
+    };
+    let path = match CStr::from_ptr(c_path).to_str() {
+        Ok(path) => path,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.add_fs_device(FsDeviceConfig {
+                fs_id: tag.to_string(),
+                shared_dir: path.to_string(),
+                shm_size: Some(shm_size.try_into().unwrap()),
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -838,6 +872,25 @@ pub unsafe extern "C" fn krun_set_gpu_options(ctx_id: u32, virgl_flags: u32) -> 
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+pub unsafe extern "C" fn krun_set_gpu_options2(
+    ctx_id: u32,
+    virgl_flags: u32,
+    shm_size: u64,
+) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.set_gpu_virgl_flags(virgl_flags);
+            cfg.set_gpu_shm_size(shm_size.try_into().unwrap());
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
 pub unsafe extern "C" fn krun_set_snd_device(ctx_id: u32, enable: bool) -> i32 {
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
@@ -967,14 +1020,6 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         None => return -libc::ENOENT,
     };
 
-    #[cfg(not(feature = "tee"))]
-    for fs in &ctx_cfg.fs_devs {
-        if ctx_cfg.vmr.add_fs_device(fs.clone()).is_err() {
-            error!("Error configuring virtio-fs");
-            return -libc::EINVAL;
-        }
-    }
-
     #[cfg(feature = "blk")]
     if let Some(block_cfg) = ctx_cfg.get_root_block_cfg() {
         if ctx_cfg.vmr.add_block_device(block_cfg).is_err() {
@@ -1065,6 +1110,9 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     if let Some(virgl_flags) = ctx_cfg.gpu_virgl_flags {
         ctx_cfg.vmr.set_gpu_virgl_flags(virgl_flags);
+    }
+    if let Some(shm_size) = ctx_cfg.gpu_shm_size {
+        ctx_cfg.vmr.set_gpu_shm_size(shm_size);
     }
 
     #[cfg(feature = "snd")]
