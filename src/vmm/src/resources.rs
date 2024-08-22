@@ -41,9 +41,6 @@ pub enum Error {
     /// Error opening TEE config file.
     #[cfg(feature = "tee")]
     OpenTeeConfig(std::io::Error),
-    /// Fs device configuration error.
-    #[cfg(not(feature = "tee"))]
-    FsDevice(FsConfigError),
     /// Error parsing TEE config file.
     #[cfg(feature = "tee")]
     ParseTeeConfig(serde_json::Error),
@@ -96,7 +93,7 @@ pub struct VmResources {
     pub initrd_bundle: Option<InitrdBundle>,
     /// The fs device.
     #[cfg(not(feature = "tee"))]
-    pub fs: FsBuilder,
+    pub fs: Vec<FsDeviceConfig>,
     /// The vsock device.
     pub vsock: VsockBuilder,
     /// The virtio-blk device.
@@ -110,6 +107,7 @@ pub struct VmResources {
     pub tee_config: TeeConfig,
     /// Flags for the virtio-gpu device.
     pub gpu_virgl_flags: Option<u32>,
+    pub gpu_shm_size: Option<usize>,
     #[cfg(feature = "snd")]
     /// Enable the virtio-snd device.
     pub snd_device: bool,
@@ -236,8 +234,8 @@ impl VmResources {
     }
 
     #[cfg(not(feature = "tee"))]
-    pub fn add_fs_device(&mut self, config: FsDeviceConfig) -> Result<FsConfigError> {
-        self.fs.insert(config)
+    pub fn add_fs_device(&mut self, config: FsDeviceConfig) {
+        self.fs.push(config)
     }
 
     #[cfg(feature = "blk")]
@@ -252,6 +250,10 @@ impl VmResources {
 
     pub fn set_gpu_virgl_flags(&mut self, virgl_flags: u32) {
         self.gpu_virgl_flags = Some(virgl_flags);
+    }
+
+    pub fn set_gpu_shm_size(&mut self, shm_size: usize) {
+        self.gpu_shm_size = Some(shm_size);
     }
 
     #[cfg(feature = "snd")]
@@ -326,6 +328,7 @@ mod tests {
             #[cfg(feature = "net")]
             net_builder: Default::default(),
             gpu_virgl_flags: None,
+            gpu_shm_size: None,
             #[cfg(feature = "snd")]
             enable_snd: False,
             console_output: None,

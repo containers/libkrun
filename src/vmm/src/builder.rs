@@ -43,7 +43,7 @@ use crate::terminal::term_set_raw_mode;
 use crate::vmm_config::block::BlockBuilder;
 use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
 #[cfg(not(feature = "tee"))]
-use crate::vmm_config::fs::FsBuilder;
+use crate::vmm_config::fs::FsDeviceConfig;
 #[cfg(target_os = "linux")]
 use crate::vstate::KvmContext;
 #[cfg(all(target_os = "linux", feature = "tee"))]
@@ -842,14 +842,17 @@ fn create_guest_memory(
 
     if let Some(vm_resources) = vm_resources {
         #[cfg(not(feature = "tee"))]
-        for (index, _fs) in vm_resources.fs.list.iter().enumerate() {
-            shm_manager
-                .create_fs_region(index, 1 << 29)
-                .map_err(StartMicrovmError::ShmCreate)?;
+        for (index, fs) in vm_resources.fs.iter().enumerate() {
+            if let Some(shm_size) = fs.shm_size {
+                shm_manager
+                    .create_fs_region(index, shm_size)
+                    .map_err(StartMicrovmError::ShmCreate)?;
+            }
         }
         if vm_resources.gpu_virgl_flags.is_some() {
+            let size = vm_resources.gpu_shm_size.unwrap_or(1 << 33);
             shm_manager
-                .create_gpu_region(1 << 33)
+                .create_gpu_region(size)
                 .map_err(StartMicrovmError::ShmCreate)?;
         }
 
@@ -1177,14 +1180,18 @@ fn attach_mmio_device(
 #[cfg(not(feature = "tee"))]
 fn attach_fs_devices(
     vmm: &mut Vmm,
-    fs_devs: &FsBuilder,
+    fs_devs: &[FsDeviceConfig],
     shm_manager: &mut ShmManager,
     intc: Option<Arc<Mutex<Gic>>>,
     #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
-    for (i, fs) in fs_devs.list.iter().enumerate() {
+    for (i, config) in fs_devs.iter().enumerate() {
+        let fs = Arc::new(Mutex::new(
+            devices::virtio::Fs::new(config.fs_id.clone(), config.shared_dir.clone()).unwrap(),
+        ));
+
         let id = format!("{}{}", String::from(fs.lock().unwrap().id()), i);
 
         if let Some(ref intc) = intc {
