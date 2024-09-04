@@ -179,7 +179,10 @@ impl MMIODeviceManager {
             .map_err(Error::BusError)?;
 
         cmdline
-            .insert("earlycon", &format!("uart,mmio,0x{:08x}", self.mmio_base))
+            .insert(
+                "earlycon",
+                &format!("pl011,mmio32,0x{:08x}", self.mmio_base),
+            )
             .map_err(Error::Cmdline)?;
 
         let ret = self.mmio_base;
