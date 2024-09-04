@@ -55,15 +55,20 @@ use crate::vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
 use arch::ArchMemoryInfo;
 use arch::DeviceType;
 use arch::InitrdConfig;
+use cca::Algo;
 #[cfg(target_os = "macos")]
 use crossbeam_channel::Sender;
 use devices::virtio::VmmExitObserver;
 use devices::BusDevice;
 use kernel::cmdline::Cmdline as KernelCmdline;
+use kvm_bindings::KVM_ARM_VCPU_REC;
 use polly::event_manager::{self, EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
 use utils::eventfd::EventFd;
+use vm_memory::Address;
+use vm_memory::GuestMemory;
 use vm_memory::GuestMemoryMmap;
+use vm_memory::GuestMemoryRegion;
 
 /// Success exit code.
 pub const FC_EXIT_CODE_OK: u8 = 0;
@@ -299,6 +304,31 @@ impl Vmm {
                 _smbios_oem_strings,
             )
             .map_err(Error::ConfigureSystem)?;
+
+            // after activation guest is not accesible anymore
+            #[cfg(feature = "cca")]
+            {
+                let _ = self
+                    .vm
+                    .realm
+                    .configure_measurement(self.vm.fd(), Algo::AlgoSha256);
+                self.vm.realm.create_realm_descriptor(self.vm.fd()).unwrap();
+
+                for (_index, region) in self.guest_memory.iter().enumerate() {
+                    self.vm
+                        .realm
+                        .populate(self.vm.fd(), region.start_addr().raw_value(), region.len())
+                        .unwrap();
+                }
+                let feature = KVM_ARM_VCPU_REC as i32;
+
+                // not really sure if the finalize and the activate should go here
+                for vcpu in vcpus.iter() {
+                    vcpu.fd.vcpu_finalize(&feature).unwrap();
+                }
+
+                self.vm.realm.activate(self.vm.fd()).unwrap();
+            }
         }
 
         #[cfg(all(target_arch = "aarch64", target_os = "macos"))]

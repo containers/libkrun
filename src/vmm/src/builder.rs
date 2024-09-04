@@ -3,8 +3,10 @@
 
 //! Enables pre-boot setup, instantiation and booting of a Firecracker VMM.
 
+use cca::Algo;
 #[cfg(target_os = "macos")]
 use crossbeam_channel::{unbounded, Sender};
+use std::cmp::max;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io;
@@ -68,7 +70,9 @@ use vm_memory::mmap::MmapRegion;
 #[cfg(any(target_arch = "aarch64", feature = "tee"))]
 use vm_memory::Bytes;
 use vm_memory::GuestMemory;
-use vm_memory::{GuestAddress, GuestMemoryMmap};
+use vm_memory::{Address, GuestAddress, GuestMemoryMmap, GuestMemoryRegion};
+
+use kvm_bindings::KVM_ARM_VCPU_REC;
 
 #[cfg(feature = "efi")]
 static EDK2_BINARY: &[u8] = include_bytes!("../../../edk2/KRUN_EFI.silent.fd");
@@ -435,17 +439,18 @@ pub fn build_microvm(
 
     // On x86_64 always create a serial device,
     // while on aarch64 only create it if 'console=' is specified in the boot args.
-    let serial_device = if cfg!(feature = "efi") {
+    // TODO: to comment this
+    let serial_device = //if cfg!(feature = "efi") {
         Some(setup_serial_device(
             event_manager,
             None,
-            None,
+            //None,
             // Uncomment this to get EFI output when debugging EDK2.
-            // Some(Box::new(io::stdout())),
-        )?)
-    } else {
-        None
-    };
+            Some(Box::new(io::stdout())),
+        )?);
+    //} else {
+    //    None
+    //};
 
     let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
         .map_err(Error::EventFd)
@@ -559,7 +564,7 @@ pub fn build_microvm(
         )?;
     }
 
-    #[cfg(not(feature = "tee"))]
+    #[cfg(all(not(feature = "tee"), not(feature = "cca")))]
     let _shm_region = Some(VirtioShmRegion {
         host_addr: guest_memory
             .get_host_address(GuestAddress(arch_memory_info.shm_start_addr))
@@ -647,6 +652,7 @@ pub fn build_microvm(
     #[cfg(not(feature = "tee"))]
     let initrd_config = None;
 
+    // after this point guest memory and regs are not accesible anymore
     vmm.configure_system(
         vcpus.as_slice(),
         &initrd_config,
@@ -809,7 +815,7 @@ fn load_cmdline(vmm: &Vmm) -> std::result::Result<(), StartMicrovmError> {
     .map_err(StartMicrovmError::LoadCommandline)
 }
 
-#[cfg(all(target_os = "linux", not(feature = "tee")))]
+#[cfg(all(target_os = "linux", not(feature = "tee"), not(feature = "cca")))]
 pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
 ) -> std::result::Result<Vm, StartMicrovmError> {
@@ -819,7 +825,30 @@ pub(crate) fn setup_vm(
     let mut vm = Vm::new(kvm.fd())
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
-    vm.memory_init(guest_memory, kvm.max_memslots())
+    vm.memory_init(guest_memory, kvm.max_memslots(), false)
+        .map_err(Error::Vm)
+        .map_err(StartMicrovmError::Internal)?;
+    Ok(vm)
+}
+#[cfg(all(target_os = "linux", feature = "cca"))]
+pub(crate) fn setup_vm(
+    guest_memory: &GuestMemoryMmap,
+) -> std::result::Result<Vm, StartMicrovmError> {
+    let kvm = KvmContext::new()
+        .map_err(Error::KvmContext)
+        .map_err(StartMicrovmError::Internal)?;
+
+    // calculate max_addr for max_ipa
+    let mut max_addr = 0;
+    for (_index, region) in guest_memory.iter().enumerate() {
+        max_addr = max(max_addr, region.start_addr().raw_value() + region.len() - 1);
+    }
+
+    let mut vm = Vm::new(kvm.fd(), max_addr as usize)
+        .map_err(Error::Vm)
+        .map_err(StartMicrovmError::Internal)?;
+
+    vm.memory_init(guest_memory, kvm.max_memslots(), true)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     Ok(vm)
@@ -833,7 +862,7 @@ pub(crate) fn setup_vm(
     let mut vm = Vm::new(kvm.fd(), tee_config)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
-    vm.memory_init(guest_memory, kvm.max_memslots())
+    vm.memory_init(guest_memory, kvm.max_memslots(), false)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     Ok(vm)
@@ -1021,7 +1050,7 @@ fn create_vcpus_aarch64(
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
     for cpu_index in 0..vcpu_config.vcpu_count {
-        let mut vcpu = Vcpu::new_aarch64(
+        let mut vcpu: Vcpu = Vcpu::new_aarch64(
             cpu_index,
             vm.fd(),
             exit_evt.try_clone().map_err(Error::EventFd)?,

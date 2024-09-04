@@ -69,7 +69,7 @@ pub fn arch_memory_regions(size: usize) -> (ArchMemoryInfo, Vec<(GuestAddress, u
     } else {
         vec![
             (GuestAddress(layout::DRAM_MEM_START), dram_size),
-            (GuestAddress(shm_start_addr), MMIO_SHM_SIZE as usize),
+            //(GuestAddress(shm_start_addr), MMIO_SHM_SIZE as usize),
         ]
     };
 
