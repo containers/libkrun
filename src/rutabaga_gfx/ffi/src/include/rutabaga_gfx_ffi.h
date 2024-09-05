@@ -87,6 +87,7 @@ extern "C" {
  * Rutabaga channel types
  */
 #define RUTABAGA_CHANNEL_TYPE_WAYLAND 1
+#define RUTABAGA_CHANNEL_TYPE_X11 0x11
 
 /**
  * Rutabaga WSI

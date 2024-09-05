@@ -19,6 +19,7 @@
 // Channel types (must match rutabaga channel types)
 #define CROSS_DOMAIN_CHANNEL_TYPE_WAYLAND 0x0001
 #define CROSS_DOMAIN_CHANNEL_TYPE_CAMERA 0x0002
+#define CROSS_DOMAIN_CHANNEL_TYPE_X11 0x0011
 
 // The maximum number of identifiers (value based on wp_linux_dmabuf)
 #define CROSS_DOMAIN_MAX_IDENTIFIERS 4

@@ -47,7 +47,7 @@ use super::super::CrossDomainJob;
 use super::super::CrossDomainState;
 use super::epoll_internal::Epoll;
 use super::epoll_internal::EpollEvent;
-use crate::cross_domain::cross_domain_protocol::CrossDomainInit;
+use crate::cross_domain::cross_domain_protocol::{CrossDomainInit, CROSS_DOMAIN_ID_TYPE_SHM};
 use crate::cross_domain::CrossDomainEvent;
 use crate::cross_domain::CrossDomainToken;
 use crate::cross_domain::WAIT_CONTEXT_MAX;
@@ -232,6 +232,12 @@ impl CrossDomainContext {
                 // can receive subsequent hang-up events.
                 write_pipe_opt = Some(write_pipe);
                 read_pipe_id_opt = Some(read_pipe_id);
+            } else if *identifier_type == CROSS_DOMAIN_ID_TYPE_SHM {
+                if let Some(ftx) = self.futexes.lock().unwrap().get(identifier) {
+                    *descriptor = ftx.handle.as_raw_descriptor();
+                } else {
+                    return Err(RutabagaError::InvalidCrossDomainItemId);
+                }
             } else {
                 // Don't know how to handle anything else yet.
                 return Err(RutabagaError::InvalidCrossDomainItemType);

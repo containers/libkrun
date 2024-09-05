@@ -20,7 +20,7 @@ use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_SHM;
 use rutabaga_gfx::{
     ResourceCreate3D, ResourceCreateBlob, Rutabaga, RutabagaBuilder, RutabagaChannel,
     RutabagaFence, RutabagaFenceHandler, RutabagaIovec, Transfer3D, RUTABAGA_CHANNEL_TYPE_WAYLAND,
-    RUTABAGA_MAP_CACHE_MASK,
+    RUTABAGA_CHANNEL_TYPE_X11, RUTABAGA_MAP_CACHE_MASK,
 };
 #[cfg(target_os = "linux")]
 use rutabaga_gfx::{
@@ -190,12 +190,22 @@ impl VirtioGpu {
             Ok(display) => display,
             Err(_) => "wayland-0".to_string(),
         };
-        let path = PathBuf::from(format!("{}/{}", xdg_runtime_dir, wayland_display));
-
-        let rutabaga_channels: Vec<RutabagaChannel> = vec![RutabagaChannel {
-            base_channel: path,
-            channel_type: RUTABAGA_CHANNEL_TYPE_WAYLAND,
-        }];
+        let wayland_path = PathBuf::from(format!("{}/{}", xdg_runtime_dir, wayland_display));
+        let x_display = match env::var("DISPLAY") {
+            Ok(display) => display,
+            Err(_) => ":0".to_string(),
+        };
+        let x_path = PathBuf::from(format!("/tmp/.X11-unix/X{}", &x_display[1..]));
+        let rutabaga_channels: Vec<RutabagaChannel> = vec![
+            RutabagaChannel {
+                base_channel: wayland_path,
+                channel_type: RUTABAGA_CHANNEL_TYPE_WAYLAND,
+            },
+            RutabagaChannel {
+                base_channel: x_path,
+                channel_type: RUTABAGA_CHANNEL_TYPE_X11,
+            },
+        ];
         let rutabaga_channels_opt = Some(rutabaga_channels);
 
         let builder = RutabagaBuilder::new(
