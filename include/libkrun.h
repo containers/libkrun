@@ -64,7 +64,7 @@ int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
 
 /**
  * Sets the path to the disk image that contains the file-system to be used as root for the microVM.
- * The only supported image format is "raw". Only available in libkrun-SEV.
+ * The only supported image format is "raw".
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
@@ -78,7 +78,7 @@ int32_t krun_set_root_disk(uint32_t ctx_id, const char *disk_path);
 
 /**
  * Sets the path to the disk image that contains the file-system to be used as a data partition for the microVM.
- * The only supported image format is "raw". Only available in libkrun-SEV.
+ * The only supported image format is "raw".
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
