@@ -490,8 +490,6 @@ pub unsafe extern "C" fn krun_set_root_disk(ctx_id: u32, c_disk_path: *const c_c
         Err(_) => return -libc::EINVAL,
     };
 
-    //let fs_id = "/dev/root".to_string();
-    //let shared_dir = root_path.to_string();
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
@@ -518,9 +516,6 @@ pub unsafe extern "C" fn krun_set_data_disk(ctx_id: u32, c_disk_path: *const c_c
         Ok(disk) => disk,
         Err(_) => return -libc::EINVAL,
     };
-
-    //let fs_id = "/dev/root".to_string();
-    //let shared_dir = root_path.to_string();
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
