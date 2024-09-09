@@ -40,16 +40,13 @@ Each variant generates a dynamic library with a different name (and ```soname```
 
 * virtio-console
 * virtio-vsock (specialized for TSI, Transparent Socket Impersonation)
+* virtio-block
 
 ### libkrun
 
 * virtio-fs
 * virtio-balloon (only free-page reporting)
 * virtio-rng
-
-### libkrun-sev
-
-* virtio-block
 
 ## Networking
 
