@@ -86,6 +86,8 @@ struct ContextConfig {
     net_cfg: NetworkConfig,
     mac: Option<[u8; 6]>,
     #[cfg(feature = "blk")]
+    block_cfgs: Vec<BlockDeviceConfig>,
+    #[cfg(feature = "blk")]
     root_block_cfg: Option<BlockDeviceConfig>,
     #[cfg(feature = "blk")]
     data_block_cfg: Option<BlockDeviceConfig>,
@@ -156,13 +158,13 @@ impl ContextConfig {
     }
 
     #[cfg(feature = "blk")]
-    fn set_root_block_cfg(&mut self, block_cfg: BlockDeviceConfig) {
-        self.root_block_cfg = Some(block_cfg);
+    fn add_block_cfg(&mut self, block_cfg: BlockDeviceConfig) {
+        self.block_cfgs.push(block_cfg);
     }
 
     #[cfg(feature = "blk")]
-    fn get_root_block_cfg(&self) -> Option<BlockDeviceConfig> {
-        self.root_block_cfg.clone()
+    fn set_root_block_cfg(&mut self, block_cfg: BlockDeviceConfig) {
+        self.root_block_cfg = Some(block_cfg);
     }
 
     #[cfg(feature = "blk")]
@@ -171,8 +173,20 @@ impl ContextConfig {
     }
 
     #[cfg(feature = "blk")]
-    fn get_data_block_cfg(&self) -> Option<BlockDeviceConfig> {
-        self.data_block_cfg.clone()
+    fn get_block_cfg(&self) -> Vec<BlockDeviceConfig> {
+        // For backwards compat, when cfgs is empty (the new API is not used), this needs to be
+        // root and then data, in that order. Also for backwards compat, root/data are setters and
+        // need to discard redundant calls. So we have simple setters above and fix up here.
+        //
+        // When the new API is used, this is simpler.
+        if self.block_cfgs.is_empty() {
+            [&self.root_block_cfg, &self.data_block_cfg]
+                .into_iter()
+                .filter_map(|cfg| cfg.clone())
+                .collect()
+        } else {
+            self.block_cfgs.clone()
+        }
     }
 
     fn set_net_cfg(&mut self, net_cfg: NetworkConfig) {
@@ -484,12 +498,47 @@ pub unsafe extern "C" fn krun_set_mapped_volumes(
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 #[cfg(feature = "blk")]
-pub unsafe extern "C" fn krun_set_root_disk(ctx_id: u32, c_disk_path: *const c_char) -> i32 {
+pub unsafe extern "C" fn krun_add_disk(
+    ctx_id: u32,
+    c_block_id: *const c_char,
+    c_disk_path: *const c_char,
+    read_only: bool,
+) -> i32 {
     let disk_path = match CStr::from_ptr(c_disk_path).to_str() {
         Ok(disk) => disk,
         Err(_) => return -libc::EINVAL,
     };
 
+    let block_id = match CStr::from_ptr(c_block_id).to_str() {
+        Ok(block_id) => block_id,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            let block_device_config = BlockDeviceConfig {
+                block_id: block_id.to_string(),
+                cache_type: CacheType::Writeback,
+                disk_image_path: disk_path.to_string(),
+                is_disk_read_only: read_only,
+            };
+            cfg.add_block_cfg(block_device_config);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(feature = "blk")]
+pub unsafe extern "C" fn krun_set_root_disk(ctx_id: u32, c_disk_path: *const c_char) -> i32 {
+    let disk_path = match CStr::from_ptr(c_disk_path).to_str() {
+        Ok(disk) => disk,
+        Err(_) => return -libc::EINVAL,
+    };
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
@@ -1009,17 +1058,9 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     };
 
     #[cfg(feature = "blk")]
-    if let Some(block_cfg) = ctx_cfg.get_root_block_cfg() {
+    for block_cfg in ctx_cfg.get_block_cfg() {
         if ctx_cfg.vmr.add_block_device(block_cfg).is_err() {
-            error!("Error configuring virtio-blk for root block");
-            return -libc::EINVAL;
-        }
-    }
-
-    #[cfg(feature = "blk")]
-    if let Some(block_cfg) = ctx_cfg.get_data_block_cfg() {
-        if ctx_cfg.vmr.add_block_device(block_cfg).is_err() {
-            error!("Error configuring virtio-blk for data block");
+            error!("Error configuring virtio-blk for block");
             return -libc::EINVAL;
         }
     }

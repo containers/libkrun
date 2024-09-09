@@ -63,6 +63,8 @@ int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus, uint32_t ram_mib)
 int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
 
 /**
+ * DEPRECATED. Use krun_add_disk instead.
+ *
  * Sets the path to the disk image that contains the file-system to be used as root for the microVM.
  * The only supported image format is "raw".
  *
@@ -77,8 +79,10 @@ int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
 int32_t krun_set_root_disk(uint32_t ctx_id, const char *disk_path);
 
 /**
- * Sets the path to the disk image that contains the file-system to be used as a data partition for the microVM.
- * The only supported image format is "raw".
+ * DEPRECATED. Use krun_add_disk instead.
+ *
+ * Sets the path to the disk image that contains the file-system to be used as
+ * a data partition for the microVM.  The only supported image format is "raw".
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
@@ -89,6 +93,25 @@ int32_t krun_set_root_disk(uint32_t ctx_id, const char *disk_path);
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_set_data_disk(uint32_t ctx_id, const char *disk_path);
+
+/**
+ * Adds a disk image to be used as a general partition for the microVM.
+ *
+ * This API is mutually exclusive with the deprecated krun_set_root_disk and
+ * krun_set_data_disk methods and must not be used together.
+ *
+ * Arguments:
+ *  "ctx_id"    - the configuration context ID.
+ *  "block_id"  - a null-terminated string representing the partition.
+ *  "disk_path" - a null-terminated string representing the path leading to the disk image that
+ *                contains the root file-system.
+ *  "read_only" - whether the mount should be read-only. Required if the caller does not have
+ *                write permissions (for disk images in /usr/share).
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_disk(uint32_t ctx_id, const char *block_id, const char *disk_path, bool read_only);
 
 /**
  * NO LONGER SUPPORTED. DO NOT USE.
