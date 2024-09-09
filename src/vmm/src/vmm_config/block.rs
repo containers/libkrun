@@ -27,7 +27,6 @@ pub struct BlockDeviceConfig {
     pub cache_type: CacheType,
     pub disk_image_path: String,
     pub is_disk_read_only: bool,
-    pub is_disk_root: bool,
 }
 
 #[derive(Default)]
