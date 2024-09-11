@@ -978,12 +978,7 @@ pub unsafe extern "C" fn krun_set_smbios_oem_strings(
 
 #[cfg(feature = "net")]
 fn create_virtio_net(ctx_cfg: &mut ContextConfig, backend: VirtioNetBackend) {
-    let mac = if let Some(mac) = ctx_cfg.mac {
-        mac
-    } else {
-        // By default, use podman-machine's well-known MAC address
-        [0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee]
-    };
+    let mac = ctx_cfg.mac.unwrap_or([0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee]);
 
     let network_interface_config = NetworkInterfaceConfig {
         iface_id: "eth0".to_string(),
