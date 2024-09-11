@@ -493,12 +493,8 @@ impl Queue {
             .read_obj(self.avail_ring.unchecked_add(u64::from(index_offset)))
             .unwrap();
 
-        DescriptorChain::checked_new(mem, self.desc_table, self.actual_size(), desc_index).map(
-            |dc| {
-                self.next_avail += Wrapping(1);
-                dc
-            },
-        )
+        DescriptorChain::checked_new(mem, self.desc_table, self.actual_size(), desc_index)
+            .inspect(|_| self.next_avail += Wrapping(1))
     }
 
     /// Undo the effects of the last `self.pop()` call.
