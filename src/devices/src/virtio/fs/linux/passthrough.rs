@@ -39,12 +39,15 @@ type Handle = u64;
 struct InodeAltKey {
     ino: libc::ino64_t,
     dev: libc::dev_t,
+    mnt_id: u64,
 }
 
 struct InodeData {
     inode: Inode,
     // Most of these aren't actually files but ¯\_(ツ)_/¯.
     file: File,
+    dev: u64,
+    mnt_id: u64,
     refcount: AtomicU64,
 }
 
@@ -148,6 +151,56 @@ fn stat(f: &File) -> io::Result<libc::stat64> {
     if res >= 0 {
         // Safe because the kernel guarantees that the struct is now fully initialized.
         Ok(unsafe { st.assume_init() })
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+fn statx(f: &File) -> io::Result<(libc::stat64, u64)> {
+    let mut stx = MaybeUninit::<libc::statx>::zeroed();
+
+    // Safe because this is a constant value and a valid C string.
+    let pathname = unsafe { CStr::from_bytes_with_nul_unchecked(EMPTY_CSTR) };
+
+    // Safe because the kernel will only write data in `st` and we check the return
+    // value.
+    let res = unsafe {
+        libc::statx(
+            f.as_raw_fd(),
+            pathname.as_ptr(),
+            libc::AT_EMPTY_PATH | libc::AT_SYMLINK_NOFOLLOW,
+            libc::STATX_BASIC_STATS | libc::STATX_MNT_ID,
+            stx.as_mut_ptr(),
+        )
+    };
+    if res >= 0 {
+        // Safe because the kernel guarantees that the struct is now fully initialized.
+        let stx = unsafe { stx.assume_init() };
+
+        // Unfortunately, we cannot use an initializer to create the stat64 object,
+        // because it may contain padding and reserved fields (depending on the
+        // architecture), and it does not implement the Default trait.
+        // So we take a zeroed struct and set what we can. (Zero in all fields is
+        // wrong, but safe.)
+        let mut st = unsafe { MaybeUninit::<libc::stat64>::zeroed().assume_init() };
+
+        st.st_dev = libc::makedev(stx.stx_dev_major, stx.stx_dev_minor);
+        st.st_ino = stx.stx_ino;
+        st.st_mode = stx.stx_mode as _;
+        st.st_nlink = stx.stx_nlink as _;
+        st.st_uid = stx.stx_uid;
+        st.st_gid = stx.stx_gid;
+        st.st_rdev = libc::makedev(stx.stx_rdev_major, stx.stx_rdev_minor);
+        st.st_size = stx.stx_size as _;
+        st.st_blksize = stx.stx_blksize as _;
+        st.st_blocks = stx.stx_blocks as _;
+        st.st_atime = stx.stx_atime.tv_sec;
+        st.st_atime_nsec = stx.stx_atime.tv_nsec as _;
+        st.st_mtime = stx.stx_mtime.tv_sec;
+        st.st_mtime_nsec = stx.stx_mtime.tv_nsec as _;
+        st.st_ctime = stx.stx_ctime.tv_sec;
+        st.st_ctime_nsec = stx.stx_ctime.tv_nsec as _;
+        Ok((st, stx.stx_mnt_id))
     } else {
         Err(io::Error::last_os_error())
     }
@@ -287,6 +340,7 @@ pub struct PassthroughFs {
     // Whether writeback caching is enabled for this directory. This will only be true when
     // `cfg.writeback` is true and `init` was called with `FsOptions::WRITEBACK_CACHE`.
     writeback: AtomicBool,
+    announce_submounts: AtomicBool,
 
     cfg: Config,
 }
@@ -329,6 +383,7 @@ impl PassthroughFs {
             proc_self_fd,
 
             writeback: AtomicBool::new(false),
+            announce_submounts: AtomicBool::new(false),
             cfg,
         })
     }
@@ -407,11 +462,21 @@ impl PassthroughFs {
         // Safe because we just opened this fd.
         let f = unsafe { File::from_raw_fd(fd) };
 
-        let st = stat(&f)?;
+        let (st, mnt_id) = statx(&f)?;
+
+        let mut attr_flags: u32 = 0;
+
+        if st.st_mode & libc::S_IFMT == libc::S_IFDIR
+            && self.announce_submounts.load(Ordering::Relaxed)
+            && (st.st_dev != p.dev || mnt_id != p.mnt_id)
+        {
+            attr_flags |= fuse::ATTR_SUBMOUNT;
+        }
 
         let altkey = InodeAltKey {
             ino: st.st_ino,
             dev: st.st_dev,
+            mnt_id,
         };
         let data = self.inodes.read().unwrap().get_alt(&altkey).cloned();
 
@@ -429,10 +494,13 @@ impl PassthroughFs {
                 InodeAltKey {
                     ino: st.st_ino,
                     dev: st.st_dev,
+                    mnt_id,
                 },
                 Arc::new(InodeData {
                     inode,
                     file: f,
+                    dev: st.st_dev,
+                    mnt_id,
                     refcount: AtomicU64::new(1),
                 }),
             );
@@ -446,7 +514,7 @@ impl PassthroughFs {
             inode,
             generation: 0,
             attr: st,
-            attr_flags: 0,
+            attr_flags,
             attr_timeout: self.cfg.attr_timeout,
             entry_timeout: self.cfg.entry_timeout,
         })
@@ -700,7 +768,7 @@ impl FileSystem for PassthroughFs {
         // Safe because we just opened this fd above.
         let f = unsafe { File::from_raw_fd(fd) };
 
-        let st = stat(&f)?;
+        let (st, mnt_id) = statx(&f)?;
 
         // Safe because this doesn't modify any memory and there is no need to check the return
         // value because this system call always succeeds. We need to clear the umask here because
@@ -715,10 +783,13 @@ impl FileSystem for PassthroughFs {
             InodeAltKey {
                 ino: st.st_ino,
                 dev: st.st_dev,
+                mnt_id,
             },
             Arc::new(InodeData {
                 inode: fuse::ROOT_ID,
                 file: f,
+                dev: st.st_dev,
+                mnt_id,
                 refcount: AtomicU64::new(2),
             }),
         );
@@ -728,6 +799,12 @@ impl FileSystem for PassthroughFs {
             opts |= FsOptions::WRITEBACK_CACHE;
             self.writeback.store(true, Ordering::Relaxed);
         }
+
+        if capable.contains(FsOptions::SUBMOUNTS) {
+            opts |= FsOptions::SUBMOUNTS;
+            self.announce_submounts.store(true, Ordering::Relaxed);
+        }
+
         Ok(opts)
     }
 
