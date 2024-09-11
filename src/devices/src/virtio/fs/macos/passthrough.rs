@@ -20,7 +20,6 @@ use std::time::Duration;
 
 use crossbeam_channel::{unbounded, Sender};
 use hvf::MemoryMapping;
-use vm_memory::ByteValued;
 
 use crate::virtio::fs::filesystem::SecContext;
 
@@ -67,16 +66,6 @@ struct HandleData {
     file: RwLock<File>,
     dirstream: Mutex<DirStream>,
 }
-
-#[repr(C, packed)]
-#[derive(Clone, Copy, Debug, Default)]
-struct LinuxDirent64 {
-    d_ino: bindings::ino64_t,
-    d_off: bindings::off64_t,
-    d_reclen: libc::c_ushort,
-    d_ty: libc::c_uchar,
-}
-unsafe impl ByteValued for LinuxDirent64 {}
 
 fn ebadf() -> io::Error {
     linux_error(io::Error::from_raw_os_error(libc::EBADF))
