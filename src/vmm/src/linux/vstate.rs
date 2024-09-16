@@ -272,34 +272,34 @@ impl Display for Error {
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
             ShmMmap(e) => write!(f, "Error creating memory map for SHM region: {e}"),
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SevSecVirtInit(e) => {
                 write!(
                     f,
                     "Error initializing the Secure Virtualization Backend (SEV): {e:?}"
                 )
             }
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SevSecVirtPrepare(e) => write!(
                 f,
                 "Error preparing the VM for Secure Virtualization (SEV): {e:?}"
             ),
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SevSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SEV): {e:?}"),
 
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SnpSecVirtInit(e) => write!(
                 f,
                 "Error initializing the Secure Virtualization Backend (SEV): {e:?}"
             ),
 
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SnpSecVirtPrepare(e) => write!(
                 f,
                 "Error preparing the VM for Secure Virtualization (SNP): {e:?}"
             ),
 
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SnpSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SNP): {e:?}"),
 
             SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {e}"),
@@ -474,7 +474,7 @@ pub struct Vm {
     #[cfg(feature = "amd-sev")]
     snp: Option<AmdSnp>,
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tee")]
     pub tee: Tee,
 }
 
