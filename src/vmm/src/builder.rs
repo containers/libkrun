@@ -572,6 +572,14 @@ pub fn build_microvm(
         _ => None,
     };
 
+    #[cfg(feature = "tdx")]
+    let mut tdx_launcher = match tee {
+        Tee::Tdx => vm
+            .tdx_secure_virt_prepare()
+            .map_err(StartMicrovmError::SecureVirtPrepare)?,
+        _ => panic!(),
+    };
+
     #[cfg(feature = "tee")]
     let measured_regions = {
         println!("Injecting and measuring memory regions. This may take a while.");
