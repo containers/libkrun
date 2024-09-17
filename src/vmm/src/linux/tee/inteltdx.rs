@@ -10,6 +10,7 @@ use std::io;
 pub enum Error {
     CreateTdxVmStruct,
     GetCapabilities,
+    InitVm,
     OpenTdvfFirmwareFile(io::Error),
     ParseTdvfSections(tdvf::Error),
 }
@@ -40,5 +41,17 @@ impl IntelTdx {
             tdvf_sections,
             tdvf_file: firmware,
         })
+    }
+
+    pub fn vm_prepare(
+        &self,
+        fd: &kvm_ioctls::VmFd,
+        cpuid: kvm_bindings::CpuId,
+    ) -> Result<(), Error> {
+        self.vm
+            .init_vm(fd, cpuid)
+            .or_else(|_| return Err(Error::InitVm))?;
+
+        Ok(())
     }
 }
