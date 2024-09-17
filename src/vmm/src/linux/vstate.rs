@@ -25,6 +25,9 @@ use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 #[cfg(feature = "amd-sev")]
 use super::tee::amdsnp::{AmdSnp, Error as SnpError};
 
+#[cfg(feature = "intel-tdx")]
+use super::tee::inteltdx::{Error as TdxError, IntelTdx};
+
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
 
@@ -127,6 +130,9 @@ pub enum Error {
     #[cfg(feature = "amd-sev")]
     /// Error attesting the Secure VM (SNP).
     SnpSecVirtAttest(SnpError),
+    #[cfg(feature = "intel-tdx")]
+    /// Error initializing the Trust Domain Extensions Backend (TDX)
+    TdxSecVirtInit(TdxError),
     #[cfg(feature = "tee")]
     /// The TEE specified is not supported.
     InvalidTee,
@@ -291,6 +297,11 @@ impl Display for Error {
             SnpSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SNP): {e:?}"),
 
             SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {e}"),
+            #[cfg(feature = "intel-tdx")]
+            TdxSecVirtInit(e) => write!(
+                f,
+                "Error initializing the Trust Domain Extensions Backend (TDX): {e:?}"
+            ),
             #[cfg(feature = "tee")]
             MissingTeeConfig => write!(f, "Missing TEE configuration"),
             #[cfg(target_arch = "x86_64")]
@@ -459,6 +470,9 @@ pub struct Vm {
     #[cfg(feature = "amd-sev")]
     tee: Option<AmdSnp>,
 
+    #[cfg(feature = "intel-tdx")]
+    tdx: Option<IntelTdx>,
+
     #[cfg(feature = "tee")]
     pub tee_config: Tee,
 }
@@ -513,6 +527,31 @@ impl Vm {
             supported_cpuid,
             supported_msrs,
             tee,
+            tee_config: tee_config.tee,
+        })
+    }
+
+    #[cfg(feature = "intel-tdx")]
+    pub fn new(kvm: &Kvm, tee_config: &TeeConfig) -> Result<Self> {
+        // create fd for interacting with kvm-vm specific functions
+        let vm_fd = kvm
+            .create_vm_with_type(tdx::launch::KVM_X86_TDX_VM)
+            .map_err(Error::VmFd)?;
+
+        let supported_cpuid = kvm
+            .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
+            .map_err(Error::VmFd)?;
+
+        let supported_msrs =
+            arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
+
+        let tdx = IntelTdx::new(&vm_fd).map_err(Error::TdxSecVirtInit)?;
+        Ok(Vm {
+            fd: vm_fd,
+            next_mem_slot: 0,
+            supported_cpuid,
+            supported_msrs,
+            tdx: Some(tdx),
             tee_config: tee_config.tee,
         })
     }
