@@ -562,6 +562,15 @@ pub fn build_microvm(
         _ => None,
     };
 
+    #[cfg(feature = "intel-tdx")]
+    let _ = match tee {
+        Tee::Tdx => Some(
+            vm.tdx_secure_virt_prepare()
+                .map_err(StartMicrovmError::SecureVirtPrepare)?,
+        ),
+        _ => None,
+    };
+
     #[cfg(feature = "tee")]
     let measured_regions = {
         println!("Injecting and measuring memory regions. This may take a while.");
