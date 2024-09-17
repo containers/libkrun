@@ -25,6 +25,9 @@ use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 #[cfg(feature = "amd-sev")]
 use super::tee::amdsnp::{AmdSnp, Error as SnpError};
 
+#[cfg(feature = "tdx")]
+use super::tee::inteltdx::IntelTdx;
+
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
 
@@ -240,6 +243,10 @@ pub enum Error {
     VmSetIrqChip(kvm_ioctls::Error),
     /// Cannot configure the microvm.
     VmSetup(kvm_ioctls::Error),
+    /// Failed to enable split IRQCHIP in vm
+    VmSplitIrqchip(kvm_ioctls::Error),
+    /// Failed to set vm APIC bus clock rate (in nanoseconds)
+    VmApicBusClockRate(kvm_ioctls::Error),
 }
 
 impl Display for Error {
@@ -266,6 +273,11 @@ impl Display for Error {
             VmFd(e) => write!(f, "Cannot open the VM file descriptor: {e}"),
             VcpuFd(e) => write!(f, "Cannot open the VCPU file descriptor: {e}"),
             VmSetup(e) => write!(f, "Cannot configure the microvm: {e}"),
+            VmSplitIrqchip(e) => write!(f, "Failed to enable split IRQCHIP: {e}"),
+            VmApicBusClockRate(e) => write!(
+                f,
+                "Failed to set vm APIC bus clock rate (in nanoseconds): {e}"
+            ),
             VcpuRun(e) => write!(f, "Cannot run the VCPUs: {e}"),
             NotEnoughMemorySlots => write!(
                 f,
@@ -465,6 +477,9 @@ pub struct Vm {
     #[cfg(feature = "amd-sev")]
     tee: Option<AmdSnp>,
 
+    #[cfg(feature = "tdx")]
+    tdx: Option<IntelTdx>,
+
     #[cfg(feature = "tee")]
     pub tee_config: Tee,
 
@@ -531,6 +546,47 @@ impl Vm {
             supported_cpuid,
             supported_msrs,
             tee,
+            tee_config: tee_config.tee,
+            guest_memfds: Vec::new(),
+        })
+    }
+
+    #[cfg(feature = "tdx")]
+    pub fn new(kvm: &Kvm, tee_config: &TeeConfig) -> Result<Self> {
+        // create fd for interacting with kvm-vm specific functions
+        let vm_fd = kvm
+            .create_vm_with_type(tdx::launch::KVM_X86_TDX_VM)
+            .map_err(Error::VmFd)?;
+
+        let supported_cpuid = kvm
+            .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
+            .map_err(Error::VmFd)?;
+
+        let supported_msrs =
+            arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
+
+        let mut cap = kvm_enable_cap {
+            cap: KVM_CAP_EXIT_HYPERCALL,
+            flags: 0,
+            args: [1 << 12 /* KVM_HC_MAP_GPA_RANGE */, 0, 0, 0],
+            ..Default::default()
+        };
+        vm_fd.enable_cap(&cap).map_err(Error::HypercallExitEnable)?;
+
+        cap.cap = kvm_bindings::KVM_CAP_SPLIT_IRQCHIP;
+        cap.args[0] = 24;
+        vm_fd.enable_cap(&cap).map_err(Error::VmSplitIrqchip)?;
+
+        cap.cap = 237; // KVM_CAP_X86_APIC_BUS_CYCLES_NS
+        cap.args[0] = 40;
+        vm_fd.enable_cap(&cap).map_err(Error::VmApicBusClockRate)?;
+
+        Ok(Vm {
+            fd: vm_fd,
+            next_mem_slot: 0,
+            supported_cpuid,
+            supported_msrs,
+            tdx: Some(IntelTdx::new()),
             tee_config: tee_config.tee,
             guest_memfds: Vec::new(),
         })
