@@ -26,7 +26,7 @@ use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 use super::tee::amdsnp::{AmdSnp, Error as SnpError};
 
 #[cfg(feature = "tdx")]
-use super::tee::inteltdx::IntelTdx;
+use super::tee::inteltdx::{Error as TdxError, IntelTdx};
 
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
@@ -129,6 +129,9 @@ pub enum Error {
     #[cfg(feature = "amd-sev")]
     /// Error attesting the Secure VM (SNP).
     SnpSecVirtAttest(SnpError),
+    #[cfg(feature = "tdx")]
+    /// Error preparing the VM for Trust Domain Extensions (TDX)
+    TdxSecVirtPrepare(TdxError),
     #[cfg(feature = "tee")]
     /// The TEE specified is not supported.
     InvalidTee,
@@ -303,6 +306,11 @@ impl Display for Error {
             SnpSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SNP): {e:?}"),
 
             SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {e}"),
+            #[cfg(feature = "tdx")]
+            TdxSecVirtPrepare(e) => write!(
+                f,
+                "Error preparing the VM for Trust Domain Extensions (TDX): {e:?}"
+            ),
             #[cfg(feature = "tee")]
             MissingTeeConfig => write!(f, "Missing TEE configuration"),
             #[cfg(target_arch = "x86_64")]
@@ -697,6 +705,16 @@ impl Vm {
         self.next_mem_slot += 1;
 
         Ok(())
+    }
+
+    #[cfg(feature = "tdx")]
+    pub fn tdx_secure_virt_prepare(&self) -> Result<tdx::launch::Launcher> {
+        match &self.tdx {
+            Some(t) => t
+                .vm_prepare(&self.fd, self.supported_cpuid.clone())
+                .map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
     }
 
     #[cfg(feature = "amd-sev")]
