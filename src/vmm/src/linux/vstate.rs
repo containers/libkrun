@@ -42,7 +42,10 @@ use kvm_bindings::{
     Msrs, KVM_CLOCK_TSC_STABLE, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
     KVM_MAX_CPUID_ENTRIES, KVM_PIT_SPEAKER_DUMMY,
 };
-use kvm_bindings::{kvm_userspace_memory_region, KVM_API_VERSION};
+use kvm_bindings::{
+    kvm_create_guest_memfd, kvm_memory_attributes, kvm_userspace_memory_region,
+    kvm_userspace_memory_region2, KVM_API_VERSION,
+};
 use kvm_ioctls::*;
 use utils::eventfd::EventFd;
 use utils::signal::{register_signal_handler, sigrtmin, Killable};
@@ -63,6 +66,9 @@ pub enum Error {
     #[cfg(target_arch = "x86_64")]
     /// A call to cpuid instruction failed.
     CpuId(cpuid::Error),
+    #[cfg(feature = "intel-tdx")]
+    /// Cannot create guest memfd
+    CreateGuestMemfd(kvm_ioctls::Error),
     #[cfg(target_arch = "x86_64")]
     /// Error configuring the floating point related registers
     FPUConfiguration(arch::x86_64::regs::Error),
@@ -104,6 +110,12 @@ pub enum Error {
     SetupGIC(arch::aarch64::gic::Error),
     /// Cannot set the memory regions.
     SetUserMemoryRegion(kvm_ioctls::Error),
+    #[cfg(feature = "intel-tdx")]
+    /// Cannot set the memory regions.
+    SetUserMemoryRegion2(kvm_ioctls::Error),
+    #[cfg(feature = "intel-tdx")]
+    /// Cannot set the memory attributes
+    SetMemoryAttributes(kvm_ioctls::Error),
     /// Error creating memory map for SHM region.
     ShmMmap(io::Error),
     #[cfg(feature = "amd-sev")]
@@ -231,6 +243,8 @@ impl Display for Error {
         match self {
             #[cfg(target_arch = "x86_64")]
             CpuId(e) => write!(f, "Cpuid error: {e:?}"),
+            #[cfg(feature = "intel-tdx")]
+            CreateGuestMemfd(e) => write!(f, "Failed to create guest memfd: {e:?}",),
             GuestMemoryMmap(e) => write!(f, "Guest memory error: {e:?}"),
             #[cfg(target_arch = "x86_64")]
             GuestMSRs(e) => write!(f, "Retrieving supported guest MSRs fails: {e:?}"),
@@ -257,6 +271,10 @@ impl Display for Error {
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
             ShmMmap(e) => write!(f, "Error creating memory map for SHM region: {e}"),
+            #[cfg(feature = "intel-tdx")]
+            SetUserMemoryRegion2(e) => write!(f, "Cannot set the memory regions: {e:?}",),
+            #[cfg(feature = "intel-tdx")]
+            SetMemoryAttributes(e) => write!(f, "Cannot set the memory attributes: {e:?}",),
             #[cfg(feature = "amd-sev")]
             SnpSecVirtInit(e) => write!(
                 f,
@@ -524,20 +542,70 @@ impl Vm {
             // It's safe to unwrap because the guest address is valid.
             let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
             debug!("Guest memory starts at {:x?}", host_addr);
-            let memory_region = kvm_userspace_memory_region {
-                slot: self.next_mem_slot,
-                guest_phys_addr: region.start_addr().raw_value(),
-                memory_size: region.len(),
-                userspace_addr: host_addr as u64,
-                flags: 0,
-            };
-            // Safe because we mapped the memory region, we made sure that the regions
-            // are not overlapping.
-            unsafe {
+
+            #[cfg(feature = "intel-tdx")]
+            {
+                let gmem = kvm_create_guest_memfd {
+                    size: region.len(),
+                    flags: 0,
+                    reserved: [0; 6],
+                };
+                let gmem = self
+                    .fd
+                    .create_guest_memfd(gmem)
+                    .map_err(Error::CreateGuestMemfd)?;
+
+                let memory_region = kvm_userspace_memory_region2 {
+                    slot: self.next_mem_slot,
+                    // KVM_MEM_GUEST_MEMFD
+                    flags: 1 << 2,
+                    guest_phys_addr: region.start_addr().raw_value(),
+                    memory_size: region.len(),
+                    userspace_addr: host_addr as u64,
+                    guest_memfd_offset: 0,
+                    guest_memfd: gmem as u32,
+                    pad1: 0,
+                    pad2: [0; 14],
+                };
+
+                // Safe because we mapped the memory region, we made sure that the regions
+                // are not overlapping.
+                unsafe {
+                    self.fd
+                        .set_user_memory_region2(memory_region)
+                        .map_err(Error::SetUserMemoryRegion2)?;
+                }
+
+                let attr = kvm_memory_attributes {
+                    address: region.start_addr().raw_value(),
+                    size: region.len() as u64,
+                    // KVM_MEMORY_ATTRIBUTE_PRIVATE,
+                    attributes: 1 << 3,
+                    flags: 0,
+                };
+
                 self.fd
-                    .set_user_memory_region(memory_region)
-                    .map_err(Error::SetUserMemoryRegion)?;
-            };
+                    .set_memory_attributes(attr)
+                    .map_err(Error::SetMemoryAttributes)?;
+            }
+
+            #[cfg(not(feature = "intel-tdx"))]
+            {
+                let memory_region = kvm_userspace_memory_region {
+                    slot: self.next_mem_slot,
+                    guest_phys_addr: region.start_addr().raw_value(),
+                    memory_size: region.len(),
+                    userspace_addr: host_addr as u64,
+                    flags: 0,
+                };
+                // Safe because we mapped the memory region, we made sure that the regions
+                // are not overlapping.
+                unsafe {
+                    self.fd
+                        .set_user_memory_region(memory_region)
+                        .map_err(Error::SetUserMemoryRegion)?;
+                };
+            }
             self.next_mem_slot += 1;
         }
 
