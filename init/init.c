@@ -574,6 +574,7 @@ static int config_parse_file(char ***argv, char **workdir)
 	jsmntok_t *tokens;
 	struct stat stat;
 	char *data;
+	char *config_file;
 	char **config_argv;
 	char **entrypoint;
 	int parsed_env, parsed_workdir, parsed_args, parsed_entrypoint;
@@ -582,7 +583,12 @@ static int config_parse_file(char ***argv, char **workdir)
 	int fd;
 	int i;
 
-	fd = open(CONFIG_FILE_PATH, O_RDONLY);
+	config_file = getenv("KRUN_CONFIG");
+	if (!config_file) {
+		config_file = CONFIG_FILE_PATH;
+	}
+
+	fd = open(config_file, O_RDONLY);
 	if (fd < 0) {
 		return ret;
 	}
