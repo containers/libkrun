@@ -62,7 +62,10 @@ impl MuxerThread {
     }
 
     pub fn run(self) {
-        thread::spawn(|| self.work());
+        thread::Builder::new()
+            .name("vsock muxer".into())
+            .spawn(|| self.work())
+            .unwrap();
     }
 
     fn send_credit_request(&self, credit_rx: MuxerRx) {

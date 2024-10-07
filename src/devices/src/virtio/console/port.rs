@@ -131,18 +131,21 @@ impl Port {
             let port_id = self.port_id;
             let stopfd = stopfd.try_clone().unwrap();
             let stop = stop.clone();
-            thread::spawn(move || {
-                process_rx(
-                    mem,
-                    rx_queue,
-                    irq_signaler,
-                    input,
-                    control,
-                    port_id,
-                    stopfd,
-                    stop,
-                )
-            })
+            thread::Builder::new()
+                .name("console port".into())
+                .spawn(move || {
+                    process_rx(
+                        mem,
+                        rx_queue,
+                        irq_signaler,
+                        input,
+                        control,
+                        port_id,
+                        stopfd,
+                        stop,
+                    )
+                })
+                .unwrap()
         });
 
         let tx_thread = output.map(|output| {
