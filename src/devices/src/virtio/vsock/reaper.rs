@@ -66,6 +66,9 @@ impl ReaperThread {
     }
 
     pub fn run(mut self) {
-        thread::spawn(move || self.work());
+        thread::Builder::new()
+            .name("vsock reaper".into())
+            .spawn(move || self.work())
+            .unwrap();
     }
 }

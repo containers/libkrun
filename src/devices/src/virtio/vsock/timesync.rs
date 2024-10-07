@@ -98,6 +98,9 @@ impl TimesyncThread {
     }
 
     pub fn run(mut self) {
-        thread::spawn(move || self.work());
+        thread::Builder::new()
+            .name("vsock timesync".into())
+            .spawn(move || self.work())
+            .unwrap();
     }
 }

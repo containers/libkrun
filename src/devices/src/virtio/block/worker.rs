@@ -87,7 +87,10 @@ impl BlockWorker {
     }
 
     pub fn run(self) -> thread::JoinHandle<()> {
-        thread::spawn(|| self.work())
+        thread::Builder::new()
+            .name("block worker".into())
+            .spawn(|| self.work())
+            .unwrap()
     }
 
     fn work(mut self) {

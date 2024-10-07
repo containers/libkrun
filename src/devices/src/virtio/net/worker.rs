@@ -92,7 +92,10 @@ impl NetWorker {
     }
 
     pub fn run(self) {
-        thread::spawn(|| self.work());
+        thread::Builder::new()
+            .name("virtio-net worker".into())
+            .spawn(|| self.work())
+            .unwrap();
     }
 
     fn work(mut self) {

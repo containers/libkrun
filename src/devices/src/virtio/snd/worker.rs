@@ -126,7 +126,10 @@ impl SndWorker {
     }
 
     pub fn run(self) -> thread::JoinHandle<()> {
-        thread::spawn(|| self.work())
+        thread::Builder::new()
+            .name("virtio-snd worker".into())
+            .spawn(|| self.work())
+            .unwrap()
     }
 
     fn work(mut self) {
