@@ -83,7 +83,12 @@ debug: $(LIBRARY_DEBUG_$(OS)) libkrun.pc
 ifeq ($(BUILD_INIT),1)
 INIT_BINARY = init/init
 $(INIT_BINARY): $(INIT_SRC)
+ifeq ($(OS),Darwin)
+	@echo "Building on macOS, using ./build_on_krunvm.sh"
+	./build_on_krunvm.sh
+else
 	gcc -O2 -static -Wall $(INIT_DEFS) -o $@ $(INIT_SRC) $(INIT_DEFS)
+endif
 endif
 
 $(LIBRARY_RELEASE_$(OS)): $(INIT_BINARY)
