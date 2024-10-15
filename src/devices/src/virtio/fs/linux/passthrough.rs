@@ -345,6 +345,13 @@ pub struct PassthroughFs {
     cfg: Config,
 }
 
+/// Some operations can only be performed on opened FDs without O_PATH, or on symlink paths.
+/// This enum encodes a fallback to handle those symlinks separately.
+enum FileOrLink {
+    File(File),
+    Link(CString),
+}
+
 impl PassthroughFs {
     pub fn new(cfg: Config) -> io::Result<PassthroughFs> {
         let fd = if let Some(fd) = cfg.proc_sfd_rawfd {
@@ -436,6 +443,29 @@ impl PassthroughFs {
 
         // Safe because we just opened this fd.
         Ok(unsafe { File::from_raw_fd(fd) })
+    }
+
+    fn open_inode_or_path(&self, inode: Inode, flags: i32) -> io::Result<FileOrLink> {
+        match self.open_inode(inode, flags) {
+            Ok(a) => Ok(FileOrLink::File(a)),
+            Err(e) => {
+                if e.raw_os_error() == Some(libc::ELOOP) {
+                    let data = self
+                        .inodes
+                        .read()
+                        .unwrap()
+                        .get(&inode)
+                        .cloned()
+                        .ok_or_else(ebadf)?;
+
+                    let pathname = CString::new(format!("/proc/self/fd/{}", data.file.as_raw_fd()))
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                    Ok(FileOrLink::Link(pathname))
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     fn do_lookup(&self, parent: Inode, name: &CStr) -> io::Result<Entry> {
@@ -1604,19 +1634,35 @@ impl FileSystem for PassthroughFs {
         }
 
         // The f{set,get,remove,list}xattr functions don't work on an fd opened with `O_PATH` so we
-        // need to get a new fd.
-        let file = self.open_inode(inode, libc::O_RDONLY | libc::O_NONBLOCK)?;
-
-        // Safe because this doesn't modify any memory and we check the return value.
-        let res = unsafe {
-            libc::fsetxattr(
-                file.as_raw_fd(),
-                name.as_ptr(),
-                value.as_ptr() as *const libc::c_void,
-                value.len(),
-                flags as libc::c_int,
-            )
+        // need to get a new fd. This doesn't work for symlinks, so we use the l* family of
+        // functions in that case.
+        let res = match self.open_inode_or_path(inode, libc::O_RDONLY | libc::O_NONBLOCK)? {
+            FileOrLink::File(file) => {
+                // Safe because this doesn't modify any memory and we check the return value.
+                unsafe {
+                    libc::fsetxattr(
+                        file.as_raw_fd(),
+                        name.as_ptr(),
+                        value.as_ptr() as *const libc::c_void,
+                        value.len(),
+                        flags as libc::c_int,
+                    )
+                }
+            }
+            FileOrLink::Link(link) => {
+                // Safe because this doesn't modify any memory and we check the return value.
+                unsafe {
+                    libc::lsetxattr(
+                        link.into_raw(),
+                        name.as_ptr(),
+                        value.as_ptr() as *const libc::c_void,
+                        value.len(),
+                        flags as libc::c_int,
+                    )
+                }
+            }
         };
+
         if res == 0 {
             Ok(())
         } else {
@@ -1639,21 +1685,36 @@ impl FileSystem for PassthroughFs {
             return Err(io::Error::from_raw_os_error(libc::ENODATA));
         }
 
-        // The f{set,get,remove,list}xattr functions don't work on an fd opened with `O_PATH` so we
-        // need to get a new fd.
-        let file = self.open_inode(inode, libc::O_RDONLY | libc::O_NONBLOCK)?;
-
         let mut buf = vec![0; size as usize];
 
-        // Safe because this will only modify the contents of `buf`.
-        let res = unsafe {
-            libc::fgetxattr(
-                file.as_raw_fd(),
-                name.as_ptr(),
-                buf.as_mut_ptr() as *mut libc::c_void,
-                size as libc::size_t,
-            )
+        // The f{set,get,remove,list}xattr functions don't work on an fd opened with `O_PATH` so we
+        // need to get a new fd. This doesn't work for symlinks, so we use the l* family of
+        // functions in that case.
+        let res = match self.open_inode_or_path(inode, libc::O_RDONLY | libc::O_NONBLOCK)? {
+            FileOrLink::File(file) => {
+                // Safe because this will only modify the contents of `buf`.
+                unsafe {
+                    libc::fgetxattr(
+                        file.as_raw_fd(),
+                        name.as_ptr(),
+                        buf.as_mut_ptr() as *mut libc::c_void,
+                        size as libc::size_t,
+                    )
+                }
+            }
+            FileOrLink::Link(link) => {
+                // Safe because this will only modify the contents of `buf`.
+                unsafe {
+                    libc::lgetxattr(
+                        link.into_raw(),
+                        name.as_ptr(),
+                        buf.as_mut_ptr() as *mut libc::c_void,
+                        size as libc::size_t,
+                    )
+                }
+            }
         };
+
         if res < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -1671,19 +1732,29 @@ impl FileSystem for PassthroughFs {
             return Err(io::Error::from_raw_os_error(libc::ENOSYS));
         }
 
-        // The f{set,get,remove,list}xattr functions don't work on an fd opened with `O_PATH` so we
-        // need to get a new fd.
-        let file = self.open_inode(inode, libc::O_RDONLY | libc::O_NONBLOCK)?;
-
         let mut buf = vec![0; size as usize];
 
-        // Safe because this will only modify the contents of `buf`.
-        let res = unsafe {
-            libc::flistxattr(
-                file.as_raw_fd(),
-                buf.as_mut_ptr() as *mut libc::c_char,
-                size as libc::size_t,
-            )
+        // The f{set,get,remove,list}xattr functions don't work on an fd opened with `O_PATH` so we
+        // need to get a new fd. This doesn't work for symlinks, so we use the l* family of
+        // functions in that case.
+        let res = match self.open_inode_or_path(inode, libc::O_RDONLY | libc::O_NONBLOCK)? {
+            FileOrLink::File(file) => {
+                // Safe because this will only modify the contents of `buf`.
+                unsafe {
+                    libc::flistxattr(
+                        file.as_raw_fd(),
+                        buf.as_mut_ptr() as *mut libc::c_char,
+                        size as libc::size_t,
+                    )
+                }
+            }
+            FileOrLink::Link(link) => unsafe {
+                libc::llistxattr(
+                    link.into_raw(),
+                    buf.as_mut_ptr() as *mut libc::c_char,
+                    size as libc::size_t,
+                )
+            },
         };
         if res < 0 {
             return Err(io::Error::last_os_error());
@@ -1703,11 +1774,18 @@ impl FileSystem for PassthroughFs {
         }
 
         // The f{set,get,remove,list}xattr functions don't work on an fd opened with `O_PATH` so we
-        // need to get a new fd.
-        let file = self.open_inode(inode, libc::O_RDONLY | libc::O_NONBLOCK)?;
-
-        // Safe because this doesn't modify any memory and we check the return value.
-        let res = unsafe { libc::fremovexattr(file.as_raw_fd(), name.as_ptr()) };
+        // need to get a new fd. This doesn't work for symlinks, so we use the l* family of
+        // functions in that case.
+        let res = match self.open_inode_or_path(inode, libc::O_RDONLY | libc::O_NONBLOCK)? {
+            FileOrLink::File(file) => {
+                // Safe because this doesn't modify any memory and we check the return value.
+                unsafe { libc::fremovexattr(file.as_raw_fd(), name.as_ptr()) }
+            }
+            FileOrLink::Link(link) => {
+                // Safe because this doesn't modify any memory and we check the return value.
+                unsafe { libc::lremovexattr(link.into_raw(), name.as_ptr()) }
+            }
+        };
 
         if res == 0 {
             Ok(())
