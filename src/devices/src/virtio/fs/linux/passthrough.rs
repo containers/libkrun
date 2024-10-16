@@ -1653,7 +1653,7 @@ impl FileSystem for PassthroughFs {
                 // Safe because this doesn't modify any memory and we check the return value.
                 unsafe {
                     libc::lsetxattr(
-                        link.into_raw(),
+                        link.as_ptr(),
                         name.as_ptr(),
                         value.as_ptr() as *const libc::c_void,
                         value.len(),
@@ -1706,7 +1706,7 @@ impl FileSystem for PassthroughFs {
                 // Safe because this will only modify the contents of `buf`.
                 unsafe {
                     libc::lgetxattr(
-                        link.into_raw(),
+                        link.as_ptr(),
                         name.as_ptr(),
                         buf.as_mut_ptr() as *mut libc::c_void,
                         size as libc::size_t,
@@ -1750,7 +1750,7 @@ impl FileSystem for PassthroughFs {
             }
             FileOrLink::Link(link) => unsafe {
                 libc::llistxattr(
-                    link.into_raw(),
+                    link.as_ptr(),
                     buf.as_mut_ptr() as *mut libc::c_char,
                     size as libc::size_t,
                 )
@@ -1783,7 +1783,7 @@ impl FileSystem for PassthroughFs {
             }
             FileOrLink::Link(link) => {
                 // Safe because this doesn't modify any memory and we check the return value.
-                unsafe { libc::lremovexattr(link.into_raw(), name.as_ptr()) }
+                unsafe { libc::lremovexattr(link.as_ptr(), name.as_ptr()) }
             }
         };
 
