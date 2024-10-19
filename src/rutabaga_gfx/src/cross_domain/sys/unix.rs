@@ -332,7 +332,7 @@ impl WaitContext {
                 token: self.calculate_token(e.data()).unwrap(),
                 readable: e.events() & EpollFlags::EPOLLIN == EpollFlags::EPOLLIN,
                 hung_up: e.events() & EpollFlags::EPOLLHUP == EpollFlags::EPOLLHUP
-                    || e.events() & EpollFlags::EPOLLRDHUP != EpollFlags::EPOLLRDHUP,
+                    || e.events() & EpollFlags::EPOLLRDHUP == EpollFlags::EPOLLRDHUP,
             })
             .collect();
 
