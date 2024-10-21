@@ -4,7 +4,7 @@ use tdx::tdvf::{self, TdvfSection, TdvfSectionType};
 use vm_memory::{self, ByteValued, Bytes, GuestAddress, GuestMemory, GuestMemoryMmap};
 
 use std::fs::File;
-use std::io;
+use std::io::{self, Read, Seek, SeekFrom};
 
 use arch_gen::x86::bootparam::e820entry;
 
@@ -90,6 +90,9 @@ pub enum Error {
     MissingHobTdvfSection,
     OpenTdvfFirmwareFile(io::Error),
     ParseTdvfSections(tdvf::Error),
+    InvalidRamRange,
+    InvalidRamType,
+    TooManyRamEntries,
 }
 
 pub struct IntelTdx {
@@ -150,6 +153,112 @@ impl IntelTdx {
                 r#type: TdxRamType::TDX_RAM_UNACCEPTED,
             })
             .collect()
+    }
+
+    pub fn configure_td_memory(
+        &self,
+        fd: &kvm_ioctls::VmFd,
+        guest_mem: &mut GuestMemoryMmap,
+        ram_entries: &mut Vec<e820entry>,
+        nr_ram_entries: &mut u64,
+    ) -> Result<(), Error> {
+        let mut hob_section = &mut TdxFirmwareEntry::default();
+
+        // FIXME: TdxFirmwareEntry is missing the `attributes` field
+        let mut sections: Vec<TdxFirmwareEntry> = self
+            .tdvf_sections
+            .iter()
+            .map(|s| TdxFirmwareEntry {
+                data_offset: s.data_offset,
+                data_len: s.raw_data_size,
+                address: s.memory_address,
+                size: s.memory_data_size,
+                r#type: s.section_type,
+                mem_ptr: 0,
+            })
+            .collect();
+
+        let mut tdx_ram_entries = self.init_ram_entries(ram_entries);
+
+        let mut firmware_file =
+            std::fs::File::open("/usr/share/edk2/ovmf/OVMF.inteltdx.fd").unwrap();
+        for section in &sections {
+            match section.r#type {
+                // put Bfv and Cfv sections into the memory regions on the guest
+                TdvfSectionType::Bfv | TdvfSectionType::Cfv => {
+                    firmware_file
+                        .seek(SeekFrom::Start(section.data_offset as u64))
+                        .unwrap();
+                    guest_mem
+                        .read_volatile_from(
+                            GuestAddress(section.address),
+                            &mut firmware_file,
+                            section.data_len as usize,
+                        )
+                        .unwrap();
+                }
+                TdvfSectionType::TdHob => {
+                    if let Err(e) = tdx_accept_ram_range(
+                        section.address,
+                        section.size,
+                        nr_ram_entries,
+                        &mut tdx_ram_entries,
+                    ) {
+                        return Err(e);
+                    }
+                }
+                TdvfSectionType::TempMem => {
+                    if let Err(e) = tdx_accept_ram_range(
+                        section.address,
+                        section.size,
+                        nr_ram_entries,
+                        &mut tdx_ram_entries,
+                    ) {
+                        return Err(e);
+                    }
+                }
+                _ => (),
+            }
+        }
+
+        tdx_ram_entries.sort_by_key(|entry| entry.addr);
+        tdx_ram_entries.reverse();
+
+        for section in &sections {
+            match section.r#type {
+                TdvfSectionType::TdHob => {
+                    tdvf_hob_create(section, &tdx_ram_entries, *nr_ram_entries, guest_mem)?;
+                }
+                _ => (),
+            }
+        }
+
+        for section in &sections {
+            // TODO: we should be checking to see if the KVM_CAP_MEMORY_MAPPING capability is
+            // enabled, but for now just assume its not
+            self.vm
+                .init_mem_region(
+                    fd,
+                    section.address,
+                    section.size / 4096,
+                    // FIXME: instead of checking the section type we should be checking the
+                    // attributes to see if the feature is set to extend the measurement
+                    if let tdx::tdvf::TdvfSectionType::Bfv = section.r#type {
+                        1
+                    } else {
+                        0
+                    },
+                    guest_mem
+                        .get_host_address(vm_memory::GuestAddress(section.address))
+                        .unwrap() as u64,
+                )
+                .unwrap();
+
+            // TODO: if the entry is of type TD_HOB or TEMP_MEM then we need to unmap the memory
+            // and set the mem_ptr to NULL (or 0 in this case)
+        }
+
+        Ok(())
     }
 }
 
@@ -322,4 +431,89 @@ fn tdvf_hob_create(
     guest_mem
         .write_obj(hit, GuestAddress(hit_area))
         .map_err(Error::GuestMemoryWriteTdHob)
+}
+
+fn tdx_add_ram_entry(
+    address: u64,
+    length: u64,
+    ram_type: TdxRamType,
+    ram_entries: &mut Vec<TdxRamEntry>,
+    nr_ram_entries: &mut u64,
+) {
+    let mut entry = &mut ram_entries[*nr_ram_entries as usize];
+    entry.addr = address;
+    entry.size = length;
+    entry.r#type = ram_type;
+    *nr_ram_entries += 1;
+}
+
+fn tdx_accept_ram_range(
+    address: u64,
+    length: u64,
+    nr_ram_entries: &mut u64,
+    ram_entries: &mut Vec<TdxRamEntry>,
+) -> Result<(), Error> {
+    let mut head_start: u64;
+    let mut tail_start: u64;
+    let mut head_length: u64;
+    let mut tail_length: u64;
+    let mut e: &mut TdxRamEntry = &mut TdxRamEntry::default();
+    let mut i: usize = 0;
+
+    for idx in 0..*nr_ram_entries {
+        e = &mut ram_entries[idx as usize];
+
+        if address + length <= e.addr || e.addr + e.size <= address {
+            continue;
+        }
+
+        // The to-be-accepted ram range must be fully contained by one RAM entry
+        if e.addr > address || e.addr + e.size < address + length {
+            return Err(Error::InvalidRamRange);
+        }
+
+        if e.r#type == TdxRamType::TDX_RAM_ADDED {
+            return Err(Error::InvalidRamType);
+        }
+
+        i = idx as usize;
+        break;
+    }
+
+    if i as u64 == *nr_ram_entries {
+        return Err(Error::TooManyRamEntries);
+    }
+
+    let mut tmp_address = e.addr;
+    let mut tmp_length = e.size;
+
+    e.addr = address;
+    e.size = length;
+    e.r#type = TdxRamType::TDX_RAM_ADDED;
+
+    head_length = address - tmp_address;
+    if head_length > 0 {
+        head_start = tmp_address;
+        tdx_add_ram_entry(
+            head_start,
+            head_length,
+            TdxRamType::TDX_RAM_UNACCEPTED,
+            ram_entries,
+            nr_ram_entries,
+        );
+    }
+
+    tail_start = address + length;
+    if tail_start < tmp_address + tmp_length {
+        tail_length = tmp_address + tmp_length - tail_start;
+        tdx_add_ram_entry(
+            tail_start,
+            tail_length,
+            TdxRamType::TDX_RAM_UNACCEPTED,
+            ram_entries,
+            nr_ram_entries,
+        );
+    }
+
+    Ok(())
 }
