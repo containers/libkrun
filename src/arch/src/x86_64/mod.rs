@@ -132,6 +132,20 @@ pub fn arch_memory_regions(
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
 
+    #[cfg(feature = "intel-tdx")]
+    let addrs = {
+        let mut firmware = std::fs::File::open("/usr/share/edk2/ovmf/OVMF.inteltdx.fd").unwrap();
+        let mut tdvf_sections = tdx::tdvf::parse_sections(&mut firmware).unwrap();
+        tdvf_sections.retain(|&s| match s.section_type {
+            tdx::tdvf::TdvfSectionType::Bfv | tdx::tdvf::TdvfSectionType::Cfv => true,
+            _ => false,
+        });
+        tdvf_sections
+            .iter()
+            .map(|&s| (GuestAddress(s.memory_address), s.memory_data_size as usize))
+            .collect::<Vec<_>>()
+    };
+
     let size = round_up(size, page_size);
     if size < (kernel_load_addr + kernel_size as u64) as usize {
         panic!("Kernel doesn't fit in RAM");
@@ -147,10 +161,13 @@ pub fn arch_memory_regions(
             (
                 ram_last_addr,
                 shm_start_addr,
+                #[cfg(not(feature = "intel-tdx"))]
                 vec![
                     (GuestAddress(0), size),
                     (GuestAddress(BIOS_START), BIOS_SIZE),
                 ],
+                #[cfg(feature = "intel-tdx")]
+                vec![(GuestAddress(0), size), addrs[1], addrs[0]],
             )
         }
         // case2: guest memory extends beyond the gap
