@@ -152,3 +152,36 @@ struct TdxRamEntry {
     size: u64,
     r#type: TdxRamType,
 }
+
+#[derive(Debug, Default)]
+struct TdxFirmwareEntry {
+    data_offset: u32,
+    data_len: u32,
+    address: u64,
+    size: u64,
+    r#type: TdvfSectionType,
+    mem_ptr: u64,
+}
+
+#[repr(C)]
+struct TdHob {
+    hob_addr: u64,
+    ptr: u64,
+    size: u32,
+
+    // working area
+    current: u64,
+    end: u64,
+}
+
+impl TdHob {
+    fn new(hob_entry: &TdxFirmwareEntry) -> Self {
+        Self {
+            hob_addr: hob_entry.address,
+            size: hob_entry.size as u32,
+            ptr: hob_entry.mem_ptr,
+            current: hob_entry.mem_ptr,
+            end: hob_entry.mem_ptr + hob_entry.size,
+        }
+    }
+}
