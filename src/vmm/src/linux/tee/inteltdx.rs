@@ -1,5 +1,5 @@
 use tdx::launch::{TdxCapabilities, TdxVm};
-use tdx::tdvf::{self, TdvfSection};
+use tdx::tdvf::{self, TdvfSection, TdvfSectionType};
 
 use kvm_ioctls::VmFd;
 
@@ -11,6 +11,7 @@ pub enum Error {
     CreateTdxVmStruct,
     GetCapabilities,
     InitVm,
+    MissingHobTdvfSection,
     OpenTdvfFirmwareFile(io::Error),
     ParseTdvfSections(tdvf::Error),
 }
@@ -53,5 +54,14 @@ impl IntelTdx {
             .or_else(|_| return Err(Error::InitVm))?;
 
         Ok(())
+    }
+
+    pub fn get_tdvf_hob_address(&self) -> Result<u64, Error> {
+        for section in &self.tdvf_sections {
+            if let TdvfSectionType::TdHob = section.section_type {
+                return Ok(section.memory_address);
+            }
+        }
+        Err(Error::MissingHobTdvfSection)
     }
 }

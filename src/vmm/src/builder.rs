@@ -1073,6 +1073,10 @@ fn create_vcpus_x86_64(
     exit_evt: &EventFd,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
+
+    #[cfg(feature = "intel-tdx")]
+    let hob_section_addr = vm.tdx_secure_virt_get_tdvf_hob_section_address().unwrap();
+
     for cpu_index in 0..vcpu_config.vcpu_count {
         let mut vcpu = Vcpu::new_x86_64(
             cpu_index,
@@ -1085,6 +1089,10 @@ fn create_vcpus_x86_64(
         .map_err(Error::Vcpu)?;
 
         vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config)
+            .map_err(Error::Vcpu)?;
+
+        #[cfg(feature = "intel-tdx")]
+        vcpu.tdx_secure_virt_init(hob_section_addr)
             .map_err(Error::Vcpu)?;
 
         vcpus.push(vcpu);
