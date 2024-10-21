@@ -1,7 +1,7 @@
 use kvm_ioctls::VmFd;
 use tdx::launch::{TdxCapabilities, TdxVm};
 use tdx::tdvf::{self, TdvfSection, TdvfSectionType};
-use vm_memory::{self, ByteValued};
+use vm_memory::{self, ByteValued, Bytes, GuestAddress, GuestMemory, GuestMemoryMmap};
 
 use std::fs::File;
 use std::io;
@@ -85,6 +85,7 @@ unsafe impl ByteValued for EfiHobResourceDescriptor {}
 pub enum Error {
     CreateTdxVmStruct,
     GetCapabilities,
+    GuestMemoryWriteTdHob(vm_memory::GuestMemoryError),
     InitVm,
     MissingHobTdvfSection,
     OpenTdvfFirmwareFile(io::Error),
@@ -197,4 +198,128 @@ impl TdHob {
             end: hob_entry.mem_ptr + hob_entry.size,
         }
     }
+}
+
+fn align_down(n: u64, m: u64) -> u64 {
+    n / m * m
+}
+
+fn align_up(n: u64, m: u64) -> u64 {
+    align_down(n + m - 1, m)
+}
+
+// FIXME: can simplify this to (hob.current + 7) / 8 * 8
+fn tdvf_align(hob: &TdHob, align: usize) -> u64 {
+    align_up(hob.current, align as u64)
+}
+
+fn tdvf_get_area(hob: &mut TdHob, size: u64) -> u64 {
+    if hob.current + size > hob.end {
+        panic!("TD_HOB overrun, size 0x{:x}", size);
+    }
+
+    let ret = hob.current;
+    hob.current += size;
+    tdvf_align(&hob, 8);
+    ret
+}
+
+fn tdvf_hob_add_memory_resources(
+    hob: &mut TdHob,
+    ram_entries: &Vec<TdxRamEntry>,
+    nr_ram_entries: u64,
+    guest_mem: &mut GuestMemoryMmap,
+) -> Result<(), Error> {
+    let mut region: EfiHobResourceDescriptor;
+    let mut attr: EfiResourceAttributeType;
+    let mut resource_type: EfiResourceType;
+
+    for i in 0..nr_ram_entries {
+        let entry = &ram_entries[i as usize];
+
+        match entry.r#type {
+            TdxRamType::TDX_RAM_UNACCEPTED => {
+                resource_type = EFI_RESOURCE_MEMORY_UNACCEPTED as u32;
+                attr = EFI_RESOURCE_ATTRIBUTE_TDVF_UNACCEPTED as u32;
+            }
+            TdxRamType::TDX_RAM_ADDED => {
+                resource_type = EFI_RESOURCE_SYSTEM_MEMORY as u32;
+                attr = EFI_RESOURCE_ATTRIBUTE_TDVF_PRIVATE as u32;
+            }
+            _ => {
+                panic!("unknown TdxRamType: {:?}", entry.r#type);
+            }
+        }
+
+        let region_area =
+            tdvf_get_area(hob, std::mem::size_of::<EfiHobResourceDescriptor>() as u64);
+        region = EfiHobResourceDescriptor {
+            header: EfiHobGenericHeader {
+                hob_type: EFI_HOB_TYPE_RESOURCE_DESCRIPTOR as u16,
+                hob_length: std::mem::size_of::<EfiHobResourceDescriptor>() as u16,
+                reserved: 0,
+            },
+            owner: EFI_HOB_OWNER_ZERO,
+            resource_type,
+            resource_attribute: attr,
+            physical_start: entry.addr,
+            resource_length: entry.size,
+        };
+        guest_mem
+            .write_obj(region, GuestAddress(region_area))
+            .map_err(Error::GuestMemoryWriteTdHob)?;
+    }
+    Ok(())
+}
+
+fn tdvf_current_guest_addr(hob: &TdHob) -> u64 {
+    hob.hob_addr + (hob.current - hob.ptr)
+}
+
+fn tdvf_hob_create(
+    hob_entry: &TdxFirmwareEntry,
+    ram_entries: &Vec<TdxRamEntry>,
+    nr_ram_entries: u64,
+    guest_mem: &mut GuestMemoryMmap,
+) -> Result<(), Error> {
+    let mut hob = TdHob::new(&hob_entry);
+
+    // here we wnt to set the address of hit to be the one that we get from this function...
+    // how would I do that in rust because I don't think this will work...
+    let hit_area = tdvf_get_area(
+        &mut hob,
+        std::mem::size_of::<EfiHobHandoffInfoTable>() as u64,
+    );
+
+    tdvf_hob_add_memory_resources(&mut hob, &ram_entries, nr_ram_entries, guest_mem)?;
+
+    // here we wnt to set the address of hit to be the one that we get from this function...
+    // how would I do that in rust because I don't think this will work...
+    let last_hob_area = tdvf_get_area(&mut hob, std::mem::size_of::<EfiHobGenericHeader>() as u64);
+    let mut last_hob = EfiHobGenericHeader {
+        hob_type: EFI_HOB_TYPE_END_OF_HOB_LIST as u16,
+        hob_length: std::mem::size_of::<EfiHobGenericHeader>() as u16,
+        reserved: 0,
+    };
+    guest_mem
+        .write_obj(last_hob, GuestAddress(last_hob_area))
+        .map_err(Error::GuestMemoryWriteTdHob)?;
+
+    // NOTE: this is done out of order when compared to QEMU... hoping that this works since we
+    // kept track of the hit area. we need to do this so we can write the `efi_end_of_hob_list`
+    // value
+    let mut hit = EfiHobHandoffInfoTable {
+        header: EfiHobGenericHeader {
+            hob_type: EFI_HOB_TYPE_HANDOFF as u16,
+            hob_length: std::mem::size_of::<EfiHobHandoffInfoTable>() as u16,
+            reserved: 0,
+        },
+        version: EFI_HOB_HANDOFF_TABLE_VERSION as u32,
+        efi_end_of_hob_list: tdvf_current_guest_addr(&hob),
+        // NOTE: Efi{free}Memory{Bottom, Top} are ignored, leave 'em zeroed
+        ..Default::default()
+    };
+    guest_mem
+        .write_obj(hit, GuestAddress(hit_area))
+        .map_err(Error::GuestMemoryWriteTdHob)
 }
