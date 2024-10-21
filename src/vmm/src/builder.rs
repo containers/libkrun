@@ -705,10 +705,19 @@ pub fn build_microvm(
     #[cfg(not(feature = "tee"))]
     let initrd_config = None;
 
+    #[cfg(feature = "intel-tdx")]
+    let mut e820_entries: Vec<arch_gen::x86::bootparam::e820entry> = Vec::new();
+    #[cfg(feature = "intel-tdx")]
+    let mut num_e820_entries = 0;
+
     vmm.configure_system(
         vcpus.as_slice(),
         &initrd_config,
         &vm_resources.smbios_oem_strings,
+        #[cfg(target_arch = "x86_64")]
+        &mut e820_entries,
+        #[cfg(target_arch = "x86_64")]
+        &mut num_e820_entries,
     )
     .map_err(StartMicrovmError::Internal)?;
 
