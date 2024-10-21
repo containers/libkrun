@@ -743,6 +743,14 @@ impl Vm {
         }
     }
 
+    #[cfg(feature = "intel-tdx")]
+    pub fn tdx_secure_virt_finalize_vm(&self) -> Result<()> {
+        match &self.tdx {
+            Some(t) => t.finalize_vm(&self.fd).map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
+    }
+
     #[cfg(feature = "amd-sev")]
     pub fn sev_secure_virt_prepare(
         &mut self,

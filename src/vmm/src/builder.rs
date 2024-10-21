@@ -746,6 +746,15 @@ pub fn build_microvm(
                     )
                     .map_err(StartMicrovmError::SecureVirtAttest)?;
             }
+
+            #[cfg(feature = "intel-tdx")]
+            Tee::Tdx => {
+                vmm.kvm_vm()
+                    .tdx_secure_virt_finalize_vm()
+                    .map_err(StartMicrovmError::SecureVirtPrepare)?;
+                // TODO(jakecorrenti): should do a no-attest here for the TDX bits so that we can
+                // unlock the LUKS partition
+            }
             _ => return Err(StartMicrovmError::InvalidTee),
         }
 
