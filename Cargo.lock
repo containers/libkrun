@@ -1454,6 +1454,7 @@ name = "vmm"
 version = "0.1.0"
 dependencies = [
  "arch",
+ "arch_gen",
  "codicon",
  "cpuid",
  "crossbeam-channel",

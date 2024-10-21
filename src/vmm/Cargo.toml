@@ -22,6 +22,7 @@ log = "0.4.0"
 vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
 
 arch = { path = "../arch" }
+arch_gen = { path = "../arch_gen" }
 devices = { path = "../devices" }
 kernel = { path = "../kernel" }
 utils = { path = "../utils"}

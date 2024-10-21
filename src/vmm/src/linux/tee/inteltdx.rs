@@ -6,6 +6,8 @@ use vm_memory::{self, ByteValued};
 use std::fs::File;
 use std::io;
 
+use arch_gen::x86::bootparam::e820entry;
+
 const EFI_HOB_TYPE_HANDOFF: u64 = 0x0001;
 const EFI_HOB_TYPE_RESOURCE_DESCRIPTOR: u64 = 0x0003;
 const EFI_HOB_HANDOFF_TABLE_VERSION: u64 = 0x0009;
@@ -136,6 +138,17 @@ impl IntelTdx {
             }
         }
         Err(Error::MissingHobTdvfSection)
+    }
+
+    fn init_ram_entries(&self, ram_entries: &Vec<e820entry>) -> Vec<TdxRamEntry> {
+        ram_entries
+            .iter()
+            .map(|entry| TdxRamEntry {
+                addr: entry.addr,
+                size: entry.size,
+                r#type: TdxRamType::TDX_RAM_UNACCEPTED,
+            })
+            .collect()
     }
 }
 
