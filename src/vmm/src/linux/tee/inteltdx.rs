@@ -138,3 +138,17 @@ impl IntelTdx {
         Err(Error::MissingHobTdvfSection)
     }
 }
+
+#[derive(Debug, Default, PartialEq)]
+enum TdxRamType {
+    #[default]
+    TDX_RAM_UNACCEPTED,
+    TDX_RAM_ADDED,
+}
+
+#[derive(Default)]
+struct TdxRamEntry {
+    addr: u64,
+    size: u64,
+    r#type: TdxRamType,
+}
