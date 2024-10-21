@@ -1991,11 +1991,6 @@ impl FileSystem for PassthroughFs {
             return Err(io::Error::last_os_error());
         }
 
-        let ret = unsafe { libc::close(fd) };
-        if ret == -1 {
-            return Err(io::Error::last_os_error());
-        }
-
         Ok(())
     }
 
