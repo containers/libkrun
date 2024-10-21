@@ -1,10 +1,83 @@
+use kvm_ioctls::VmFd;
 use tdx::launch::{TdxCapabilities, TdxVm};
 use tdx::tdvf::{self, TdvfSection, TdvfSectionType};
-
-use kvm_ioctls::VmFd;
+use vm_memory::{self, ByteValued};
 
 use std::fs::File;
 use std::io;
+
+const EFI_HOB_TYPE_HANDOFF: u64 = 0x0001;
+const EFI_HOB_TYPE_RESOURCE_DESCRIPTOR: u64 = 0x0003;
+const EFI_HOB_HANDOFF_TABLE_VERSION: u64 = 0x0009;
+const EFI_HOB_TYPE_END_OF_HOB_LIST: u64 = 0xFFFF;
+const EFI_RESOURCE_MEMORY_UNACCEPTED: u64 = 0x00000005;
+const EFI_RESOURCE_ATTRIBUTE_TDVF_UNACCEPTED: u64 = 0x00000007;
+const EFI_RESOURCE_SYSTEM_MEMORY: u64 = 0x00000000;
+const EFI_RESOURCE_ATTRIBUTE_PRESENT: u64 = 0x00000001;
+const EFI_RESOURCE_ATTRIBUTE_INITIALIZE: u64 = 0x00000002;
+const EFI_RESOURCE_ATTRIBUTE_TESTED: u64 = 0x00000004;
+const EFI_RESOURCE_ATTRIBUTE_TDVF_PRIVATE: u64 = EFI_RESOURCE_ATTRIBUTE_PRESENT
+    | EFI_RESOURCE_ATTRIBUTE_INITIALIZE
+    | EFI_RESOURCE_ATTRIBUTE_TESTED;
+const EFI_HOB_OWNER_ZERO: EfiGuid = EfiGuid {
+    data1: 0x00000000,
+    data2: 0x0000,
+    data3: 0x0000,
+    data4: [0x00; 8],
+};
+
+type EfiResourceAttributeType = u32;
+type EfiResourceType = u32;
+type EfiBootMode = u32;
+type EfiPhysicalAddress = u64;
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct EfiGuid {
+    data1: u32,
+    data2: u16,
+    data3: u16,
+    data4: [u8; 8],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct EfiHobResourceDescriptor {
+    header: EfiHobGenericHeader,
+    owner: EfiGuid,
+    resource_type: EfiResourceType,
+    resource_attribute: EfiResourceAttributeType,
+    physical_start: EfiPhysicalAddress,
+    resource_length: u64,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+struct EfiHobGenericHeader {
+    hob_type: u16,
+    hob_length: u16,
+    reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+struct EfiHobHandoffInfoTable {
+    header: EfiHobGenericHeader,
+    version: u32,
+    boot_mode: EfiBootMode,
+    efi_memory_top: EfiPhysicalAddress,
+    efi_memory_bottom: EfiPhysicalAddress,
+    efi_free_memory_top: EfiPhysicalAddress,
+    efi_free_memory_bottom: EfiPhysicalAddress,
+    efi_end_of_hob_list: EfiPhysicalAddress,
+}
+
+// SAFETY: data structure only contain a series of integers
+unsafe impl ByteValued for EfiHobHandoffInfoTable {}
+// SAFETY: data structure only contain a series of integers
+unsafe impl ByteValued for EfiHobGenericHeader {}
+// SAFETY: data structure only contain a series of integers
+unsafe impl ByteValued for EfiHobResourceDescriptor {}
 
 #[derive(Debug)]
 pub enum Error {
