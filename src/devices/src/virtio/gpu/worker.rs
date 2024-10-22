@@ -22,6 +22,7 @@ use super::protocol::{
 };
 use super::virtio_gpu::VirtioGpu;
 use crate::legacy::Gic;
+use crate::virtio::fs::ExportTable;
 use crate::virtio::gpu::protocol::{VIRTIO_GPU_FLAG_FENCE, VIRTIO_GPU_FLAG_INFO_RING_IDX};
 use crate::virtio::gpu::virtio_gpu::VirtioGpuRing;
 use crate::virtio::VirtioShmRegion;
@@ -39,6 +40,7 @@ pub struct Worker {
     virgl_flags: u32,
     #[cfg(target_os = "macos")]
     map_sender: Sender<MemoryMapping>,
+    export_table: Option<ExportTable>,
 }
 
 impl Worker {
@@ -54,6 +56,7 @@ impl Worker {
         shm_region: VirtioShmRegion,
         virgl_flags: u32,
         #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
+        export_table: Option<ExportTable>,
     ) -> Self {
         Self {
             receiver,
@@ -67,6 +70,7 @@ impl Worker {
             virgl_flags,
             #[cfg(target_os = "macos")]
             map_sender,
+            export_table,
         }
     }
 
@@ -88,6 +92,7 @@ impl Worker {
             self.virgl_flags,
             #[cfg(target_os = "macos")]
             self.map_sender.clone(),
+            self.export_table.take(),
         );
 
         loop {
