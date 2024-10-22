@@ -7,11 +7,13 @@ use crossbeam_channel::Sender;
 #[cfg(target_os = "macos")]
 use hvf::MemoryMapping;
 
+use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
 use std::mem;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::bindings;
@@ -340,6 +342,8 @@ pub struct SecContext {
     /// Actual security context
     pub secctx: Vec<u8>,
 }
+
+pub type ExportTable = Arc<Mutex<BTreeMap<(u64, u64), File>>>;
 
 /// The main trait that connects a file system with a transport.
 #[allow(unused_variables)]

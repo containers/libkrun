@@ -26,8 +26,8 @@ use crate::virtio::fs::filesystem::SecContext;
 use super::super::super::linux_errno::{linux_error, LINUX_ERANGE};
 use super::super::bindings;
 use super::super::filesystem::{
-    Context, DirEntry, Entry, Extensions, FileSystem, FsOptions, GetxattrReply, ListxattrReply,
-    OpenOptions, SetattrValid, ZeroCopyReader, ZeroCopyWriter,
+    Context, DirEntry, Entry, ExportTable, Extensions, FileSystem, FsOptions, GetxattrReply,
+    ListxattrReply, OpenOptions, SetattrValid, ZeroCopyReader, ZeroCopyWriter,
 };
 use super::super::fuse;
 use super::super::multikey::MultikeyBTreeMap;
@@ -388,6 +388,11 @@ pub struct Config {
     ///
     /// The default is `None`.
     pub proc_sfd_rawfd: Option<RawFd>,
+
+    /// ID of this filesystem to uniquely identify exports. Not supported for macos.
+    pub export_fsid: u64,
+    /// Table of exported FDs to share with other subsystems. Not supported for macos.
+    pub export_table: Option<ExportTable>,
 }
 
 impl Default for Config {
@@ -400,6 +405,8 @@ impl Default for Config {
             root_dir: String::from("/"),
             xattr: true,
             proc_sfd_rawfd: None,
+            export_fsid: 0,
+            export_table: None,
         }
     }
 }

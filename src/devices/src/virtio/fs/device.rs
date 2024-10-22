@@ -2,7 +2,7 @@
 use crossbeam_channel::Sender;
 use std::cmp;
 use std::io::Write;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -17,6 +17,7 @@ use super::super::{
 };
 use super::passthrough;
 use super::worker::FsWorker;
+use super::ExportTable;
 use super::{defs, defs::uapi};
 use crate::legacy::Gic;
 
@@ -119,6 +120,15 @@ impl Fs {
 
     pub fn set_shm_region(&mut self, shm_region: VirtioShmRegion) {
         self.shm_region = Some(shm_region);
+    }
+
+    pub fn set_export_table(&mut self, export_table: ExportTable) -> u64 {
+        static FS_UNIQUE_ID: AtomicU64 = AtomicU64::new(0);
+
+        self.passthrough_cfg.export_fsid = FS_UNIQUE_ID.fetch_add(1, Ordering::Relaxed);
+        self.passthrough_cfg.export_table = Some(export_table);
+
+        self.passthrough_cfg.export_fsid
     }
 
     #[cfg(target_os = "macos")]

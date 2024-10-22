@@ -25,6 +25,7 @@ use super::descriptor_utils;
 
 pub use self::defs::uapi::VIRTIO_ID_FS as TYPE_FS;
 pub use self::device::Fs;
+pub use self::filesystem::ExportTable;
 
 mod defs {
     pub const FS_DEV_ID: &str = "virtio_fs";
