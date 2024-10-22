@@ -54,7 +54,7 @@ use arch::ArchMemoryInfo;
 use arch::InitrdConfig;
 use device_manager::shm::ShmManager;
 #[cfg(not(feature = "tee"))]
-use devices::virtio::VirtioShmRegion;
+use devices::virtio::{fs::ExportTable, VirtioShmRegion};
 #[cfg(feature = "tee")]
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
 use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
@@ -633,12 +633,22 @@ pub fn build_microvm(
         intc.clone(),
         vm_resources.console_output.clone(),
     )?;
+
+    #[cfg(not(feature = "tee"))]
+    let export_table: Option<ExportTable> = if cfg!(feature = "gpu") {
+        Some(Default::default())
+    } else {
+        None
+    };
+
     #[cfg(feature = "gpu")]
     if let Some(virgl_flags) = vm_resources.gpu_virgl_flags {
         attach_gpu_device(
             &mut vmm,
             event_manager,
             &mut _shm_manager,
+            #[cfg(not(feature = "tee"))]
+            export_table.clone(),
             intc.clone(),
             virgl_flags,
             #[cfg(target_os = "macos")]
@@ -650,6 +660,8 @@ pub fn build_microvm(
         &mut vmm,
         &vm_resources.fs,
         &mut _shm_manager,
+        #[cfg(not(feature = "tee"))]
+        export_table,
         intc.clone(),
         #[cfg(target_os = "macos")]
         _map_sender,
@@ -1182,6 +1194,7 @@ fn attach_fs_devices(
     vmm: &mut Vmm,
     fs_devs: &[FsDeviceConfig],
     shm_manager: &mut ShmManager,
+    #[cfg(not(feature = "tee"))] export_table: Option<ExportTable>,
     intc: Option<Arc<Mutex<Gic>>>,
     #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
 ) -> std::result::Result<(), StartMicrovmError> {
@@ -1207,6 +1220,11 @@ fn attach_fs_devices(
                 guest_addr: shm_region.guest_addr.raw_value(),
                 size: shm_region.size,
             });
+        }
+
+        #[cfg(not(feature = "tee"))]
+        if let Some(export_table) = export_table.as_ref() {
+            fs.lock().unwrap().set_export_table(export_table.clone());
         }
 
         #[cfg(target_os = "macos")]
@@ -1465,6 +1483,7 @@ fn attach_gpu_device(
     vmm: &mut Vmm,
     event_manager: &mut EventManager,
     shm_manager: &mut ShmManager,
+    #[cfg(not(feature = "tee"))] mut export_table: Option<ExportTable>,
     intc: Option<Arc<Mutex<Gic>>>,
     virgl_flags: u32,
     #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
@@ -1499,6 +1518,11 @@ fn attach_gpu_device(
             guest_addr: shm_region.guest_addr.raw_value(),
             size: shm_region.size,
         });
+    }
+
+    #[cfg(not(feature = "tee"))]
+    if let Some(export_table) = export_table.take() {
+        gpu.lock().unwrap().set_export_table(export_table);
     }
 
     // The device mutex mustn't be locked here otherwise it will deadlock.
