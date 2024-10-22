@@ -19,12 +19,12 @@
 
 int main(int argc, char *const argv[])
 {
-    char *const port_map[] =
+    const char *const port_map[] =
     {
         "18000:8000",
         0
     };
-    char *const rlimits[] =
+    const char *const rlimits[] =
     {
         // RLIMIT_NPROC = 6
         "6=4096:8192",
@@ -88,14 +88,14 @@ int main(int argc, char *const argv[])
     }
 
     // Map port 18000 in the host to 8000 in the guest.
-    if (err = krun_set_port_map(ctx_id, &port_map[0])) {
+    if (err = krun_set_port_map(ctx_id, port_map)) {
         errno = -err;
         perror("Error configuring port map");
         return -1;
     }
 
     // Configure the rlimits that will be set in the guest
-    if (err = krun_set_rlimits(ctx_id, &rlimits[0])) {
+    if (err = krun_set_rlimits(ctx_id, rlimits)) {
         errno = -err;
         perror("Error configuring rlimits");
         return -1;
