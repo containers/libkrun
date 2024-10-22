@@ -101,7 +101,10 @@ impl AmdSnp {
                 .map_err(|_| Error::MemoryEncryptRegion)?;
         }
 
-        let start = Start::new(None, GuestPolicy(0), false, [0; 16]);
+        let mut policy = GuestPolicy(0);
+        policy.set_smt_allowed(1);
+
+        let start = Start::new(None, policy, false, [0; 16]);
 
         let launcher = launcher.start(start).map_err(Error::LaunchStart)?;
 
