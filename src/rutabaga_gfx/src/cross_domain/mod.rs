@@ -31,6 +31,7 @@ use crate::cross_domain::sys::Receiver;
 use crate::cross_domain::sys::Sender;
 use crate::cross_domain::sys::SystemStream;
 use crate::cross_domain::sys::WaitContext;
+use crate::rutabaga_core::ExportTable;
 use crate::rutabaga_core::RutabagaComponent;
 use crate::rutabaga_core::RutabagaContext;
 use crate::rutabaga_core::RutabagaResource;
@@ -128,6 +129,8 @@ pub(crate) struct CrossDomainContext {
     pub(crate) context_resources: CrossDomainResources,
     pub(crate) item_state: CrossDomainItemState,
     fence_handler: RutabagaFenceHandler,
+    #[allow(dead_code)]
+    export_table: Option<ExportTable>,
     worker_thread: Option<thread::JoinHandle<RutabagaResult<()>>>,
     pub(crate) resample_evt: Option<Sender>,
     kill_evt: Option<Sender>,
@@ -139,6 +142,7 @@ pub struct CrossDomain {
     channels: Option<Vec<RutabagaChannel>>,
     gralloc: Arc<Mutex<RutabagaGralloc>>,
     fence_handler: RutabagaFenceHandler,
+    export_table: Option<ExportTable>,
 }
 
 // TODO(gurchetansingh): optimize the item tracker.  Each requirements blob is long-lived and can
@@ -463,12 +467,14 @@ impl CrossDomain {
     pub fn init(
         channels: Option<Vec<RutabagaChannel>>,
         fence_handler: RutabagaFenceHandler,
+        export_table: Option<ExportTable>,
     ) -> RutabagaResult<Box<dyn RutabagaComponent>> {
         let gralloc = RutabagaGralloc::new()?;
         Ok(Box::new(CrossDomain {
             channels,
             gralloc: Arc::new(Mutex::new(gralloc)),
             fence_handler,
+            export_table,
         }))
     }
 }
@@ -967,6 +973,7 @@ impl RutabagaComponent for CrossDomain {
             worker_thread: None,
             resample_evt: None,
             kill_evt: None,
+            export_table: self.export_table.clone(),
         }))
     }
 

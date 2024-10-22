@@ -5,10 +5,11 @@
 //! rutabaga_core: Cross-platform, Rust-based, Wayland and Vulkan centric GPU virtualization.
 use std::collections::BTreeMap as Map;
 use std::convert::TryInto;
+use std::fs::File;
 use std::io::IoSliceMut;
 use std::io::Read;
 use std::io::Write;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::cross_domain::CrossDomain;
 
@@ -27,6 +28,8 @@ use crate::virgl_renderer::VirglRenderer;
 
 const RUTABAGA_DEFAULT_WIDTH: u32 = 1280;
 const RUTABAGA_DEFAULT_HEIGHT: u32 = 1024;
+
+pub type ExportTable = Arc<Mutex<Map<(u64, u64), File>>>;
 
 /// Information required for 2D functionality.
 pub struct Rutabaga2DInfo {
@@ -1046,6 +1049,7 @@ pub struct RutabagaBuilder {
     capset_mask: u64,
     channels: Option<Vec<RutabagaChannel>>,
     debug_handler: Option<RutabagaDebugHandler>,
+    export_table: Option<ExportTable>,
 }
 
 impl RutabagaBuilder {
@@ -1065,6 +1069,7 @@ impl RutabagaBuilder {
             capset_mask,
             channels: None,
             debug_handler: None,
+            export_table: None,
         }
     }
 
@@ -1161,6 +1166,11 @@ impl RutabagaBuilder {
         debug_handler: Option<RutabagaDebugHandler>,
     ) -> RutabagaBuilder {
         self.debug_handler = debug_handler;
+        self
+    }
+
+    pub fn set_export_table(mut self, export_table: ExportTable) -> RutabagaBuilder {
+        self.export_table = Some(export_table);
         self
     }
 
@@ -1283,7 +1293,11 @@ impl RutabagaBuilder {
                 push_capset(RUTABAGA_CAPSET_GFXSTREAM_COMPOSER);
             }
 
-            let cross_domain = CrossDomain::init(self.channels, fence_handler.clone())?;
+            let cross_domain = CrossDomain::init(
+                self.channels,
+                fence_handler.clone(),
+                self.export_table.take(),
+            )?;
             rutabaga_components.insert(RutabagaComponentType::CrossDomain, cross_domain);
             push_capset(RUTABAGA_CAPSET_CROSS_DOMAIN);
         }

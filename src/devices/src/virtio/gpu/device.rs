@@ -8,8 +8,8 @@ use utils::eventfd::EventFd;
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::super::{
-    ActivateError, ActivateResult, DeviceState, GpuError, Queue as VirtQueue, VirtioDevice,
-    VirtioShmRegion, VIRTIO_MMIO_INT_VRING,
+    fs::ExportTable, ActivateError, ActivateResult, DeviceState, GpuError, Queue as VirtQueue,
+    VirtioDevice, VirtioShmRegion, VIRTIO_MMIO_INT_VRING,
 };
 use super::defs;
 use super::defs::uapi;
@@ -50,6 +50,7 @@ pub struct Gpu {
     virgl_flags: u32,
     #[cfg(target_os = "macos")]
     map_sender: Sender<MemoryMapping>,
+    export_table: Option<ExportTable>,
 }
 
 impl Gpu {
@@ -85,6 +86,7 @@ impl Gpu {
             virgl_flags,
             #[cfg(target_os = "macos")]
             map_sender,
+            export_table: None,
         })
     }
 
@@ -115,6 +117,10 @@ impl Gpu {
     pub fn set_shm_region(&mut self, shm_region: VirtioShmRegion) {
         debug!("virtio_gpu: set_shm_region");
         self.shm_region = Some(shm_region);
+    }
+
+    pub fn set_export_table(&mut self, export_table: ExportTable) {
+        self.export_table = Some(export_table);
     }
 
     pub fn signal_used_queue(&self) -> result::Result<(), DeviceError> {
@@ -289,6 +295,7 @@ impl VirtioDevice for Gpu {
             self.virgl_flags,
             #[cfg(target_os = "macos")]
             self.map_sender.clone(),
+            self.export_table.take(),
         );
         worker.run();
 
