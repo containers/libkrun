@@ -316,45 +316,42 @@ impl CrossDomainWorker {
             match event.token {
                 CrossDomainToken::ContextChannel => {
                     let (len, files) = self.state.receive_msg(receive_buf)?;
-                    if len != 0 || !files.is_empty() {
-                        let mut cmd_receive: CrossDomainSendReceive = Default::default();
+                    let mut cmd_receive: CrossDomainSendReceive = Default::default();
 
-                        let num_files = files.len();
-                        cmd_receive.hdr.cmd = CROSS_DOMAIN_CMD_RECEIVE;
-                        cmd_receive.num_identifiers = files.len().try_into()?;
-                        cmd_receive.opaque_data_size = len.try_into()?;
+                    let num_files = files.len();
+                    cmd_receive.hdr.cmd = CROSS_DOMAIN_CMD_RECEIVE;
+                    cmd_receive.num_identifiers = files.len().try_into()?;
+                    cmd_receive.opaque_data_size = len.try_into()?;
 
-                        let iter = cmd_receive
-                            .identifiers
-                            .iter_mut()
-                            .zip(cmd_receive.identifier_types.iter_mut())
-                            .zip(cmd_receive.identifier_sizes.iter_mut())
-                            .zip(files)
-                            .take(num_files);
+                    let iter = cmd_receive
+                        .identifiers
+                        .iter_mut()
+                        .zip(cmd_receive.identifier_types.iter_mut())
+                        .zip(cmd_receive.identifier_sizes.iter_mut())
+                        .zip(files)
+                        .take(num_files);
 
-                        for (((identifier, identifier_type), identifier_size), mut file) in iter {
-                            // Safe since the descriptors from receive_msg(..) are owned by us and valid.
-                            descriptor_analysis(&mut file, identifier_type, identifier_size)?;
+                    for (((identifier, identifier_type), identifier_size), mut file) in iter {
+                        // Safe since the descriptors from receive_msg(..) are owned by us and valid.
+                        descriptor_analysis(&mut file, identifier_type, identifier_size)?;
 
-                            *identifier = match *identifier_type {
-                                CROSS_DOMAIN_ID_TYPE_VIRTGPU_BLOB => add_item(
-                                    &self.item_state,
-                                    CrossDomainItem::WaylandKeymap(file.into()),
-                                ),
-                                CROSS_DOMAIN_ID_TYPE_WRITE_PIPE => add_item(
-                                    &self.item_state,
-                                    CrossDomainItem::WaylandWritePipe(file),
-                                ),
-                                _ => return Err(RutabagaError::InvalidCrossDomainItemType),
-                            };
-                        }
-
-                        self.state.write_to_ring(
-                            RingWrite::Write(cmd_receive, Some(&receive_buf[0..len])),
-                            self.state.channel_ring_id,
-                        )?;
-                        self.fence_handler.call(fence);
+                        *identifier = match *identifier_type {
+                            CROSS_DOMAIN_ID_TYPE_VIRTGPU_BLOB => add_item(
+                                &self.item_state,
+                                CrossDomainItem::WaylandKeymap(file.into()),
+                            ),
+                            CROSS_DOMAIN_ID_TYPE_WRITE_PIPE => {
+                                add_item(&self.item_state, CrossDomainItem::WaylandWritePipe(file))
+                            }
+                            _ => return Err(RutabagaError::InvalidCrossDomainItemType),
+                        };
                     }
+
+                    self.state.write_to_ring(
+                        RingWrite::Write(cmd_receive, Some(&receive_buf[0..len])),
+                        self.state.channel_ring_id,
+                    )?;
+                    self.fence_handler.call(fence);
                 }
                 CrossDomainToken::Resample => {
                     // The resample event is triggered when the job queue is in the following state:
