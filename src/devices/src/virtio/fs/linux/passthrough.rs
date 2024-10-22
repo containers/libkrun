@@ -15,11 +15,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use nix::request_code_read;
+
 use vm_memory::ByteValued;
 
 use super::super::filesystem::{
-    Context, DirEntry, Entry, Extensions, FileSystem, FsOptions, GetxattrReply, ListxattrReply,
-    OpenOptions, SetattrValid, ZeroCopyReader, ZeroCopyWriter,
+    Context, DirEntry, Entry, ExportTable, Extensions, FileSystem, FsOptions, GetxattrReply,
+    ListxattrReply, OpenOptions, SetattrValid, ZeroCopyReader, ZeroCopyWriter,
 };
 use super::super::fuse;
 use super::super::multikey::MultikeyBTreeMap;
@@ -54,6 +56,7 @@ struct InodeData {
 struct HandleData {
     inode: Inode,
     file: RwLock<File>,
+    exported: AtomicBool,
 }
 
 #[repr(C, packed)]
@@ -295,6 +298,11 @@ pub struct Config {
     ///
     /// The default is `None`.
     pub proc_sfd_rawfd: Option<RawFd>,
+
+    /// ID of this filesystem to uniquely identify exports.
+    pub export_fsid: u64,
+    /// Table of exported FDs to share with other subsystems.
+    pub export_table: Option<ExportTable>,
 }
 
 impl Default for Config {
@@ -307,6 +315,8 @@ impl Default for Config {
             root_dir: String::from("/"),
             xattr: true,
             proc_sfd_rawfd: None,
+            export_fsid: 0,
+            export_table: None,
         }
     }
 }
@@ -664,7 +674,11 @@ impl PassthroughFs {
         let file = RwLock::new(self.open_inode(inode, flags as i32)?);
 
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-        let data = HandleData { inode, file };
+        let data = HandleData {
+            inode,
+            file,
+            exported: Default::default(),
+        };
 
         self.handles.write().unwrap().insert(handle, Arc::new(data));
 
@@ -693,6 +707,16 @@ impl PassthroughFs {
 
         if let btree_map::Entry::Occupied(e) = handles.entry(handle) {
             if e.get().inode == inode {
+                if e.get().exported.load(Ordering::Relaxed) {
+                    self.cfg
+                        .export_table
+                        .as_ref()
+                        .unwrap()
+                        .lock()
+                        .unwrap()
+                        .remove(&(self.cfg.export_fsid, handle));
+                }
+
                 // We don't need to close the file here because that will happen automatically when
                 // the last `Arc` is dropped.
                 e.remove();
@@ -1069,6 +1093,7 @@ impl FileSystem for PassthroughFs {
         let data = HandleData {
             inode: entry.inode,
             file,
+            exported: Default::default(),
         };
 
         self.handles.write().unwrap().insert(handle, Arc::new(data));
@@ -2023,5 +2048,59 @@ impl FileSystem for PassthroughFs {
         }
 
         Ok(())
+    }
+
+    fn ioctl(
+        &self,
+        _ctx: Context,
+        inode: Self::Inode,
+        handle: Self::Handle,
+        _flags: u32,
+        cmd: u32,
+        _arg: u64,
+        _in_size: u32,
+        out_size: u32,
+    ) -> io::Result<Vec<u8>> {
+        const VIRTIO_IOC_MAGIC: u8 = b'v';
+        const VIRTIO_IOC_TYPE_EXPORT_FD: u8 = 1;
+        const VIRTIO_IOC_EXPORT_FD_SIZE: usize = 2 * mem::size_of::<u64>();
+        const VIRTIO_IOC_EXPORT_FD_REQ: u32 = request_code_read!(
+            VIRTIO_IOC_MAGIC,
+            VIRTIO_IOC_TYPE_EXPORT_FD,
+            VIRTIO_IOC_EXPORT_FD_SIZE
+        ) as u32;
+
+        match cmd {
+            VIRTIO_IOC_EXPORT_FD_REQ => {
+                if out_size as usize != VIRTIO_IOC_EXPORT_FD_SIZE {
+                    return Err(io::Error::from_raw_os_error(libc::EINVAL));
+                }
+
+                let mut exports = self
+                    .cfg
+                    .export_table
+                    .as_ref()
+                    .ok_or(io::Error::from_raw_os_error(libc::EOPNOTSUPP))?
+                    .lock()
+                    .unwrap();
+
+                let handles = self.handles.read().unwrap();
+                let data = handles
+                    .get(&handle)
+                    .filter(|hd| hd.inode == inode)
+                    .ok_or_else(ebadf)?;
+
+                data.exported.store(true, Ordering::Relaxed);
+
+                let fd = data.file.read().unwrap().try_clone()?;
+
+                exports.insert((self.cfg.export_fsid, handle), fd);
+
+                let mut ret: Vec<_> = self.cfg.export_fsid.to_ne_bytes().into();
+                ret.extend_from_slice(&handle.to_ne_bytes());
+                Ok(ret)
+            }
+            _ => Err(io::Error::from_raw_os_error(libc::EOPNOTSUPP)),
+        }
     }
 }
