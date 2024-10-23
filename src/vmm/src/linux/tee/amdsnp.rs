@@ -1,4 +1,7 @@
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::{
+    os::unix::io::{AsRawFd, RawFd},
+    slice,
+};
 
 use crate::vstate::MeasuredRegion;
 use arch::x86_64::layout::*;
@@ -287,43 +290,19 @@ impl AmdSnp {
          * entire slice of a guest memory region.
          */
         let gr: &GuestRegionMmap = guest_mem.find_region(ga).unwrap();
-        // TODO: Find the right way to replace this deprecated method.
-        #[allow(deprecated)]
-        let region_slice = unsafe { gr.as_slice().unwrap() };
 
-        /*
-         * The memory region we are currently looking to measure is
-         * represented simply as a guest address at the moment. Instead,
-         * we would like to obtain a slice of it. To do this, we must use
-         * the guest address as an OFFSET within the slice, and only take
-         * that subslice.
-         */
-        let offset: usize = guest_mem
-            .to_region_addr(ga)
-            .unwrap()
-            .1
-             .0
-            .try_into()
-            .unwrap();
+        let region_addr = gr.to_region_addr(ga).unwrap();
+        let bytes = gr.get_slice(region_addr, region.size).unwrap();
+        let ptr = bytes.ptr_guard().as_ptr();
+        let slice: &[u8] = unsafe { slice::from_raw_parts(ptr, region.size) };
 
-        /*
-         * We know the size of the region to be measured from the
-         * MeasuredRegion.
-         */
-        let count: usize = region.size;
-
-        /*
-         * We now have the start and end indexes of the slice, so use these
-         * indexes to take a subslice of the guest region (corresponding to
-         * the slice of bytes that we're looking to measure).
-         */
-        let buf = &region_slice[offset..offset + count];
-
-        /*
-         * From that subslice, build an Update struct and call
-         * SNP_LAUNCH_UPDATE.
-         */
-        let update = Update::new(region.guest_addr >> 12, buf, false, page_type, (dp, dp, dp));
+        let update = Update::new(
+            region.guest_addr >> 12,
+            slice,
+            false,
+            page_type,
+            (dp, dp, dp),
+        );
 
         launcher.update_data(update).map_err(Error::LaunchUpdate)
     }
