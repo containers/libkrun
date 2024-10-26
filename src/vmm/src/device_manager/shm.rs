@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use arch::{round_up, ArchMemoryInfo};
 use vm_memory::GuestAddress;
@@ -18,7 +18,7 @@ pub struct ShmRegion {
 pub struct ShmManager {
     next_guest_addr: u64,
     page_size: usize,
-    fs_regions: HashMap<usize, ShmRegion>,
+    fs_regions: BTreeMap<usize, ShmRegion>,
     gpu_region: Option<ShmRegion>,
 }
 
@@ -27,7 +27,7 @@ impl ShmManager {
         Self {
             next_guest_addr: info.shm_start_addr,
             page_size: info.page_size,
-            fs_regions: HashMap::new(),
+            fs_regions: BTreeMap::new(),
             gpu_region: None,
         }
     }
