@@ -99,7 +99,6 @@ pub(crate) struct CrossDomainResource {
 
 pub(crate) struct CrossDomainItems {
     descriptor_id: u32,
-    requirements_blob_id: u32,
     read_pipe_id: u32,
     table: Map<u32, CrossDomainItem>,
 }
@@ -152,16 +151,12 @@ pub(crate) fn add_item(item_state: &CrossDomainItemState, item: CrossDomainItem)
     let mut items = item_state.lock().unwrap();
 
     let item_id = match item {
-        CrossDomainItem::ImageRequirements(_) => {
-            items.requirements_blob_id += 2;
-            items.requirements_blob_id
-        }
         CrossDomainItem::WaylandReadPipe(_) => {
             items.read_pipe_id += 1;
             max(items.read_pipe_id, CROSS_DOMAIN_PIPE_READ_START)
         }
         _ => {
-            items.descriptor_id += 2;
+            items.descriptor_id += 1;
             items.descriptor_id
         }
     };
@@ -176,7 +171,6 @@ impl Default for CrossDomainItems {
         // Odd for descriptors, and even for requirement blobs.
         CrossDomainItems {
             descriptor_id: 1,
-            requirements_blob_id: 2,
             read_pipe_id: CROSS_DOMAIN_PIPE_READ_START,
             table: Default::default(),
         }
@@ -672,96 +666,88 @@ impl RutabagaContext for CrossDomainContext {
     ) -> RutabagaResult<RutabagaResource> {
         let item_id = resource_create_blob.blob_id as u32;
 
-        // We don't want to remove requirements blobs, since they can be used for subsequent
-        // allocations.  We do want to remove Wayland keymaps, since they are mapped the guest
-        // and then never used again.  The current protocol encodes this as divisiblity by 2.
-        if item_id % 2 == 0 {
-            let items = self.item_state.lock().unwrap();
-            let item = items
-                .table
-                .get(&item_id)
-                .ok_or(RutabagaError::InvalidCrossDomainItemId)?;
+        let mut items = self.item_state.lock().unwrap();
+        let item = items
+            .table
+            .get_mut(&item_id)
+            .ok_or(RutabagaError::InvalidCrossDomainItemId)?;
 
-            match item {
-                CrossDomainItem::ImageRequirements(reqs) => {
-                    if reqs.size != resource_create_blob.size {
-                        return Err(RutabagaError::SpecViolation("blob size mismatch"));
-                    }
-
-                    // Strictly speaking, it's against the virtio-gpu spec to allocate memory in the context
-                    // create blob function, which says "the actual allocation is done via
-                    // VIRTIO_GPU_CMD_SUBMIT_3D."  However, atomic resource creation is easiest for the
-                    // cross-domain use case, so whatever.
-                    let hnd = match handle_opt {
-                        Some(handle) => handle,
-                        None => self.gralloc.lock().unwrap().allocate_memory(*reqs)?,
-                    };
-
-                    let info_3d = Resource3DInfo {
-                        width: reqs.info.width,
-                        height: reqs.info.height,
-                        drm_fourcc: reqs.info.drm_format.into(),
-                        strides: reqs.strides,
-                        offsets: reqs.offsets,
-                        modifier: reqs.modifier,
-                    };
-
-                    Ok(RutabagaResource {
-                        resource_id,
-                        handle: Some(Arc::new(hnd)),
-                        blob: true,
-                        blob_mem: resource_create_blob.blob_mem,
-                        blob_flags: resource_create_blob.blob_flags,
-                        map_info: Some(reqs.map_info | RUTABAGA_MAP_ACCESS_RW),
-                        #[cfg(target_os = "macos")]
-                        map_ptr: None,
-                        info_2d: None,
-                        info_3d: Some(info_3d),
-                        vulkan_info: reqs.vulkan_info,
-                        backing_iovecs: None,
-                        component_mask: 1 << (RutabagaComponentType::CrossDomain as u8),
-                        size: resource_create_blob.size,
-                        mapping: None,
-                    })
-                }
-                _ => Err(RutabagaError::InvalidCrossDomainItemType),
+        // Items that are kept in the table after usage.
+        if let CrossDomainItem::ImageRequirements(reqs) = item {
+            if reqs.size != resource_create_blob.size {
+                return Err(RutabagaError::SpecViolation("blob size mismatch"));
             }
-        } else {
-            let item = self
-                .item_state
-                .lock()
-                .unwrap()
-                .table
-                .remove(&item_id)
-                .ok_or(RutabagaError::InvalidCrossDomainItemId)?;
 
-            match item {
-                CrossDomainItem::WaylandKeymap(descriptor) => {
-                    let hnd = RutabagaHandle {
-                        os_handle: descriptor,
-                        handle_type: RUTABAGA_MEM_HANDLE_TYPE_SHM,
-                    };
+            // Strictly speaking, it's against the virtio-gpu spec to allocate memory in the context
+            // create blob function, which says "the actual allocation is done via
+            // VIRTIO_GPU_CMD_SUBMIT_3D."  However, atomic resource creation is easiest for the
+            // cross-domain use case, so whatever.
+            let hnd = match handle_opt {
+                Some(handle) => handle,
+                None => self.gralloc.lock().unwrap().allocate_memory(*reqs)?,
+            };
 
-                    Ok(RutabagaResource {
-                        resource_id,
-                        handle: Some(Arc::new(hnd)),
-                        blob: true,
-                        blob_mem: resource_create_blob.blob_mem,
-                        blob_flags: resource_create_blob.blob_flags,
-                        map_info: Some(RUTABAGA_MAP_CACHE_CACHED | RUTABAGA_MAP_ACCESS_READ),
-                        #[cfg(target_os = "macos")]
-                        map_ptr: None,
-                        info_2d: None,
-                        info_3d: None,
-                        vulkan_info: None,
-                        backing_iovecs: None,
-                        component_mask: 1 << (RutabagaComponentType::CrossDomain as u8),
-                        size: resource_create_blob.size,
-                        mapping: None,
-                    })
-                }
-                _ => Err(RutabagaError::InvalidCrossDomainItemType),
+            let info_3d = Resource3DInfo {
+                width: reqs.info.width,
+                height: reqs.info.height,
+                drm_fourcc: reqs.info.drm_format.into(),
+                strides: reqs.strides,
+                offsets: reqs.offsets,
+                modifier: reqs.modifier,
+            };
+
+            // Keep ImageRequirements items and return immediately, since they can be used for subsequent allocations.
+            return Ok(RutabagaResource {
+                resource_id,
+                handle: Some(Arc::new(hnd)),
+                blob: true,
+                blob_mem: resource_create_blob.blob_mem,
+                blob_flags: resource_create_blob.blob_flags,
+                map_info: Some(reqs.map_info | RUTABAGA_MAP_ACCESS_RW),
+                #[cfg(target_os = "macos")]
+                map_ptr: None,
+                info_2d: None,
+                info_3d: Some(info_3d),
+                vulkan_info: reqs.vulkan_info,
+                backing_iovecs: None,
+                component_mask: 1 << (RutabagaComponentType::CrossDomain as u8),
+                size: resource_create_blob.size,
+                mapping: None,
+            });
+        }
+
+        let item = items
+            .table
+            .remove(&item_id)
+            .ok_or(RutabagaError::InvalidCrossDomainItemId)?;
+
+        // Items that are removed from the table after one usage.
+        match item {
+            CrossDomainItem::WaylandKeymap(descriptor) => {
+                let hnd = RutabagaHandle {
+                    os_handle: descriptor,
+                    handle_type: RUTABAGA_MEM_HANDLE_TYPE_SHM,
+                };
+
+                Ok(RutabagaResource {
+                    resource_id,
+                    handle: Some(Arc::new(hnd)),
+                    blob: true,
+                    blob_mem: resource_create_blob.blob_mem,
+                    blob_flags: resource_create_blob.blob_flags,
+                    map_info: Some(RUTABAGA_MAP_CACHE_CACHED | RUTABAGA_MAP_ACCESS_READ),
+                    #[cfg(target_os = "macos")]
+                    map_ptr: None,
+                    info_2d: None,
+                    info_3d: None,
+                    vulkan_info: None,
+                    backing_iovecs: None,
+                    component_mask: 1 << (RutabagaComponentType::CrossDomain as u8),
+                    size: resource_create_blob.size,
+                    mapping: None,
+                })
             }
+            _ => Err(RutabagaError::InvalidCrossDomainItemType),
         }
     }
 
