@@ -5,12 +5,14 @@
 //! The cross-domain component type, specialized for allocating and sharing resources across domain
 //! boundaries.
 
+use log::info;
 use std::cmp::max;
 use std::collections::BTreeMap as Map;
 use std::collections::VecDeque;
 use std::convert::TryInto;
-use std::fs::File;
+use std::fs::{read_link, File};
 use std::mem::size_of;
+use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::sync::Condvar;
 use std::sync::Mutex;
@@ -69,7 +71,8 @@ const CROSS_DOMAIN_MAX_SEND_RECV_SIZE: usize =
 
 pub(crate) enum CrossDomainItem {
     ImageRequirements(ImageMemoryRequirements),
-    WaylandKeymap(SafeDescriptor),
+    ShmBlob(SafeDescriptor),
+    DmaBuf(SafeDescriptor),
     #[allow(dead_code)] // `WaylandReadPipe` is never constructed on Windows.
     WaylandReadPipe(File),
     WaylandWritePipe(File),
@@ -334,10 +337,28 @@ impl CrossDomainWorker {
                         descriptor_analysis(&mut file, identifier_type, identifier_size)?;
 
                         *identifier = match *identifier_type {
-                            CROSS_DOMAIN_ID_TYPE_VIRTGPU_BLOB => add_item(
-                                &self.item_state,
-                                CrossDomainItem::WaylandKeymap(file.into()),
-                            ),
+                            CROSS_DOMAIN_ID_TYPE_VIRTGPU_BLOB => {
+                                let fd_path =
+                                    read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
+                                        .unwrap();
+                                if fd_path.starts_with("/dmabuf:") {
+                                    add_item(&self.item_state, CrossDomainItem::DmaBuf(file.into()))
+                                } else if fd_path.starts_with("/memfd:") {
+                                    add_item(
+                                        &self.item_state,
+                                        CrossDomainItem::ShmBlob(file.into()),
+                                    )
+                                } else {
+                                    info!(
+                                        "Unknown fd item path {:?}, treating as a shmem blob",
+                                        fd_path
+                                    );
+                                    add_item(
+                                        &self.item_state,
+                                        CrossDomainItem::ShmBlob(file.into()),
+                                    )
+                                }
+                            }
                             CROSS_DOMAIN_ID_TYPE_WRITE_PIPE => {
                                 add_item(&self.item_state, CrossDomainItem::WaylandWritePipe(file))
                             }
@@ -723,7 +744,7 @@ impl RutabagaContext for CrossDomainContext {
 
         // Items that are removed from the table after one usage.
         match item {
-            CrossDomainItem::WaylandKeymap(descriptor) => {
+            CrossDomainItem::ShmBlob(descriptor) => {
                 let hnd = RutabagaHandle {
                     os_handle: descriptor,
                     handle_type: RUTABAGA_MEM_HANDLE_TYPE_SHM,
@@ -736,6 +757,30 @@ impl RutabagaContext for CrossDomainContext {
                     blob_mem: resource_create_blob.blob_mem,
                     blob_flags: resource_create_blob.blob_flags,
                     map_info: Some(RUTABAGA_MAP_CACHE_CACHED | RUTABAGA_MAP_ACCESS_READ),
+                    #[cfg(target_os = "macos")]
+                    map_ptr: None,
+                    info_2d: None,
+                    info_3d: None,
+                    vulkan_info: None,
+                    backing_iovecs: None,
+                    component_mask: 1 << (RutabagaComponentType::CrossDomain as u8),
+                    size: resource_create_blob.size,
+                    mapping: None,
+                })
+            }
+            CrossDomainItem::DmaBuf(descriptor) => {
+                let hnd = RutabagaHandle {
+                    os_handle: descriptor,
+                    handle_type: RUTABAGA_MEM_HANDLE_TYPE_DMABUF,
+                };
+
+                Ok(RutabagaResource {
+                    resource_id,
+                    handle: Some(Arc::new(hnd)),
+                    blob: true,
+                    blob_mem: resource_create_blob.blob_mem,
+                    blob_flags: resource_create_blob.blob_flags,
+                    map_info: Some(RUTABAGA_MAP_CACHE_CACHED | RUTABAGA_MAP_ACCESS_RW),
                     #[cfg(target_os = "macos")]
                     map_ptr: None,
                     info_2d: None,
