@@ -1418,6 +1418,10 @@ impl Vcpu {
                 match e.errno() {
                     libc::EAGAIN => Ok(VcpuEmulation::Handled),
                     libc::EINTR => {
+                        println!("KVM_RUN exited: Err(EINTR)");
+                        println!(
+                            "//setting immediate_exit = 0, passing interrupt handling to the guest"
+                        );
                         self.fd.set_kvm_immediate_exit(0);
                         // Notify that this KVM_RUN was interrupted.
                         Ok(VcpuEmulation::Interrupted)
