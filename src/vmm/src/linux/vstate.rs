@@ -28,6 +28,9 @@ use super::tee::amdsev::{AmdSev, Error as SevError};
 #[cfg(feature = "amd-sev")]
 use super::tee::amdsnp::{AmdSnp, Error as SnpError};
 
+#[cfg(feature = "intel-tdx")]
+use super::tee::inteltdx::{Error as TdxError, IntelTdx};
+
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
 
@@ -45,7 +48,10 @@ use kvm_bindings::{
     Msrs, KVM_CLOCK_TSC_STABLE, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
     KVM_MAX_CPUID_ENTRIES, KVM_PIT_SPEAKER_DUMMY,
 };
-use kvm_bindings::{kvm_userspace_memory_region, KVM_API_VERSION};
+use kvm_bindings::{
+    kvm_create_guest_memfd, kvm_memory_attributes, kvm_userspace_memory_region,
+    kvm_userspace_memory_region2, KVM_API_VERSION,
+};
 use kvm_ioctls::*;
 use utils::eventfd::EventFd;
 use utils::signal::{register_signal_handler, sigrtmin, Killable};
@@ -69,6 +75,9 @@ pub enum Error {
     #[cfg(target_arch = "x86_64")]
     /// A call to cpuid instruction failed.
     CpuId(cpuid::Error),
+    #[cfg(feature = "intel-tdx")]
+    /// Cannot create guest memfd
+    CreateGuestMemfd(kvm_ioctls::Error),
     #[cfg(target_arch = "x86_64")]
     /// Error configuring the floating point related registers
     FPUConfiguration(arch::x86_64::regs::Error),
@@ -110,6 +119,12 @@ pub enum Error {
     SetupGIC(arch::aarch64::gic::Error),
     /// Cannot set the memory regions.
     SetUserMemoryRegion(kvm_ioctls::Error),
+    #[cfg(feature = "intel-tdx")]
+    /// Cannot set the memory regions.
+    SetUserMemoryRegion2(kvm_ioctls::Error),
+    #[cfg(feature = "intel-tdx")]
+    /// Cannot set the memory attributes
+    SetMemoryAttributes(kvm_ioctls::Error),
     /// Error creating memory map for SHM region.
     ShmMmap(io::Error),
     #[cfg(feature = "amd-sev")]
@@ -130,6 +145,15 @@ pub enum Error {
     #[cfg(feature = "amd-sev")]
     /// Error attesting the Secure VM (SNP).
     SnpSecVirtAttest(SnpError),
+    #[cfg(feature = "intel-tdx")]
+    /// Error initializing the Trust Domain Extensions Backend (TDX)
+    TdxSecVirtInit(TdxError),
+    #[cfg(feature = "intel-tdx")]
+    /// Error preparing the VM for Trust Domain Extensions (TDX)
+    TdxSecVirtPrepare(TdxError),
+    #[cfg(feature = "intel-tdx")]
+    /// Error initializing vCPU for Trust Domain Extensions (TDX)
+    TdxSecVirtInitVcpu,
     #[cfg(feature = "tee")]
     /// The TEE specified is not supported.
     InvalidTee,
@@ -246,6 +270,8 @@ impl Display for Error {
         match self {
             #[cfg(target_arch = "x86_64")]
             CpuId(e) => write!(f, "Cpuid error: {e:?}"),
+            #[cfg(feature = "intel-tdx")]
+            CreateGuestMemfd(e) => write!(f, "Failed to create guest memfd: {e:?}",),
             GuestMemoryMmap(e) => write!(f, "Guest memory error: {e:?}"),
             #[cfg(target_arch = "x86_64")]
             GuestMSRs(e) => write!(f, "Retrieving supported guest MSRs fails: {e:?}"),
@@ -272,37 +298,56 @@ impl Display for Error {
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
             ShmMmap(e) => write!(f, "Error creating memory map for SHM region: {e}"),
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "intel-tdx")]
+            SetUserMemoryRegion2(e) => write!(f, "Cannot set the memory regions: {e:?}",),
+            #[cfg(feature = "intel-tdx")]
+            SetMemoryAttributes(e) => write!(f, "Cannot set the memory attributes: {e:?}",),
+            #[cfg(feature = "amd-sev")]
             SevSecVirtInit(e) => {
                 write!(
                     f,
                     "Error initializing the Secure Virtualization Backend (SEV): {e:?}"
                 )
             }
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SevSecVirtPrepare(e) => write!(
                 f,
                 "Error preparing the VM for Secure Virtualization (SEV): {e:?}"
             ),
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SevSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SEV): {e:?}"),
 
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SnpSecVirtInit(e) => write!(
                 f,
                 "Error initializing the Secure Virtualization Backend (SEV): {e:?}"
             ),
 
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SnpSecVirtPrepare(e) => write!(
                 f,
                 "Error preparing the VM for Secure Virtualization (SNP): {e:?}"
             ),
 
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SnpSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SNP): {e:?}"),
 
             SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {e}"),
+            #[cfg(feature = "intel-tdx")]
+            TdxSecVirtInit(e) => write!(
+                f,
+                "Error initializing the Trust Domain Extensions Backend (TDX): {e:?}"
+            ),
+            #[cfg(feature = "intel-tdx")]
+            TdxSecVirtPrepare(e) => write!(
+                f,
+                "Error preparing the VM for Trust Domain Extensions (TDX): {e:?}"
+            ),
+            #[cfg(feature = "intel-tdx")]
+            TdxSecVirtInitVcpu => write!(
+                f,
+                "Error initializing vCPU for Trust Domain Extensions (TDX)"
+            ),
             #[cfg(feature = "tee")]
             MissingTeeConfig => write!(f, "Missing TEE configuration"),
             #[cfg(target_arch = "x86_64")]
@@ -474,7 +519,10 @@ pub struct Vm {
     #[cfg(feature = "amd-sev")]
     snp: Option<AmdSnp>,
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "intel-tdx")]
+    tdx: Option<IntelTdx>,
+
+    #[cfg(feature = "tee")]
     pub tee: Tee,
 }
 
@@ -537,6 +585,31 @@ impl Vm {
         })
     }
 
+    #[cfg(feature = "intel-tdx")]
+    pub fn new(kvm: &Kvm, tee_config: &TeeConfig) -> Result<Self> {
+        // create fd for interacting with kvm-vm specific functions
+        let vm_fd = kvm
+            .create_vm_with_type(tdx::launch::KVM_X86_TDX_VM)
+            .map_err(Error::VmFd)?;
+
+        let supported_cpuid = kvm
+            .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
+            .map_err(Error::VmFd)?;
+
+        let supported_msrs =
+            arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
+
+        let tdx = IntelTdx::new(&vm_fd).map_err(Error::TdxSecVirtInit)?;
+        Ok(Vm {
+            fd: vm_fd,
+            next_mem_slot: 0,
+            supported_cpuid,
+            supported_msrs,
+            tdx: Some(tdx),
+            tee: tee_config.tee,
+        })
+    }
+
     /// Returns a ref to the supported `CpuId` for this Vm.
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     pub fn supported_cpuid(&self) -> &CpuId {
@@ -562,20 +635,70 @@ impl Vm {
             // It's safe to unwrap because the guest address is valid.
             let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
             debug!("Guest memory starts at {:x?}", host_addr);
-            let memory_region = kvm_userspace_memory_region {
-                slot: self.next_mem_slot,
-                guest_phys_addr: region.start_addr().raw_value(),
-                memory_size: region.len(),
-                userspace_addr: host_addr as u64,
-                flags: 0,
-            };
-            // Safe because we mapped the memory region, we made sure that the regions
-            // are not overlapping.
-            unsafe {
+
+            #[cfg(feature = "intel-tdx")]
+            {
+                let gmem = kvm_create_guest_memfd {
+                    size: region.len(),
+                    flags: 0,
+                    reserved: [0; 6],
+                };
+                let gmem = self
+                    .fd
+                    .create_guest_memfd(gmem)
+                    .map_err(Error::CreateGuestMemfd)?;
+
+                let memory_region = kvm_userspace_memory_region2 {
+                    slot: self.next_mem_slot,
+                    // KVM_MEM_GUEST_MEMFD
+                    flags: 1 << 2,
+                    guest_phys_addr: region.start_addr().raw_value(),
+                    memory_size: region.len(),
+                    userspace_addr: host_addr as u64,
+                    guest_memfd_offset: 0,
+                    guest_memfd: gmem as u32,
+                    pad1: 0,
+                    pad2: [0; 14],
+                };
+
+                // Safe because we mapped the memory region, we made sure that the regions
+                // are not overlapping.
+                unsafe {
+                    self.fd
+                        .set_user_memory_region2(memory_region)
+                        .map_err(Error::SetUserMemoryRegion2)?;
+                }
+
+                let attr = kvm_memory_attributes {
+                    address: region.start_addr().raw_value(),
+                    size: region.len() as u64,
+                    // KVM_MEMORY_ATTRIBUTE_PRIVATE,
+                    attributes: 1 << 3,
+                    flags: 0,
+                };
+
                 self.fd
-                    .set_user_memory_region(memory_region)
-                    .map_err(Error::SetUserMemoryRegion)?;
-            };
+                    .set_memory_attributes(attr)
+                    .map_err(Error::SetMemoryAttributes)?;
+            }
+
+            #[cfg(not(feature = "intel-tdx"))]
+            {
+                let memory_region = kvm_userspace_memory_region {
+                    slot: self.next_mem_slot,
+                    guest_phys_addr: region.start_addr().raw_value(),
+                    memory_size: region.len(),
+                    userspace_addr: host_addr as u64,
+                    flags: 0,
+                };
+                // Safe because we mapped the memory region, we made sure that the regions
+                // are not overlapping.
+                unsafe {
+                    self.fd
+                        .set_user_memory_region(memory_region)
+                        .map_err(Error::SetUserMemoryRegion)?;
+                };
+            }
             self.next_mem_slot += 1;
         }
 
@@ -585,6 +708,47 @@ impl Vm {
             .map_err(Error::VmSetup)?;
 
         Ok(())
+    }
+
+    #[cfg(feature = "intel-tdx")]
+    pub fn tdx_secure_virt_prepare(&self) -> Result<()> {
+        match &self.tdx {
+            Some(t) => t
+                .vm_prepare(&self.fd, self.supported_cpuid.clone())
+                .map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
+    }
+
+    #[cfg(feature = "intel-tdx")]
+    pub fn tdx_secure_virt_get_tdvf_hob_section_address(&self) -> Result<u64> {
+        match &self.tdx {
+            Some(t) => t.get_tdvf_hob_address().map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
+    }
+
+    #[cfg(feature = "intel-tdx")]
+    pub fn tdx_secure_virt_prepare_memory(
+        &self,
+        guest_mem: &mut GuestMemoryMmap,
+        ram_entries: &mut Vec<arch_gen::x86::bootparam::e820entry>,
+        nr_ram_entries: &mut u64,
+    ) -> Result<()> {
+        match &self.tdx {
+            Some(t) => t
+                .configure_td_memory(&self.fd, guest_mem, ram_entries, nr_ram_entries)
+                .map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
+    }
+
+    #[cfg(feature = "intel-tdx")]
+    pub fn tdx_secure_virt_finalize_vm(&self) -> Result<()> {
+        match &self.tdx {
+            Some(t) => t.finalize_vm(&self.fd).map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
     }
 
     #[cfg(feature = "amd-sev")]
@@ -999,13 +1163,16 @@ impl Vcpu {
             .set_cpuid2(&self.cpuid)
             .map_err(Error::VcpuSetCpuid)?;
 
-        arch::x86_64::msr::setup_msrs(&self.fd).map_err(Error::MSRSConfiguration)?;
-        arch::x86_64::regs::setup_regs(&self.fd, kernel_start_addr.raw_value(), self.id)
-            .map_err(Error::REGSConfiguration)?;
-        arch::x86_64::regs::setup_fpu(&self.fd).map_err(Error::FPUConfiguration)?;
-        arch::x86_64::regs::setup_sregs(guest_mem, &self.fd, self.id)
-            .map_err(Error::SREGSConfiguration)?;
-        arch::x86_64::interrupts::set_lint(&self.fd).map_err(Error::LocalIntConfiguration)?;
+        #[cfg(not(feature = "intel-tdx"))]
+        {
+            arch::x86_64::msr::setup_msrs(&self.fd).map_err(Error::MSRSConfiguration)?;
+            arch::x86_64::regs::setup_regs(&self.fd, kernel_start_addr.raw_value(), self.id)
+                .map_err(Error::REGSConfiguration)?;
+            arch::x86_64::regs::setup_fpu(&self.fd).map_err(Error::FPUConfiguration)?;
+            arch::x86_64::regs::setup_sregs(guest_mem, &self.fd, self.id)
+                .map_err(Error::SREGSConfiguration)?;
+            arch::x86_64::interrupts::set_lint(&self.fd).map_err(Error::LocalIntConfiguration)?;
+        }
         Ok(())
     }
 
@@ -1378,6 +1545,12 @@ impl Vcpu {
         barrier.wait();
 
         StateMachine::finish()
+    }
+
+    #[cfg(feature = "intel-tdx")]
+    pub fn tdx_secure_virt_init(&self, hob_addr: u64) -> Result<()> {
+        tdx::launch::TdxVcpu::init_raw(&self.fd, hob_addr)
+            .or_else(|_| return Err(Error::TdxSecVirtInitVcpu))
     }
 
     #[cfg(test)]

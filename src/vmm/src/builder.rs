@@ -428,7 +428,7 @@ pub fn build_microvm(
     #[cfg(feature = "tee")]
     let tee = vm_resources.tee_config().tee;
 
-    #[cfg(feature = "tee")]
+    #[cfg(feature = "amd-sev")]
     let sev_launcher = match tee {
         Tee::Sev => Some(
             vm.sev_secure_virt_prepare(&guest_memory)
@@ -437,10 +437,19 @@ pub fn build_microvm(
         _ => None,
     };
 
-    #[cfg(feature = "tee")]
+    #[cfg(feature = "amd-sev")]
     let snp_launcher = match tee {
         Tee::Snp => Some(
             vm.snp_secure_virt_prepare(&guest_memory)
+                .map_err(StartMicrovmError::SecureVirtPrepare)?,
+        ),
+        _ => None,
+    };
+
+    #[cfg(feature = "intel-tdx")]
+    let _ = match tee {
+        Tee::Tdx => Some(
+            vm.tdx_secure_virt_prepare()
                 .map_err(StartMicrovmError::SecureVirtPrepare)?,
         ),
         _ => None,
@@ -542,6 +551,7 @@ pub fn build_microvm(
     // while on aarch64 we need to do it the other way around.
     #[cfg(target_arch = "x86_64")]
     {
+        #[cfg(not(feature = "intel-tdx"))]
         setup_interrupt_controller(&vm)?;
         attach_legacy_devices(&vm, &mut pio_device_manager)?;
 
@@ -708,21 +718,32 @@ pub fn build_microvm(
     #[cfg(not(feature = "tee"))]
     let initrd_config = None;
 
+    #[cfg(feature = "intel-tdx")]
+    let mut e820_entries: Vec<arch_gen::x86::bootparam::e820entry> = Vec::new();
+    #[cfg(feature = "intel-tdx")]
+    let mut num_e820_entries = 0;
+
     vmm.configure_system(
         vcpus.as_slice(),
         &initrd_config,
         &vm_resources.smbios_oem_strings,
+        #[cfg(target_arch = "x86_64")]
+        &mut e820_entries,
+        #[cfg(target_arch = "x86_64")]
+        &mut num_e820_entries,
     )
     .map_err(StartMicrovmError::Internal)?;
 
     #[cfg(feature = "tee")]
     {
         match tee {
+            #[cfg(feature = "amd-sev")]
             Tee::Sev => vmm
                 .kvm_vm()
                 .sev_secure_virt_attest(vmm.guest_memory(), measured_regions, sev_launcher.unwrap())
                 .map_err(StartMicrovmError::SecureVirtAttest)?,
 
+            #[cfg(feature = "amd-sev")]
             Tee::Snp => {
                 let cpuid = kvm
                     .fd()
@@ -737,6 +758,15 @@ pub fn build_microvm(
                         snp_launcher.unwrap(),
                     )
                     .map_err(StartMicrovmError::SecureVirtAttest)?;
+            }
+
+            #[cfg(feature = "intel-tdx")]
+            Tee::Tdx => {
+                vmm.kvm_vm()
+                    .tdx_secure_virt_finalize_vm()
+                    .map_err(StartMicrovmError::SecureVirtPrepare)?;
+                // TODO(jakecorrenti): should do a no-attest here for the TDX bits so that we can
+                // unlock the LUKS partition
             }
             _ => return Err(StartMicrovmError::InvalidTee),
         }
@@ -1074,6 +1104,10 @@ fn create_vcpus_x86_64(
     exit_evt: &EventFd,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
+
+    #[cfg(feature = "intel-tdx")]
+    let hob_section_addr = vm.tdx_secure_virt_get_tdvf_hob_section_address().unwrap();
+
     for cpu_index in 0..vcpu_config.vcpu_count {
         let mut vcpu = Vcpu::new_x86_64(
             cpu_index,
@@ -1086,6 +1120,10 @@ fn create_vcpus_x86_64(
         .map_err(Error::Vcpu)?;
 
         vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config)
+            .map_err(Error::Vcpu)?;
+
+        #[cfg(feature = "intel-tdx")]
+        vcpu.tdx_secure_virt_init(hob_section_addr)
             .map_err(Error::Vcpu)?;
 
         vcpus.push(vcpu);
@@ -1582,6 +1620,7 @@ pub mod tests {
 
         let (guest_memory, _arch_memory_info, _shm_manager) = default_guest_memory(128).unwrap();
         let mut vm = setup_vm(&guest_memory).unwrap();
+        #[cfg(not(feature = "intel-tdx"))]
         setup_interrupt_controller(&mut vm).unwrap();
         let vcpu_config = VcpuConfig {
             vcpu_count,
