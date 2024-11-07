@@ -163,134 +163,136 @@ impl IntelTdx {
         ram_entries: &mut Vec<e820entry>,
         nr_ram_entries: &mut u64,
     ) -> Result<(), Error> {
-        //  let mut hob_section = &mut TdxFirmwareEntry::default();
+          let mut hob_section = &mut TdxFirmwareEntry::default();
 
-        //  // FIXME: TdxFirmwareEntry is missing the `attributes` field
-        //  let mut sections: Vec<TdxFirmwareEntry> = self
-        //      .tdvf_sections
-        //      .iter()
-        //      .map(|s| TdxFirmwareEntry {
-        //          data_offset: s.data_offset,
-        //          data_len: s.raw_data_size,
-        //          address: s.memory_address,
-        //          size: s.memory_data_size,
-        //          r#type: s.section_type,
-        //          mem_ptr: 0,
-        //      })
-        //      .collect();
+          // FIXME: TdxFirmwareEntry is missing the `attributes` field
+          let mut sections: Vec<TdxFirmwareEntry> = self
+              .tdvf_sections
+              .iter()
+              .map(|s| TdxFirmwareEntry {
+                  data_offset: s.data_offset,
+                  data_len: s.raw_data_size,
+                  address: s.memory_address,
+                  size: s.memory_data_size,
+                  r#type: s.section_type,
+                  mem_ptr: 0,
+              })
+              .collect();
 
-        //  let mut tdx_ram_entries = self.init_ram_entries(ram_entries);
+          let mut tdx_ram_entries = self.init_ram_entries(ram_entries);
 
-        //  let mut firmware_file =
-        //      std::fs::File::open("/usr/share/edk2/ovmf/OVMF.inteltdx.fd").unwrap();
-        //  for section in &sections {
-        //      match section.r#type {
-        //          // put Bfv and Cfv sections into the memory regions on the guest
-        //          TdvfSectionType::Bfv | TdvfSectionType::Cfv => {
-        //              firmware_file
-        //                  .seek(SeekFrom::Start(section.data_offset as u64))
-        //                  .unwrap();
-        //              guest_mem
-        //                  .read_volatile_from(
-        //                      GuestAddress(section.address),
-        //                      &mut firmware_file,
-        //                      section.data_len as usize,
-        //                  )
-        //                  .unwrap();
-        //          }
-        //          TdvfSectionType::TdHob => {
-        //              if let Err(e) = tdx_accept_ram_range(
-        //                  section.address,
-        //                  section.size,
-        //                  nr_ram_entries,
-        //                  &mut tdx_ram_entries,
-        //              ) {
-        //                  return Err(e);
-        //              }
-        //          }
-        //          TdvfSectionType::TempMem => {
-        //              if let Err(e) = tdx_accept_ram_range(
-        //                  section.address,
-        //                  section.size,
-        //                  nr_ram_entries,
-        //                  &mut tdx_ram_entries,
-        //              ) {
-        //                  return Err(e);
-        //              }
-        //          }
-        //          _ => (),
-        //      }
-        //  }
+          let mut firmware_file =
+              std::fs::File::open("/usr/share/edk2/ovmf/OVMF.inteltdx.fd").unwrap();
+          for section in &sections {
+              match section.r#type {
+                  // put Bfv and Cfv sections into the memory regions on the guest
+                  TdvfSectionType::Bfv | TdvfSectionType::Cfv => {
+                      firmware_file
+                          .seek(SeekFrom::Start(section.data_offset as u64))
+                          .unwrap();
+                      guest_mem
+                          .read_volatile_from(
+                              GuestAddress(section.address),
+                              &mut firmware_file,
+                              section.data_len as usize,
+                          )
+                          .unwrap();
+                  }
+                  TdvfSectionType::TdHob => {
+                      if let Err(e) = tdx_accept_ram_range(
+                          section.address,
+                          section.size,
+                          nr_ram_entries,
+                          &mut tdx_ram_entries,
+                      ) {
+                          return Err(e);
+                      }
+                  }
+                  TdvfSectionType::TempMem => {
+                      if let Err(e) = tdx_accept_ram_range(
+                          section.address,
+                          section.size,
+                          nr_ram_entries,
+                          &mut tdx_ram_entries,
+                      ) {
+                          return Err(e);
+                      }
+                  }
+                  _ => (),
+              }
+          }
 
-        //  tdx_ram_entries.sort_by_key(|entry| entry.addr);
-        //  tdx_ram_entries.reverse();
+          tdx_ram_entries.sort_by_key(|entry| entry.addr);
+          tdx_ram_entries.reverse();
 
-        //  for section in &sections {
-        //      match section.r#type {
-        //          TdvfSectionType::TdHob => {
-        //              tdvf_hob_create(section, &tdx_ram_entries, *nr_ram_entries, guest_mem)?;
-        //          }
-        //          _ => (),
-        //      }
-        //  }
+          for section in &sections {
+              match section.r#type {
+                  TdvfSectionType::TdHob => {
+                      tdvf_hob_create(section, &tdx_ram_entries, *nr_ram_entries, guest_mem)?;
+                  }
+                  _ => (),
+              }
+          }
 
-        // const FIRMWARE: &[u8; 7] = &[
-        //     0xb8, 0x00, 0x10, 0x00, 0x80,
-        //     0xff, 0xe0,
-        // ];
+         const FIRMWARE: &[u8; 7] = &[
+             0xb8, 0x00, 0x10, 0x00, 0x80,
+             0xff, 0xe0,
+         ];
 
         // const FIRMWARE: &[u8; 7] = &[
         //     0xf4, 0xf4, 0xf4, 0xf4, 0xf4,
         //     0xf4, 0xf4,
         // ];
 
-        let firmware_code = &mut [0xf4u8; 4096];
-        //for (idx, b) in FIRMWARE.iter().enumerate() {
-        //    firmware_code[idx] = *b;
-        //}
+       // let firmware_code = &mut [0xf4u8; 4096];
+
+       //let firmware_code = &mut [0u8; 4096];
+       //for (idx, b) in FIRMWARE.iter().enumerate() {
+       //    firmware_code[4096 - 16 + idx] = *b;
+       //}
 
         guest_mem
-            .write(firmware_code, GuestAddress(0xfffff000))
+            .write(FIRMWARE, GuestAddress(0xfffffff0))
             .unwrap();
 
-        self.vm
-            .init_mem_region(
-                fd,
-                0xfffff000,
-                1,
-                // FIXME: instead of checking the section type we should be checking the
-                // attributes to see if the feature is set to extend the measurement
-                1,
-                guest_mem
-                    .get_host_address(vm_memory::GuestAddress(0xfffff000))
-                    .unwrap() as u64,
-            )
-            .unwrap();
+     //  self.vm
+     //      .init_mem_region(
+     //          fd,
+     //          0xfffff000,
+     //          1,
+     //          // FIXME: instead of checking the section type we should be checking the
+     //          // attributes to see if the feature is set to extend the measurement
+     //          1,
+     //          guest_mem
+     //              .get_host_address(vm_memory::GuestAddress(0xfffff000))
+     //              .unwrap() as u64,
+     //      )
+     //      .unwrap();
 
-       //for section in &sections {
-       //    // TODO: we should be checking to see if the KVM_CAP_MEMORY_MAPPING capability is
-       //    // enabled, but for now just assume its not
-       //    self.vm
-       //        .init_mem_region(
-       //            fd,
-       //            0xfffff000,
-       //            1,
-       //            // FIXME: instead of checking the section type we should be checking the
-       //            // attributes to see if the feature is set to extend the measurement
-       //            if let tdx::tdvf::TdvfSectionType::Bfv = section.r#type {
-       //                1
-       //            } else {
-       //                0
-       //            },
-       //            guest_mem
-       //                .get_host_address(vm_memory::GuestAddress(0xfffff000))
-       //                .unwrap() as u64,
-       //        )
-       //        .unwrap();
+      for section in &sections {
+          // TODO: we should be checking to see if the KVM_CAP_MEMORY_MAPPING capability is
+          // enabled, but for now just assume its not
+          self.vm
+              .init_mem_region(
+                  fd,
+                  section.address,
+                  section.size / 4096,
+                  // FIXME: instead of checking the section type we should be checking the
+                  // attributes to see if the feature is set to extend the measurement
+                  if let tdx::tdvf::TdvfSectionType::Bfv = section.r#type {
+                      1
+                  } else {
+                      0
+                  },
+                  guest_mem
+                      .get_host_address(vm_memory::GuestAddress(section.address))
+                      .unwrap() as u64,
+              )
+              .unwrap();
 
-       //    // TODO: if the entry is of type TD_HOB or TEMP_MEM then we need to unmap the memory
-       //    // and set the mem_ptr to NULL (or 0 in this case)
-       //}
+          // TODO: if the entry is of type TD_HOB or TEMP_MEM then we need to unmap the memory
+          // and set the mem_ptr to NULL (or 0 in this case)
+      }
 
         Ok(())
     }

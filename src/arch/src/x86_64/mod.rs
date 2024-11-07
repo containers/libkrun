@@ -259,6 +259,7 @@ pub fn configure_system(
     if let Some(initrd_config) = initrd {
         params.0.hdr.ramdisk_image = initrd_config.address.raw_value() as u32;
         params.0.hdr.ramdisk_size = initrd_config.size as u32;
+        println!("initrd: image={:x}, size={}", initrd_config.address.raw_value() as u32, initrd_config.size as u32);
     }
 
     #[cfg(feature = "tee")]

@@ -1388,10 +1388,12 @@ impl Vcpu {
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::Hlt => {
+                    println!("HERE HLT");
                     info!("Received KVM_EXIT_HLT signal");
                     Ok(VcpuEmulation::Stopped)
                 }
                 VcpuExit::Shutdown => {
+                    println!("HERE SHUTDOWN");
                     info!("Received KVM_EXIT_SHUTDOWN signal");
                     Ok(VcpuEmulation::Stopped)
                 }
