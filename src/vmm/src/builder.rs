@@ -806,11 +806,14 @@ fn load_payload(
                 .write(kernel_data, GuestAddress(kernel_load_addr))
                 .unwrap();
 
-            let qboot_data =
-                unsafe { std::slice::from_raw_parts(qboot_host_addr as *mut u8, qboot_size) };
-            guest_mem
-                .write(qboot_data, GuestAddress(arch::BIOS_START))
-                .unwrap();
+            #[cfg(not(feature = "intel-tdx"))]
+            {
+                let qboot_data =
+                    unsafe { std::slice::from_raw_parts(qboot_host_addr as *mut u8, qboot_size) };
+                guest_mem
+                    .write(qboot_data, GuestAddress(arch::BIOS_START))
+                    .unwrap();
+            }
 
             let initrd_data =
                 unsafe { std::slice::from_raw_parts(initrd_host_addr as *mut u8, initrd_size) };
