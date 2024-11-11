@@ -729,21 +729,6 @@ impl Vm {
     }
 
     #[cfg(feature = "intel-tdx")]
-    pub fn tdx_secure_virt_prepare_memory(
-        &self,
-        guest_mem: &mut GuestMemoryMmap,
-        ram_entries: &mut Vec<arch_gen::x86::bootparam::e820entry>,
-        nr_ram_entries: &mut u64,
-    ) -> Result<()> {
-        match &self.tdx {
-            Some(t) => t
-                .configure_td_memory(&self.fd, guest_mem, ram_entries, nr_ram_entries)
-                .map_err(Error::TdxSecVirtPrepare),
-            None => Err(Error::InvalidTee),
-        }
-    }
-
-    #[cfg(feature = "intel-tdx")]
     pub fn tdx_secure_virt_finalize_vm(&self) -> Result<()> {
         match &self.tdx {
             Some(t) => t.finalize_vm(&self.fd).map_err(Error::TdxSecVirtPrepare),

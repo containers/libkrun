@@ -263,11 +263,6 @@ impl Vmm {
         vcpus: &[Vcpu],
         initrd: &Option<InitrdConfig>,
         _smbios_oem_strings: &Option<Vec<String>>,
-        #[cfg(target_arch = "x86_64")] e820_entries: &mut Vec<arch_gen::x86::bootparam::e820entry>,
-        // FIXME(jakecorrenti): could we do something along the lines of calling e820_entries.shrink_to_it() so
-        // that we don't have to also carry around num_e820_entries around with us? That might be a
-        // little better to read and maintain.
-        #[cfg(target_arch = "x86_64")] num_e820_entries: &mut u8,
     ) -> Result<()> {
         #[cfg(target_arch = "x86_64")]
         {
@@ -284,19 +279,8 @@ impl Vmm {
                 cmdline_len,
                 initrd,
                 vcpus.len() as u8,
-                e820_entries,
-                num_e820_entries,
             )
             .map_err(Error::ConfigureSystem)?;
-
-            #[cfg(feature = "intel-tdx")]
-            self.vm
-                .tdx_secure_virt_prepare_memory(
-                    &mut self.guest_memory,
-                    e820_entries,
-                    &mut (*num_e820_entries as u64),
-                )
-                .unwrap();
         }
 
         #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
