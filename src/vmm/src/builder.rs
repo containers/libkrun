@@ -815,6 +815,26 @@ fn load_payload(
                     .unwrap();
             }
 
+            #[cfg(feature = "intel-tdx")]
+            {
+                let mut tdvf_file =
+                    std::fs::File::open("/usr/share/edk2/ovmf/OVMF.inteltdx.fd").unwrap();
+                tdvf_file.sync_all().unwrap();
+                let tdvf_file_size = tdvf_file.metadata().unwrap().len();
+                let tdvf_guest_start_address = 0x1_0000_0000 - tdvf_file_size;
+                println!(
+                    "reading the contents of the tdvf file into the address at 0x{:x} on the guest",
+                    tdvf_file_size
+                );
+                guest_mem
+                    .read_exact_volatile_from(
+                        GuestAddress(tdvf_guest_start_address as u64),
+                        &mut tdvf_file,
+                        tdvf_file_size as usize,
+                    )
+                    .unwrap();
+            }
+
             let initrd_data =
                 unsafe { std::slice::from_raw_parts(initrd_host_addr as *mut u8, initrd_size) };
             guest_mem

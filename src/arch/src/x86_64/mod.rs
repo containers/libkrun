@@ -119,6 +119,14 @@ pub fn arch_memory_regions(
     (info, regions)
 }
 
+#[cfg(feature = "intel-tdx")]
+fn get_tdvf_image_size() -> usize {
+    use std::io::{Seek, SeekFrom};
+    let mut fs = std::fs::File::open("/usr/share/edk2/ovmf/OVMF.inteltdx.fd").unwrap();
+    // TODO(jakecorrenti): do proper error handling here
+    fs.seek(SeekFrom::End(0)).unwrap() as usize
+}
+
 /// Returns a Vec of the valid memory addresses.
 /// These should be used to configure the GuestMemoryMmap structure for the platform.
 /// For SEV, don't make a hole for the kernel, as it needs to be copied instead of injected,
@@ -131,6 +139,11 @@ pub fn arch_memory_regions(
     kernel_size: usize,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
+
+    #[cfg(feature = "intel-tdx")]
+    let tdvf_image_size = get_tdvf_image_size();
+    #[cfg(feature = "intel-tdx")]
+    let tdvf_image_start_addr = 0x1_0000_0000 - tdvf_image_size;
 
     let size = round_up(size, page_size);
     if size < (kernel_load_addr + kernel_size as u64) as usize {
@@ -149,7 +162,10 @@ pub fn arch_memory_regions(
                 shm_start_addr,
                 vec![
                     (GuestAddress(0), size),
+                    #[cfg(not(feature = "intel-tdx"))]
                     (GuestAddress(BIOS_START), BIOS_SIZE),
+                    #[cfg(feature = "intel-tdx")]
+                    (GuestAddress(tdvf_image_start_addr as u64), tdvf_image_size),
                 ],
             )
         }
@@ -240,7 +256,6 @@ pub fn configure_system(
     if let Some(initrd_config) = initrd {
         params.0.hdr.ramdisk_image = initrd_config.address.raw_value() as u32;
         params.0.hdr.ramdisk_size = initrd_config.size as u32;
-        println!("initrd: image={:x}, size={}", initrd_config.address.raw_value() as u32, initrd_config.size as u32);
     }
 
     #[cfg(feature = "tee")]
