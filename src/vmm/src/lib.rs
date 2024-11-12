@@ -263,6 +263,8 @@ impl Vmm {
         vcpus: &[Vcpu],
         initrd: &Option<InitrdConfig>,
         _smbios_oem_strings: &Option<Vec<String>>,
+        #[cfg(target_arch = "x86_64")] ram_entries: &mut Vec<arch_gen::x86::bootparam::e820entry>,
+        #[cfg(target_arch = "x86_64")] nr_ram_entries: &mut u8,
     ) -> Result<()> {
         #[cfg(target_arch = "x86_64")]
         {
@@ -279,6 +281,8 @@ impl Vmm {
                 cmdline_len,
                 initrd,
                 vcpus.len() as u8,
+                ram_entries,
+                nr_ram_entries,
             )
             .map_err(Error::ConfigureSystem)?;
         }

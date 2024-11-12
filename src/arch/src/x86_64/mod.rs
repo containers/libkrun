@@ -230,6 +230,8 @@ pub fn configure_system(
     cmdline_size: usize,
     initrd: &Option<InitrdConfig>,
     num_cpus: u8,
+    ram_entries: &mut Vec<arch_gen::x86::bootparam::e820entry>,
+    nr_ram_entries: &mut u8,
 ) -> super::Result<()> {
     const KERNEL_BOOT_FLAG_MAGIC: u16 = 0xaa55;
     const KERNEL_HDR_MAGIC: u32 = 0x5372_6448;
@@ -301,6 +303,9 @@ pub fn configure_system(
     guest_mem
         .write_obj(params, zero_page_addr)
         .map_err(|_| Error::ZeroPageSetup)?;
+
+    *ram_entries = params.0.e820_map.to_vec();
+    *nr_ram_entries = params.0.e820_entries;
 
     Ok(())
 }

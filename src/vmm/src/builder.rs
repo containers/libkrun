@@ -706,12 +706,27 @@ pub fn build_microvm(
     #[cfg(not(feature = "tee"))]
     let initrd_config = None;
 
+    #[cfg(feature = "intel-tdx")]
+    let mut ram_entries: Vec<arch_gen::x86::bootparam::e820entry> = Vec::new();
+    #[cfg(feature = "intel-tdx")]
+    let mut nr_ram_entries = 0;
+
     vmm.configure_system(
         vcpus.as_slice(),
         &initrd_config,
         &vm_resources.smbios_oem_strings,
+        #[cfg(target_arch = "x86_64")]
+        &mut ram_entries,
+        #[cfg(target_arch = "x86_64")]
+        &mut nr_ram_entries,
     )
     .map_err(StartMicrovmError::Internal)?;
+
+    #[cfg(target_arch = "x86_64")]
+    println!(
+        "nr ram entries: {}\nram entries: {:?}",
+        nr_ram_entries, ram_entries
+    );
 
     #[cfg(feature = "tee")]
     {
