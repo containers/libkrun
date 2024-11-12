@@ -722,12 +722,6 @@ pub fn build_microvm(
     )
     .map_err(StartMicrovmError::Internal)?;
 
-    #[cfg(target_arch = "x86_64")]
-    println!(
-        "nr ram entries: {}\nram entries: {:?}",
-        nr_ram_entries, ram_entries
-    );
-
     #[cfg(feature = "tee")]
     {
         match tee {

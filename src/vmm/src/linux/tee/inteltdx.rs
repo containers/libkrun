@@ -152,7 +152,22 @@ impl IntelTdx {
         ram_entries: &mut Vec<e820entry>,
         nr_ram_entries: &mut u64,
     ) -> Result<(), Error> {
-        println!("entering configure td memory");
+        let mut tdx_firmware_entries: Vec<TdxFirmwareEntry> = self
+            .tdvf_sections
+            .iter()
+            .map(|&s| TdxFirmwareEntry {
+                data_offset: s.data_offset,
+                data_len: s.raw_data_size,
+                address: s.memory_address,
+                size: s.memory_data_size,
+                r#type: s.section_type,
+                attributes: s.attributes,
+                mem_ptr: guest_mem
+                    .get_host_address(vm_memory::GuestAddress(s.memory_address))
+                    .unwrap() as u64,
+            })
+            .collect();
+
         Ok(())
     }
 
@@ -161,4 +176,15 @@ impl IntelTdx {
             .finalize(fd)
             .or_else(|_| return Err(Error::FinalizeVm))
     }
+}
+
+#[derive(Debug, Default)]
+struct TdxFirmwareEntry {
+    data_offset: u32,
+    data_len: u32,
+    address: u64,
+    size: u64,
+    r#type: TdvfSectionType,
+    attributes: u32,
+    mem_ptr: u64,
 }
