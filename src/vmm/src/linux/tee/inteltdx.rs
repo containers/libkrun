@@ -105,7 +105,7 @@ pub struct IntelTdx {
 
 impl IntelTdx {
     pub fn new(vm_fd: &VmFd) -> Result<Self, Error> {
-        // FIXME(jakecorrenti): need to specify the max number of VCPUs here and not just assume 100
+        // FIXME(jakecorrenti): need to specify the max number of VCPUs here and not just assume 100. This should come from the VmResources that we set when doing krun_set_vm_config()
         let vm = TdxVm::new(vm_fd, 100).or_else(|_| return Err(Error::CreateTdxVmStruct))?;
         let caps = vm
             .get_capabilities(vm_fd)
@@ -143,6 +143,17 @@ impl IntelTdx {
             }
         }
         Err(Error::MissingHobTdvfSection)
+    }
+
+    pub fn configure_td_memory(
+        &self,
+        fd: &kvm_ioctls::VmFd,
+        guest_mem: &mut GuestMemoryMmap,
+        ram_entries: &mut Vec<e820entry>,
+        nr_ram_entries: &mut u64,
+    ) -> Result<(), Error> {
+        println!("entering configure td memory");
+        Ok(())
     }
 
     pub fn finalize_vm(&self, fd: &kvm_ioctls::VmFd) -> Result<(), Error> {
