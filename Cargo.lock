@@ -629,9 +629,9 @@ dependencies = [
 
 [[package]]
 name = "kbs-types"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b6441ed73b0faa50707d4de41c6b45c76654b661b96aaf7b26a41331eedc0a5"
+checksum = "21350cefefc9715198c3c5319a5eb23ce4cc89b4b567599fb88f0d4a011c1d2d"
 dependencies = [
  "serde",
  "serde_json",
@@ -1050,6 +1050,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdrand"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d92195228612ac8eed47adbc2ed0f04e513a4ccb98175b6f2bd04d963b533655"
+dependencies = [
+ "rand_core",
+]
+
+[[package]]
 name = "redox_users"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1197,9 +1206,9 @@ dependencies = [
 
 [[package]]
 name = "sev"
-version = "3.2.0"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35156eab65ff1b63432b5a11a06b770e92120033e2831c7dee064865de5dbbbd"
+checksum = "a97bd0b2e2d937951add10c8512a2dacc6ad29b39e5c5f26565a3e443329857d"
 dependencies = [
  "base64",
  "bincode",
@@ -1213,6 +1222,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "openssl",
+ "rdrand",
  "serde",
  "serde-big-array",
  "serde_bytes",
@@ -1457,6 +1467,7 @@ dependencies = [
  "nix 0.24.3",
  "polly",
  "procfs",
+ "rdrand",
  "serde",
  "serde_json",
  "sev",

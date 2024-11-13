@@ -42,7 +42,7 @@ pub enum Error {
     MemoryEncryptRegion,
     ReadingCpuData(procfs::ProcError),
     ReadingCoreData,
-    SessionFromPolicy(std::io::Error),
+    SessionFromPolicy(rdrand::ErrorCode),
     SessionRequest(curl::Error),
     SevInit(kvm_ioctls::Error),
     SevInjectSecret(kvm_ioctls::Error),
@@ -51,7 +51,7 @@ pub enum Error {
     SevLaunchStart(kvm_ioctls::Error),
     SevLaunchUpdateData(kvm_ioctls::Error),
     SevLaunchUpdateVmsa(kvm_ioctls::Error),
-    StartFromSession(std::io::Error),
+    StartFromSession(sev::error::SessionError),
     UnknownCpuModel,
 }
 
