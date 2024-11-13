@@ -184,17 +184,17 @@ int start_passt()
 
 int main(int argc, char *const argv[])
 {
-    char *const envp[] =
+    const char *const envp[] =
     {
         "TEST=works",
         0
     };
-    char *const port_map[] =
+    const char *const port_map[] =
     {
         "18000:8000",
         0
     };
-    char *const rlimits[] =
+    const char *const rlimits[] =
     {
         // RLIMIT_NPROC = 6
         "6=4096:8192",
@@ -295,7 +295,7 @@ int main(int argc, char *const argv[])
     }
 
     // Specify the path of the binary to be executed in the isolated context, relative to the root path.
-    if (err = krun_set_exec(ctx_id, cmdline.guest_argv[0], &cmdline.guest_argv[1], &envp[0])) {
+    if (err = krun_set_exec(ctx_id, cmdline.guest_argv[0], (const char* const*) &cmdline.guest_argv[1], &envp[0])) {
         errno = -err;
         perror("Error configuring the parameters for the executable to be run");
         return -1;
