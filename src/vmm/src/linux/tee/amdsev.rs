@@ -349,6 +349,7 @@ impl AmdSev {
 
         let mut cmd = kvm_sev_cmd {
             id: 3, // SEV_LAUNCH_UPDATE_DATA
+            pad0: 0,
             data: &mut data as *mut _ as u64,
             error: 0,
             sev_fd: self.fw.as_raw_fd() as u32,
