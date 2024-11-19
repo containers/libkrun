@@ -8,7 +8,7 @@
 use std::cmp;
 use std::convert::From;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io::{self, Write};
 #[cfg(target_os = "linux")]
 use std::os::linux::fs::MetadataExt;
 #[cfg(target_os = "macos")]
@@ -19,6 +19,9 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use imago::file::File as ImagoFile;
+use imago::qcow2::Qcow2;
+use imago::SyncFormatAccess;
 use log::{error, warn};
 use utils::eventfd::{EventFd, EFD_NONBLOCK};
 use virtio_bindings::{
@@ -33,7 +36,7 @@ use super::{
 };
 
 use crate::legacy::Gic;
-use crate::virtio::ActivateError;
+use crate::virtio::{block::ImageType, ActivateError};
 
 /// Configuration options for disk caching.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -51,22 +54,18 @@ pub enum CacheType {
 /// Helper object for setting up all `Block` fields derived from its backing file.
 pub(crate) struct DiskProperties {
     cache_type: CacheType,
-    pub(crate) file: File,
+    pub(crate) file: Arc<SyncFormatAccess<ImagoFile>>,
     nsectors: u64,
     image_id: Vec<u8>,
 }
 
 impl DiskProperties {
     pub fn new(
-        disk_image_path: String,
-        is_disk_read_only: bool,
+        disk_image: Arc<SyncFormatAccess<ImagoFile>>,
+        disk_image_id: Vec<u8>,
         cache_type: CacheType,
     ) -> io::Result<Self> {
-        let mut disk_image = OpenOptions::new()
-            .read(true)
-            .write(!is_disk_read_only)
-            .open(PathBuf::from(&disk_image_path))?;
-        let disk_size = disk_image.seek(SeekFrom::End(0))?;
+        let disk_size = disk_image.size();
 
         // We only support disk size, which uses the first two words of the configuration space.
         // If the image is not a multiple of the sector size, the tail bits are not exposed.
@@ -81,13 +80,13 @@ impl DiskProperties {
         Ok(Self {
             cache_type,
             nsectors: disk_size >> SECTOR_SHIFT,
-            image_id: Self::build_disk_image_id(&disk_image),
+            image_id: disk_image_id,
             file: disk_image,
         })
     }
 
-    pub fn file_mut(&mut self) -> &mut File {
-        &mut self.file
+    pub fn file(&self) -> &SyncFormatAccess<ImagoFile> {
+        self.file.as_ref()
     }
 
     pub fn nsectors(&self) -> u64 {
@@ -141,7 +140,7 @@ impl Drop for DiskProperties {
                     error!("Failed to flush block data on drop.");
                 }
                 // Sync data out to physical media on host.
-                if self.file.sync_all().is_err() {
+                if self.file.sync().is_err() {
                     error!("Failed to sync block data on drop.")
                 }
             }
@@ -168,8 +167,8 @@ pub struct Block {
     // Host file and properties.
     disk: Option<DiskProperties>,
     cache_type: CacheType,
-    disk_image_path: String,
-    is_disk_read_only: bool,
+    disk_image: Arc<SyncFormatAccess<ImagoFile>>,
+    disk_image_id: Vec<u8>,
     worker_thread: Option<JoinHandle<()>>,
     worker_stopfd: EventFd,
 
@@ -203,10 +202,32 @@ impl Block {
         partuuid: Option<String>,
         cache_type: CacheType,
         disk_image_path: String,
+        disk_image_format: ImageType,
         is_disk_read_only: bool,
     ) -> io::Result<Block> {
+        let disk_image = OpenOptions::new()
+            .read(true)
+            .write(!is_disk_read_only)
+            .open(PathBuf::from(&disk_image_path))?;
+
+        let disk_image_id = DiskProperties::build_disk_image_id(&disk_image);
+
+        let disk_image = match disk_image_format {
+            ImageType::Qcow2 => {
+                let mut qcow_disk_image =
+                    Qcow2::<ImagoFile>::open_path_sync(disk_image_path, !is_disk_read_only)?;
+                qcow_disk_image.open_implicit_dependencies_sync()?;
+                SyncFormatAccess::new(qcow_disk_image)?
+            }
+            ImageType::Raw => {
+                let raw = imago::raw::Raw::open_path_sync(disk_image_path, !is_disk_read_only)?;
+                SyncFormatAccess::new(raw)?
+            }
+        };
+        let disk_image = Arc::new(disk_image);
+
         let disk_properties =
-            DiskProperties::new(disk_image_path.clone(), is_disk_read_only, cache_type)?;
+            DiskProperties::new(Arc::clone(&disk_image), disk_image_id.clone(), cache_type)?;
 
         let mut avail_features = (1u64 << VIRTIO_F_VERSION_1)
             | (1u64 << VIRTIO_BLK_F_FLUSH)
@@ -234,8 +255,8 @@ impl Block {
             config,
             disk: Some(disk_properties),
             cache_type,
-            disk_image_path,
-            is_disk_read_only,
+            disk_image,
+            disk_image_id,
             avail_features,
             acked_features: 0u64,
             interrupt_status: Arc::new(AtomicUsize::new(0)),
@@ -348,8 +369,8 @@ impl VirtioDevice for Block {
         let disk = match self.disk.take() {
             Some(d) => d,
             None => DiskProperties::new(
-                self.disk_image_path.clone(),
-                self.is_disk_read_only,
+                Arc::clone(&self.disk_image),
+                self.disk_image_id.clone(),
                 self.cache_type,
             )
             .map_err(|_| ActivateError::BadActivate)?,

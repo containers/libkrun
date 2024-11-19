@@ -18,6 +18,8 @@ use std::sync::Mutex;
 
 #[cfg(target_os = "macos")]
 use crossbeam_channel::unbounded;
+#[cfg(feature = "blk")]
+use devices::virtio::block::ImageType;
 #[cfg(feature = "net")]
 use devices::virtio::net::device::VirtioNetBackend;
 #[cfg(feature = "blk")]
@@ -521,6 +523,7 @@ pub unsafe extern "C" fn krun_add_disk(
                 block_id: block_id.to_string(),
                 cache_type: CacheType::Writeback,
                 disk_image_path: disk_path.to_string(),
+                disk_image_format: ImageType::Raw,
                 is_disk_read_only: read_only,
             };
             cfg.add_block_cfg(block_device_config);
@@ -547,6 +550,7 @@ pub unsafe extern "C" fn krun_set_root_disk(ctx_id: u32, c_disk_path: *const c_c
                 block_id: "root".to_string(),
                 cache_type: CacheType::Writeback,
                 disk_image_path: disk_path.to_string(),
+                disk_image_format: ImageType::Raw,
                 is_disk_read_only: false,
             };
             cfg.set_root_block_cfg(block_device_config);
@@ -573,6 +577,7 @@ pub unsafe extern "C" fn krun_set_data_disk(ctx_id: u32, c_disk_path: *const c_c
                 block_id: "data".to_string(),
                 cache_type: CacheType::Writeback,
                 disk_image_path: disk_path.to_string(),
+                disk_image_format: ImageType::Raw,
                 is_disk_read_only: false,
             };
             cfg.set_data_block_cfg(block_device_config);
