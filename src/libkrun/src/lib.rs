@@ -537,6 +537,53 @@ pub unsafe extern "C" fn krun_add_disk(
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 #[cfg(feature = "blk")]
+pub unsafe extern "C" fn krun_add_disk2(
+    ctx_id: u32,
+    c_block_id: *const c_char,
+    c_disk_path: *const c_char,
+    disk_format: u32,
+    read_only: bool,
+) -> i32 {
+    let disk_path = match CStr::from_ptr(c_disk_path).to_str() {
+        Ok(disk) => disk,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    let block_id = match CStr::from_ptr(c_block_id).to_str() {
+        Ok(block_id) => block_id,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    let format = match disk_format {
+        0 => ImageType::Raw,
+        1 => ImageType::Qcow2,
+        _ => {
+            // Do not continue if the user cannot specify a valid disk format
+            return -libc::EINVAL;
+        }
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            let block_device_config = BlockDeviceConfig {
+                block_id: block_id.to_string(),
+                cache_type: CacheType::Writeback,
+                disk_image_path: disk_path.to_string(),
+                disk_image_format: format,
+                is_disk_read_only: read_only,
+            };
+            cfg.add_block_cfg(block_device_config);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(feature = "blk")]
 pub unsafe extern "C" fn krun_set_root_disk(ctx_id: u32, c_disk_path: *const c_char) -> i32 {
     let disk_path = match CStr::from_ptr(c_disk_path).to_str() {
         Ok(disk) => disk,

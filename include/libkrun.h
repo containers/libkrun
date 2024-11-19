@@ -95,16 +95,20 @@ int32_t krun_set_root_disk(uint32_t ctx_id, const char *disk_path);
 int32_t krun_set_data_disk(uint32_t ctx_id, const char *disk_path);
 
 /**
- * Adds a disk image to be used as a general partition for the microVM.
+ * Adds a disk image to be used as a general partition for the microVM. The only supported image
+ * format is "raw".
  *
  * This API is mutually exclusive with the deprecated krun_set_root_disk and
  * krun_set_data_disk methods and must not be used together.
  *
+ * This function deliberately only handles images in the Raw format, because it doesn't allow
+ * specifying an image format, and probing an image's format is dangerous. For more information,
+ * see the security note on `krun_add_disk2`, which allows opening non-Raw images.
+ *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
  *  "block_id"  - a null-terminated string representing the partition.
- *  "disk_path" - a null-terminated string representing the path leading to the disk image that
- *                contains the root file-system.
+ *  "disk_path" - a null-terminated string representing the path leading to the disk image.
  *  "read_only" - whether the mount should be read-only. Required if the caller does not have
  *                write permissions (for disk images in /usr/share).
  *
@@ -112,6 +116,59 @@ int32_t krun_set_data_disk(uint32_t ctx_id, const char *disk_path);
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_add_disk(uint32_t ctx_id, const char *block_id, const char *disk_path, bool read_only);
+
+/* Supported disk image formats */
+#define KRUN_DISK_FORMAT_RAW 0
+#define KRUN_DISK_FORMAT_QCOW2 1
+/**
+ * Adds a disk image to be used as a general partition for the microVM. The supported
+ * image formats are: "raw" and "qcow2".
+ *
+ * This API is mutually exclusive with the deprecated krun_set_root_disk and
+ * krun_set_data_disk methods and must not be used together.
+ *
+ * SECURITY NOTE:
+ * Non-Raw images can reference other files, which libkrun will automatically open, and to which the
+ * guest will have access. Libkrun should therefore never be asked to open an image in a non-Raw
+ * format when it doesn't come from a fully trustworthy source.
+ *
+ * Consequently, probing an image's format is quite dangerous and to be avoided if at all possible,
+ * which is why libkrun provides no facilities for doing so. If it's not clear what format an image
+ * has, it may also not be clear whether it can be trusted to not reference files to which the guest
+ * shouldn't have access.
+ *
+ * If probing absolutely can't be avoided, it must only be done on images that are fully trusted, i.e.
+ * before a potentially untrusted guest had write access to it. Specifically, consider that a guest has
+ * full access to all of a Raw image, and can therefore turn it into a file in an arbitrary format, for
+ * example, into a Qcow2 image, referencing and granting a malicious guest access to arbitrary files.
+ * To hand a Raw image to an untrusted and potentially malicious guest, and then to re-probe it after
+ * the guest was able to write to it (when it can no longer be trusted), would therefore be a severe
+ * security vulnerability.
+ *
+ * Therefore, after having probed a yet fully trusted image once, the result must be remembered so the
+ * image will from then on always be opened in the format that was detected originally. When adhering
+ * to this, a guest can write anything they want to a Raw image, it's always going to be opened as a
+ * Raw image, preventing the security vulnerability outlined above.
+ *
+ * However, if at all possible, the image format should be explicitly selected based on knowledge
+ * obtained separately from the pure image data, for example by the user.
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "block_id"    - a null-terminated string representing the partition.
+ *  "disk_path"   - a null-terminated string representing the path leading to the disk image.
+ *  "disk_format" - the disk image format (i.e. KRUN_DISK_FORMAT_{RAW, QCOW2})
+ *  "read_only"   - whether the mount should be read-only. Required if the caller does not have
+ *                  write permissions (for disk images in /usr/share).
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_disk2(uint32_t ctx_id,
+                       const char *block_id,
+                       const char *disk_path,
+                       uint32_t disk_format,
+                       bool read_only);
 
 /**
  * NO LONGER SUPPORTED. DO NOT USE.
