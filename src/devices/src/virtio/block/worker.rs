@@ -228,7 +228,7 @@ impl BlockWorker {
                     Err(RequestError::InvalidDataLength)
                 } else {
                     writer
-                        .write_from_at(&self.disk.file, data_len, request_header.sector * 512)
+                        .write_from_at(&self.disk, data_len, request_header.sector * 512)
                         .map_err(RequestError::WritingToDescriptor)
                 }
             }
@@ -238,15 +238,15 @@ impl BlockWorker {
                     Err(RequestError::InvalidDataLength)
                 } else {
                     reader
-                        .read_to_at(&self.disk.file, data_len, request_header.sector * 512)
+                        .read_to_at(&self.disk, data_len, request_header.sector * 512)
                         .map_err(RequestError::ReadingFromDescriptor)
                 }
             }
             VIRTIO_BLK_T_FLUSH => match self.disk.cache_type() {
                 CacheType::Writeback => {
-                    let diskfile = self.disk.file_mut();
+                    let diskfile = self.disk.file();
                     diskfile.flush().map_err(RequestError::FlushingToDisk)?;
-                    diskfile.sync_all().map_err(RequestError::FlushingToDisk)?;
+                    diskfile.sync().map_err(RequestError::FlushingToDisk)?;
                     Ok(0)
                 }
                 CacheType::Unsafe => Ok(0),

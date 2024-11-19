@@ -32,3 +32,10 @@ pub enum Error {
     /// Guest gave us a write only descriptor that protocol says to read from.
     UnexpectedWriteOnlyDescriptor,
 }
+
+/// Supported disk image formats
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ImageType {
+    Raw,
+    Qcow2,
+}

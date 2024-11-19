@@ -6,11 +6,15 @@ use std::fs::File;
 use std::io::{Error, ErrorKind, Result};
 use std::os::unix::io::AsRawFd;
 
+#[cfg(feature = "blk")]
+use imago::io_buffers::{IoVector, IoVectorMut};
 use vm_memory::VolatileSlice;
 
 use libc::{c_int, c_void, read, readv, size_t, write, writev};
 
 use super::bindings::{off64_t, pread64, preadv64, pwrite64, pwritev64};
+#[cfg(feature = "blk")]
+use super::block::device::DiskProperties;
 
 /// A trait for setting the size of a file.
 /// This is equivalent to File's `set_len` method, but
@@ -411,3 +415,42 @@ macro_rules! volatile_impl {
 }
 
 volatile_impl!(File);
+
+#[cfg(feature = "blk")]
+impl FileReadWriteAtVolatile for DiskProperties {
+    fn read_at_volatile(&self, slice: VolatileSlice, offset: u64) -> Result<usize> {
+        self.read_vectored_at_volatile(&[slice], offset)
+    }
+
+    fn read_vectored_at_volatile(&self, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
+        if bufs.is_empty() {
+            return Ok(0);
+        }
+
+        let (iovec, _guard) = IoVectorMut::from_volatile_slice(bufs);
+        let full_length = iovec
+            .len()
+            .try_into()
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+        self.file().readv(iovec, offset)?;
+        Ok(full_length)
+    }
+
+    fn write_at_volatile(&self, slice: VolatileSlice, offset: u64) -> Result<usize> {
+        self.write_vectored_at_volatile(&[slice], offset)
+    }
+
+    fn write_vectored_at_volatile(&self, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
+        if bufs.is_empty() {
+            return Ok(0);
+        }
+
+        let (iovec, _guard) = IoVector::from_volatile_slice(bufs);
+        let full_length = iovec
+            .len()
+            .try_into()
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+        self.file().writev(iovec, offset)?;
+        Ok(full_length)
+    }
+}
