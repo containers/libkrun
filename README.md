@@ -1,14 +1,14 @@
 # libkrun
 
-```libkrun``` is a dynamic library that allows programs to easily acquire the ability to run processes in a partially isolated environment using [KVM](https://www.kernel.org/doc/Documentation/virtual/kvm/api.txt) Virtualization.
+```libkrun``` is a dynamic library that allows programs to easily acquire the ability to run processes in a partially isolated environment using [KVM](https://www.kernel.org/doc/Documentation/virtual/kvm/api.txt) Virtualization on Linux and [HVF](https://developer.apple.com/documentation/hypervisor) on macOS/ARM64.
 
 It integrates a VMM (Virtual Machine Monitor, the userspace side of an Hypervisor) with the minimum amount of emulated devices required to its purpose, abstracting most of the complexity that comes from Virtual Machine management, offering users a simple C API.
 
-## Possible use cases
+## Use cases
 
-* Adding VM-isolation capabilities to an OCI runtime.
-* Implementing a lightweight jailer for serverless workloads.
-* Bringing additional self-isolation capabilities to conventional services (think of something as simple as ```chroot```, but more powerful).
+* [crun](https://github.com/containers/crun/blob/main/krun.1.md): Adding Virtualization-based isolation to container and confidential workloads.
+* [kunkit](https://github.com/containers/krunkit): Running GPU-enabled (via [venus](https://docs.mesa3d.org/drivers/venus.html)) lightweight VMs on macOS.
+* [muvm](https://github.com/AsahiLinux/muvm): Launching a microVM with GPU acceleration (via [native context](https://www.youtube.com/watch?v=9sFP_yddLLQ)) for running games that require 4k pages.
 
 ## Goals and non-goals
 
@@ -30,7 +30,8 @@ It integrates a VMM (Virtual Machine Monitor, the userspace side of an Hyperviso
 This project provides two different variants of the library:
 
 - **libkrun**: Generic variant compatible with all Virtualization-capable systems.
-- **libkrun-sev**: Variant including support for AMD SEV (bare SEV and SEV-ES) memory encryption and remote attestation. Requires an SEV-capable CPU.
+- **libkrun-sev**: Variant including support for AMD SEV (SEV, SEV-ES and SEV-SNP) memory encryption and remote attestation. Requires an SEV-capable CPU.
+- **libkrun-efi**: Variant that bundles OVMF/EDK2 for booting a distribution-provided kernel (only available on macOS).
 
 Each variant generates a dynamic library with a different name (and ```soname```), so both can be installed at the same time in the same system.
 
@@ -39,24 +40,22 @@ Each variant generates a dynamic library with a different name (and ```soname```
 ### All variants
 
 * virtio-console
-* virtio-vsock (specialized for TSI, Transparent Socket Impersonation)
 * virtio-block
-
-### libkrun
-
 * virtio-fs
+* virtio-gpu (venus and native-context)
+* virtio-net
+* virtio-vsock (for TSI and socket redirection)
 * virtio-balloon (only free-page reporting)
 * virtio-rng
+* virtio-snd
 
 ## Networking
 
-In ```libkrun```, networking is implemented using a novel technique called **Transparent Socket Impersonation**, or **TSI**. This allows the VM to have network connectivity without a virtual interface (hence, ```virtio-net``` is not among the list of supported devices).
+In ```libkrun```, networking is provided by two different, mutually exclusive techniques:
 
-This technique supports both outgoing and incoming connections. It's possible for userspace applications running in the VM are able to transparently connect to endpoints outside the VM, and also receive connections from the outside to ports listening inside the VM.
+- **virtio-vsock + TSI**: A novel technique called **Transparent Socket Impersonation** which allows the VM to have network connectivity without a virtual interface. This technique supports both outgoing and incoming connections. It's possible for userspace applications running in the VM to transparently connect to endpoints outside the VM and receive connections from the outside to ports listening inside the VM. Requires a custom kernel (like the one bundled in **libkrunfw**) and it's limited to AF_INET SOCK_DGRAM and SOCK_STREAM sockets.
 
-### Limitations
-
-**TSI** only supports impersonating AF_INET SOCK_DGRAM and SOCK_STREAM sockets. This implies it's not possible to communicate outside the VM with raw sockets.
+- **virtio-net + passt/gvproxy**: A conventional virtual interface that allows the guest to communicate with the outside through the VMM using a supporting application like [passt](https://passt.top/passt/about/) or [gvproxy](https://github.com/containers/gvisor-tap-vsock). 
 
 ## Building and installing
 
@@ -69,16 +68,24 @@ This technique supports both outgoing and incoming connections. It's possible fo
 * C Library static libraries, as the [init](init/init.c) binary is statically linked (package ```glibc-static``` in Fedora)
 * patchelf
 
+#### Optional features
+
+* **GPU=1**: Enables virtio-gpu. Requires virglrenderer-devel.
+* **VIRGL_RESOURCE_MAP2=1**: Uses virgl_resource_map2 function. Requires a virglrenderer-devel patched with [1374](https://gitlab.freedesktop.org/virgl/virglrenderer/-/merge_requests/1374)
+* **BLK=1**: Enables virtio-block.
+* **NET=1**: Enables virtio-net.
+* **SND=1**: Enables virtio-snd.
+
 #### Compiling
 
 ```
-make
+make [FEATURE_OPTIONS]
 ```
 
 #### Installing
 
 ```
-sudo make install
+sudo make [FEATURE_OPTIONS] install
 ```
 
 ### Linux (SEV variant)
@@ -103,19 +110,23 @@ make SEV=1
 sudo make SEV=1 install
 ```
 
-### macOS
+### macOS (EFI variant)
 
 #### Requirements
 
-As part of ```libkrun``` building process, it's necessary to produce a Linux ELF binary from [init/init.c](init/init.c). The easiest way to do this is by using a binary version of [krunvm](https://github.com/slp/krunvm) and its dependencies ([libkrunfw](https://github.com/containers/libkrunfw), and ```libkrun``` itself), such as the one available in the [krunvm Homebrew repo](https://github.com/slp/homebrew-krun), and then executing the [build_on_krunvm.sh](build_on_krunvm.sh) script found in this repository.
+* A working [Rust](https://www.rust-lang.org/) toolchain
 
-This will create a lightweight Linux VM using ```krunvm``` with the current working directory mapped inside it, and produce the Linux ELF binary from [init/init.c](init/init.c).
-
-#### Building the library using krunvm
+#### Compiling
 
 ```
-./build_on_krunvm.sh
-make
+make EFI=1
+```
+
+#### Installing
+
+```
+sudo make EFI=1 install
+
 ```
 
 ## Using the library
@@ -167,14 +178,9 @@ LD_LIBRARY_PATH=/usr/local/lib64 ./chroot_vm rootfs/ /bin/sh
 
 ```libkrun``` has achieved maturity and starting version ```1.0.0``` the public API is guaranteed to be stable, following [SemVer](https://semver.org/).
 
-### Known users
-
-- [crun](https://github.com/containers/crun): An OCI runtime that can make use of libkrun to run containers with Virtualization-based isolation.
-- [krunvm](https://github.com/slp/krunvm): A CLI tool for creating and running microVMs based on OCI images.
-
 ## Getting in contact
 
-The main communication channel is the [VirTEE Matrix channel](https://matrix.to/#/#virtee:matrix.org).
+The main communication channel is the [libkrun Matrix channel](https://matrix.to/#/#libkrun:matrix.org).
 
 ## Acknowledgments
 
