@@ -168,6 +168,22 @@ impl IntelTdx {
             })
             .collect();
 
+        let mut tdx_ram_entries = tdx_init_ram_entries(&ram_entries[0..(*nr_ram_entries as usize)]);
+
+        for entry in tdx_firmware_entries {
+            match entry.r#type {
+                TdvfSectionType::TempMem | TdvfSectionType::TdHob => {
+                    let ret = tdx_accept_ram_range(&mut tdx_ram_entries, entry.address, entry.size);
+                    if ret < 0 {
+                        panic!("unable to accept ram range");
+                    }
+                }
+                _ => (),
+            }
+        }
+
+        tdx_ram_entries.sort_by(|a, b| a.address.cmp(&b.address));
+
         Ok(())
     }
 
@@ -187,4 +203,84 @@ struct TdxFirmwareEntry {
     r#type: TdvfSectionType,
     attributes: u32,
     mem_ptr: u64,
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+enum TdxRamType {
+    #[default]
+    TdxRamUnaccepted,
+    TdxRamAdded,
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+struct TdxRamEntry {
+    address: u64,
+    length: u64,
+    r#type: TdxRamType,
+}
+
+fn tdx_init_ram_entries(entries: &[e820entry]) -> Vec<TdxRamEntry> {
+    entries
+        .iter()
+        .map(|e| TdxRamEntry {
+            address: e.addr,
+            length: e.size,
+            r#type: TdxRamType::TdxRamUnaccepted,
+        })
+        .collect()
+}
+
+fn tdx_accept_ram_range(ram_entries: &mut Vec<TdxRamEntry>, address: u64, length: u64) -> i32 {
+    let mut found_entry: Option<&mut TdxRamEntry> = None;
+
+    for entry in ram_entries.iter_mut() {
+        if address + length <= entry.address || entry.address + entry.length <= address {
+            continue;
+        }
+
+        if entry.address > address || entry.address + entry.length < address + length {
+            return -libc::EINVAL;
+        }
+
+        if let TdxRamType::TdxRamAdded = entry.r#type {
+            return -libc::EINVAL;
+        }
+
+        found_entry = Some(entry);
+    }
+
+    let found_entry = found_entry.unwrap();
+
+    let tmp_address = found_entry.address;
+    let tmp_length = found_entry.length;
+
+    found_entry.address = address;
+    found_entry.length = length;
+    found_entry.r#type = TdxRamType::TdxRamAdded;
+
+    // determine the chunk of the ram range before the newly added range
+    let head_length = address - tmp_address;
+    if head_length > 0 {
+        let head_start = tmp_address;
+        ram_entries.push(TdxRamEntry {
+            address: head_start,
+            length: head_length,
+            r#type: TdxRamType::TdxRamUnaccepted,
+        });
+    }
+
+    // determine the chunk of the ram range after the newly added range
+    let tail_start = address + length;
+    // check if the start of the ram range after the newly added range begins before the old
+    // range's end
+    if tail_start < tmp_address + tmp_length {
+        let tail_length = tmp_address + tmp_length - tail_start;
+        ram_entries.push(TdxRamEntry {
+            address: tail_start,
+            length: tail_length,
+            r#type: TdxRamType::TdxRamUnaccepted,
+        });
+    }
+
+    0
 }
