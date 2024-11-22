@@ -8,79 +8,6 @@ use std::io::{self, Read, Seek, SeekFrom};
 
 use arch_gen::x86::bootparam::e820entry;
 
-const EFI_HOB_TYPE_HANDOFF: u64 = 0x0001;
-const EFI_HOB_TYPE_RESOURCE_DESCRIPTOR: u64 = 0x0003;
-const EFI_HOB_HANDOFF_TABLE_VERSION: u64 = 0x0009;
-const EFI_HOB_TYPE_END_OF_HOB_LIST: u64 = 0xFFFF;
-const EFI_RESOURCE_MEMORY_UNACCEPTED: u64 = 0x00000005;
-const EFI_RESOURCE_ATTRIBUTE_TDVF_UNACCEPTED: u64 = 0x00000007;
-const EFI_RESOURCE_SYSTEM_MEMORY: u64 = 0x00000000;
-const EFI_RESOURCE_ATTRIBUTE_PRESENT: u64 = 0x00000001;
-const EFI_RESOURCE_ATTRIBUTE_INITIALIZE: u64 = 0x00000002;
-const EFI_RESOURCE_ATTRIBUTE_TESTED: u64 = 0x00000004;
-const EFI_RESOURCE_ATTRIBUTE_TDVF_PRIVATE: u64 = EFI_RESOURCE_ATTRIBUTE_PRESENT
-    | EFI_RESOURCE_ATTRIBUTE_INITIALIZE
-    | EFI_RESOURCE_ATTRIBUTE_TESTED;
-const EFI_HOB_OWNER_ZERO: EfiGuid = EfiGuid {
-    data1: 0x00000000,
-    data2: 0x0000,
-    data3: 0x0000,
-    data4: [0x00; 8],
-};
-
-type EfiResourceAttributeType = u32;
-type EfiResourceType = u32;
-type EfiBootMode = u32;
-type EfiPhysicalAddress = u64;
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct EfiGuid {
-    data1: u32,
-    data2: u16,
-    data3: u16,
-    data4: [u8; 8],
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct EfiHobResourceDescriptor {
-    header: EfiHobGenericHeader,
-    owner: EfiGuid,
-    resource_type: EfiResourceType,
-    resource_attribute: EfiResourceAttributeType,
-    physical_start: EfiPhysicalAddress,
-    resource_length: u64,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Default)]
-struct EfiHobGenericHeader {
-    hob_type: u16,
-    hob_length: u16,
-    reserved: u32,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Default)]
-struct EfiHobHandoffInfoTable {
-    header: EfiHobGenericHeader,
-    version: u32,
-    boot_mode: EfiBootMode,
-    efi_memory_top: EfiPhysicalAddress,
-    efi_memory_bottom: EfiPhysicalAddress,
-    efi_free_memory_top: EfiPhysicalAddress,
-    efi_free_memory_bottom: EfiPhysicalAddress,
-    efi_end_of_hob_list: EfiPhysicalAddress,
-}
-
-// SAFETY: data structure only contain a series of integers
-unsafe impl ByteValued for EfiHobHandoffInfoTable {}
-// SAFETY: data structure only contain a series of integers
-unsafe impl ByteValued for EfiHobGenericHeader {}
-// SAFETY: data structure only contain a series of integers
-unsafe impl ByteValued for EfiHobResourceDescriptor {}
-
 #[derive(Debug)]
 pub enum Error {
     CreateTdxVmStruct,
@@ -170,7 +97,7 @@ impl IntelTdx {
 
         let mut tdx_ram_entries = tdx_init_ram_entries(&ram_entries[0..(*nr_ram_entries as usize)]);
 
-        for entry in tdx_firmware_entries {
+        for entry in &tdx_firmware_entries {
             match entry.r#type {
                 TdvfSectionType::TempMem | TdvfSectionType::TdHob => {
                     let ret = tdx_accept_ram_range(&mut tdx_ram_entries, entry.address, entry.size);
@@ -183,6 +110,15 @@ impl IntelTdx {
         }
 
         tdx_ram_entries.sort_by(|a, b| a.address.cmp(&b.address));
+
+        for entry in &tdx_firmware_entries {
+            match entry.r#type {
+                TdvfSectionType::TdHob => {
+                    tdvf_hob_create(&entry, &tdx_ram_entries, guest_mem).unwrap()
+                }
+                _ => (),
+            }
+        }
 
         Ok(())
     }
@@ -283,4 +219,213 @@ fn tdx_accept_ram_range(ram_entries: &mut Vec<TdxRamEntry>, address: u64, length
     }
 
     0
+}
+
+#[derive(Debug, Default)]
+struct TdvfHob {
+    hob_addr: u64,
+    ptr: u64,
+    size: u64,
+
+    // working area
+    current: u64,
+    end: u64,
+}
+
+type EfiPhysicalAddress = u64;
+type EfiBootMode = u32;
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default)]
+struct EfiHobGenericHeader {
+    hob_type: u16,
+    hob_length: u16,
+    reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default)]
+struct EfiHobHandoffInfoTable {
+    header: EfiHobGenericHeader,
+    version: u32,
+    boot_mode: EfiBootMode,
+    efi_memory_top: EfiPhysicalAddress,
+    efi_memory_bottom: EfiPhysicalAddress,
+    efi_free_memory_top: EfiPhysicalAddress,
+    efi_free_memory_bottom: EfiPhysicalAddress,
+    efi_end_of_hob_list: EfiPhysicalAddress,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default)]
+struct EfiHobResourceDescriptor {
+    header: EfiHobGenericHeader,
+    owner: EfiGuid,
+    resource_type: EfiResourceType,
+    resource_attribute: EfiResourceAttributeType,
+    physical_start: EfiPhysicalAddress,
+    resource_length: u64,
+}
+
+type EfiResourceType = u32;
+type EfiResourceAttributeType = u32;
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default)]
+struct EfiGuid {
+    data1: u32,
+    data2: u16,
+    data3: u16,
+    data4: [u8; 8],
+}
+
+// SAFETY: data structure only contain a series of integers
+unsafe impl ByteValued for EfiHobResourceDescriptor {}
+// SAFETY: data structure only contain a series of integers
+unsafe impl ByteValued for EfiHobGenericHeader {}
+// SAFETY: data structure only contain a series of integers
+unsafe impl ByteValued for EfiHobHandoffInfoTable {}
+
+const EFI_HOB_HANDOFF_TABLE_VERSION: u32 = 0x0009;
+
+const EFI_HOB_TYPE_HANDOFF: u16 = 0x0001;
+const EFI_HOB_TYPE_RESOURCE_DESCRIPTOR: u16 = 0x0003;
+const EFI_HOB_TYPE_END_OF_HOB_LIST: u16 = 0xFFFF;
+
+const EFI_RESOURCE_SYSTEM_MEMORY: u32 = 0x00000000;
+
+const EFI_RESOURCE_ATTRIBUTE_PRESENT: u32 = 0x00000001;
+const EFI_RESOURCE_ATTRIBUTE_INITIALIZED: u32 = 0x00000002;
+const EFI_RESOURCE_ATTRIBUTE_TESTED: u32 = 0x00000004;
+const EFI_RESOURCE_MEMORY_UNACCEPTED: u32 = 0x00000007;
+
+const EFI_RESOURCE_ATTRIBUTE_TDVF_PRIVATE: u32 = EFI_RESOURCE_ATTRIBUTE_PRESENT
+    | EFI_RESOURCE_ATTRIBUTE_INITIALIZED
+    | EFI_RESOURCE_ATTRIBUTE_TESTED;
+
+const EFI_RESOURCE_ATTRIBUTE_TDVF_UNACCEPTED: u32 = EFI_RESOURCE_ATTRIBUTE_PRESENT
+    | EFI_RESOURCE_ATTRIBUTE_INITIALIZED
+    | EFI_RESOURCE_ATTRIBUTE_TESTED;
+
+const EFI_HOB_OWNER_ZERO: EfiGuid = EfiGuid {
+    data1: 0x00000000,
+    data2: 0x0000,
+    data3: 0x0000,
+    data4: [0x00; 8],
+};
+
+fn tdvf_hob_create(
+    td_hob: &TdxFirmwareEntry,
+    ram_entries: &Vec<TdxRamEntry>,
+    guest_mem: &mut GuestMemoryMmap,
+) -> Result<(), Error> {
+    let mut hob = TdvfHob {
+        hob_addr: td_hob.address,
+        size: td_hob.size,
+        ptr: td_hob.mem_ptr,
+
+        current: td_hob.address,
+        end: td_hob.address + td_hob.size,
+    };
+
+    let hit_area = tdvf_get_area(
+        &mut hob,
+        std::mem::size_of::<EfiHobHandoffInfoTable>() as u64,
+    );
+
+    tdvf_hob_add_memory_resources(&mut hob, &ram_entries, guest_mem)?;
+
+    let last_hob_area = tdvf_get_area(&mut hob, std::mem::size_of::<EfiHobGenericHeader>() as u64);
+    let last_hob = EfiHobGenericHeader {
+        hob_type: EFI_HOB_TYPE_END_OF_HOB_LIST,
+        hob_length: std::mem::size_of::<EfiHobGenericHeader>() as u16,
+        reserved: 0,
+    };
+    guest_mem
+        .write_obj(last_hob, last_hob_area)
+        .map_err(Error::GuestMemoryWriteTdHob)?;
+
+    let hit = EfiHobHandoffInfoTable {
+        header: EfiHobGenericHeader {
+            hob_type: EFI_HOB_TYPE_HANDOFF,
+            hob_length: std::mem::size_of::<EfiHobHandoffInfoTable>() as u16,
+            reserved: 0,
+        },
+        version: EFI_HOB_HANDOFF_TABLE_VERSION,
+        boot_mode: 0,
+        efi_memory_top: 0,
+        efi_memory_bottom: 0,
+        efi_free_memory_top: 0,
+        efi_free_memory_bottom: 0,
+        efi_end_of_hob_list: hob.current,
+    };
+    guest_mem
+        .write_obj(hit, hit_area)
+        .map_err(Error::GuestMemoryWriteTdHob)?;
+
+    Ok(())
+}
+
+fn tdvf_get_area(hob: &mut TdvfHob, size: u64) -> GuestAddress {
+    if hob.current + size > hob.end {
+        panic!("TD_HOB overrun, size = 0x{:x}", size);
+    }
+
+    let ret = GuestAddress(hob.current);
+    hob.current += size;
+    hob.current = tdvf_align(hob, 8);
+    ret
+}
+
+fn align_down(n: u64, m: u64) -> u64 {
+    n / m * m
+}
+
+fn align_up(n: u64, m: u64) -> u64 {
+    align_down(n + m - 1, m)
+}
+
+// FIXME: can simplify this to (hob.current + 7) / 8 * 8
+fn tdvf_align(hob: &TdvfHob, align: usize) -> u64 {
+    align_up(hob.current, align as u64)
+}
+
+fn tdvf_hob_add_memory_resources(
+    hob: &mut TdvfHob,
+    ram_entries: &Vec<TdxRamEntry>,
+    guest_mem: &GuestMemoryMmap,
+) -> Result<(), Error> {
+    for entry in ram_entries {
+        let (resource_type, resource_attribute) = match entry.r#type {
+            TdxRamType::TdxRamUnaccepted => (
+                EFI_RESOURCE_MEMORY_UNACCEPTED,
+                EFI_RESOURCE_ATTRIBUTE_TDVF_UNACCEPTED,
+            ),
+            TdxRamType::TdxRamAdded => (
+                EFI_RESOURCE_SYSTEM_MEMORY,
+                EFI_RESOURCE_ATTRIBUTE_TDVF_PRIVATE,
+            ),
+        };
+
+        let region_area =
+            tdvf_get_area(hob, std::mem::size_of::<EfiHobResourceDescriptor>() as u64);
+        let region = EfiHobResourceDescriptor {
+            header: EfiHobGenericHeader {
+                hob_type: EFI_HOB_TYPE_RESOURCE_DESCRIPTOR,
+                hob_length: std::mem::size_of::<EfiHobResourceDescriptor>() as u16,
+                reserved: 0,
+            },
+            owner: EFI_HOB_OWNER_ZERO,
+            resource_type,
+            resource_attribute,
+            physical_start: entry.address,
+            resource_length: entry.length,
+        };
+
+        guest_mem
+            .write_obj(region, region_area)
+            .map_err(Error::GuestMemoryWriteTdHob)?;
+    }
+
+    Ok(())
 }
