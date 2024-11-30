@@ -557,7 +557,8 @@ impl From<bindings::stat64> for Attr {
 impl Attr {
     pub fn with_flags(st: bindings::stat64, flags: u32) -> Attr {
         Attr {
-            ino: st.st_ino,
+            #[allow(clippy::unnecessary_cast)]
+            ino: st.st_ino ^ ((st.st_dev as u64) << 32),
             size: st.st_size as u64,
             blocks: st.st_blocks as u64,
             atime: st.st_atime as u64,
