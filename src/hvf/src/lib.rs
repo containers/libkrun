@@ -247,7 +247,7 @@ pub struct HvfVcpu<'a> {
     pending_advance_pc: bool,
 }
 
-impl<'a> HvfVcpu<'a> {
+impl HvfVcpu<'_> {
     pub fn new() -> Result<Self, Error> {
         let mut vcpuid: hv_vcpu_t = 0;
         let vcpu_exit_ptr: *mut hv_vcpu_exit_t = std::ptr::null_mut();
