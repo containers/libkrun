@@ -362,11 +362,7 @@ impl Vcpu {
                 self.init_thread_local_data()
                     .expect("Cannot cleanly initialize vcpu TLS.");
 
-                init_tls_sender
-                    .send(true)
-                    .expect("Cannot notify vcpu TLS initialization.");
-
-                self.run();
+                self.run(init_tls_sender);
             })
             .map_err(Error::VcpuSpawn)?;
 
@@ -462,9 +458,13 @@ impl Vcpu {
     }
 
     /// Main loop of the vCPU thread.
-    pub fn run(&mut self) {
+    pub fn run(&mut self, init_tls_sender: Sender<bool>) {
         let mut hvf_vcpu = HvfVcpu::new().expect("Can't create HVF vCPU");
         let hvf_vcpuid = hvf_vcpu.id();
+
+        init_tls_sender
+            .send(true)
+            .expect("Cannot notify vcpu TLS initialization.");
 
         let (wfe_sender, wfe_receiver) = unbounded();
         self.vcpu_list.register(hvf_vcpuid, wfe_sender);

@@ -267,6 +267,14 @@ impl HvfVcpu<'_> {
             return Err(Error::VcpuCreate);
         }
 
+        // We write vcpuid to Aff1 as otherwise it won't match the redistributor ID
+        // when using HVF in-kernel GICv3.
+        let ret =
+            unsafe { hv_vcpu_set_sys_reg(vcpuid, hv_sys_reg_t_HV_SYS_REG_MPIDR_EL1, vcpuid << 8) };
+        if ret != HV_SUCCESS {
+            return Err(Error::VcpuCreate);
+        }
+
         let vcpu_exit: &hv_vcpu_exit_t = unsafe { vcpu_exit_ptr.as_mut().unwrap() };
 
         Ok(Self {
