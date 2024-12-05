@@ -198,7 +198,7 @@ pub trait ZeroCopyReader {
     }
 }
 
-impl<'a, R: ZeroCopyReader> ZeroCopyReader for &'a mut R {
+impl<R: ZeroCopyReader> ZeroCopyReader for &mut R {
     fn read_to(&mut self, f: &File, count: usize, off: u64) -> io::Result<usize> {
         (**self).read_to(f, count, off)
     }
@@ -291,7 +291,7 @@ pub trait ZeroCopyWriter {
     }
 }
 
-impl<'a, W: ZeroCopyWriter> ZeroCopyWriter for &'a mut W {
+impl<W: ZeroCopyWriter> ZeroCopyWriter for &mut W {
     fn write_from(&mut self, f: &File, count: usize, off: u64) -> io::Result<usize> {
         (**self).write_from(f, count, off)
     }
