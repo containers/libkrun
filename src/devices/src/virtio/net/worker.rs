@@ -398,9 +398,7 @@ impl NetWorker {
         let mut result: std::result::Result<(), FrontendError> = Ok(());
 
         let queue = &mut self.queues[RX_INDEX];
-        let head_descriptor = queue
-            .pop(&self.mem)
-            .ok_or_else(|| FrontendError::EmptyQueue)?;
+        let head_descriptor = queue.pop(&self.mem).ok_or(FrontendError::EmptyQueue)?;
         let head_index = head_descriptor.index;
 
         let mut frame_slice = &self.rx_frame_buf[..self.rx_frame_buf_len];
