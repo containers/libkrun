@@ -151,7 +151,6 @@ unsafe impl ByteValued for VirtqUsedElem {}
 
 /// An iterator over a single descriptor chain.  Not to be confused with AvailIter,
 /// which iterates over the descriptor chain heads in a queue.
-
 pub struct DescIter<'a> {
     next: Option<DescriptorChain<'a>>,
 }
