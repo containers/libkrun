@@ -28,12 +28,12 @@ polly = { path = "../polly" }
 
 # Dependencies for amd-sev
 codicon = { version = "3.0.0", optional = true }
-kbs-types = { version = "0.8.0", features = ["tee-sev", "tee-snp"], optional = true }
+kbs-types = { version = "0.9.2", features = ["tee-sev", "tee-snp"], optional = true }
 procfs = { version = "0.12", optional = true }
 rdrand = { version = "^0.8", optional = true }
 serde = { version = "1.0.125", optional = true }
 serde_json = { version = "1.0.64", optional = true }
-sev = { version = "4.0.0", features = ["openssl"], optional = true }
+sev = { version = "5.0.0", features = ["openssl"], optional = true }
 curl = { version = "0.4", optional = true }
 nix = "0.24.1"
 

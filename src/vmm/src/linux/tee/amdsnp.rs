@@ -6,8 +6,11 @@ use std::{
 use crate::vstate::MeasuredRegion;
 use arch::x86_64::layout::*;
 
-use sev::firmware::{guest::GuestPolicy, host::Firmware};
 use sev::launch::snp::*;
+use sev::{
+    error::FirmwareError as SevFirmwareError,
+    firmware::{guest::GuestPolicy, host::Firmware},
+};
 
 use kvm_bindings::{
     kvm_create_guest_memfd, kvm_userspace_memory_region2, CpuId, KVM_CPUID_FLAG_SIGNIFCANT_INDEX,
@@ -22,12 +25,12 @@ use vm_memory::{
 pub enum Error {
     CpuIdWrite,
     CpuIdFull,
-    CreateLauncher(std::io::Error),
+    CreateLauncher(SevFirmwareError),
     GuestMemoryWrite(vm_memory::GuestMemoryError),
     GuestMemoryRead(vm_memory::GuestMemoryError),
-    LaunchStart(std::io::Error),
-    LaunchUpdate(std::io::Error),
-    LaunchFinish(std::io::Error),
+    LaunchStart(SevFirmwareError),
+    LaunchUpdate(SevFirmwareError),
+    LaunchFinish(SevFirmwareError),
     MemoryEncryptRegion,
     OpenFirmware(std::io::Error),
 }
@@ -130,7 +133,7 @@ impl AmdSnp {
         let mut policy = GuestPolicy(0);
         policy.set_smt_allowed(1);
 
-        let start = Start::new(None, policy, false, [0; 16]);
+        let start = Start::new(policy, [0; 16]);
 
         let launcher = launcher.start(start).map_err(Error::LaunchStart)?;
 
@@ -304,7 +307,6 @@ impl AmdSnp {
         launcher: &mut Launcher<Started, RawFd, RawFd>,
         page_type: PageType,
     ) -> Result<(), Error> {
-        let dp = VmplPerms::empty();
         let ga = GuestAddress(region.guest_addr);
 
         /*
@@ -319,15 +321,11 @@ impl AmdSnp {
         let ptr = bytes.ptr_guard().as_ptr();
         let slice: &[u8] = unsafe { slice::from_raw_parts(ptr, region.size) };
 
-        let update = Update::new(
-            region.guest_addr >> 12,
-            slice,
-            false,
-            page_type,
-            (dp, dp, dp),
-        );
+        let update = Update::new(region.guest_addr >> 12, slice, page_type);
 
-        launcher.update_data(update).map_err(Error::LaunchUpdate)
+        launcher
+            .update_data(update, ga.0, region.size.try_into().unwrap())
+            .map_err(Error::LaunchUpdate)
     }
 
     pub fn vm_measure(
