@@ -12,10 +12,7 @@ use sev::{
     firmware::{guest::GuestPolicy, host::Firmware},
 };
 
-use kvm_bindings::{
-    kvm_create_guest_memfd, kvm_userspace_memory_region2, CpuId, KVM_CPUID_FLAG_SIGNIFCANT_INDEX,
-    KVM_MEM_GUEST_MEMFD,
-};
+use kvm_bindings::{CpuId, KVM_CPUID_FLAG_SIGNIFCANT_INDEX};
 use kvm_ioctls::VmFd;
 use vm_memory::{
     Bytes, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion, GuestRegionMmap,
@@ -90,41 +87,8 @@ impl AmdSnp {
     pub fn vm_prepare(
         &self,
         vm_fd: &VmFd,
-        guest_mem: &GuestMemoryMmap,
+        _guest_mem: &GuestMemoryMmap,
     ) -> Result<Launcher<Started, RawFd, RawFd>, Error> {
-        for region in guest_mem.iter() {
-            // It's safe to unwrap because the guest address is valid.
-            let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
-
-            // Create guest_memfd struct.
-            let gmem = kvm_create_guest_memfd {
-                size: region.len(),
-                flags: 0, //Unused.
-                reserved: [0; 6],
-            };
-
-            // Create KVM guest_memfd.
-            let fd = vm_fd.create_guest_memfd(gmem).unwrap();
-
-            // Create memory region.
-            let mem_region = kvm_userspace_memory_region2 {
-                slot: 0,
-                flags: KVM_MEM_GUEST_MEMFD,
-                guest_phys_addr: region.start_addr().0,
-                memory_size: region.len(),
-                userspace_addr: host_addr as u64,
-                guest_memfd_offset: 0,
-                guest_memfd: fd as u32,
-                pad1: 0,
-                pad2: [0; 14],
-            };
-
-            // Set the memory region.
-            unsafe {
-                vm_fd.set_user_memory_region2(mem_region).unwrap();
-            }
-        }
-
         let vm_rfd = vm_fd.as_raw_fd();
         let fw_rfd = self.fw.as_raw_fd();
 
