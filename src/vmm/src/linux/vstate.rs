@@ -1171,8 +1171,8 @@ impl Vcpu {
             arch::x86_64::regs::setup_fpu(&self.fd).map_err(Error::FPUConfiguration)?;
             arch::x86_64::regs::setup_sregs(guest_mem, &self.fd, self.id)
                 .map_err(Error::SREGSConfiguration)?;
-            arch::x86_64::interrupts::set_lint(&self.fd).map_err(Error::LocalIntConfiguration)?;
         }
+        // arch::x86_64::interrupts::set_lint(&self.fd).map_err(Error::LocalIntConfiguration)?;
         Ok(())
     }
 
@@ -1363,25 +1363,30 @@ impl Vcpu {
     ///
     /// Returns error or enum specifying whether emulation was handled or interrupted.
     fn run_emulation(&mut self) -> Result<VcpuEmulation> {
+        println!("Running emulation");
         match self.fd.run() {
             Ok(run) => match run {
                 #[cfg(target_arch = "x86_64")]
                 VcpuExit::IoIn(addr, data) => {
+                    println!("IO IN");
                     self.io_bus.read(0, u64::from(addr), data);
                     Ok(VcpuEmulation::Handled)
                 }
                 #[cfg(target_arch = "x86_64")]
                 VcpuExit::IoOut(addr, data) => {
+                    println!("IO OUT");
                     self.io_bus.write(0, u64::from(addr), data);
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::MmioRead(addr, data) => {
+                    println!("MMIO READ");
                     if let Some(ref mmio_bus) = self.mmio_bus {
                         mmio_bus.read(0, addr, data);
                     }
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::MmioWrite(addr, data) => {
+                    println!("MMIO WRITE");
                     if let Some(ref mmio_bus) = self.mmio_bus {
                         mmio_bus.write(0, addr, data);
                     }
@@ -1400,11 +1405,17 @@ impl Vcpu {
                 // Documentation specifies that below kvm exits are considered
                 // errors.
                 VcpuExit::FailEntry(reason, vcpu) => {
+                    println!("FAIL ENTRY");
                     error!("Received KVM_EXIT_FAIL_ENTRY signal: reason={reason}, vcpu={vcpu}");
                     Err(Error::VcpuUnhandledKvmExit)
                 }
                 VcpuExit::InternalError => {
+                    println!("INTERNAL ERROR");
                     error!("Received KVM_EXIT_INTERNAL_ERROR signal");
+                    Err(Error::VcpuUnhandledKvmExit)
+                }
+                VcpuExit::Unknown => {
+                    println!("unknown exit");
                     Err(Error::VcpuUnhandledKvmExit)
                 }
                 r => {
@@ -1418,7 +1429,10 @@ impl Vcpu {
             // error in our code in which case it is better to panic.
             Err(ref e) => {
                 match e.errno() {
-                    libc::EAGAIN => Ok(VcpuEmulation::Handled),
+                    libc::EAGAIN => {
+                        println!("AGAIN!");
+                        Ok(VcpuEmulation::Handled)
+                    },
                     libc::EINTR => {
                         println!("KVM_RUN exited: Err(EINTR)");
                         println!(
@@ -1554,7 +1568,8 @@ impl Vcpu {
     }
 
     #[cfg(feature = "intel-tdx")]
-    pub fn tdx_secure_virt_init(&self, hob_addr: u64) -> Result<()> {
+    pub fn tdx_secure_virt_init(&self, hob_addr: u64, cpuid: &CpuId) -> Result<()> {
+        self.fd.set_cpuid2(cpuid).unwrap();
         tdx::launch::TdxVcpu::init_raw(&self.fd, hob_addr)
             .or_else(|_| return Err(Error::TdxSecVirtInitVcpu))
     }

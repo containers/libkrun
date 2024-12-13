@@ -51,7 +51,10 @@ pub enum Error {
 
 // Where BIOS/VGA magic would live on a real PC.
 const EBDA_START: u64 = 0x9fc00;
+#[cfg(not(feature = "intel-tdx"))]
 pub const RESET_VECTOR: u64 = 0xfff0;
+#[cfg(feature = "intel-tdx")]
+pub const RESET_VECTOR: u64 = 0xffff_fff0;
 pub const RESET_VECTOR_SEV_AP: u64 = 0xfff3;
 pub const BIOS_START: u64 = 0xffff_0000;
 pub const BIOS_SIZE: usize = 65536;
@@ -122,7 +125,8 @@ pub fn arch_memory_regions(
 #[cfg(feature = "intel-tdx")]
 fn get_tdvf_image_size() -> usize {
     use std::io::{Seek, SeekFrom};
-    let mut fs = std::fs::File::open("/usr/share/edk2/ovmf/OVMF.inteltdx.fd").unwrap();
+    let mut fs = std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/DEBUG_GCC5/FV/OVMF.fd").unwrap();
+    // let mut fs = std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/RELEASE_GCC5/FV/OVMF.fd").unwrap();
     // TODO(jakecorrenti): do proper error handling here
     fs.seek(SeekFrom::End(0)).unwrap() as usize
 }
@@ -161,11 +165,13 @@ pub fn arch_memory_regions(
                 ram_last_addr,
                 shm_start_addr,
                 vec![
+                    #[cfg(not(feature = "intel-tdx"))]
                     (GuestAddress(0), size),
                     #[cfg(not(feature = "intel-tdx"))]
                     (GuestAddress(BIOS_START), BIOS_SIZE),
                     #[cfg(feature = "intel-tdx")]
-                    (GuestAddress(tdvf_image_start_addr as u64), tdvf_image_size),
+                    (GuestAddress(0), tdvf_image_start_addr + tdvf_image_size),
+                    // (GuestAddress(tdvf_image_start_addr as u64), tdvf_image_size),
                 ],
             )
         }

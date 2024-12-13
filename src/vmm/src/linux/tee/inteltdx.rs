@@ -38,7 +38,8 @@ impl IntelTdx {
             .get_capabilities(vm_fd)
             .or_else(|_| return Err(Error::GetCapabilities))?;
 
-        let mut firmware = std::fs::File::open("/usr/share/edk2/ovmf/OVMF.inteltdx.fd")
+        // let mut firmware = std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/RELEASE_GCC5/FV/OVMF.fd")
+        let mut firmware = std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/DEBUG_GCC5/FV/OVMF.fd")
             .map_err(Error::OpenTdvfFirmwareFile)?;
         let tdvf_sections =
             tdx::tdvf::parse_sections(&mut firmware).map_err(Error::ParseTdvfSections)?;
@@ -96,6 +97,11 @@ impl IntelTdx {
             .collect();
 
         let mut tdx_ram_entries = tdx_init_ram_entries(&ram_entries[0..(*nr_ram_entries as usize)]);
+        let mut tdx_ram_entries = vec![TdxRamEntry {
+            address: 0,
+            length: 0x8000_0000,
+            r#type: TdxRamType::TdxRamUnaccepted,
+        }];
 
         for entry in &tdx_firmware_entries {
             match entry.r#type {
@@ -111,13 +117,34 @@ impl IntelTdx {
 
         tdx_ram_entries.sort_by(|a, b| a.address.cmp(&b.address));
 
-        for entry in &tdx_firmware_entries {
-            match entry.r#type {
-                TdvfSectionType::TdHob => {
-                    tdvf_hob_create(&entry, &tdx_ram_entries, guest_mem).unwrap()
-                }
-                _ => (),
-            }
+        //for entry in &tdx_firmware_entries {
+        //    match entry.r#type {
+        //        TdvfSectionType::TdHob => {
+        //            tdvf_hob_create(&entry, &tdx_ram_entries, guest_mem).unwrap()
+        //        }
+        //        _ => (),
+        //    }
+        //}
+
+        for section in &tdx_firmware_entries {
+            // TODO: we should be checking to see if the KVM_CAP_MEMORY_MAPPING capability is
+            // enabled, but for now just assume its not
+            self.vm
+                .init_mem_region(
+                    fd,
+                    section.address,
+                    section.size / 4096,
+                    // FIXME: instead of checking the section type we should be checking the
+                    // attributes to see if the feature is set to extend the measurement
+                    section.attributes & 1,
+                    guest_mem
+                        .get_host_address(vm_memory::GuestAddress(section.address))
+                        .unwrap() as u64,
+                )
+                .unwrap();
+
+            // TODO: if the entry is of type TD_HOB or TEMP_MEM then we need to unmap the memory
+            // and set the mem_ptr to NULL (or 0 in this case)
         }
 
         Ok(())
@@ -328,6 +355,8 @@ fn tdvf_hob_create(
         end: td_hob.address + td_hob.size,
     };
 
+    println!("initial td hob: {:?}", hob);
+
     let hit_area = tdvf_get_area(
         &mut hob,
         std::mem::size_of::<EfiHobHandoffInfoTable>() as u64,
@@ -341,6 +370,13 @@ fn tdvf_hob_create(
         hob_length: std::mem::size_of::<EfiHobGenericHeader>() as u16,
         reserved: 0,
     };
+
+    println!("last region: {:#?}", last_hob_area);
+    println!("{:#?}", last_hob);
+    println!("td hob after last: {:#?}", hob);
+    println!("");
+    println!("");
+
     guest_mem
         .write_obj(last_hob, last_hob_area)
         .map_err(Error::GuestMemoryWriteTdHob)?;
@@ -359,6 +395,9 @@ fn tdvf_hob_create(
         efi_free_memory_bottom: 0,
         efi_end_of_hob_list: hob.current,
     };
+    println!("hit region: {:#?}", hit_area);
+    println!("{:#?}", hit);
+    println!("td hob after hit: {:#?}", hob);
     guest_mem
         .write_obj(hit, hit_area)
         .map_err(Error::GuestMemoryWriteTdHob)?;
@@ -421,6 +460,12 @@ fn tdvf_hob_add_memory_resources(
             physical_start: entry.address,
             resource_length: entry.length,
         };
+
+        println!("region: {:#?}", region_area);
+        println!("{:#?}", region);
+        println!("hob after adding resources: {:#?}", hob);
+        println!("");
+        println!("");
 
         guest_mem
             .write_obj(region, region_area)

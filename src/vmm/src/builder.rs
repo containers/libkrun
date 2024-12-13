@@ -495,17 +495,20 @@ pub fn build_microvm(
 
     // On x86_64 always create a serial device,
     // while on aarch64 only create it if 'console=' is specified in the boot args.
+    // let serial_device = if cfg!(not(feature = "efi")) {
     let serial_device = if cfg!(feature = "efi") {
         Some(setup_serial_device(
             event_manager,
             None,
-            None,
+            // None,
             // Uncomment this to get EFI output when debugging EDK2.
-            // Some(Box::new(io::stdout())),
+            Some(Box::new(io::stdout())),
         )?)
     } else {
         None
     };
+
+    println!("serial device: {:#?}", serial_device.is_none());
 
     let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
         .map_err(Error::EventFd)
@@ -546,14 +549,18 @@ pub fn build_microvm(
     #[cfg(feature = "tee")]
     let boot_ip: GuestAddress = GuestAddress(arch::RESET_VECTOR);
 
+    println!("boot_ip: {:#?}", boot_ip);
+
     let vcpus;
     // For x86_64 we need to create the interrupt controller before calling `KVM_CREATE_VCPUS`
     // while on aarch64 we need to do it the other way around.
     #[cfg(target_arch = "x86_64")]
     {
-        #[cfg(not(feature = "intel-tdx"))]
-        setup_interrupt_controller(&vm)?;
-        attach_legacy_devices(&vm, &mut pio_device_manager)?;
+        // #[cfg(not(feature = "intel-tdx"))]
+        // {
+        //     setup_interrupt_controller(&vm)?;
+            attach_legacy_devices(&vm, &mut pio_device_manager)?;
+        // }
 
         vcpus = create_vcpus_x86_64(
             &vm,
@@ -827,7 +834,8 @@ fn load_payload(
             #[cfg(feature = "intel-tdx")]
             {
                 let mut tdvf_file =
-                    std::fs::File::open("/usr/share/edk2/ovmf/OVMF.inteltdx.fd").unwrap();
+                    std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/DEBUG_GCC5/FV/OVMF.fd").unwrap();
+                    // std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/RELEASE_GCC5/FV/OVMF.fd").unwrap();
                 tdvf_file.sync_all().unwrap();
                 let tdvf_file_size = tdvf_file.metadata().unwrap().len();
                 let tdvf_guest_start_address = 0x1_0000_0000 - tdvf_file_size;
@@ -1130,11 +1138,19 @@ fn create_vcpus_x86_64(
         )
         .map_err(Error::Vcpu)?;
 
-        vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config)
-            .map_err(Error::Vcpu)?;
+        let mut cpuid = vm.supported_cpuid().clone();
+        for entry in cpuid.as_mut_slice().iter_mut() {
+            if entry.index == 0x1 {
+                entry.ecx &= 1 << 21;
+            }
+        }
 
         #[cfg(feature = "intel-tdx")]
-        vcpu.tdx_secure_virt_init(hob_section_addr)
+        vcpu.tdx_secure_virt_init(hob_section_addr, &cpuid)
+            .map_err(Error::Vcpu)?;
+
+        println!("entry addr: {:#?}", entry_addr);
+        vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config)
             .map_err(Error::Vcpu)?;
 
         vcpus.push(vcpu);
