@@ -42,3 +42,4 @@ lru = ">=0.9"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rutabaga_gfx = { path = "../rutabaga_gfx", features = ["x"], optional = true }
+caps = "0.5.5"
