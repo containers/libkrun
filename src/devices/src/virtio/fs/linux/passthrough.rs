@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use caps::{has_cap, CapSet, Capability};
 use nix::request_code_read;
 
 use vm_memory::ByteValued;
@@ -78,11 +79,6 @@ macro_rules! scoped_cred {
             // Changes the effective uid/gid of the current thread to `val`.  Changes
             // the thread's credentials back to root when the returned struct is dropped.
             fn new(val: $ty) -> io::Result<Option<$name>> {
-                if val == 0 {
-                    // Nothing to do since we are already uid 0.
-                    return Ok(None);
-                }
-
                 // We want credential changes to be per-thread because otherwise
                 // we might interfere with operations being carried out on other
                 // threads with different uids/gids.  However, posix requires that
@@ -121,15 +117,6 @@ macro_rules! scoped_cred {
 }
 scoped_cred!(ScopedUid, libc::uid_t, libc::SYS_setresuid);
 scoped_cred!(ScopedGid, libc::gid_t, libc::SYS_setresgid);
-
-fn set_creds(
-    uid: libc::uid_t,
-    gid: libc::gid_t,
-) -> io::Result<(Option<ScopedUid>, Option<ScopedGid>)> {
-    // We have to change the gid before we change the uid because if we change the uid first then we
-    // lose the capability to change the gid.  However changing back can happen in any order.
-    ScopedGid::new(gid).and_then(|gid| Ok((ScopedUid::new(uid)?, gid)))
-}
 
 fn ebadf() -> io::Error {
     io::Error::from_raw_os_error(libc::EBADF)
@@ -351,6 +338,8 @@ pub struct PassthroughFs {
     // `cfg.writeback` is true and `init` was called with `FsOptions::WRITEBACK_CACHE`.
     writeback: AtomicBool,
     announce_submounts: AtomicBool,
+    my_uid: Option<libc::uid_t>,
+    my_gid: Option<libc::gid_t>,
 
     cfg: Config,
 }
@@ -385,6 +374,22 @@ impl PassthroughFs {
             fd
         };
 
+        let my_uid = if has_cap(None, CapSet::Effective, Capability::CAP_SETUID).unwrap_or_default()
+        {
+            None
+        } else {
+            // SAFETY: This syscall is always safe to call and always succeeds.
+            Some(unsafe { libc::getuid() })
+        };
+
+        let my_gid = if has_cap(None, CapSet::Effective, Capability::CAP_SETGID).unwrap_or_default()
+        {
+            None
+        } else {
+            // SAFETY: This syscall is always safe to call and always succeeds.
+            Some(unsafe { libc::getgid() })
+        };
+
         // Safe because we just opened this fd or it was provided by our caller.
         let proc_self_fd = unsafe { File::from_raw_fd(fd) };
 
@@ -401,6 +406,8 @@ impl PassthroughFs {
 
             writeback: AtomicBool::new(false),
             announce_submounts: AtomicBool::new(false),
+            my_uid,
+            my_gid,
             cfg,
         })
     }
@@ -758,6 +765,37 @@ impl PassthroughFs {
             Err(io::Error::last_os_error())
         }
     }
+
+    fn set_creds(
+        &self,
+        uid: libc::uid_t,
+        gid: libc::gid_t,
+    ) -> io::Result<(Option<ScopedUid>, Option<ScopedGid>)> {
+        // Change the gid first, since once we change the uid we lose the capability to change the gid.
+        let scoped_gid = if gid == 0 || self.my_gid == Some(gid) {
+            // Always allow "root" accesses even if we don't have root powers.
+            // This means guest processes running as root can use /tmp (though
+            // the files will not be actually owned by root), which is desirable.
+            None
+        } else if self.my_gid.is_some() {
+            // Reject writes as any other gid if we do not have setgid
+            // privileges.
+            return Err(io::Error::from_raw_os_error(libc::EPERM));
+        } else {
+            ScopedGid::new(gid)?
+        };
+
+        // Same logic as above, for uid.
+        let scoped_uid = if uid == 0 || self.my_uid == Some(uid) {
+            None
+        } else if self.my_uid.is_some() {
+            return Err(io::Error::from_raw_os_error(libc::EPERM));
+        } else {
+            ScopedUid::new(uid)?
+        };
+
+        Ok((scoped_uid, scoped_gid))
+    }
 }
 
 fn forget_one(
@@ -957,7 +995,7 @@ impl FileSystem for PassthroughFs {
             unimplemented!("SECURITY_CTX is not supported and should not be used by the guest");
         }
 
-        let (_uid, _gid) = set_creds(ctx.uid, ctx.gid)?;
+        let (_uid, _gid) = self.set_creds(ctx.uid, ctx.gid)?;
         let data = self
             .inodes
             .read()
@@ -1060,7 +1098,7 @@ impl FileSystem for PassthroughFs {
             unimplemented!("SECURITY_CTX is not supported and should not be used by the guest");
         }
 
-        let (_uid, _gid) = set_creds(ctx.uid, ctx.gid)?;
+        let (_uid, _gid) = self.set_creds(ctx.uid, ctx.gid)?;
         let data = self
             .inodes
             .read()
@@ -1167,7 +1205,7 @@ impl FileSystem for PassthroughFs {
         if kill_priv {
             // We need to change credentials during a write so that the kernel will remove setuid
             // or setgid bits from the file if it was written to by someone other than the owner.
-            let (_uid, _gid) = set_creds(ctx.uid, ctx.gid)?;
+            let (_uid, _gid) = self.set_creds(ctx.uid, ctx.gid)?;
         }
 
         let data = self
@@ -1395,7 +1433,7 @@ impl FileSystem for PassthroughFs {
             unimplemented!("SECURITY_CTX is not supported and should not be used by the guest");
         }
 
-        let (_uid, _gid) = set_creds(ctx.uid, ctx.gid)?;
+        let (_uid, _gid) = self.set_creds(ctx.uid, ctx.gid)?;
         let data = self
             .inodes
             .read()
@@ -1476,7 +1514,7 @@ impl FileSystem for PassthroughFs {
             unimplemented!("SECURITY_CTX is not supported and should not be used by the guest");
         }
 
-        let (_uid, _gid) = set_creds(ctx.uid, ctx.gid)?;
+        let (_uid, _gid) = self.set_creds(ctx.uid, ctx.gid)?;
         let data = self
             .inodes
             .read()
