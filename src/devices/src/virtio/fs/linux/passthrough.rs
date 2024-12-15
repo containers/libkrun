@@ -340,6 +340,7 @@ pub struct PassthroughFs {
     announce_submounts: AtomicBool,
     my_uid: Option<libc::uid_t>,
     my_gid: Option<libc::gid_t>,
+    cap_fowner: bool,
 
     cfg: Config,
 }
@@ -390,6 +391,9 @@ impl PassthroughFs {
             Some(unsafe { libc::getgid() })
         };
 
+        let cap_fowner =
+            has_cap(None, CapSet::Effective, Capability::CAP_FOWNER).unwrap_or_default();
+
         // Safe because we just opened this fd or it was provided by our caller.
         let proc_self_fd = unsafe { File::from_raw_fd(fd) };
 
@@ -408,6 +412,7 @@ impl PassthroughFs {
             announce_submounts: AtomicBool::new(false),
             my_uid,
             my_gid,
+            cap_fowner,
             cfg,
         })
     }
@@ -676,8 +681,15 @@ impl PassthroughFs {
         Ok(())
     }
 
-    fn do_open(&self, inode: Inode, flags: u32) -> io::Result<(Option<Handle>, OpenOptions)> {
+    fn do_open(&self, inode: Inode, mut flags: u32) -> io::Result<(Option<Handle>, OpenOptions)> {
         debug!("do_open: {:?}", inode);
+        if !self.cap_fowner {
+            // O_NOATIME can only be used with CAP_FOWNER or if we are the file
+            // owner. Not worth checking the latter, just drop it if we don't
+            // have the cap. This makes overlayfs mounts with virtiofs lower dirs
+            // work.
+            flags &= !(libc::O_NOATIME as u32);
+        }
         let file = RwLock::new(self.open_inode(inode, flags as i32)?);
 
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
