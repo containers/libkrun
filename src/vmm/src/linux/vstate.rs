@@ -38,6 +38,8 @@ use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 use arch::aarch64::gic::GICDevice;
 #[cfg(target_arch = "x86_64")]
 use cpuid::{c3, filter_cpuid, t2, VmSpec};
+#[cfg(not(feature = "amd-sev"))]
+use kvm_bindings::kvm_userspace_memory_region;
 #[cfg(target_arch = "x86_64")]
 use kvm_bindings::{
     kvm_clock_data, kvm_debugregs, kvm_irqchip, kvm_lapic_state, kvm_mp_state, kvm_pit_config,
@@ -45,7 +47,14 @@ use kvm_bindings::{
     Msrs, KVM_CLOCK_TSC_STABLE, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
     KVM_MAX_CPUID_ENTRIES, KVM_PIT_SPEAKER_DUMMY,
 };
-use kvm_bindings::{kvm_userspace_memory_region, KVM_API_VERSION};
+
+#[cfg(feature = "amd-sev")]
+use kvm_bindings::{
+    kvm_create_guest_memfd, kvm_memory_attributes, kvm_userspace_memory_region2,
+    KVM_MEM_GUEST_MEMFD,
+};
+
+use kvm_bindings::KVM_API_VERSION;
 use kvm_ioctls::*;
 use utils::eventfd::EventFd;
 use utils::signal::{register_signal_handler, sigrtmin, Killable};
@@ -112,6 +121,9 @@ pub enum Error {
     SetUserMemoryRegion(kvm_ioctls::Error),
     /// Error creating memory map for SHM region.
     ShmMmap(io::Error),
+    #[cfg(feature = "amd-sev")]
+    /// Error setting KVM memory attributes of a region.
+    SetMemoryAttributes(kvm_ioctls::Error),
     #[cfg(feature = "amd-sev")]
     /// Error initializing the Secure Virtualization Backend (SEV).
     SevSecVirtInit(SevError),
@@ -272,6 +284,10 @@ impl Display for Error {
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
             ShmMmap(e) => write!(f, "Error creating memory map for SHM region: {e}"),
+            #[cfg(feature = "amd-sev")]
+            SetMemoryAttributes(e) => {
+                write!(f, "Error setting KVM memory attributes of a region: {e}")
+            }
             #[cfg(feature = "tee")]
             SevSecVirtInit(e) => {
                 write!(
@@ -507,8 +523,12 @@ impl Vm {
 
     #[cfg(feature = "amd-sev")]
     pub fn new(kvm: &Kvm, tee_config: &TeeConfig) -> Result<Self> {
+        const KVM_X86_SNP_VM: u64 = 4;
+
         //create fd for interacting with kvm-vm specific functions
-        let vm_fd = kvm.create_vm().map_err(Error::VmFd)?;
+        let vm_fd = kvm
+            .create_vm_with_type(KVM_X86_SNP_VM)
+            .map_err(Error::VmFd)?;
 
         let supported_cpuid = kvm
             .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
@@ -558,6 +578,8 @@ impl Vm {
         if guest_mem.num_regions() > kvm_max_memslots {
             return Err(Error::NotEnoughMemorySlots);
         }
+
+        #[cfg(not(feature = "amd-sev"))]
         for region in guest_mem.iter() {
             // It's safe to unwrap because the guest address is valid.
             let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
@@ -576,6 +598,54 @@ impl Vm {
                     .set_user_memory_region(memory_region)
                     .map_err(Error::SetUserMemoryRegion)?;
             };
+            self.next_mem_slot += 1;
+        }
+
+        #[cfg(feature = "amd-sev")]
+        for region in guest_mem.iter() {
+            // It's safe to unwrap because the guest address is valid.
+            let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
+
+            // Create guest_memfd struct.
+            let gmem = kvm_create_guest_memfd {
+                size: region.len(),
+                flags: 0, // Unused.
+                reserved: [0; 6],
+            };
+
+            // Create KVM guest_memfd.
+            let guest_memfd = self.fd.create_guest_memfd(gmem).unwrap();
+
+            // Create memory region.
+            let memory_region = kvm_userspace_memory_region2 {
+                slot: self.next_mem_slot,
+                flags: KVM_MEM_GUEST_MEMFD,
+                guest_phys_addr: region.start_addr().raw_value(),
+                memory_size: region.len(),
+                userspace_addr: host_addr as u64,
+                guest_memfd_offset: 0,
+                guest_memfd: guest_memfd as u32,
+                pad1: 0,
+                pad2: [0; 14],
+            };
+
+            // Set the memory region.
+            unsafe {
+                self.fd.set_user_memory_region2(memory_region).unwrap();
+            }
+
+            let attr = kvm_memory_attributes {
+                address: region.start_addr().raw_value(),
+                size: region.len(),
+                // KVM_MEMORY_ATTRIBUTE_PRIVATE,
+                attributes: 1 << 3,
+                flags: 0,
+            };
+
+            self.fd
+                .set_memory_attributes(attr)
+                .map_err(Error::SetMemoryAttributes)?;
+
             self.next_mem_slot += 1;
         }
 

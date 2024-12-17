@@ -6,10 +6,13 @@ use std::{
 use crate::vstate::MeasuredRegion;
 use arch::x86_64::layout::*;
 
-use sev::firmware::{guest::GuestPolicy, host::Firmware};
 use sev::launch::snp::*;
+use sev::{
+    error::FirmwareError as SevFirmwareError,
+    firmware::{guest::GuestPolicy, host::Firmware},
+};
 
-use kvm_bindings::{kvm_enc_region, CpuId, KVM_CPUID_FLAG_SIGNIFCANT_INDEX};
+use kvm_bindings::{CpuId, KVM_CPUID_FLAG_SIGNIFCANT_INDEX};
 use kvm_ioctls::VmFd;
 use vm_memory::{
     Bytes, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion, GuestRegionMmap,
@@ -19,12 +22,12 @@ use vm_memory::{
 pub enum Error {
     CpuIdWrite,
     CpuIdFull,
-    CreateLauncher(std::io::Error),
+    CreateLauncher(SevFirmwareError),
     GuestMemoryWrite(vm_memory::GuestMemoryError),
     GuestMemoryRead(vm_memory::GuestMemoryError),
-    LaunchStart(std::io::Error),
-    LaunchUpdate(std::io::Error),
-    LaunchFinish(std::io::Error),
+    LaunchStart(SevFirmwareError),
+    LaunchUpdate(SevFirmwareError),
+    LaunchFinish(SevFirmwareError),
     MemoryEncryptRegion,
     OpenFirmware(std::io::Error),
 }
@@ -84,30 +87,17 @@ impl AmdSnp {
     pub fn vm_prepare(
         &self,
         vm_fd: &VmFd,
-        guest_mem: &GuestMemoryMmap,
+        _guest_mem: &GuestMemoryMmap,
     ) -> Result<Launcher<Started, RawFd, RawFd>, Error> {
         let vm_rfd = vm_fd.as_raw_fd();
         let fw_rfd = self.fw.as_raw_fd();
 
         let launcher = Launcher::new(vm_rfd, fw_rfd).map_err(Error::CreateLauncher)?;
 
-        for region in guest_mem.iter() {
-            // It's safe to unwrap because the guest address is valid.
-            let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
-            let enc_region = kvm_enc_region {
-                addr: host_addr as u64,
-                size: region.len(),
-            };
-
-            vm_fd
-                .register_enc_memory_region(&enc_region)
-                .map_err(|_| Error::MemoryEncryptRegion)?;
-        }
-
         let mut policy = GuestPolicy(0);
         policy.set_smt_allowed(1);
 
-        let start = Start::new(None, policy, false, [0; 16]);
+        let start = Start::new(policy, [0; 16]);
 
         let launcher = launcher.start(start).map_err(Error::LaunchStart)?;
 
@@ -281,7 +271,6 @@ impl AmdSnp {
         launcher: &mut Launcher<Started, RawFd, RawFd>,
         page_type: PageType,
     ) -> Result<(), Error> {
-        let dp = VmplPerms::empty();
         let ga = GuestAddress(region.guest_addr);
 
         /*
@@ -296,15 +285,11 @@ impl AmdSnp {
         let ptr = bytes.ptr_guard().as_ptr();
         let slice: &[u8] = unsafe { slice::from_raw_parts(ptr, region.size) };
 
-        let update = Update::new(
-            region.guest_addr >> 12,
-            slice,
-            false,
-            page_type,
-            (dp, dp, dp),
-        );
+        let update = Update::new(region.guest_addr >> 12, slice, page_type);
 
-        launcher.update_data(update).map_err(Error::LaunchUpdate)
+        launcher
+            .update_data(update, ga.0, region.size.try_into().unwrap())
+            .map_err(Error::LaunchUpdate)
     }
 
     pub fn vm_measure(
