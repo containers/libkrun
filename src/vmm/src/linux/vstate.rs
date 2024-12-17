@@ -49,7 +49,10 @@ use kvm_bindings::{
 };
 
 #[cfg(feature = "amd-sev")]
-use kvm_bindings::{kvm_create_guest_memfd, kvm_userspace_memory_region2, KVM_MEM_GUEST_MEMFD};
+use kvm_bindings::{
+    kvm_create_guest_memfd, kvm_memory_attributes, kvm_userspace_memory_region2,
+    KVM_MEM_GUEST_MEMFD,
+};
 
 use kvm_bindings::KVM_API_VERSION;
 use kvm_ioctls::*;
@@ -118,6 +121,9 @@ pub enum Error {
     SetUserMemoryRegion(kvm_ioctls::Error),
     /// Error creating memory map for SHM region.
     ShmMmap(io::Error),
+    #[cfg(feature = "amd-sev")]
+    /// Error setting KVM memory attributes of a region.
+    SetMemoryAttributes(kvm_ioctls::Error),
     #[cfg(feature = "amd-sev")]
     /// Error initializing the Secure Virtualization Backend (SEV).
     SevSecVirtInit(SevError),
@@ -278,6 +284,10 @@ impl Display for Error {
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
             ShmMmap(e) => write!(f, "Error creating memory map for SHM region: {e}"),
+            #[cfg(feature = "amd-sev")]
+            SetMemoryAttributes(e) => {
+                write!(f, "Error setting KVM memory attributes of a region: {e}")
+            }
             #[cfg(feature = "tee")]
             SevSecVirtInit(e) => {
                 write!(
@@ -623,6 +633,18 @@ impl Vm {
             unsafe {
                 self.fd.set_user_memory_region2(memory_region).unwrap();
             }
+
+            let attr = kvm_memory_attributes {
+                address: region.start_addr().raw_value(),
+                size: region.len(),
+                // KVM_MEMORY_ATTRIBUTE_PRIVATE,
+                attributes: 1 << 3,
+                flags: 0,
+            };
+
+            self.fd
+                .set_memory_attributes(attr)
+                .map_err(Error::SetMemoryAttributes)?;
 
             self.next_mem_slot += 1;
         }
