@@ -208,6 +208,7 @@ impl Vmm {
         device_type: DeviceType,
         device_id: &str,
     ) -> Option<&Mutex<dyn BusDevice>> {
+        println!("device id: {}", device_id);
         self.mmio_device_manager.get_device(device_type, device_id)
     }
 

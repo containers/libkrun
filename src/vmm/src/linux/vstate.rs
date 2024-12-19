@@ -1363,19 +1363,21 @@ impl Vcpu {
     ///
     /// Returns error or enum specifying whether emulation was handled or interrupted.
     fn run_emulation(&mut self) -> Result<VcpuEmulation> {
-        println!("Running emulation");
+        // println!("Running emulation");
         match self.fd.run() {
             Ok(run) => match run {
                 #[cfg(target_arch = "x86_64")]
                 VcpuExit::IoIn(addr, data) => {
-                    println!("IO IN");
+                    // println!("IO IN");
                     self.io_bus.read(0, u64::from(addr), data);
+                    // println!("{:?}", data);
                     Ok(VcpuEmulation::Handled)
                 }
                 #[cfg(target_arch = "x86_64")]
                 VcpuExit::IoOut(addr, data) => {
-                    println!("IO OUT");
+                    // println!("IO OUT");
                     self.io_bus.write(0, u64::from(addr), data);
+                    // print!("{}", String::from_utf8_lossy(data));
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::MmioRead(addr, data) => {

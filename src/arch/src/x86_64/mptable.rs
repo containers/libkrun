@@ -195,6 +195,7 @@ pub fn setup_mptable(mem: &GuestMemoryMmap, num_cpus: u8) -> Result<()> {
         let mut mpc_bus = MpcBusWrapper(mpspec::mpc_bus::default());
         mpc_bus.0.type_ = mpspec::MP_BUS as u8;
         mpc_bus.0.busid = 0;
+        panic!("hi");
         mpc_bus.0.bustype = BUS_TYPE_ISA;
         mem.write_obj(mpc_bus, base_mp)
             .map_err(|_| Error::WriteMpcBus)?;

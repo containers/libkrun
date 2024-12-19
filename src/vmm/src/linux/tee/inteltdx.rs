@@ -33,7 +33,7 @@ pub struct IntelTdx {
 impl IntelTdx {
     pub fn new(vm_fd: &VmFd) -> Result<Self, Error> {
         // FIXME(jakecorrenti): need to specify the max number of VCPUs here and not just assume 100. This should come from the VmResources that we set when doing krun_set_vm_config()
-        let vm = TdxVm::new(vm_fd, 100).or_else(|_| return Err(Error::CreateTdxVmStruct))?;
+        let vm = TdxVm::new(vm_fd, 1).or_else(|_| return Err(Error::CreateTdxVmStruct))?;
         let caps = vm
             .get_capabilities(vm_fd)
             .or_else(|_| return Err(Error::GetCapabilities))?;
@@ -117,14 +117,14 @@ impl IntelTdx {
 
         tdx_ram_entries.sort_by(|a, b| a.address.cmp(&b.address));
 
-        //for entry in &tdx_firmware_entries {
-        //    match entry.r#type {
-        //        TdvfSectionType::TdHob => {
-        //            tdvf_hob_create(&entry, &tdx_ram_entries, guest_mem).unwrap()
-        //        }
-        //        _ => (),
-        //    }
-        //}
+        for entry in &tdx_firmware_entries {
+            match entry.r#type {
+                TdvfSectionType::TdHob => {
+                    tdvf_hob_create(&entry, &tdx_ram_entries, guest_mem).unwrap()
+                }
+                _ => (),
+            }
+        }
 
         for section in &tdx_firmware_entries {
             // TODO: we should be checking to see if the KVM_CAP_MEMORY_MAPPING capability is
