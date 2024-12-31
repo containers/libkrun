@@ -59,7 +59,7 @@ impl Vsock {
         cid: u64,
         host_port_map: Option<HashMap<u16, u16>>,
         queues: Vec<VirtQueue>,
-        unix_ipc_port_map: Option<HashMap<u32, PathBuf>>,
+        unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
     ) -> super::Result<Vsock> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
@@ -103,7 +103,7 @@ impl Vsock {
     pub fn new(
         cid: u64,
         host_port_map: Option<HashMap<u16, u16>>,
-        unix_ipc_port_map: Option<HashMap<u32, PathBuf>>,
+        unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
     ) -> super::Result<Vsock> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
             .iter()

@@ -42,11 +42,18 @@ pub enum ProxyRemoval {
 }
 
 #[derive(Default)]
+pub enum NewProxyType {
+    #[default]
+    Tcp,
+    Unix,
+}
+
+#[derive(Default)]
 pub struct ProxyUpdate {
     pub signal_queue: bool,
     pub remove_proxy: ProxyRemoval,
     pub polling: Option<(u64, RawFd, EventSet)>,
-    pub new_proxy: Option<(u32, RawFd)>,
+    pub new_proxy: Option<(u32, RawFd, NewProxyType)>,
     pub push_accept: Option<(u64, u64)>,
     pub push_credit_req: Option<MuxerRx>,
 }

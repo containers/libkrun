@@ -111,7 +111,7 @@ pub struct VsockMuxer {
     irq_line: Option<u32>,
     proxy_map: ProxyMap,
     reaper_sender: Option<Sender<u64>>,
-    unix_ipc_port_map: Option<HashMap<u32, PathBuf>>,
+    unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
 }
 
 impl VsockMuxer {
@@ -120,7 +120,7 @@ impl VsockMuxer {
         host_port_map: Option<HashMap<u16, u16>>,
         interrupt_evt: EventFd,
         interrupt_status: Arc<AtomicUsize>,
-        unix_ipc_port_map: Option<HashMap<u32, PathBuf>>,
+        unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
     ) -> Self {
         VsockMuxer {
             cid,
@@ -179,6 +179,7 @@ impl VsockMuxer {
             intc,
             irq_line,
             sender.clone(),
+            self.unix_ipc_port_map.clone().unwrap_or_default(),
         );
         thread.run();
 
@@ -499,9 +500,18 @@ impl VsockMuxer {
         if let Some(proxy) = proxy_map.get(&id) {
             proxy.lock().unwrap().confirm_connect(pkt)
         } else if let Some(ref mut ipc_map) = &mut self.unix_ipc_port_map {
-            if let Some(path) = ipc_map.get(&pkt.dst_port()) {
+            if let Some((path, listen)) = ipc_map.get(&pkt.dst_port()) {
                 let mem = self.mem.as_ref().unwrap();
                 let queue = self.queue.as_ref().unwrap();
+                if *listen {
+                    warn!("vsock: Attempting to connect a socket that is listening, sending rst");
+                    let rx = MuxerRx::Reset {
+                        local_port: pkt.dst_port(),
+                        peer_port: pkt.src_port(),
+                    };
+                    push_packet(self.cid, rx, &self.rxq, queue, mem);
+                    return;
+                }
                 let rxq = self.rxq.clone();
 
                 let mut unix = UnixProxy::new(
