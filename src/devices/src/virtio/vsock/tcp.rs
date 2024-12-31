@@ -21,7 +21,9 @@ use super::muxer_rxq::MuxerRxQ;
 use super::packet::{
     TsiAcceptReq, TsiConnectReq, TsiGetnameRsp, TsiListenReq, TsiSendtoAddr, VsockPacket,
 };
-use super::proxy::{Proxy, ProxyError, ProxyRemoval, ProxyStatus, ProxyUpdate, RecvPkt};
+use super::proxy::{
+    NewProxyType, Proxy, ProxyError, ProxyRemoval, ProxyStatus, ProxyUpdate, RecvPkt,
+};
 use utils::epoll::EventSet;
 
 use vm_memory::GuestMemoryMmap;
@@ -729,7 +731,7 @@ impl Proxy for TcpProxy {
             {
                 match accept(self.fd) {
                     Ok(accept_fd) => {
-                        update.new_proxy = Some((self.peer_port, accept_fd));
+                        update.new_proxy = Some((self.peer_port, accept_fd, NewProxyType::Tcp));
                     }
                     Err(e) => warn!("error accepting connection: id={}, err={}", self.id, e),
                 };

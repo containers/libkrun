@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::os::unix::io::RawFd;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -8,9 +10,11 @@ use super::super::Queue as VirtQueue;
 use super::super::VIRTIO_MMIO_INT_VRING;
 use super::muxer::{push_packet, MuxerRx, ProxyMap};
 use super::muxer_rxq::MuxerRxQ;
-use super::proxy::{ProxyRemoval, ProxyUpdate};
+use super::proxy::{NewProxyType, Proxy, ProxyRemoval, ProxyUpdate};
 use super::tcp::TcpProxy;
 
+use crate::virtio::vsock::defs;
+use crate::virtio::vsock::unix::{UnixAcceptorProxy, UnixProxy};
 use crossbeam_channel::Sender;
 use rand::{rngs::ThreadRng, thread_rng, Rng};
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
@@ -29,6 +33,7 @@ pub struct MuxerThread {
     intc: Option<GicV3>,
     irq_line: Option<u32>,
     reaper_sender: Sender<u64>,
+    unix_ipc_port_map: HashMap<u32, (PathBuf, bool)>,
 }
 
 impl MuxerThread {
@@ -45,6 +50,7 @@ impl MuxerThread {
         intc: Option<GicV3>,
         irq_line: Option<u32>,
         reaper_sender: Sender<u64>,
+        unix_ipc_port_map: HashMap<u32, (PathBuf, bool)>,
     ) -> Self {
         MuxerThread {
             cid,
@@ -58,6 +64,7 @@ impl MuxerThread {
             intc,
             irq_line,
             reaper_sender,
+            unix_ipc_port_map,
         }
     }
 
@@ -111,24 +118,36 @@ impl MuxerThread {
 
         let mut should_signal = update.signal_queue;
 
-        if let Some((peer_port, accept_fd)) = update.new_proxy {
+        if let Some((peer_port, accept_fd, proxy_type)) = update.new_proxy {
             let local_port: u32 = thread_rng.gen_range(1024..u32::MAX);
             let new_id: u64 = (peer_port as u64) << 32 | local_port as u64;
-            let new_proxy = TcpProxy::new_reverse(
-                new_id,
-                self.cid,
-                id,
-                local_port,
-                peer_port,
-                accept_fd,
-                self.mem.clone(),
-                self.queue.clone(),
-                self.rxq.clone(),
-            );
+            let new_proxy: Box<dyn Proxy> = match proxy_type {
+                NewProxyType::Tcp => Box::new(TcpProxy::new_reverse(
+                    new_id,
+                    self.cid,
+                    id,
+                    local_port,
+                    peer_port,
+                    accept_fd,
+                    self.mem.clone(),
+                    self.queue.clone(),
+                    self.rxq.clone(),
+                )),
+                NewProxyType::Unix => Box::new(UnixProxy::new_reverse(
+                    new_id,
+                    self.cid,
+                    local_port,
+                    peer_port,
+                    accept_fd,
+                    self.mem.clone(),
+                    self.queue.clone(),
+                    self.rxq.clone(),
+                )),
+            };
             self.proxy_map
                 .write()
                 .unwrap()
-                .insert(new_id, Mutex::new(Box::new(new_proxy)));
+                .insert(new_id, Mutex::new(new_proxy));
             if let Some(proxy) = self.proxy_map.read().unwrap().get(&new_id) {
                 proxy.lock().unwrap().push_op_request();
             };
@@ -147,8 +166,32 @@ impl MuxerThread {
         }
     }
 
+    fn create_lisening_ipc_sockets(&self) {
+        for (port, (path, do_listen)) in &self.unix_ipc_port_map {
+            if !do_listen {
+                continue;
+            }
+            let id = (*port as u64) << 32 | defs::TSI_PROXY_PORT as u64;
+            let proxy = match UnixAcceptorProxy::new(id, path, *port) {
+                Ok(proxy) => proxy,
+                Err(e) => {
+                    warn!("Failed to create listening proxy at {:?}: {:?}", path, e);
+                    continue;
+                }
+            };
+            self.proxy_map
+                .write()
+                .unwrap()
+                .insert(id, Mutex::new(Box::new(proxy)));
+            if let Some(proxy) = self.proxy_map.read().unwrap().get(&id) {
+                self.update_polling(id, proxy.lock().unwrap().as_raw_fd(), EventSet::IN);
+            };
+        }
+    }
+
     fn work(self) {
         let mut thread_rng = thread_rng();
+        self.create_lisening_ipc_sockets();
         loop {
             let mut epoll_events = vec![EpollEvent::new(EventSet::empty(), 0); 32];
             match self
