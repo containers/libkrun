@@ -39,7 +39,7 @@ pub struct VsockDeviceConfig {
     /// An optional map of host to guest port mappings.
     pub host_port_map: Option<HashMap<u16, u16>>,
     /// An optional map of guest port to host UNIX domain sockets for IPC.
-    pub unix_ipc_port_map: Option<HashMap<u32, PathBuf>>,
+    pub unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
 }
 
 struct VsockWrapper {

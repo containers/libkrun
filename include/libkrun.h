@@ -441,6 +441,21 @@ int32_t krun_set_tee_config_file(uint32_t ctx_id, const char *filepath);
 int32_t krun_add_vsock_port(uint32_t ctx_id,
                             uint32_t port,
                             const char *c_filepath);
+
+/**
+ * Adds a port-path pairing for guest IPC with a process in the host.
+ *
+ * Arguments:
+ *  "ctx_id"    - the configuration context ID.
+ *  "port"      - a vsock port that the guest will connect to for IPC.
+ *  "filepath"  - a null-terminated string representing the path of the UNIX
+ *                socket in the host.
+ *  "listen"    - true if guest expects connections to be initiated from host side
+ */
+int32_t krun_add_vsock_port2(uint32_t ctx_id,
+                             uint32_t port,
+                             const char *c_filepath,
+                             bool listen);
 /**
  * Returns the eventfd file descriptor to signal the guest to shut down orderly. This must be
  * called before starting the microVM with "krun_start_event". Only available in libkrun-efi.

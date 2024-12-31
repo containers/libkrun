@@ -95,7 +95,7 @@ struct ContextConfig {
     data_block_cfg: Option<BlockDeviceConfig>,
     #[cfg(feature = "tee")]
     tee_config_file: Option<PathBuf>,
-    unix_ipc_port_map: Option<HashMap<u32, PathBuf>>,
+    unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
     shutdown_efd: Option<EventFd>,
     gpu_virgl_flags: Option<u32>,
     gpu_shm_size: Option<usize>,
@@ -220,12 +220,12 @@ impl ContextConfig {
         self.tee_config_file.clone()
     }
 
-    fn add_vsock_port(&mut self, port: u32, filepath: PathBuf) {
+    fn add_vsock_port(&mut self, port: u32, filepath: PathBuf, listen: bool) {
         if let Some(ref mut map) = &mut self.unix_ipc_port_map {
-            map.insert(port, filepath);
+            map.insert(port, (filepath, listen));
         } else {
-            let mut map: HashMap<u32, PathBuf> = HashMap::new();
-            map.insert(port, filepath);
+            let mut map: HashMap<u32, (PathBuf, bool)> = HashMap::new();
+            map.insert(port, (filepath, listen));
             self.unix_ipc_port_map = Some(map);
         }
     }
@@ -934,15 +934,34 @@ pub unsafe extern "C" fn krun_add_vsock_port(
     port: u32,
     c_filepath: *const c_char,
 ) -> i32 {
+    krun_add_vsock_port2(ctx_id, port, c_filepath, false)
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_vsock_port2(
+    ctx_id: u32,
+    port: u32,
+    c_filepath: *const c_char,
+    listen: bool,
+) -> i32 {
     let filepath = match CStr::from_ptr(c_filepath).to_str() {
-        Ok(f) => f,
+        Ok(f) => PathBuf::from(f.to_string()),
         Err(_) => return -libc::EINVAL,
     };
+
+    if listen {
+        match filepath.try_exists() {
+            Ok(true) => return -libc::EEXIST,
+            Err(_) => return -libc::EINVAL,
+            _ => {}
+        }
+    }
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            cfg.add_vsock_port(port, PathBuf::from(filepath.to_string()));
+            cfg.add_vsock_port(port, filepath, listen);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
