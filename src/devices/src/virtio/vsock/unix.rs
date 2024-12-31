@@ -3,18 +3,17 @@ use super::{
     proxy::{ProxyRemoval, RecvPkt},
 };
 
+use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use nix::sys::socket::{
+    accept, bind, connect, listen, recv, send, setsockopt, shutdown, socket, sockopt,
+    AddressFamily, MsgFlags, Shutdown, SockFlag, SockType, UnixAddr,
+};
+use nix::unistd::close;
 use std::collections::HashMap;
 use std::num::Wrapping;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
-use nix::sys::socket::{
-    accept, connect, recv, send, setsockopt, shutdown, socket, sockopt, AddressFamily, MsgFlags,
-    Shutdown, SockFlag, SockType, UnixAddr,
-};
-use nix::unistd::close;
 
 #[cfg(target_os = "macos")]
 use super::super::linux_errno::linux_errno_raw;
@@ -22,7 +21,7 @@ use super::super::Queue as VirtQueue;
 use super::muxer::{push_packet, MuxerRx};
 use super::muxer_rxq::MuxerRxQ;
 use super::packet::{TsiAcceptReq, TsiConnectReq, TsiListenReq, TsiSendtoAddr, VsockPacket};
-use super::proxy::{Proxy, ProxyError, ProxyStatus, ProxyUpdate};
+use super::proxy::{NewProxyType, Proxy, ProxyError, ProxyStatus, ProxyUpdate};
 use utils::epoll::EventSet;
 
 use vm_memory::GuestMemoryMmap;
@@ -47,6 +46,47 @@ pub struct UnixProxy {
     rx_cnt: Wrapping<u32>,
 }
 
+fn proxy_fd_create(id: u64) -> Result<RawFd, ProxyError> {
+    let fd = socket(
+        AddressFamily::Unix,
+        SockType::Stream,
+        SockFlag::empty(),
+        None,
+    )
+    .map_err(ProxyError::CreatingSocket)?;
+
+    // macOS forces us to do this here instead of just using SockFlag::SOCK_NONBLOCK above.
+    match fcntl(fd, FcntlArg::F_GETFL) {
+        Ok(flags) => match OFlag::from_bits(flags) {
+            Some(flags) => {
+                if let Err(e) = fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)) {
+                    warn!("error switching to non-blocking: id={}, err={}", id, e);
+                }
+            }
+            None => error!("invalid fd flags id={}", id),
+        },
+        Err(e) => error!("couldn't obtain fd flags id={}, err={}", id, e),
+    };
+
+    setsockopt(fd, sockopt::ReusePort, &true).map_err(ProxyError::SettingReusePort)?;
+    #[cfg(target_os = "macos")]
+    {
+        // nix doesn't provide an abstraction for SO_NOSIGPIPE, fall back to libc.
+        let option_value: libc::c_int = 1;
+        unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_NOSIGPIPE,
+                &option_value as *const _ as *const libc::c_void,
+                std::mem::size_of_val(&option_value) as libc::socklen_t,
+            )
+        };
+    }
+
+    Ok(fd)
+}
+
 impl UnixProxy {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -59,42 +99,7 @@ impl UnixProxy {
         rxq: Arc<Mutex<MuxerRxQ>>,
         path: PathBuf,
     ) -> Result<Self, ProxyError> {
-        let fd = socket(
-            AddressFamily::Unix,
-            SockType::Stream,
-            SockFlag::empty(),
-            None,
-        )
-        .map_err(ProxyError::CreatingSocket)?;
-
-        // macOS forces us to do this here instead of just using SockFlag::SOCK_NONBLOCK above.
-        match fcntl(fd, FcntlArg::F_GETFL) {
-            Ok(flags) => match OFlag::from_bits(flags) {
-                Some(flags) => {
-                    if let Err(e) = fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)) {
-                        warn!("error switching to non-blocking: id={}, err={}", id, e);
-                    }
-                }
-                None => error!("invalid fd flags id={}", id),
-            },
-            Err(e) => error!("couldn't obtain fd flags id={}, err={}", id, e),
-        };
-
-        setsockopt(fd, sockopt::ReusePort, &true).map_err(ProxyError::SettingReusePort)?;
-        #[cfg(target_os = "macos")]
-        {
-            // nix doesn't provide an abstraction for SO_NOSIGPIPE, fall back to libc.
-            let option_value: libc::c_int = 1;
-            unsafe {
-                libc::setsockopt(
-                    fd,
-                    libc::SOL_SOCKET,
-                    libc::SO_NOSIGPIPE,
-                    &option_value as *const _ as *const libc::c_void,
-                    std::mem::size_of_val(&option_value) as libc::socklen_t,
-                )
-            };
-        }
+        let fd = proxy_fd_create(id)?;
 
         Ok(UnixProxy {
             id,
@@ -115,6 +120,42 @@ impl UnixProxy {
             push_cnt: Wrapping(0),
             rx_cnt: Wrapping(0),
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_reverse(
+        id: u64,
+        cid: u64,
+        local_port: u32,
+        peer_port: u32,
+        fd: RawFd,
+        mem: GuestMemoryMmap,
+        queue: Arc<Mutex<VirtQueue>>,
+        rxq: Arc<Mutex<MuxerRxQ>>,
+    ) -> Self {
+        debug!(
+            "new_reverse: id={} local_port={} peer_port={}",
+            id, local_port, peer_port
+        );
+        UnixProxy {
+            id,
+            cid,
+            local_port,
+            peer_port,
+            control_port: 0,
+            fd,
+            status: ProxyStatus::ReverseInit,
+            mem,
+            queue,
+            rxq,
+            rx_cnt: Wrapping(0),
+            tx_cnt: Wrapping(0),
+            last_tx_cnt_sent: Wrapping(0),
+            peer_buf_alloc: 0,
+            peer_fwd_cnt: Wrapping(0),
+            push_cnt: Wrapping(0),
+            path: Default::default(),
+        }
     }
 
     fn switch_to_connected(&mut self) {
@@ -434,11 +475,36 @@ impl Proxy for UnixProxy {
     }
 
     fn push_op_request(&self) {
-        todo!();
+        debug!(
+            "push_op_request: id={}, local_port={} peer_port={}",
+            self.id, self.local_port, self.peer_port
+        );
+
+        // This packet goes to the connection.
+        let rx = MuxerRx::OpRequest {
+            local_port: self.local_port,
+            peer_port: self.peer_port,
+        };
+        push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
     }
 
-    fn process_op_response(&mut self, _pkt: &VsockPacket) -> ProxyUpdate {
-        todo!();
+    fn process_op_response(&mut self, pkt: &VsockPacket) -> ProxyUpdate {
+        debug!(
+            "process_op_response: id={} src_port={} dst_port={}",
+            self.id,
+            pkt.src_port(),
+            pkt.dst_port()
+        );
+
+        self.peer_buf_alloc = pkt.buf_alloc();
+        self.peer_fwd_cnt = Wrapping(pkt.fwd_cnt());
+
+        self.switch_to_connected();
+
+        ProxyUpdate {
+            polling: Some((self.id, self.fd, EventSet::IN)),
+            ..Default::default()
+        }
     }
 
     fn enqueue_accept(&mut self) {
@@ -467,11 +533,7 @@ impl Proxy for UnixProxy {
             "release: id={}, tx_cnt={}, last_tx_cnt={}",
             self.id, self.tx_cnt, self.last_tx_cnt_sent
         );
-        let remove_proxy = if self.status == ProxyStatus::Listening {
-            ProxyRemoval::Immediate
-        } else {
-            ProxyRemoval::Deferred
-        };
+        let remove_proxy = ProxyRemoval::Deferred;
 
         ProxyUpdate {
             remove_proxy,
@@ -494,11 +556,7 @@ impl Proxy for UnixProxy {
             self.status = ProxyStatus::Closed;
             update.polling = Some((self.id, self.fd, EventSet::empty()));
             update.signal_queue = true;
-            update.remove_proxy = if self.status == ProxyStatus::Listening {
-                ProxyRemoval::Immediate
-            } else {
-                ProxyRemoval::Deferred
-            };
+            update.remove_proxy = ProxyRemoval::Deferred;
 
             return update;
         }
@@ -533,17 +591,6 @@ impl Proxy for UnixProxy {
                     debug!("process_event: WaitingCreditUpdate");
                     update.polling = Some((self.id(), self.fd, EventSet::empty()));
                 }
-            } else if self.status == ProxyStatus::Listening
-                || self.status == ProxyStatus::WaitingOnAccept
-            {
-                match accept(self.fd) {
-                    Ok(accept_fd) => {
-                        update.new_proxy = Some((self.peer_port, accept_fd));
-                    }
-                    Err(e) => warn!("error accepting connection: id={}, err={}", self.id, e),
-                };
-                update.signal_queue = true;
-                return update;
             } else {
                 debug!(
                     "vsock::tcp: EventSet::IN while not connected: {:?}",
@@ -575,6 +622,107 @@ impl AsRawFd for UnixProxy {
 }
 
 impl Drop for UnixProxy {
+    fn drop(&mut self) {
+        if let Err(e) = close(self.fd) {
+            warn!("error closing proxy fd: {}", e);
+        }
+    }
+}
+
+pub struct UnixAcceptorProxy {
+    id: u64,
+    fd: RawFd,
+    peer_port: u32,
+}
+
+impl UnixAcceptorProxy {
+    pub fn new(id: u64, path: &PathBuf, peer_port: u32) -> Result<Self, ProxyError> {
+        let fd = socket(
+            AddressFamily::Unix,
+            SockType::Stream,
+            SockFlag::empty(),
+            None,
+        )
+        .map_err(ProxyError::CreatingSocket)?;
+        bind(
+            fd,
+            &UnixAddr::new(path).map_err(ProxyError::CreatingSocket)?,
+        )
+        .map_err(ProxyError::CreatingSocket)?;
+        listen(fd, 5).map_err(ProxyError::CreatingSocket)?;
+        Ok(UnixAcceptorProxy { id, fd, peer_port })
+    }
+}
+
+impl Proxy for UnixAcceptorProxy {
+    fn id(&self) -> u64 {
+        self.id
+    }
+    fn status(&self) -> ProxyStatus {
+        ProxyStatus::WaitingOnAccept
+    }
+    fn connect(&mut self, _: &VsockPacket, _: TsiConnectReq) -> ProxyUpdate {
+        unreachable!()
+    }
+    fn getpeername(&mut self, _: &VsockPacket) {
+        unreachable!()
+    }
+    fn sendmsg(&mut self, _: &VsockPacket) -> ProxyUpdate {
+        unreachable!()
+    }
+    fn sendto_addr(&mut self, _: TsiSendtoAddr) -> ProxyUpdate {
+        unreachable!()
+    }
+    fn listen(
+        &mut self,
+        _: &VsockPacket,
+        _: TsiListenReq,
+        _: &Option<HashMap<u16, u16>>,
+    ) -> ProxyUpdate {
+        unreachable!()
+    }
+    fn accept(&mut self, _: TsiAcceptReq) -> ProxyUpdate {
+        unreachable!()
+    }
+    fn update_peer_credit(&mut self, _: &VsockPacket) -> ProxyUpdate {
+        unreachable!()
+    }
+    fn process_op_response(&mut self, _: &VsockPacket) -> ProxyUpdate {
+        unreachable!()
+    }
+    fn release(&mut self) -> ProxyUpdate {
+        unreachable!()
+    }
+    fn process_event(&mut self, evset: EventSet) -> ProxyUpdate {
+        let mut update = ProxyUpdate::default();
+
+        if evset.contains(EventSet::HANG_UP) {
+            debug!("process_event: HANG_UP");
+            update.polling = Some((self.id, self.fd, EventSet::empty()));
+            update.signal_queue = true;
+            update.remove_proxy = ProxyRemoval::Deferred;
+            return update;
+        }
+        if evset.contains(EventSet::IN) {
+            match accept(self.fd) {
+                Ok(accept_fd) => {
+                    update.new_proxy = Some((self.peer_port, accept_fd, NewProxyType::Unix));
+                }
+                Err(e) => warn!("error accepting connection: id={}, err={}", self.id, e),
+            };
+            update.signal_queue = true;
+        }
+        update
+    }
+}
+
+impl AsRawFd for UnixAcceptorProxy {
+    fn as_raw_fd(&self) -> RawFd {
+        self.fd
+    }
+}
+
+impl Drop for UnixAcceptorProxy {
     fn drop(&mut self) {
         if let Err(e) = close(self.fd) {
             warn!("error closing proxy fd: {}", e);
