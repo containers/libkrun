@@ -723,7 +723,8 @@ impl Vm {
     #[cfg(feature = "intel-tdx")]
     pub fn tdx_secure_virt_get_tdvf_hob_section_address(&self) -> Result<u64> {
         match &self.tdx {
-            Some(t) => t.get_tdvf_hob_address().map_err(Error::TdxSecVirtPrepare),
+            // Some(t) => t.get_tdvf_hob_address().map_err(Error::TdxSecVirtPrepare),
+            Some(t) => Ok(0),
             None => Err(Error::InvalidTee),
         }
     }
@@ -731,13 +732,15 @@ impl Vm {
     #[cfg(feature = "intel-tdx")]
     pub fn tdx_secure_virt_prepare_memory(
         &self,
-        guest_mem: &mut GuestMemoryMmap,
-        ram_entries: &mut Vec<arch_gen::x86::bootparam::e820entry>,
-        nr_ram_entries: &mut u64,
+        // guest_mem: &mut GuestMemoryMmap,
+        // ram_entries: &mut Vec<arch_gen::x86::bootparam::e820entry>,
+        // nr_ram_entries: &mut u64,
+        regions: &Vec<crate::vstate::MeasuredRegion>,
     ) -> Result<()> {
         match &self.tdx {
             Some(t) => t
-                .configure_td_memory(&self.fd, guest_mem, ram_entries, nr_ram_entries)
+                // .configure_td_memory(&self.fd, guest_mem, ram_entries, nr_ram_entries)
+                .configure_td_memory(&self.fd, &regions)
                 .map_err(Error::TdxSecVirtPrepare),
             None => Err(Error::InvalidTee),
         }

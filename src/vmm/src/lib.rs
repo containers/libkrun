@@ -287,14 +287,14 @@ impl Vmm {
             )
             .map_err(Error::ConfigureSystem)?;
 
-            #[cfg(feature = "intel-tdx")]
-            self.vm
-                .tdx_secure_virt_prepare_memory(
-                    &mut self.guest_memory,
-                    ram_entries,
-                    &mut (*nr_ram_entries as u64),
-                )
-                .unwrap();
+            // #[cfg(feature = "intel-tdx")]
+            // self.vm
+            //     .tdx_secure_virt_prepare_memory(
+            //         &mut self.guest_memory,
+            //         ram_entries,
+            //         &mut (*nr_ram_entries as u64),
+            //     )
+            //     .unwrap();
         }
 
         #[cfg(all(target_arch = "aarch64", target_os = "linux"))]

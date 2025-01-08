@@ -73,82 +73,106 @@ impl IntelTdx {
         Err(Error::MissingHobTdvfSection)
     }
 
-    pub fn configure_td_memory(
-        &self,
-        fd: &kvm_ioctls::VmFd,
-        guest_mem: &mut GuestMemoryMmap,
-        ram_entries: &mut Vec<e820entry>,
-        nr_ram_entries: &mut u64,
-    ) -> Result<(), Error> {
-        let mut tdx_firmware_entries: Vec<TdxFirmwareEntry> = self
-            .tdvf_sections
-            .iter()
-            .map(|&s| TdxFirmwareEntry {
-                data_offset: s.data_offset,
-                data_len: s.raw_data_size,
-                address: s.memory_address,
-                size: s.memory_data_size,
-                r#type: s.section_type,
-                attributes: s.attributes,
-                mem_ptr: guest_mem
-                    .get_host_address(vm_memory::GuestAddress(s.memory_address))
-                    .unwrap() as u64,
-            })
-            .collect();
-
-        let mut tdx_ram_entries = tdx_init_ram_entries(&ram_entries[0..(*nr_ram_entries as usize)]);
-        let mut tdx_ram_entries = vec![TdxRamEntry {
-            address: 0,
-            length: 0x8000_0000,
-            r#type: TdxRamType::TdxRamUnaccepted,
-        }];
-
-        for entry in &tdx_firmware_entries {
-            match entry.r#type {
-                TdvfSectionType::TempMem | TdvfSectionType::TdHob => {
-                    let ret = tdx_accept_ram_range(&mut tdx_ram_entries, entry.address, entry.size);
-                    if ret < 0 {
-                        panic!("unable to accept ram range");
-                    }
+    pub fn configure_td_memory(&self, fd: &kvm_ioctls::VmFd, regions: &Vec<crate::vstate::MeasuredRegion>) -> Result<(), Error> {
+        for region in regions {
+            println!("adding region: {:#?}", region);
+            let ext = if arch::BIOS_START == region.guest_addr {
+                1
+            } else {
+                0
+            };
+            // loop {
+                match self.vm.init_mem_region(fd, region.guest_addr, (region.size / 4096) as u64, ext, region.host_addr) {
+                    Err(e) => if e.code == 11 {
+                        // continue
+                    } else {
+                        panic!("error: {:#?}", e)
+                    },
+                    // _ => break,
+                    _ => (),
                 }
-                _ => (),
-            }
+            // }
         }
-
-        tdx_ram_entries.sort_by(|a, b| a.address.cmp(&b.address));
-
-        for entry in &tdx_firmware_entries {
-            match entry.r#type {
-                TdvfSectionType::TdHob => {
-                    tdvf_hob_create(&entry, &tdx_ram_entries, guest_mem).unwrap()
-                }
-                _ => (),
-            }
-        }
-
-        for section in &tdx_firmware_entries {
-            // TODO: we should be checking to see if the KVM_CAP_MEMORY_MAPPING capability is
-            // enabled, but for now just assume its not
-            self.vm
-                .init_mem_region(
-                    fd,
-                    section.address,
-                    section.size / 4096,
-                    // FIXME: instead of checking the section type we should be checking the
-                    // attributes to see if the feature is set to extend the measurement
-                    section.attributes & 1,
-                    guest_mem
-                        .get_host_address(vm_memory::GuestAddress(section.address))
-                        .unwrap() as u64,
-                )
-                .unwrap();
-
-            // TODO: if the entry is of type TD_HOB or TEMP_MEM then we need to unmap the memory
-            // and set the mem_ptr to NULL (or 0 in this case)
-        }
-
+        
         Ok(())
     }
+
+    // pub fn configure_td_memory(
+    //     &self,
+    //     fd: &kvm_ioctls::VmFd,
+    //     guest_mem: &mut GuestMemoryMmap,
+    //     ram_entries: &mut Vec<e820entry>,
+    //     nr_ram_entries: &mut u64,
+    // ) -> Result<(), Error> {
+    //     let mut tdx_firmware_entries: Vec<TdxFirmwareEntry> = self
+    //         .tdvf_sections
+    //         .iter()
+    //         .map(|&s| TdxFirmwareEntry {
+    //             data_offset: s.data_offset,
+    //             data_len: s.raw_data_size,
+    //             address: s.memory_address,
+    //             size: s.memory_data_size,
+    //             r#type: s.section_type,
+    //             attributes: s.attributes,
+    //             mem_ptr: guest_mem
+    //                 .get_host_address(vm_memory::GuestAddress(s.memory_address))
+    //                 .unwrap() as u64,
+    //         })
+    //         .collect();
+
+    //     let mut tdx_ram_entries = tdx_init_ram_entries(&ram_entries[0..(*nr_ram_entries as usize)]);
+    //     let mut tdx_ram_entries = vec![TdxRamEntry {
+    //         address: 0,
+    //         length: 0x8000_0000,
+    //         r#type: TdxRamType::TdxRamUnaccepted,
+    //     }];
+
+    //     for entry in &tdx_firmware_entries {
+    //         match entry.r#type {
+    //             TdvfSectionType::TempMem | TdvfSectionType::TdHob => {
+    //                 let ret = tdx_accept_ram_range(&mut tdx_ram_entries, entry.address, entry.size);
+    //                 if ret < 0 {
+    //                     panic!("unable to accept ram range");
+    //                 }
+    //             }
+    //             _ => (),
+    //         }
+    //     }
+
+    //     tdx_ram_entries.sort_by(|a, b| a.address.cmp(&b.address));
+
+    //     for entry in &tdx_firmware_entries {
+    //         match entry.r#type {
+    //             TdvfSectionType::TdHob => {
+    //                 tdvf_hob_create(&entry, &tdx_ram_entries, guest_mem).unwrap()
+    //             }
+    //             _ => (),
+    //         }
+    //     }
+
+    //     for section in &tdx_firmware_entries {
+    //         // TODO: we should be checking to see if the KVM_CAP_MEMORY_MAPPING capability is
+    //         // enabled, but for now just assume its not
+    //         self.vm
+    //             .init_mem_region(
+    //                 fd,
+    //                 section.address,
+    //                 section.size / 4096,
+    //                 // FIXME: instead of checking the section type we should be checking the
+    //                 // attributes to see if the feature is set to extend the measurement
+    //                 section.attributes & 1,
+    //                 guest_mem
+    //                     .get_host_address(vm_memory::GuestAddress(section.address))
+    //                     .unwrap() as u64,
+    //             )
+    //             .unwrap();
+
+    //         // TODO: if the entry is of type TD_HOB or TEMP_MEM then we need to unmap the memory
+    //         // and set the mem_ptr to NULL (or 0 in this case)
+    //     }
+
+    //     Ok(())
+    // }
 
     pub fn finalize_vm(&self, fd: &kvm_ioctls::VmFd) -> Result<(), Error> {
         self.vm

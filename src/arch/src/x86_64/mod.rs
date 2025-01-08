@@ -165,13 +165,8 @@ pub fn arch_memory_regions(
                 ram_last_addr,
                 shm_start_addr,
                 vec![
-                    #[cfg(not(feature = "intel-tdx"))]
                     (GuestAddress(0), size),
-                    #[cfg(not(feature = "intel-tdx"))]
                     (GuestAddress(BIOS_START), BIOS_SIZE),
-                    #[cfg(feature = "intel-tdx")]
-                    (GuestAddress(0), tdvf_image_start_addr + tdvf_image_size),
-                    // (GuestAddress(tdvf_image_start_addr as u64), tdvf_image_size),
                 ],
             )
         }
@@ -268,7 +263,9 @@ pub fn configure_system(
 
     #[cfg(feature = "tee")]
     {
-        params.0.hdr.syssize = num_cpus as u32;
+        // params.0.hdr.syssize = num_cpus as u32;
+        params.0.hdr.syssize = (arch_memory_info.ram_last_addr / 4096) as u32;
+        params.0.hdr.root_flags = num_cpus as u16;
     }
 
     add_e820_entry(&mut params.0, 0, EBDA_START, E820_RAM)?;

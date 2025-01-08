@@ -461,33 +461,39 @@ pub fn build_microvm(
 
         let m = vec![
             MeasuredRegion {
+                guest_addr: 0,
+                host_addr: guest_memory.get_host_address(GuestAddress(0)).unwrap() as u64,
+                size: 0x8000_0000,  
+            },
+            MeasuredRegion {
                 guest_addr: arch::BIOS_START,
                 host_addr: guest_memory
                     .get_host_address(GuestAddress(arch::BIOS_START))
                     .unwrap() as u64,
                 size: qboot_bundle.size,
             },
-            MeasuredRegion {
-                guest_addr: kernel_bundle.guest_addr,
-                host_addr: guest_memory
-                    .get_host_address(GuestAddress(kernel_bundle.guest_addr))
-                    .unwrap() as u64,
-                size: kernel_bundle.size,
-            },
-            MeasuredRegion {
-                guest_addr: arch::x86_64::layout::INITRD_SEV_START,
-                host_addr: guest_memory
-                    .get_host_address(GuestAddress(arch::x86_64::layout::INITRD_SEV_START))
-                    .unwrap() as u64,
-                size: initrd_bundle.size,
-            },
-            MeasuredRegion {
-                guest_addr: arch::x86_64::layout::ZERO_PAGE_START,
-                host_addr: guest_memory
-                    .get_host_address(GuestAddress(arch::x86_64::layout::ZERO_PAGE_START))
-                    .unwrap() as u64,
-                size: 4096,
-            },
+            // MeasuredRegion {
+            //     guest_addr: kernel_bundle.guest_addr,
+            //     host_addr: guest_memory
+            //         .get_host_address(GuestAddress(kernel_bundle.guest_addr))
+            //         .unwrap() as u64,
+            //     size: kernel_bundle.size,
+            // },
+            // MeasuredRegion {
+            //     guest_addr: arch::x86_64::layout::INITRD_SEV_START,
+            //     host_addr: guest_memory
+            //         .get_host_address(GuestAddress(arch::x86_64::layout::INITRD_SEV_START))
+            //         .unwrap() as u64,
+            //     size: initrd_bundle.size,
+            // },
+            // MeasuredRegion {
+            //     guest_addr: arch::x86_64::layout::ZERO_PAGE_START,
+            //     host_addr: guest_memory
+            //         .get_host_address(GuestAddress(arch::x86_64::layout::ZERO_PAGE_START))
+            //         .unwrap() as u64,
+            //     // size: 0x19000,
+            //     size: 4096,
+            // },
         ];
 
         m
@@ -626,6 +632,16 @@ pub fn build_microvm(
             _shutdown_efd,
         )?;
     }
+
+    #[cfg(feature = "intel-tdx")]
+    let _ = match tee {
+        Tee::Tdx => Some(
+            vm.tdx_secure_virt_prepare_memory(&measured_regions)
+                .map_err(StartMicrovmError::SecureVirtPrepare)?,
+        ),
+        _ => None,
+    };
+    
 
     let mut vmm = Vmm {
         guest_memory,
@@ -822,35 +838,35 @@ fn load_payload(
                 .write(kernel_data, GuestAddress(kernel_load_addr))
                 .unwrap();
 
-            #[cfg(not(feature = "intel-tdx"))]
-            {
+            // #[cfg(not(feature = "intel-tdx"))]
+            // {
                 let qboot_data =
                     unsafe { std::slice::from_raw_parts(qboot_host_addr as *mut u8, qboot_size) };
                 guest_mem
                     .write(qboot_data, GuestAddress(arch::BIOS_START))
                     .unwrap();
-            }
+            // }
 
-            #[cfg(feature = "intel-tdx")]
-            {
-                let mut tdvf_file =
-                    std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/DEBUG_GCC5/FV/OVMF.fd").unwrap();
-                    // std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/RELEASE_GCC5/FV/OVMF.fd").unwrap();
-                tdvf_file.sync_all().unwrap();
-                let tdvf_file_size = tdvf_file.metadata().unwrap().len();
-                let tdvf_guest_start_address = 0x1_0000_0000 - tdvf_file_size;
-                println!(
-                    "reading the contents of the tdvf file into the address at 0x{:x} on the guest",
-                    tdvf_file_size
-                );
-                guest_mem
-                    .read_exact_volatile_from(
-                        GuestAddress(tdvf_guest_start_address as u64),
-                        &mut tdvf_file,
-                        tdvf_file_size as usize,
-                    )
-                    .unwrap();
-            }
+            // #[cfg(feature = "intel-tdx")]
+            // {
+            //     let mut tdvf_file =
+            //         std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/DEBUG_GCC5/FV/OVMF.fd").unwrap();
+            //         // std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/RELEASE_GCC5/FV/OVMF.fd").unwrap();
+            //     tdvf_file.sync_all().unwrap();
+            //     let tdvf_file_size = tdvf_file.metadata().unwrap().len();
+            //     let tdvf_guest_start_address = 0x1_0000_0000 - tdvf_file_size;
+            //     println!(
+            //         "reading the contents of the tdvf file into the address at 0x{:x} on the guest",
+            //         tdvf_file_size
+            //     );
+            //     guest_mem
+            //         .read_exact_volatile_from(
+            //             GuestAddress(tdvf_guest_start_address as u64),
+            //             &mut tdvf_file,
+            //             tdvf_file_size as usize,
+            //         )
+            //         .unwrap();
+            // }
 
             let initrd_data =
                 unsafe { std::slice::from_raw_parts(initrd_host_addr as *mut u8, initrd_size) };
