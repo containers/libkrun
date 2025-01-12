@@ -5,17 +5,11 @@
 use std::fs::File;
 use std::io::IoSlice;
 use std::io::IoSliceMut;
-use std::io::Seek;
-use std::io::SeekFrom;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::FromRawFd;
 use std::os::unix::prelude::AsFd;
 
-use libc::O_ACCMODE;
-use libc::O_WRONLY;
 use nix::cmsg_space;
-use nix::fcntl::fcntl;
-use nix::fcntl::FcntlArg;
 use nix::sys::epoll::EpollCreateFlags;
 use nix::sys::epoll::EpollFlags;
 use nix::sys::eventfd::eventfd;
@@ -36,18 +30,17 @@ use nix::unistd::read;
 use nix::unistd::write;
 
 use super::super::add_item;
-use super::super::cross_domain_protocol::CrossDomainSendReceive;
 use super::super::cross_domain_protocol::CROSS_DOMAIN_ID_TYPE_READ_PIPE;
 use super::super::cross_domain_protocol::CROSS_DOMAIN_ID_TYPE_VIRTGPU_BLOB;
-use super::super::cross_domain_protocol::CROSS_DOMAIN_ID_TYPE_WRITE_PIPE;
-use super::super::cross_domain_protocol::CROSS_DOMAIN_MAX_IDENTIFIERS;
 use super::super::CrossDomainContext;
 use super::super::CrossDomainItem;
 use super::super::CrossDomainJob;
 use super::super::CrossDomainState;
 use super::epoll_internal::Epoll;
 use super::epoll_internal::EpollEvent;
-use crate::cross_domain::cross_domain_protocol::{CrossDomainInit, CROSS_DOMAIN_ID_TYPE_SHM};
+use crate::cross_domain::cross_domain_protocol::{
+    CrossDomainInitV1, CrossDomainSendReceiveBase, CROSS_DOMAIN_ID_TYPE_SHM,
+};
 use crate::cross_domain::CrossDomainEvent;
 use crate::cross_domain::CrossDomainToken;
 use crate::cross_domain::WAIT_CONTEXT_MAX;
@@ -58,31 +51,6 @@ use crate::RutabagaError;
 use crate::RutabagaResult;
 
 pub type SystemStream = File;
-
-// Determine type of OS-specific descriptor.  See `from_file` in wl.rs  for explantation on the
-// current, Linux-based method.
-pub fn descriptor_analysis(
-    descriptor: &mut File,
-    descriptor_type: &mut u32,
-    size: &mut u32,
-) -> RutabagaResult<()> {
-    match descriptor.seek(SeekFrom::End(0)) {
-        Ok(seek_size) => {
-            *descriptor_type = CROSS_DOMAIN_ID_TYPE_VIRTGPU_BLOB;
-            *size = seek_size.try_into()?;
-            Ok(())
-        }
-        _ => {
-            let flags = fcntl(descriptor.as_raw_descriptor(), FcntlArg::F_GETFL)?;
-            *descriptor_type = match flags & O_ACCMODE {
-                O_WRONLY => CROSS_DOMAIN_ID_TYPE_WRITE_PIPE,
-                _ => return Err(RutabagaError::InvalidCrossDomainItemType),
-            };
-
-            Ok(())
-        }
-    }
-}
 
 impl CrossDomainState {
     fn send_msg(&self, opaque_data: &[u8], descriptors: &[RawDescriptor]) -> RutabagaResult<usize> {
@@ -102,10 +70,13 @@ impl CrossDomainState {
         Err(RutabagaError::InvalidCrossDomainChannel)
     }
 
-    pub(crate) fn receive_msg(&self, opaque_data: &mut [u8]) -> RutabagaResult<(usize, Vec<File>)> {
+    pub(crate) fn receive_msg<const MAX_IDENTIFIERS: usize>(
+        &self,
+        opaque_data: &mut [u8],
+    ) -> RutabagaResult<(usize, Vec<File>)> {
         // If any errors happen, the socket will get dropped, preventing more reading.
         let mut iovecs = [IoSliceMut::new(opaque_data)];
-        let mut cmsgspace = cmsg_space!([RawDescriptor; CROSS_DOMAIN_MAX_IDENTIFIERS]);
+        let mut cmsgspace = cmsg_space!([RawDescriptor; MAX_IDENTIFIERS]);
         let flags = MsgFlags::empty();
 
         if let Some(connection) = &self.connection {
@@ -140,7 +111,7 @@ impl CrossDomainState {
 impl CrossDomainContext {
     pub(crate) fn get_connection(
         &mut self,
-        cmd_init: &CrossDomainInit,
+        cmd_init: &CrossDomainInitV1,
     ) -> RutabagaResult<Option<SystemStream>> {
         let channels = self
             .channels
@@ -165,32 +136,30 @@ impl CrossDomainContext {
         Ok(Some(stream))
     }
 
-    pub(crate) fn send(
+    pub(crate) fn send<T: CrossDomainSendReceiveBase, const MAX_IDENTIFIERS: usize>(
         &self,
-        cmd_send: &CrossDomainSendReceive,
+        cmd_send: &mut T,
         opaque_data: &[u8],
     ) -> RutabagaResult<()> {
-        let mut descriptors = [0; CROSS_DOMAIN_MAX_IDENTIFIERS];
+        let mut descriptors = [0; MAX_IDENTIFIERS];
 
         let mut write_pipe_opt: Option<File> = None;
         let mut read_pipe_id_opt: Option<u32> = None;
 
-        let num_identifiers = cmd_send.num_identifiers.try_into()?;
+        let num_identifiers = (*cmd_send.num_identifiers_mut()).try_into()?;
 
-        if num_identifiers > CROSS_DOMAIN_MAX_IDENTIFIERS {
+        if num_identifiers > MAX_IDENTIFIERS {
             return Err(RutabagaError::SpecViolation(
                 "max cross domain identifiers exceeded",
             ));
         }
 
         let iter = cmd_send
-            .identifiers
-            .iter()
-            .zip(cmd_send.identifier_types.iter())
+            .iter_over_identifiers()
             .zip(descriptors.iter_mut())
             .take(num_identifiers);
 
-        for ((identifier, identifier_type), descriptor) in iter {
+        for ((identifier, identifier_type, _), descriptor) in iter {
             if *identifier_type == CROSS_DOMAIN_ID_TYPE_VIRTGPU_BLOB {
                 let context_resources = self.context_resources.lock().unwrap();
 

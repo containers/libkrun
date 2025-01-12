@@ -24,8 +24,8 @@ use rutabaga_gfx::{
 };
 #[cfg(target_os = "linux")]
 use rutabaga_gfx::{
-    RUTABAGA_CHANNEL_TYPE_X11, RUTABAGA_MAP_ACCESS_MASK, RUTABAGA_MAP_ACCESS_READ,
-    RUTABAGA_MAP_ACCESS_RW, RUTABAGA_MAP_ACCESS_WRITE,
+    RUTABAGA_CHANNEL_TYPE_PW, RUTABAGA_CHANNEL_TYPE_X11, RUTABAGA_MAP_ACCESS_MASK,
+    RUTABAGA_MAP_ACCESS_READ, RUTABAGA_MAP_ACCESS_RW, RUTABAGA_MAP_ACCESS_WRITE,
 };
 use utils::eventfd::EventFd;
 use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, VolatileSlice};
@@ -209,6 +209,19 @@ impl VirtioGpu {
                     channel_type: RUTABAGA_CHANNEL_TYPE_X11,
                 });
             }
+        }
+        #[cfg(target_os = "linux")]
+        if let Ok(pw_sock_dir) = env::var("PIPEWIRE_RUNTIME_DIR")
+            .or_else(|_| env::var("XDG_RUNTIME_DIR"))
+            .or_else(|_| env::var("USERPROFILE"))
+        {
+            let name = env::var("PIPEWIRE_REMOTE").unwrap_or_else(|_| "pipewire-0".to_string());
+            let mut pw_path = PathBuf::from(pw_sock_dir);
+            pw_path.push(name);
+            rutabaga_channels.push(RutabagaChannel {
+                base_channel: pw_path,
+                channel_type: RUTABAGA_CHANNEL_TYPE_PW,
+            });
         }
         let rutabaga_channels_opt = Some(rutabaga_channels);
 
