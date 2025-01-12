@@ -3,9 +3,10 @@
 // found in the LICENSE file.
 
 use std::fs::File;
+use std::sync::Arc;
 
-use super::super::cross_domain_protocol::CrossDomainInit;
-use super::super::cross_domain_protocol::CrossDomainSendReceive;
+use super::super::cross_domain_protocol::CrossDomainInitV1;
+use super::super::cross_domain_protocol::CrossDomainSendReceiveBase;
 use super::super::CrossDomainContext;
 use super::super::CrossDomainState;
 use crate::cross_domain::CrossDomainEvent;
@@ -16,17 +17,8 @@ use crate::rutabaga_utils::RutabagaResult;
 pub struct Stub(());
 pub type SystemStream = Stub;
 
-// Determine type of OS-specific descriptor.
-pub fn descriptor_analysis(
-    _descriptor: &mut File,
-    _descriptor_type: &mut u32,
-    _size: &mut u32,
-) -> RutabagaResult<()> {
-    Err(RutabagaError::Unsupported)
-}
-
 impl CrossDomainState {
-    pub(crate) fn receive_msg(
+    pub(crate) fn receive_msg<const MAX_IDENTIFIERS: usize>(
         &self,
         _opaque_data: &mut [u8],
     ) -> RutabagaResult<(usize, Vec<File>)> {
@@ -37,14 +29,14 @@ impl CrossDomainState {
 impl CrossDomainContext {
     pub(crate) fn get_connection(
         &mut self,
-        _cmd_init: &CrossDomainInit,
+        _cmd_init: &CrossDomainInitV1,
     ) -> RutabagaResult<Option<SystemStream>> {
         Err(RutabagaError::Unsupported)
     }
 
-    pub(crate) fn send(
+    pub(crate) fn send<T: CrossDomainSendReceiveBase, const MAX_IDENTIFIERS: usize>(
         &self,
-        _cmd_send: &CrossDomainSendReceive,
+        _cmd_send: &mut T,
         _opaque_data: &[u8],
     ) -> RutabagaResult<()> {
         Err(RutabagaError::Unsupported)
@@ -79,6 +71,7 @@ pub type WaitContext = Stub;
 pub trait WaitTrait {}
 impl WaitTrait for Stub {}
 impl WaitTrait for &Stub {}
+impl WaitTrait for Arc<Stub> {}
 impl WaitTrait for File {}
 impl WaitTrait for &File {}
 impl WaitTrait for &mut File {}

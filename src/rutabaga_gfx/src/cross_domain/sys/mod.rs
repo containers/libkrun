@@ -18,7 +18,6 @@ cfg_if::cfg_if! {
 pub use platform::channel;
 pub use platform::channel_signal;
 pub use platform::channel_wait;
-pub use platform::descriptor_analysis;
 pub use platform::read_volatile;
 pub use platform::write_volatile;
 pub use platform::Receiver;
