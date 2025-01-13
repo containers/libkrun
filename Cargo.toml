@@ -1,5 +1,5 @@
 [workspace]
-members = ["src/libkrun"]
+members = [ "krun-sys","src/libkrun"]
 resolver = "2"
 
 [profile.dev]
