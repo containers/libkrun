@@ -176,7 +176,7 @@ impl EventManager {
                 pollable,
                 &epoll::EpollEvent::default(),
             )
-            .map_or(false, |_| {
+            .is_ok_and(|_| {
                 self.epoll
                     .ctl(
                         epoll::ControlOperation::Delete,
