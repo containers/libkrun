@@ -661,7 +661,7 @@ impl SndWorker {
         }
 
         if !stream_ids.is_empty() {
-            let b = self.audio_backend.write().unwrap();
+            let b = self.audio_backend.read().unwrap();
             for id in stream_ids {
                 b.write(id).unwrap();
             }
