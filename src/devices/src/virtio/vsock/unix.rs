@@ -5,8 +5,8 @@ use super::{
 
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
-    accept, bind, connect, listen, recv, send, setsockopt, shutdown, socket, sockopt,
-    AddressFamily, MsgFlags, Shutdown, SockFlag, SockType, UnixAddr,
+    accept, bind, connect, listen, recv, send, shutdown, socket, AddressFamily, MsgFlags, Shutdown,
+    SockFlag, SockType, UnixAddr,
 };
 use nix::unistd::close;
 use std::collections::HashMap;
@@ -68,7 +68,6 @@ fn proxy_fd_create(id: u64) -> Result<RawFd, ProxyError> {
         Err(e) => error!("couldn't obtain fd flags id={}, err={}", id, e),
     };
 
-    setsockopt(fd, sockopt::ReusePort, &true).map_err(ProxyError::SettingReusePort)?;
     #[cfg(target_os = "macos")]
     {
         // nix doesn't provide an abstraction for SO_NOSIGPIPE, fall back to libc.

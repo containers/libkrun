@@ -50,7 +50,6 @@ impl Gvproxy {
             Err(e) => error!("couldn't obtain fd flags id={}, err={}", fd, e),
         };
 
-        setsockopt(fd, sockopt::ReusePort, &true).unwrap();
         #[cfg(target_os = "macos")]
         {
             // nix doesn't provide an abstraction for SO_NOSIGPIPE, fall back to libc.
