@@ -11,6 +11,7 @@ use super::{stream::Stream, BackendType, Result, VirtioSndPcmSetParams};
 pub trait AudioBackend {
     fn write(&self, stream_id: u32) -> Result<()>;
 
+    #[allow(dead_code)]
     fn read(&self, stream_id: u32) -> Result<()>;
 
     fn set_parameters(&self, _stream_id: u32, _: VirtioSndPcmSetParams) -> Result<()> {

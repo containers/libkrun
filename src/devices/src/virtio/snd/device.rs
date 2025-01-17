@@ -1,6 +1,6 @@
 use std::io::Write;
 use std::sync::atomic::AtomicUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use utils::eventfd::EventFd;
@@ -180,7 +180,7 @@ impl VirtioDevice for Snd {
             queue_evts,
             self.interrupt_status.clone(),
             self.interrupt_evt.try_clone().unwrap(),
-            self.intc,
+            self.intc.clone(),
             self.irq_line,
             mem.clone(),
             self.worker_stopfd.try_clone().unwrap(),
