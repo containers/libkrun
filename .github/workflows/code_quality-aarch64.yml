@@ -24,7 +24,7 @@ jobs:
             components: rustfmt, clippy
 
       - name: Install packages
-        run: sudo apt-get update && sudo apt-get install -y libvirglrenderer-dev libepoxy-dev libdrm-dev
+        run: sudo apt-get update && sudo apt-get install -y libvirglrenderer-dev libepoxy-dev libdrm-dev libpipewire-0.3-dev
 
       - name: Create a fake init
         run: touch init/init
@@ -35,8 +35,5 @@ jobs:
       - name: Clippy (default features)
         run: cargo clippy -- -D warnings
       
-      - name: Clippy (net feature)
-        run: cargo clippy --features net -- -D warnings
-
-      - name: Clippy (blk+gpu feature)
-        run: cargo clippy --features blk,gpu -- -D warnings
+      - name: Clippy (net+blk+gpu+snd features)
+        run: cargo clippy --features net,blk,gpu,snd -- -D warnings
