@@ -1,0 +1,3 @@
+edition = "2021"
+format_code_in_doc_comments = true
+imports_granularity = "Module"
