@@ -641,13 +641,10 @@ dependencies = [
 
 [[package]]
 name = "imago"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "301cd8e9a7de4545ed7387d5d563f4cc5adbdc44d8e658ffbb548bccb5bfe194"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "bincode",
- "futures",
  "libc",
  "miniz_oxide",
  "rustc_version",
@@ -655,7 +652,6 @@ dependencies = [
  "tokio",
  "tracing",
  "vm-memory",
- "windows-sys 0.59.0",
 ]
 
 [[package]]
