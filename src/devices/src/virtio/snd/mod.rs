@@ -22,7 +22,7 @@ use virtio_sound::*;
 
 use super::{Descriptor, Queue};
 use crate::{
-    legacy::Gic,
+    legacy::GicV3,
     virtio::{
         snd::virtio_sound::{VirtioSoundHeader, VirtioSoundPcmStatus},
         VIRTIO_MMIO_INT_VRING,
