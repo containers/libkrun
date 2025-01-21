@@ -760,6 +760,7 @@ dependencies = [
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
+ "libloading",
  "log",
  "once_cell",
  "polly",
