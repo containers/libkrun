@@ -404,6 +404,19 @@ int32_t krun_set_exec(uint32_t ctx_id,
                       const char *const envp[]);
 
 /**
+ * Sets the path to the kernel to be loaded in the microVM.
+ *
+ * Arguments:
+ *  "ctx_id"    - the configuration context ID.
+ *  "kernel_path" - the path to the kernel, relative to the host's filesystem.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_kernel(uint32_t ctx_id,
+                        const char *kernel_path);
+
+/**
  * Sets environment variables to be configured in the context of the executable.
  *
  * Arguments:
