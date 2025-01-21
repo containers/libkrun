@@ -14,6 +14,8 @@ use std::os::fd::RawFd;
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
+#[cfg(not(feature = "efi"))]
+use std::sync::LazyLock;
 use std::sync::Mutex;
 
 #[cfg(target_os = "macos")]
@@ -48,16 +50,59 @@ use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::net::NetworkInterfaceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
-// Minimum krunfw version we require.
-#[cfg(not(feature = "efi"))]
-const KRUNFW_MIN_VERSION: u32 = 4;
 // Value returned on success. We use libc's errors otherwise.
 const KRUN_SUCCESS: i32 = 0;
 // Maximum number of arguments/environment variables we allow
 const MAX_ARGS: usize = 4096;
 
+// krunfw library name for each context
+#[cfg(all(target_os = "linux", not(feature = "amd-sev")))]
+const KRUNFW_NAME: &str = "libkrunfw.so.4";
+#[cfg(all(target_os = "linux", feature = "amd-sev"))]
+const KRUNFW_NAME: &str = "libkrunfw-sev.so.4";
+#[cfg(target_os = "macos")]
+const KRUNFW_NAME: &str = "libkrunfw.4.dylib";
+
 // Path to the init binary to be executed inside the VM.
 const INIT_PATH: &str = "/init.krun";
+
+#[cfg(not(feature = "efi"))]
+static KRUNFW: LazyLock<libloading::Library> =
+    LazyLock::new(|| unsafe { libloading::Library::new(KRUNFW_NAME).unwrap() });
+
+#[cfg(not(feature = "efi"))]
+pub struct KrunfwBindings {
+    get_kernel: libloading::Symbol<
+        'static,
+        unsafe extern "C" fn(*mut u64, *mut u64, *mut size_t) -> *mut c_char,
+    >,
+    #[cfg(feature = "tee")]
+    get_initrd: libloading::Symbol<'static, unsafe extern "C" fn(*mut size_t) -> *mut c_char>,
+    #[cfg(feature = "tee")]
+    get_qboot: libloading::Symbol<'static, unsafe extern "C" fn(*mut size_t) -> *mut c_char>,
+}
+
+#[cfg(not(feature = "efi"))]
+impl KrunfwBindings {
+    fn load_bindings() -> Result<KrunfwBindings, libloading::Error> {
+        Ok(unsafe {
+            KrunfwBindings {
+                get_kernel: KRUNFW.get(b"krunfw_get_kernel")?,
+                #[cfg(feature = "tee")]
+                get_initrd: KRUNFW.get(b"krunfw_get_initrd")?,
+                #[cfg(feature = "tee")]
+                get_qboot: KRUNFW.get(b"krunfw_get_qboot")?,
+            }
+        })
+    }
+
+    pub fn new() -> Option<Self> {
+        match Self::load_bindings() {
+            Ok(bindings) => Some(bindings),
+            Err(_) => None,
+        }
+    }
+}
 
 #[derive(Default)]
 struct TsiConfig {
@@ -79,6 +124,8 @@ impl Default for NetworkConfig {
 
 #[derive(Default)]
 struct ContextConfig {
+    #[cfg(not(feature = "efi"))]
+    krunfw: Option<KrunfwBindings>,
     vmr: VmResources,
     workdir: Option<String>,
     exec_path: Option<String>,
@@ -242,30 +289,6 @@ impl ContextConfig {
 static CTX_MAP: Lazy<Mutex<HashMap<u32, ContextConfig>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static CTX_IDS: AtomicI32 = AtomicI32::new(0);
 
-#[cfg(all(not(feature = "tee"), not(feature = "efi")))]
-#[link(name = "krunfw")]
-extern "C" {
-    fn krunfw_get_kernel(
-        load_addr: *mut u64,
-        entry_addr: *mut u64,
-        size: *mut size_t,
-    ) -> *mut c_char;
-    fn krunfw_get_version() -> u32;
-}
-
-#[cfg(feature = "tee")]
-#[link(name = "krunfw-sev")]
-extern "C" {
-    fn krunfw_get_qboot(size: *mut size_t) -> *mut c_char;
-    fn krunfw_get_initrd(size: *mut size_t) -> *mut c_char;
-    fn krunfw_get_kernel(
-        load_addr: *mut u64,
-        entry_addr: *mut u64,
-        size: *mut size_t,
-    ) -> *mut c_char;
-    fn krunfw_get_version() -> u32;
-}
-
 #[no_mangle]
 pub extern "C" fn krun_set_log_level(level: u32) -> i32 {
     let log_level = match level {
@@ -281,70 +304,20 @@ pub extern "C" fn krun_set_log_level(level: u32) -> i32 {
 }
 
 #[no_mangle]
-#[cfg(not(feature = "efi"))]
 pub extern "C" fn krun_create_ctx() -> i32 {
-    let krunfw_version = unsafe { krunfw_get_version() };
-    if krunfw_version < KRUNFW_MIN_VERSION {
-        eprintln!("Unsupported libkrunfw version: {krunfw_version}");
-        return -libc::EINVAL;
-    }
-
-    let mut kernel_guest_addr: u64 = 0;
-    let mut kernel_entry_addr: u64 = 0;
-    let mut kernel_size: usize = 0;
-    let kernel_host_addr = unsafe {
-        krunfw_get_kernel(
-            &mut kernel_guest_addr as *mut u64,
-            &mut kernel_entry_addr as *mut u64,
-            &mut kernel_size as *mut usize,
-        )
-    };
-
-    let mut ctx_cfg = ContextConfig::default();
-
-    let kernel_bundle = KernelBundle {
-        host_addr: kernel_host_addr as u64,
-        guest_addr: kernel_guest_addr,
-        entry_addr: kernel_entry_addr,
-        size: kernel_size,
-    };
-    ctx_cfg.vmr.set_kernel_bundle(kernel_bundle).unwrap();
-
-    #[cfg(feature = "tee")]
-    {
-        let mut qboot_size: usize = 0;
-        let qboot_host_addr = unsafe { krunfw_get_qboot(&mut qboot_size as *mut usize) };
-        let qboot_bundle = QbootBundle {
-            host_addr: qboot_host_addr as u64,
-            size: qboot_size,
+    let ctx_cfg = {
+        let shutdown_efd = if cfg!(feature = "tee") {
+            Some(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap())
+        } else {
+            None
         };
-        ctx_cfg.vmr.set_qboot_bundle(qboot_bundle).unwrap();
 
-        let mut initrd_size: usize = 0;
-        let initrd_host_addr = unsafe { krunfw_get_initrd(&mut initrd_size as *mut usize) };
-        let initrd_bundle = InitrdBundle {
-            host_addr: initrd_host_addr as u64,
-            size: initrd_size,
-        };
-        ctx_cfg.vmr.set_initrd_bundle(initrd_bundle).unwrap();
-    }
-
-    let ctx_id = CTX_IDS.fetch_add(1, Ordering::SeqCst);
-    if ctx_id == i32::MAX || CTX_MAP.lock().unwrap().contains_key(&(ctx_id as u32)) {
-        // libkrun is not intended to be used as a daemon for managing VMs.
-        panic!("Context ID namespace exhausted");
-    }
-    CTX_MAP.lock().unwrap().insert(ctx_id as u32, ctx_cfg);
-
-    ctx_id
-}
-
-#[no_mangle]
-#[cfg(feature = "efi")]
-pub extern "C" fn krun_create_ctx() -> i32 {
-    let ctx_cfg = ContextConfig {
-        shutdown_efd: Some(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap()),
-        ..Default::default()
+        ContextConfig {
+            #[cfg(not(feature = "efi"))]
+            krunfw: KrunfwBindings::new(),
+            shutdown_efd,
+            ..Default::default()
+        }
     };
 
     let ctx_id = CTX_IDS.fetch_add(1, Ordering::SeqCst);
@@ -1104,6 +1077,50 @@ fn create_virtio_net(ctx_cfg: &mut ContextConfig, backend: VirtioNetBackend) {
         .expect("Failed to create network interface");
 }
 
+unsafe fn load_krunfw_payload(
+    krunfw: &KrunfwBindings,
+    vmr: &mut VmResources,
+) -> Result<(), libloading::Error> {
+    let mut kernel_guest_addr: u64 = 0;
+    let mut kernel_entry_addr: u64 = 0;
+    let mut kernel_size: usize = 0;
+    let kernel_host_addr = unsafe {
+        (krunfw.get_kernel)(
+            &mut kernel_guest_addr as *mut u64,
+            &mut kernel_entry_addr as *mut u64,
+            &mut kernel_size as *mut usize,
+        )
+    };
+    let kernel_bundle = KernelBundle {
+        host_addr: kernel_host_addr as u64,
+        guest_addr: kernel_guest_addr,
+        entry_addr: kernel_entry_addr,
+        size: kernel_size,
+    };
+    vmr.set_kernel_bundle(kernel_bundle).unwrap();
+
+    #[cfg(feature = "tee")]
+    {
+        let mut qboot_size: usize = 0;
+        let qboot_host_addr = unsafe { (krunfw.get_qboot)(&mut qboot_size as *mut usize) };
+        let qboot_bundle = QbootBundle {
+            host_addr: qboot_host_addr as u64,
+            size: qboot_size,
+        };
+        ctx_cfg.vmr.set_qboot_bundle(qboot_bundle).unwrap();
+
+        let mut initrd_size: usize = 0;
+        let initrd_host_addr = unsafe { (krunfw.get_initrd)(&mut initrd_size as *mut usize) };
+        let initrd_bundle = InitrdBundle {
+            host_addr: initrd_host_addr as u64,
+            size: initrd_size,
+        };
+        ctx_cfg.vmr.set_initrd_bundle(initrd_bundle).unwrap();
+    }
+
+    Ok(())
+}
+
 #[no_mangle]
 pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "linux")]
@@ -1127,6 +1144,16 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         Some(ctx_cfg) => ctx_cfg,
         None => return -libc::ENOENT,
     };
+
+    if let Some(ref krunfw) = ctx_cfg.krunfw {
+        if let Err(err) = unsafe { load_krunfw_payload(krunfw, &mut ctx_cfg.vmr) } {
+            eprintln!("Can't load libkrunfw symbols: {err}");
+            return -libc::ENOENT;
+        }
+    } else {
+        eprintln!("Couldn't find or load {}", KRUNFW_NAME);
+        return -libc::ENOENT;
+    }
 
     #[cfg(feature = "blk")]
     for block_cfg in ctx_cfg.get_block_cfg() {
