@@ -8,7 +8,9 @@ use std::env;
 use std::ffi::CStr;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_arch = "aarch64", not(feature = "efi")))]
+use std::fs::File;
+#[cfg(not(feature = "efi"))]
 use std::os::fd::AsRawFd;
 use std::os::fd::RawFd;
 use std::path::PathBuf;
@@ -58,7 +60,7 @@ const MAX_ARGS: usize = 4096;
 const KRUNFW_NAME: &str = "libkrunfw.so.4";
 #[cfg(all(target_os = "linux", feature = "amd-sev"))]
 const KRUNFW_NAME: &str = "libkrunfw-sev.so.4";
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(feature = "efi")))]
 const KRUNFW_NAME: &str = "libkrunfw.4.dylib";
 
 // Path to the init binary to be executed inside the VM.
@@ -106,6 +108,8 @@ struct ContextConfig {
     gpu_shm_size: Option<usize>,
     enable_snd: bool,
     console_output: Option<PathBuf>,
+    #[cfg(not(feature = "efi"))]
+    external_kernel: bool,
 }
 
 impl ContextConfig {
@@ -1029,6 +1033,77 @@ fn create_virtio_net(ctx_cfg: &mut ContextConfig, backend: VirtioNetBackend) {
         .expect("Failed to create network interface");
 }
 
+#[cfg(any(target_arch = "x86_64", feature = "tee", feature = "efi"))]
+#[allow(clippy::format_collect)]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_kernel(_ctx_id: u32, _c_kernel_path: *const c_char) -> i32 {
+    -libc::EOPNOTSUPP
+}
+
+#[cfg(all(target_arch = "aarch64", not(feature = "efi")))]
+#[allow(clippy::format_collect)]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_kernel(ctx_id: u32, c_kernel_path: *const c_char) -> i32 {
+    let kernel_path = match CStr::from_ptr(c_kernel_path).to_str() {
+        Ok(path) => path,
+        Err(e) => {
+            error!("Error parsing kernel_path: {:?}", e);
+            return -libc::EINVAL;
+        }
+    };
+
+    let file = match File::options().read(true).write(false).open(kernel_path) {
+        Ok(file) => file,
+        Err(err) => {
+            error!("Error opening external kernel: {err}");
+            return -libc::EINVAL;
+        }
+    };
+
+    let kernel_size = file.metadata().unwrap().len();
+
+    let kernel_host_addr = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            kernel_size as usize,
+            libc::PROT_READ,
+            libc::MAP_SHARED,
+            file.as_raw_fd(),
+            0_i64,
+        )
+    };
+    if kernel_host_addr == libc::MAP_FAILED {
+        error!("Can't load kernel into process map");
+        return -libc::EINVAL;
+    }
+
+    let kernel_bundle = KernelBundle {
+        host_addr: kernel_host_addr as u64,
+        guest_addr: 0x8000_0000,
+        entry_addr: 0x8000_0000,
+        size: kernel_size as usize,
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let ctx_cfg = ctx_cfg.get_mut();
+            if ctx_cfg.external_kernel {
+                error!("An extenal kernel was already configured");
+                return -libc::EINVAL;
+            } else {
+                ctx_cfg.external_kernel = true;
+            }
+            ctx_cfg.vmr.set_kernel_bundle(kernel_bundle).unwrap()
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[cfg(not(feature = "efi"))]
 unsafe fn load_krunfw_payload(
     krunfw: &libloading::Library,
     vmr: &mut VmResources,
@@ -1070,7 +1145,7 @@ unsafe fn load_krunfw_payload(
             host_addr: qboot_host_addr as u64,
             size: qboot_size,
         };
-        ctx_cfg.vmr.set_qboot_bundle(qboot_bundle).unwrap();
+        vmr.set_qboot_bundle(qboot_bundle).unwrap();
 
         let mut initrd_size: usize = 0;
         let initrd_host_addr = unsafe { krunfw_get_initrd(&mut initrd_size as *mut usize) };
@@ -1078,7 +1153,7 @@ unsafe fn load_krunfw_payload(
             host_addr: initrd_host_addr as u64,
             size: initrd_size,
         };
-        ctx_cfg.vmr.set_initrd_bundle(initrd_bundle).unwrap();
+        vmr.set_initrd_bundle(initrd_bundle).unwrap();
     }
 
     Ok(())
@@ -1108,18 +1183,24 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         None => return -libc::ENOENT,
     };
 
-    // The reference to the dynamically loaded library must be kept alive.
-    let krunfw = match unsafe { libloading::Library::new(KRUNFW_NAME) } {
-        Ok(lib) => lib,
-        Err(err) => {
-            eprintln!("Can't load libkrunfw: {err}");
+    #[cfg(not(feature = "efi"))]
+    let _krunfw = if !ctx_cfg.external_kernel {
+        // The reference to the dynamically loaded library must be kept alive.
+        let krunfw = match unsafe { libloading::Library::new(KRUNFW_NAME) } {
+            Ok(lib) => lib,
+            Err(err) => {
+                eprintln!("Can't load libkrunfw: {err}");
+                return -libc::ENOENT;
+            }
+        };
+        if let Err(err) = unsafe { load_krunfw_payload(&krunfw, &mut ctx_cfg.vmr) } {
+            eprintln!("Can't load libkrunfw symbols: {err}");
             return -libc::ENOENT;
         }
+        Some(krunfw)
+    } else {
+        None
     };
-    if let Err(err) = unsafe { load_krunfw_payload(&krunfw, &mut ctx_cfg.vmr) } {
-        eprintln!("Can't load libkrunfw symbols: {err}");
-        return -libc::ENOENT;
-    }
 
     #[cfg(feature = "blk")]
     for block_cfg in ctx_cfg.get_block_cfg() {
