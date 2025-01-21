@@ -773,6 +773,7 @@ dependencies = [
  "env_logger",
  "hvf",
  "libc",
+ "libloading",
  "log",
  "once_cell",
  "polly",
