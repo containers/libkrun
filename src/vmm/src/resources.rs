@@ -199,10 +199,6 @@ impl VmResources {
             return Err(KernelBundleError::InvalidGuestAddress);
         }
 
-        if kernel_bundle.size & (page_size - 1) != 0 {
-            return Err(KernelBundleError::InvalidSize);
-        }
-
         self.kernel_bundle = Some(kernel_bundle);
         Ok(())
     }
