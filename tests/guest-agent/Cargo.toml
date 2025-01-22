@@ -1,0 +1,7 @@
+[package]
+name = "guest-agent"
+edition = "2021"
+
+[dependencies]
+test_cases = { path = "../test_cases", features = ["guest"] }
+anyhow = "1.0.95"
