@@ -8,9 +8,9 @@ use std::env;
 use std::ffi::CStr;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
-#[cfg(all(target_arch = "aarch64", not(feature = "efi")))]
+#[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
 use std::fs::File;
-#[cfg(not(feature = "efi"))]
+#[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::os::fd::RawFd;
 use std::path::PathBuf;
@@ -39,6 +39,8 @@ use vmm::resources::VmResources;
 #[cfg(feature = "blk")]
 use vmm::vmm_config::block::BlockDeviceConfig;
 use vmm::vmm_config::boot_source::{BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
+#[cfg(not(feature = "tee"))]
+use vmm::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(not(feature = "tee"))]
 use vmm::vmm_config::fs::FsDeviceConfig;
 #[cfg(not(feature = "efi"))]
@@ -108,8 +110,6 @@ struct ContextConfig {
     gpu_shm_size: Option<usize>,
     enable_snd: bool,
     console_output: Option<PathBuf>,
-    #[cfg(not(feature = "efi"))]
-    external_kernel: bool,
 }
 
 impl ContextConfig {
@@ -1033,27 +1033,8 @@ fn create_virtio_net(ctx_cfg: &mut ContextConfig, backend: VirtioNetBackend) {
         .expect("Failed to create network interface");
 }
 
-#[cfg(any(target_arch = "x86_64", feature = "tee", feature = "efi"))]
-#[allow(clippy::format_collect)]
-#[allow(clippy::missing_safety_doc)]
-#[no_mangle]
-pub unsafe extern "C" fn krun_set_kernel(_ctx_id: u32, _c_kernel_path: *const c_char) -> i32 {
-    -libc::EOPNOTSUPP
-}
-
-#[cfg(all(target_arch = "aarch64", not(feature = "efi")))]
-#[allow(clippy::format_collect)]
-#[allow(clippy::missing_safety_doc)]
-#[no_mangle]
-pub unsafe extern "C" fn krun_set_kernel(ctx_id: u32, c_kernel_path: *const c_char) -> i32 {
-    let kernel_path = match CStr::from_ptr(c_kernel_path).to_str() {
-        Ok(path) => path,
-        Err(e) => {
-            error!("Error parsing kernel_path: {:?}", e);
-            return -libc::EINVAL;
-        }
-    };
-
+#[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
+fn map_kernel(ctx_id: u32, kernel_path: &str) -> i32 {
     let file = match File::options().read(true).write(false).open(kernel_path) {
         Ok(file) => file,
         Err(err) => {
@@ -1087,16 +1068,66 @@ pub unsafe extern "C" fn krun_set_kernel(ctx_id: u32, c_kernel_path: *const c_ch
     };
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
-        Entry::Occupied(mut ctx_cfg) => {
-            let ctx_cfg = ctx_cfg.get_mut();
-            if ctx_cfg.external_kernel {
-                error!("An extenal kernel was already configured");
-                return -libc::EINVAL;
-            } else {
-                ctx_cfg.external_kernel = true;
-            }
-            ctx_cfg.vmr.set_kernel_bundle(kernel_bundle).unwrap()
+        Entry::Occupied(mut ctx_cfg) => ctx_cfg
+            .get_mut()
+            .vmr
+            .set_kernel_bundle(kernel_bundle)
+            .unwrap(),
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[cfg(feature = "tee")]
+#[allow(clippy::format_collect)]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_kernel(_ctx_id: u32, _c_kernel_path: *const c_char) -> i32 {
+    -libc::EOPNOTSUPP
+}
+
+#[cfg(not(feature = "tee"))]
+#[allow(clippy::format_collect)]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_kernel(
+    ctx_id: u32,
+    c_kernel_path: *const c_char,
+    kernel_format: u32,
+) -> i32 {
+    let kernel_path = match CStr::from_ptr(c_kernel_path).to_str() {
+        Ok(path) => path,
+        Err(e) => {
+            error!("Error parsing kernel_path: {:?}", e);
+            return -libc::EINVAL;
         }
+    };
+
+    let format = match kernel_format {
+        // For raw kernels in x86_64, we map the kernel into the
+        // process and treat it as a bundled kernel.
+        #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
+        0 => return map_kernel(ctx_id, kernel_path),
+        #[cfg(target_arch = "aarch64")]
+        0 => KernelFormat::Raw,
+        1 => KernelFormat::Elf,
+        2 => KernelFormat::PeGz,
+        3 => KernelFormat::ImageBz2,
+        4 => KernelFormat::ImageGz,
+        5 => KernelFormat::ImageZstd,
+        _ => {
+            return -libc::EINVAL;
+        }
+    };
+
+    let external_kernel = ExternalKernel {
+        path: PathBuf::from(kernel_path),
+        format,
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => ctx_cfg.get_mut().vmr.set_external_kernel(external_kernel),
         Entry::Vacant(_) => return -libc::ENOENT,
     }
 
@@ -1184,7 +1215,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     };
 
     #[cfg(not(feature = "efi"))]
-    let _krunfw = if !ctx_cfg.external_kernel {
+    let _krunfw = if ctx_cfg.vmr.external_kernel.is_none() && ctx_cfg.vmr.kernel_bundle.is_none() {
         // The reference to the dynamically loaded library must be kept alive.
         let krunfw = match unsafe { libloading::Library::new(KRUNFW_NAME) } {
             Ok(lib) => lib,

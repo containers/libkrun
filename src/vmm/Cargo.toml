@@ -16,7 +16,9 @@ snd = []
 [dependencies]
 crossbeam-channel = "0.5"
 env_logger = "0.9.0"
+flate2 = "1.0.35"
 libc = ">=0.2.39"
+linux-loader = { version = "0.13.0", features = ["bzimage", "elf", "pe"] }
 log = "0.4.0"
 vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
 
@@ -38,7 +40,9 @@ curl = { version = "0.4", optional = true }
 nix = "0.24.1"
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
+bzip2 = "0.5"
 cpuid = { path = "../cpuid" }
+zstd = "0.13"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 kvm-bindings = { version = ">=0.10", features = ["fam-wrappers"] }

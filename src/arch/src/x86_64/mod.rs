@@ -67,48 +67,68 @@ pub const MMIO_MEM_START: u64 = FIRST_ADDR_PAST_32BITS - MEM_32BIT_GAP_SIZE;
 #[cfg(not(feature = "tee"))]
 pub fn arch_memory_regions(
     size: usize,
-    kernel_load_addr: u64,
+    kernel_load_addr: Option<u64>,
     kernel_size: usize,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
 
     let size = round_up(size, page_size);
-    if size < (kernel_load_addr + kernel_size as u64) as usize {
-        panic!("Kernel doesn't fit in RAM");
-    }
 
     // It's safe to cast MMIO_MEM_START to usize because it fits in a u32 variable
     // (It points to an address in the 32 bit space).
     let (ram_last_addr, shm_start_addr, regions) = match size.checked_sub(MMIO_MEM_START as usize) {
         // case1: guest memory fits before the gap
         None | Some(0) => {
-            let ram_last_addr = kernel_load_addr + kernel_size as u64 + size as u64;
             let shm_start_addr = FIRST_ADDR_PAST_32BITS;
-            (
-                ram_last_addr,
-                shm_start_addr,
-                vec![
-                    (GuestAddress(0), kernel_load_addr as usize),
-                    (GuestAddress(kernel_load_addr + kernel_size as u64), size),
-                ],
-            )
+
+            if let Some(kernel_load_addr) = kernel_load_addr {
+                if size < (kernel_load_addr + kernel_size as u64) as usize {
+                    panic!("Kernel doesn't fit in RAM");
+                }
+
+                let ram_last_addr = kernel_load_addr + kernel_size as u64 + size as u64;
+                (
+                    ram_last_addr,
+                    shm_start_addr,
+                    vec![
+                        (GuestAddress(0), kernel_load_addr as usize),
+                        (GuestAddress(kernel_load_addr + kernel_size as u64), size),
+                    ],
+                )
+            } else {
+                let ram_last_addr = size as u64;
+                (ram_last_addr, shm_start_addr, vec![(GuestAddress(0), size)])
+            }
         }
+
         // case2: guest memory extends beyond the gap
         Some(remaining) => {
             let ram_last_addr = FIRST_ADDR_PAST_32BITS + remaining as u64;
             let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
-            (
-                ram_last_addr,
-                shm_start_addr,
-                vec![
-                    (GuestAddress(0), kernel_load_addr as usize),
-                    (
-                        GuestAddress(kernel_load_addr + kernel_size as u64),
-                        (MMIO_MEM_START - (kernel_load_addr + kernel_size as u64)) as usize,
-                    ),
-                    (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
-                ],
-            )
+
+            if let Some(kernel_load_addr) = kernel_load_addr {
+                (
+                    ram_last_addr,
+                    shm_start_addr,
+                    vec![
+                        (GuestAddress(0), kernel_load_addr as usize),
+                        (
+                            GuestAddress(kernel_load_addr + kernel_size as u64),
+                            (MMIO_MEM_START - (kernel_load_addr + kernel_size as u64)) as usize,
+                        ),
+                        (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
+                    ],
+                )
+            } else {
+                (
+                    ram_last_addr,
+                    shm_start_addr,
+                    vec![
+                        (GuestAddress(0), MMIO_MEM_START as usize),
+                        (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
+                    ],
+                )
+            }
         }
     };
     let info = ArchMemoryInfo {
@@ -127,14 +147,16 @@ pub fn arch_memory_regions(
 #[cfg(feature = "tee")]
 pub fn arch_memory_regions(
     size: usize,
-    kernel_load_addr: u64,
+    kernel_load_addr: Option<u64>,
     kernel_size: usize,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
 
     let size = round_up(size, page_size);
-    if size < (kernel_load_addr + kernel_size as u64) as usize {
-        panic!("Kernel doesn't fit in RAM");
+    if let Some(kernel_load_addr) = kernel_load_addr {
+        if size < (kernel_load_addr + kernel_size as u64) as usize {
+            panic!("Kernel doesn't fit in RAM");
+        }
     }
 
     // It's safe to cast MMIO_MEM_START to usize because it fits in a u32 variable
