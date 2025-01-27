@@ -19,12 +19,12 @@
 
 int main(int argc, char *const argv[])
 {
-    char *const port_map[] =
+    const char *const port_map[] =
     {
         "18000:8000",
         0
     };
-    char *const rlimits[] =
+    const char *const rlimits[] =
     {
         // RLIMIT_NPROC = 6
         "6=4096:8192",
