@@ -74,7 +74,7 @@ ifeq ($(PREFIX),)
     PREFIX := /usr/local
 endif
 
-.PHONY: install clean
+.PHONY: install clean $(LIBRARY_RELEASE_$(OS)) $(LIBRARY_DEBUG_$(OS))
 
 all: $(LIBRARY_RELEASE_$(OS)) libkrun.pc
 
