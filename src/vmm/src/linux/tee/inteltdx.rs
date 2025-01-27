@@ -39,7 +39,7 @@ impl IntelTdx {
             .or_else(|_| return Err(Error::GetCapabilities))?;
 
         // let mut firmware = std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/RELEASE_GCC5/FV/OVMF.fd")
-        let mut firmware = std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/DEBUG_GCC5/FV/OVMF.fd")
+        let mut firmware = std::fs::File::open("/home/slp/OVMF.fd")
             .map_err(Error::OpenTdvfFirmwareFile)?;
         let tdvf_sections =
             tdx::tdvf::parse_sections(&mut firmware).map_err(Error::ParseTdvfSections)?;

@@ -266,7 +266,7 @@ extern "C" {
 
 // #[cfg(all(feature = "intel-tdx", feature = "tee"))]
 #[cfg(feature = "tee")]
-#[link(name = "krunfw-tdx")]
+#[link(name = "krunfw-sev")]
 extern "C" {
     fn krunfw_get_qboot(size: *mut size_t) -> *mut c_char;
     fn krunfw_get_initrd(size: *mut size_t) -> *mut c_char;

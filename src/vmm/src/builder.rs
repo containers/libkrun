@@ -5,6 +5,8 @@
 
 #[cfg(target_os = "macos")]
 use crossbeam_channel::{unbounded, Sender};
+#[cfg(feature = "intel-tdx")]
+use crossbeam_channel::{unbounded, Sender};
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io;
@@ -455,6 +457,9 @@ pub fn build_microvm(
         _ => None,
     };
 
+    let qboot_file = std::fs::File::open("/home/slp/src/qboot-krunfw/build/bios.bin").unwrap();
+    let qboot_size = qboot_file.metadata().unwrap().len();
+
     #[cfg(feature = "tee")]
     let measured_regions = {
         println!("Injecting and measuring memory regions. This may take a while.");
@@ -463,14 +468,14 @@ pub fn build_microvm(
             MeasuredRegion {
                 guest_addr: 0,
                 host_addr: guest_memory.get_host_address(GuestAddress(0)).unwrap() as u64,
-                size: 0x8000_0000,  
+                size: 0x8000_0000,
             },
             MeasuredRegion {
                 guest_addr: arch::BIOS_START,
                 host_addr: guest_memory
                     .get_host_address(GuestAddress(arch::BIOS_START))
                     .unwrap() as u64,
-                size: qboot_bundle.size,
+                size: qboot_size as usize,
             },
             // MeasuredRegion {
             //     guest_addr: kernel_bundle.guest_addr,
@@ -502,7 +507,7 @@ pub fn build_microvm(
     // On x86_64 always create a serial device,
     // while on aarch64 only create it if 'console=' is specified in the boot args.
     let serial_device = if cfg!(not(feature = "efi")) {
-    // let serial_device = if cfg!(feature = "efi") {
+        // let serial_device = if cfg!(feature = "efi") {
         Some(setup_serial_device(
             event_manager,
             None,
@@ -565,7 +570,7 @@ pub fn build_microvm(
         // #[cfg(not(feature = "intel-tdx"))]
         // {
         //     setup_interrupt_controller(&vm)?;
-            attach_legacy_devices(&vm, &mut pio_device_manager)?;
+        attach_legacy_devices(&vm, &mut pio_device_manager)?;
         // }
 
         vcpus = create_vcpus_x86_64(
@@ -632,16 +637,6 @@ pub fn build_microvm(
             _shutdown_efd,
         )?;
     }
-
-    #[cfg(feature = "intel-tdx")]
-    let _ = match tee {
-        Tee::Tdx => Some(
-            vm.tdx_secure_virt_prepare_memory(&measured_regions)
-                .map_err(StartMicrovmError::SecureVirtPrepare)?,
-        ),
-        _ => None,
-    };
-    
 
     let mut vmm = Vmm {
         guest_memory,
@@ -774,6 +769,9 @@ pub fn build_microvm(
             #[cfg(feature = "intel-tdx")]
             Tee::Tdx => {
                 vmm.kvm_vm()
+                    .tdx_secure_virt_prepare_memory(&measured_regions)
+                    .map_err(StartMicrovmError::SecureVirtPrepare)?;
+                vmm.kvm_vm()
                     .tdx_secure_virt_finalize_vm()
                     .map_err(StartMicrovmError::SecureVirtPrepare)?;
                 // TODO(jakecorrenti): should do a no-attest here for the TDX bits so that we can
@@ -827,8 +825,8 @@ fn load_payload(
             kernel_region,
             kernel_load_addr,
             kernel_size,
-            qboot_host_addr,
-            qboot_size,
+            _qboot_host_addr,
+            _qboot_size,
             initrd_host_addr,
             initrd_size,
         ) => {
@@ -840,11 +838,21 @@ fn load_payload(
 
             // #[cfg(not(feature = "intel-tdx"))]
             // {
-                let qboot_data =
-                    unsafe { std::slice::from_raw_parts(qboot_host_addr as *mut u8, qboot_size) };
-                guest_mem
-                    .write(qboot_data, GuestAddress(arch::BIOS_START))
-                    .unwrap();
+            let mut qboot_file =
+                std::fs::File::open("/home/slp/src/qboot-krunfw/build/bios.bin").unwrap();
+            let qboot_size = qboot_file.metadata().unwrap().len();
+            guest_mem
+                .read_exact_volatile_from(
+                    GuestAddress(arch::BIOS_START),
+                    &mut qboot_file,
+                    qboot_size as usize,
+                )
+                .unwrap();
+            //let qboot_data =
+            //    unsafe { std::slice::from_raw_parts(qboot_host_addr as *mut u8, qboot_size) };
+            //guest_mem
+            //    .write(qboot_data, GuestAddress(arch::BIOS_START))
+            //    .unwrap();
             // }
 
             // #[cfg(feature = "intel-tdx")]

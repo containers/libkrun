@@ -125,7 +125,8 @@ pub fn arch_memory_regions(
 #[cfg(feature = "intel-tdx")]
 fn get_tdvf_image_size() -> usize {
     use std::io::{Seek, SeekFrom};
-    let mut fs = std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/DEBUG_GCC5/FV/OVMF.fd").unwrap();
+    let mut fs =
+        std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/DEBUG_GCC5/FV/OVMF.fd").unwrap();
     // let mut fs = std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/RELEASE_GCC5/FV/OVMF.fd").unwrap();
     // TODO(jakecorrenti): do proper error handling here
     fs.seek(SeekFrom::End(0)).unwrap() as usize
@@ -144,10 +145,12 @@ pub fn arch_memory_regions(
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
 
+    /*
     #[cfg(feature = "intel-tdx")]
     let tdvf_image_size = get_tdvf_image_size();
     #[cfg(feature = "intel-tdx")]
     let tdvf_image_start_addr = 0x1_0000_0000 - tdvf_image_size;
+    */
 
     let size = round_up(size, page_size);
     if size < (kernel_load_addr + kernel_size as u64) as usize {
@@ -268,7 +271,7 @@ pub fn configure_system(
         params.0.hdr.root_flags = num_cpus as u16;
     }
 
-    add_e820_entry(&mut params.0, 0, EBDA_START, E820_RAM)?;
+    add_e820_entry(&mut params.0, 0, EBDA_START - 0x10000, E820_RAM)?;
 
     let last_addr = GuestAddress(arch_memory_info.ram_last_addr);
     if last_addr < end_32bit_gap_start {

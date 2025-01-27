@@ -8,5 +8,5 @@ fn main() {
     #[cfg(feature = "amd-sev")]
     println!("cargo:rustc-link-lib=krunfw-sev");
     #[cfg(feature = "intel-tdx")]
-    println!("cargo:rustc-link-lib=krunfw-tdx");
+    println!("cargo:rustc-link-lib=krunfw-sev");
 }

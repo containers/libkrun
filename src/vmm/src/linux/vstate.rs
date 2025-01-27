@@ -69,6 +69,16 @@ use sev::launch::snp;
 /// Signal number (SIGRTMIN) used to kick Vcpus.
 pub(crate) const VCPU_RTSIG_OFFSET: i32 = 0;
 
+const TDG_VP_VMCALL_MAP_GPA: u64                        = 0x10001;
+const TDG_VP_VMCALL_GET_QUOTE: u64                      = 0x10002;
+const TDG_VP_VMCALL_REPORT_FATAL_ERROR: u64             = 0x10003;
+const TDG_VP_VMCALL_SETUP_EVENT_NOTIFY_INTERRUPT: u64   = 0x10004;
+const TDG_VP_VMCALL_SUCCESS: u64 =           0x0000000000000000;
+const TDG_VP_VMCALL_RETRY: u64 =             0x0000000000000001;
+const TDG_VP_VMCALL_INVALID_OPERAND: u64 =   0x8000000000000000;
+const TDG_VP_VMCALL_GPA_INUSE: u64 =         0x8000000000000001;
+const TDG_VP_VMCALL_ALIGN_ERROR: u64 =       0x8000000000000002;
+
 /// Errors associated with the wrappers over KVM ioctls.
 #[derive(Debug)]
 pub enum Error {
@@ -1423,11 +1433,66 @@ impl Vcpu {
                     println!("unknown exit");
                     Err(Error::VcpuUnhandledKvmExit)
                 }
+                VcpuExit::Tdx => {
+                    let kvm_run = self.fd.get_kvm_run();
+                    let tdx = unsafe { &mut kvm_run.__bindgen_anon_1.tdx };
+
+                    const KVM_EXIT_TDX_VMCALL: u32 = 1;
+
+                    // check if the exit type is KVM_EXIT_TDX_VMCALL
+                    if tdx.type_ != KVM_EXIT_TDX_VMCALL {
+                        println!("unknown tdx exit type 0x{:x}", tdx.type_);
+                        return Err(Error::VcpuUnhandledKvmExit);
+                    }
+
+                    // handle the vmcall
+                    let mut vmcall = unsafe { tdx.u.vmcall };
+                    unsafe {
+                        vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_INVALID_OPERAND;
+
+                        if vmcall.__bindgen_anon_2.type_ != 0 {
+                            println!("unknown TDG.VP.VMCALL type 0x{:x} subfunction 0x{:x}", vmcall.__bindgen_anon_2.type_, vmcall.__bindgen_anon_3.subfunction);
+                            return Err(Error::VcpuUnhandledKvmExit);
+                        }
+
+                        match vmcall.__bindgen_anon_3.subfunction {
+                            TDG_VP_VMCALL_MAP_GPA => {
+                                // self.vmcall_sender.send(vmcall).unwrap();
+                                if self.tdx_handle_map_gpa(&mut vmcall) < 0 {
+                                    return Err(Error::VcpuUnhandledKvmExit);
+                                }
+                                return Ok(VcpuEmulation::Handled);
+                            }
+                            TDG_VP_VMCALL_GET_QUOTE => {
+                                // NOTE: upstream QEMU at this time doesn't contain support for
+                                // Attestion
+                                return Ok(VcpuEmulation::Handled);
+                            },
+                            TDG_VP_VMCALL_REPORT_FATAL_ERROR => {
+                                // This means the guest panicked somewhere
+                                let _ = Self::tdx_handle_report_fatal_error(&mut vmcall);
+                                return Err(Error::VcpuUnhandledKvmExit);
+                            },
+                            TDG_VP_VMCALL_SETUP_EVENT_NOTIFY_INTERRUPT => {
+                                // update runtime state
+                                let _ = Self::tdx_handle_setup_event_notify_interrupt(&mut vmcall);
+                                return Ok(VcpuEmulation::Handled);
+                            },
+                            _ => {
+                                println!("unknown TDG.VP.VMCALL type 0x{:x} subfunction 0x{:x}", vmcall.__bindgen_anon_2.type_, vmcall.__bindgen_anon_3.subfunction);
+                                return Err(Error::VcpuUnhandledKvmExit);
+                            }
+                        }
+                    }
+
+                    Err(Error::VcpuUnhandledKvmExit)
+                }
                 r => {
                     // TODO: Are we sure we want to finish running a vcpu upon
                     // receiving a vm exit that is not necessarily an error?
-                    error!("Unexpected exit reason on vcpu run: {:?}", r);
+                    println!("Unexpected exit reason on vcpu run: {:?}", r);
                     Err(Error::VcpuUnhandledKvmExit)
+                    // Ok(VcpuEmulation::Handled)
                 }
             },
             // The unwrap on raw_os_error can only fail if we have a logic
@@ -1437,7 +1502,7 @@ impl Vcpu {
                     libc::EAGAIN => {
                         println!("AGAIN!");
                         Ok(VcpuEmulation::Handled)
-                    },
+                    }
                     libc::EINTR => {
                         println!("KVM_RUN exited: Err(EINTR)");
                         println!(
@@ -1454,6 +1519,124 @@ impl Vcpu {
                 }
             }
         }
+    }
+
+    unsafe fn tdx_handle_setup_event_notify_interrupt(vmcall: &mut kvm_bindings::kvm_tdx_exit__bindgen_ty_1_kvm_tdx_vmcall) -> i32 {
+        let vector = vmcall.in_r12;
+
+        if 32 <= vector && vector >= 255 {
+            // normally this is where we would update the runtime state
+            // with the vector and the apic_id of the cpu
+            vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_SUCCESS;
+        } else {
+            vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_INVALID_OPERAND;
+        }
+
+        0
+    }
+
+    unsafe fn tdx_handle_report_fatal_error(vmcall: &mut kvm_bindings::kvm_tdx_exit__bindgen_ty_1_kvm_tdx_vmcall) -> i32 {
+        const GUEST_PANIC_INFO_TDX_MESSAGE_MAX: usize = 64;
+        let error_code = vmcall.in_r12;
+        // This is supposed to be initialized to -1... is 0 going to be ok here?
+        let mut gpa: u64 = 0;
+
+        if (error_code & 0xffff) > 0 {
+            println!("TDX: REPORT_FATAL_ERROR: invalid error code: 0x{:x}", error_code);
+            return -1;
+        }
+
+        let mut message = [char::default(); GUEST_PANIC_INFO_TDX_MESSAGE_MAX + 1]; 
+
+        // it has optional message
+        if vmcall.in_r14  > 0 {
+            message[1] = char::from_u32(u64::to_le(vmcall.in_r14) as u32).unwrap();
+            message[2] = char::from_u32(u64::to_le(vmcall.in_r15) as u32).unwrap();
+            message[3] = char::from_u32(u64::to_le(vmcall.in_rbx) as u32).unwrap();
+            message[4] = char::from_u32(u64::to_le(vmcall.in_rdi) as u32).unwrap();
+            message[5] = char::from_u32(u64::to_le(vmcall.in_rsi) as u32).unwrap();
+            message[6] = char::from_u32(u64::to_le(vmcall.in_r8) as u32).unwrap();
+            message[7] = char::from_u32(u64::to_le(vmcall.in_r9) as u32).unwrap();
+            message[8] = char::from_u32(u64::to_le(vmcall.in_rdx) as u32).unwrap();
+            message[GUEST_PANIC_INFO_TDX_MESSAGE_MAX] = '\0';
+        }
+
+        const TDX_REPORT_FATAL_ERROR_GPA_VALID: u64 = 1 << 63;
+        if (error_code & TDX_REPORT_FATAL_ERROR_GPA_VALID) > 0 {
+            gpa = vmcall.in_r13;
+        }
+
+        let message = {
+            let mut s = String::new();
+            message.iter_mut().for_each(|c| s.push(*c));
+            s
+        };
+
+        println!("TDX: REPORT_FATAL_ERROR: message: {} error_code: {} gpa: 0x{:x}", message, error_code, gpa);
+
+        -1
+    }
+
+
+    unsafe fn tdx_handle_map_gpa(&self, vmcall: &mut kvm_bindings::kvm_tdx_exit__bindgen_ty_1_kvm_tdx_vmcall) -> i32 {
+        const TDX_MAP_GPA_MAX_LEN: u64 = 64 * 1024 * 1024;
+
+        let is_aligned = |n: u64, m: u64| -> bool {
+            ((n) % (m)) == 0
+        };
+
+        let phys_bits = unsafe { std::arch::x86_64::__cpuid(0x8000_0008).eax } & 0xff;
+        let shared_bit = if phys_bits > 48 {
+              1 << 51
+        } else {
+            1 << 47
+        };
+        let gpa = vmcall.in_r12 & !shared_bit;
+        let private: bool = if vmcall.in_r12 & shared_bit > 0 { false } else { true }; // !(vmcall.in_r12 & shared_bit)
+        let mut size = vmcall.in_r13;
+        let mut retry = false;
+        let mut ret = 0;
+        
+        vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_INVALID_OPERAND;
+
+        // check to make sure the ram range is 4k aligned
+        if !is_aligned(gpa, 4096) || !is_aligned(size, 4096) {
+            vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_ALIGN_ERROR;
+            return 0;
+        }
+
+        // overflow case
+        if gpa + size < gpa {
+            return 0;
+        }
+
+        if gpa >= (1 << phys_bits) || gpa + size >= (1 << phys_bits) {
+            return 0;
+        }
+
+        if size > TDX_MAP_GPA_MAX_LEN {
+            retry = true;
+            size = TDX_MAP_GPA_MAX_LEN;
+        }
+
+        // if we are passed a valid memory range, convert it
+        if size > 0 {
+            // convert memory
+        }
+
+        if ret == 0 {
+            if retry {
+                vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_RETRY;
+                vmcall.out_r11 = gpa + size;
+                if !private {
+                    vmcall.out_r11 |= shared_bit;
+                }
+            } else {
+                vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_SUCCESS;
+            }
+        }
+
+        0
     }
 
     /// Main loop of the vCPU thread.
