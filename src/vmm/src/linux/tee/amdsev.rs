@@ -192,7 +192,7 @@ fn find_cpu_model() -> Result<CpuModel, Error> {
 
 fn fetch_chain(fw: &mut Firmware, curl_agent: &mut CurlAgent) -> Result<certs::sev::Chain, Error> {
     const CEK_SVC: &str = "https://kdsintf.amd.com/cek/id";
-    const ASK_ARK_SVC: &str = "https://developer.amd.com/wp-content/resources/";
+    const ASK_ARK_SVC: &str = "https://download.amd.com/developer/eula/sev/";
 
     let mut chain = fw
         .pdh_cert_export()
