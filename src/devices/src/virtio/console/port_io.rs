@@ -226,8 +226,13 @@ impl PortInput for PortInputSigInt {
         Ok(1)
     }
 
-    fn wait_until_readable(&self, _stopfd: Option<&EventFd>) {
-        let mut poll_fds = [PollFd::new(self.sigint_evt.as_raw_fd(), PollFlags::POLLIN)];
+    fn wait_until_readable(&self, stopfd: Option<&EventFd>) {
+        let mut poll_fds = Vec::with_capacity(2);
+        poll_fds.push(PollFd::new(self.sigint_evt.as_raw_fd(), PollFlags::POLLIN));
+        if let Some(stopfd) = stopfd {
+            poll_fds.push(PollFd::new(stopfd.as_raw_fd(), PollFlags::POLLIN));
+        }
+
         poll(&mut poll_fds, -1).expect("Failed to poll");
     }
 }
@@ -251,7 +256,12 @@ impl PortInput for PortInputEmpty {
         Ok(0)
     }
 
-    fn wait_until_readable(&self, _stopfd: Option<&EventFd>) {
-        std::thread::sleep(std::time::Duration::MAX);
+    fn wait_until_readable(&self, stopfd: Option<&EventFd>) {
+        if let Some(stopfd) = stopfd {
+            let mut poll_fds = [PollFd::new(stopfd.as_raw_fd(), PollFlags::POLLIN)];
+            poll(&mut poll_fds, -1).expect("Failed to poll");
+        } else {
+            std::thread::sleep(std::time::Duration::MAX);
+        }
     }
 }
