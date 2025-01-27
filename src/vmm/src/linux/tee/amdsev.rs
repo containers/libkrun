@@ -27,6 +27,7 @@ pub enum Error {
     DecodeAskArk,
     DecodeCek,
     DecodeChain,
+    Deprecated,
     DownloadCek(curl::Error),
     DownloadAskArk(curl::Error),
     EncodeChain,
@@ -265,7 +266,6 @@ pub struct AmdSev {
     tee_config: TeeConfig,
     fw: Firmware,
     start: Start,
-    sev_es: bool,
     curl_agent: Arc<Mutex<CurlAgent>>,
 }
 
@@ -274,7 +274,6 @@ impl AmdSev {
         let mut fw = Firmware::open().map_err(Error::OpenFirmware)?;
         let mut curl_agent = CurlAgent::new();
         let chain = get_and_store_chain(&mut fw, tee_config, &mut curl_agent)?;
-        let mut sev_es = false;
 
         let start = if !tee_config.attestation_url.is_empty() {
             let build = fw
@@ -305,18 +304,22 @@ impl AmdSev {
             let sev_challenge: SevChallenge = serde_json::from_value(challenge.extra_params)
                 .map_err(Error::ParseSessionResponse)?;
 
-            if sev_challenge
+            if !sev_challenge
                 .start
                 .policy
                 .flags
                 .contains(PolicyFlags::ENCRYPTED_STATE)
             {
-                sev_es = true;
+                error!("SEV without ES is no longer supported. Please switch to SEV-ES or SNP");
+                return Err(Error::Deprecated);
             }
 
             sev_challenge.start
         } else {
-            let policy = Policy::default();
+            let policy = Policy {
+                flags: PolicyFlags::ENCRYPTED_STATE,
+                ..Default::default()
+            };
             let session = Session::try_from(policy).map_err(Error::SessionFromPolicy)?;
             session.start(chain).map_err(Error::StartFromSession)?
         };
@@ -325,7 +328,6 @@ impl AmdSev {
             tee_config: tee_config.clone(),
             fw,
             start,
-            sev_es,
             curl_agent: Arc::new(Mutex::new(curl_agent)),
         })
     }
@@ -366,11 +368,7 @@ impl AmdSev {
         let vm_rfd = vm_fd.as_raw_fd();
         let fw_rfd = self.fw.as_raw_fd();
 
-        let launcher = if self.sev_es {
-            Launcher::new_es(vm_rfd, fw_rfd).unwrap()
-        } else {
-            Launcher::new(vm_rfd, fw_rfd).unwrap()
-        };
+        let launcher = Launcher::new_es(vm_rfd, fw_rfd).unwrap();
 
         for region in guest_mem.iter() {
             // It's safe to unwrap because the guest address is valid.
@@ -401,9 +399,7 @@ impl AmdSev {
                 .map_err(Error::SevLaunchUpdateData)?;
         }
 
-        if self.sev_es {
-            launcher.update_vmsa().unwrap()
-        }
+        launcher.update_vmsa().unwrap();
 
         let mut launcher = launcher.measure().unwrap();
         let measurement = launcher.measurement();
