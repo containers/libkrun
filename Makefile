@@ -74,7 +74,7 @@ ifeq ($(PREFIX),)
     PREFIX := /usr/local
 endif
 
-.PHONY: install clean $(LIBRARY_RELEASE_$(OS)) $(LIBRARY_DEBUG_$(OS))
+.PHONY: install clean test $(LIBRARY_RELEASE_$(OS)) $(LIBRARY_DEBUG_$(OS))
 
 all: $(LIBRARY_RELEASE_$(OS)) libkrun.pc
 
@@ -136,3 +136,10 @@ install: libkrun.pc
 clean:
 	rm -f $(INIT_BINARY)
 	cargo clean
+	rm -rf test-prefix
+	cd tests; cargo clean
+
+test: $(LIBRARY_RELEASE_$(OS))
+	mkdir -p test-prefix
+	PKG_CONFIG_PATH=test-prefix/lib64/pkgconfig/ PREFIX="$$(realpath test-prefix)" make install
+	cd tests; LD_LIBRARY_PATH=../test-prefix/lib64/ PKG_CONFIG_PATH=../test-prefix/lib64/pkgconfig/ ./run.sh
