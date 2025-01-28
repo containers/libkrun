@@ -354,8 +354,12 @@ pub fn build_microvm(
     vm_resources: &super::resources::VmResources,
     event_manager: &mut EventManager,
     _shutdown_efd: Option<EventFd>,
+    vmcall_sender: Sender<(u64, u64, bool)>,
     #[cfg(target_os = "macos")] _map_sender: Sender<MemoryMapping>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
+    
+    let mut guest_memfd_regions: Vec<(GuestAddress, u64)> = vec![];
+
     #[cfg(not(feature = "efi"))]
     let kernel_bundle = vm_resources
         .kernel_bundle()
@@ -423,7 +427,7 @@ pub fn build_microvm(
         let kvm = KvmContext::new()
             .map_err(Error::KvmContext)
             .map_err(StartMicrovmError::Internal)?;
-        let vm = setup_vm(&kvm, &guest_memory, vm_resources.tee_config())?;
+        let vm = setup_vm(&kvm, &guest_memory, vm_resources.tee_config(), &mut guest_memfd_regions)?;
         (kvm, vm)
     };
 
@@ -580,6 +584,7 @@ pub fn build_microvm(
             boot_ip,
             &pio_device_manager.io_bus,
             &exit_evt,
+            vmcall_sender,
         )
         .map_err(StartMicrovmError::Internal)?;
     }
@@ -640,6 +645,7 @@ pub fn build_microvm(
 
     let mut vmm = Vmm {
         guest_memory,
+        guest_memfd_regions,
         arch_memory_info,
         kernel_cmdline,
         vcpus_handles: Vec::new(),
@@ -984,11 +990,12 @@ pub(crate) fn setup_vm(
     kvm: &KvmContext,
     guest_memory: &GuestMemoryMmap,
     tee_config: &TeeConfig,
+    guest_memfd_regions: &mut Vec<(GuestAddress, u64)>,
 ) -> std::result::Result<Vm, StartMicrovmError> {
     let mut vm = Vm::new(kvm.fd(), tee_config)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
-    vm.memory_init(guest_memory, kvm.max_memslots())
+    vm.memory_init(guest_memory, kvm.max_memslots(), guest_memfd_regions)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     Ok(vm)
@@ -1145,6 +1152,7 @@ fn create_vcpus_x86_64(
     entry_addr: GuestAddress,
     io_bus: &devices::Bus,
     exit_evt: &EventFd,
+    vmcall_sender: Sender<(u64, u64, bool)>,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
 
@@ -1159,6 +1167,7 @@ fn create_vcpus_x86_64(
             vm.supported_msrs().clone(),
             io_bus.clone(),
             exit_evt.try_clone().map_err(Error::EventFd)?,
+            vmcall_sender.clone(),
         )
         .map_err(Error::Vcpu)?;
 

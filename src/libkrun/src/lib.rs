@@ -1165,14 +1165,14 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         ctx_cfg.vmr.set_console_output(console_output);
     }
 
-    #[cfg(target_os = "macos")]
-    let (sender, receiver) = unbounded();
+    // #[cfg(target_os = "macos")]
+    let (sender, receiver) = crossbeam_channel::unbounded();
 
     let _vmm = match vmm::builder::build_microvm(
         &ctx_cfg.vmr,
         &mut event_manager,
         ctx_cfg.shutdown_efd,
-        #[cfg(target_os = "macos")]
+        // #[cfg(target_os = "macos")]
         sender,
     ) {
         Ok(vmm) => vmm,
@@ -1182,8 +1182,19 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         }
     };
 
-    #[cfg(target_os = "macos")]
+    // #[cfg(target_os = "macos")]
     let mapper_vmm = _vmm.clone();
+
+    std::thread::Builder::new()
+        .name("vmcall worker".into())
+        .spawn(move || loop {
+            match receiver.recv() {
+                Err(e) => error!("Error in receiver: {:?}", e),
+                Ok((gpa, size, private)) => {
+                    let _ = convert_memory(&mapper_vmm, gpa, size, private);
+                },
+            }
+        }).unwrap();
 
     #[cfg(target_os = "macos")]
     std::thread::Builder::new()
@@ -1212,4 +1223,76 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             }
         }
     }
+}
+
+use std::sync::Arc;
+use vm_memory::GuestAddress;
+fn convert_memory(vmm: &Arc<Mutex<vmm::Vmm>>, gpa: u64, size: u64, to_private: bool) -> i32 {
+    let mut ret = -1;
+    let is_aligned = |n: u64, m: u64| -> bool {
+        ((n) % (m)) == 0
+    };
+    
+    if !is_aligned(gpa, 4096) || !is_aligned(size, 4096) {
+        return -1;
+    }
+
+    if size < 1 {
+        return -1;
+    }
+
+    use vm_memory::guest_memory::GuestMemory;
+    let binding = vmm.as_ref().lock().unwrap();
+    let region = binding.guest_memory().find_region(GuestAddress(gpa));
+
+    if let None = region {
+        // Ignore converting non-assigned region to shared
+        //
+        // TDX requires vMMIO region to be shared to inject #VE to guest. OVMF issues
+        // conservatively MapGPA(shared) on 32bit PCI MMIO region, and V vIO-APIC 0xFEC00000 4K
+        // page. OVMF assigns 32bit PCI MMIO region to [top of low memory: typically 2GB=0xC000000,
+        // 0xFC00000)
+        if !to_private {
+            return 0;
+        }
+        return -1;
+    }
+
+    let region = region.unwrap();
+
+    use vm_memory::Address;
+    let mut region_has_guest_memfd = false;
+    for region in binding.guest_memfd_regions().iter() {
+       if gpa >= region.0.raw_value() && gpa + size <= region.0.raw_value() + region.1 {
+           region_has_guest_memfd = true;
+       }
+    }
+
+    if !region_has_guest_memfd {
+        println!("DOESNT HAVE MEMFD");
+
+        // Because vMMIO region must be shared, guest TD may convert vMMIO region to shared
+        // explicitly. Don't complain such case. See memory_region_type() for checking if the
+        // region is MMIO region.
+      // if !to_private && !is_ram && !is_ram_device && !is_rom && !is_romd {
+      //     ret = 0;
+      // } else {
+      //     println!("Convert non guest_memfd backed memory region (0x{:x}, 0x{:x}, {}", gpa, size, if to_private { "private" } else { "shared" });
+      // }
+
+        return ret;
+    }
+    
+    let attr = kvm_bindings::kvm_memory_attributes {
+        address: gpa,
+        size,
+        attributes: if to_private {
+        // KVM_MEMORY_ATTRIBUTE_PRIVATE,
+        1 << 3 } else { 0 },
+        flags: 0,
+    };
+
+    binding.vm_fd().set_memory_attributes(attr).unwrap();
+
+    ret
 }

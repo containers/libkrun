@@ -690,11 +690,14 @@ dependencies = [
  "devices",
  "env_logger",
  "hvf",
+ "kvm-bindings",
+ "kvm-ioctls",
  "libc",
  "log",
  "once_cell",
  "polly",
  "utils",
+ "vm-memory",
  "vmm",
 ]
 

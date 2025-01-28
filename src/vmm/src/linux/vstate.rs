@@ -637,6 +637,7 @@ impl Vm {
         &mut self,
         guest_mem: &GuestMemoryMmap,
         kvm_max_memslots: usize,
+        guest_memfd_regions: &mut Vec<(GuestAddress, u64)>,
     ) -> Result<()> {
         if guest_mem.num_regions() > kvm_max_memslots {
             return Err(Error::NotEnoughMemorySlots);
@@ -690,6 +691,8 @@ impl Vm {
                 self.fd
                     .set_memory_attributes(attr)
                     .map_err(Error::SetMemoryAttributes)?;
+
+                guest_memfd_regions.push((region.start_addr(), region.len()));
             }
 
             #[cfg(not(feature = "intel-tdx"))]
@@ -971,6 +974,8 @@ pub struct Vcpu {
     response_receiver: Option<Receiver<VcpuResponse>>,
     // The transmitting end of the responses channel owned by the vcpu side.
     response_sender: Sender<VcpuResponse>,
+
+    vmcall_sender: Sender<(u64, u64, bool)>,
 }
 
 impl Vcpu {
@@ -1074,6 +1079,7 @@ impl Vcpu {
         msr_list: MsrList,
         io_bus: devices::Bus,
         exit_evt: EventFd,
+        vmcall_sender: Sender<(u64, u64, bool)>,
     ) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = unbounded();
@@ -1092,6 +1098,7 @@ impl Vcpu {
             event_sender: Some(event_sender),
             response_receiver: Some(response_receiver),
             response_sender,
+            vmcall_sender,
         })
     }
 
@@ -1394,43 +1401,43 @@ impl Vcpu {
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::MmioRead(addr, data) => {
-                    println!("MMIO READ");
+                    // println!("MMIO READ");
                     if let Some(ref mmio_bus) = self.mmio_bus {
                         mmio_bus.read(0, addr, data);
                     }
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::MmioWrite(addr, data) => {
-                    println!("MMIO WRITE");
+                    // println!("MMIO WRITE");
                     if let Some(ref mmio_bus) = self.mmio_bus {
                         mmio_bus.write(0, addr, data);
                     }
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::Hlt => {
-                    println!("HERE HLT");
+                    // println!("HERE HLT");
                     info!("Received KVM_EXIT_HLT signal");
                     Ok(VcpuEmulation::Stopped)
                 }
                 VcpuExit::Shutdown => {
-                    println!("HERE SHUTDOWN");
+                    // println!("HERE SHUTDOWN");
                     info!("Received KVM_EXIT_SHUTDOWN signal");
                     Ok(VcpuEmulation::Stopped)
                 }
                 // Documentation specifies that below kvm exits are considered
                 // errors.
                 VcpuExit::FailEntry(reason, vcpu) => {
-                    println!("FAIL ENTRY");
+                    // println!("FAIL ENTRY");
                     error!("Received KVM_EXIT_FAIL_ENTRY signal: reason={reason}, vcpu={vcpu}");
                     Err(Error::VcpuUnhandledKvmExit)
                 }
                 VcpuExit::InternalError => {
-                    println!("INTERNAL ERROR");
+                    // println!("INTERNAL ERROR");
                     error!("Received KVM_EXIT_INTERNAL_ERROR signal");
                     Err(Error::VcpuUnhandledKvmExit)
                 }
                 VcpuExit::Unknown => {
-                    println!("unknown exit");
+                    // println!("unknown exit");
                     Err(Error::VcpuUnhandledKvmExit)
                 }
                 VcpuExit::Tdx => {
@@ -1486,6 +1493,25 @@ impl Vcpu {
                     }
 
                     Err(Error::VcpuUnhandledKvmExit)
+                }
+                VcpuExit::MemoryFault { flags, gpa, size } => {
+                    // TODO: flags can be private or shared
+                    if flags & !kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64 != 0 {
+                        error!("KVM_EXIT_MEMORY_FAULT: Unknown flag {}", flags);
+                        Err(Error::VcpuUnhandledKvmExit)
+                    } else {
+                        // from private to shared
+                        let mut attr = 0;
+                        // from shared to private
+                        if flags & kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64
+                            == kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64
+                        {
+                            attr = kvm_bindings::KVM_MEMORY_ATTRIBUTE_PRIVATE;
+                        };
+
+                        let _ = self.vmcall_sender.try_send((gpa, size, attr > 0));
+                        Ok(VcpuEmulation::Handled)
+                    }
                 }
                 r => {
                     // TODO: Are we sure we want to finish running a vcpu upon
@@ -1622,6 +1648,7 @@ impl Vcpu {
         // if we are passed a valid memory range, convert it
         if size > 0 {
             // convert memory
+            self.vmcall_sender.send((gpa, size, private)).unwrap();
         }
 
         if ret == 0 {
