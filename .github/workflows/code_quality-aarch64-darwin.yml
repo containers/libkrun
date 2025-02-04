@@ -30,13 +30,13 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Clippy (default features)
-        run: cargo clippy --target aarch64-apple-darwin -- -D warnings
+        run: cargo clippy --target aarch64-apple-darwin --workspace --exclude krun-sys -- -D warnings
 
       - name: Clippy (net feature)
-        run: cargo clippy --target aarch64-apple-darwin --features net -- -D warnings
+        run: cargo clippy --target aarch64-apple-darwin --workspace --exclude krun-sys --features net -- -D warnings
 
       - name: Clippy (blk feature)
-        run: cargo clippy --target aarch64-apple-darwin --features blk -- -D warnings
+        run: cargo clippy --target aarch64-apple-darwin --workspace --exclude krun-sys --features blk -- -D warnings
 
       - name: Clippy (efi(blk+net) feature)
-        run: cargo clippy --target aarch64-apple-darwin --features efi -- -D warnings
+        run: cargo clippy --target aarch64-apple-darwin --workspace --exclude krun-sys --features efi -- -D warnings

@@ -12,5 +12,5 @@ task:
     fingerprint_script: cat Cargo.lock
   install_packages_script:
     - apt-get update && apt-get install -y libvirglrenderer-dev libepoxy-dev libdrm-dev
-  test_script: cargo test
+  test_script: cargo test --workspace --exclude krun-sys
   before_cache_script: rm -rf $CARGO_HOME/registry/index
