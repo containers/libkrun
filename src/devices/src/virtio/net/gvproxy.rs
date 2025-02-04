@@ -1,7 +1,7 @@
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
-    bind, getsockopt, recv, sendto, setsockopt, socket, sockopt, AddressFamily, MsgFlags, SockFlag,
-    SockType, UnixAddr,
+    bind, connect, getsockopt, recv, send, setsockopt, socket, sockopt, AddressFamily, MsgFlags,
+    SockFlag, SockType, UnixAddr,
 };
 use nix::unistd::unlink;
 use std::os::fd::{AsRawFd, RawFd};
@@ -13,7 +13,6 @@ const VFKIT_MAGIC: [u8; 4] = *b"VFKT";
 
 pub struct Gvproxy {
     fd: RawFd,
-    peer_addr: UnixAddr,
 }
 
 impl Gvproxy {
@@ -34,8 +33,11 @@ impl Gvproxy {
         }
         bind(fd, &local_addr).map_err(ConnectError::Binding)?;
 
-        sendto(fd, &VFKIT_MAGIC, &peer_addr, MsgFlags::empty())
-            .map_err(ConnectError::SendingMagic)?;
+        // Connect so we don't need to use the peer address again. This also
+        // allows the server to remove the socket after the connection.
+        connect(fd, &peer_addr).map_err(ConnectError::Binding)?;
+
+        send(fd, &VFKIT_MAGIC, MsgFlags::empty()).map_err(ConnectError::SendingMagic)?;
 
         // macOS forces us to do this here instead of just using SockFlag::SOCK_NONBLOCK above.
         match fcntl(fd, FcntlArg::F_GETFL) {
@@ -78,7 +80,7 @@ impl Gvproxy {
             getsockopt(fd, sockopt::RcvBuf)
         );
 
-        Ok(Self { fd, peer_addr })
+        Ok(Self { fd })
     }
 }
 
@@ -110,8 +112,8 @@ impl NetBackend for Gvproxy {
     /// If this function returns WriteError::PartialWrite, you have to finish the write using
     /// try_finish_write.
     fn write_frame(&mut self, hdr_len: usize, buf: &mut [u8]) -> Result<(), WriteError> {
-        let ret = sendto(self.fd, &buf[hdr_len..], &self.peer_addr, MsgFlags::empty())
-            .map_err(WriteError::Internal)?;
+        let ret =
+            send(self.fd, &buf[hdr_len..], MsgFlags::empty()).map_err(WriteError::Internal)?;
         debug!(
             "Written frame size={}, written={}",
             buf.len() - hdr_len,
