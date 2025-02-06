@@ -74,7 +74,7 @@ ifeq ($(PREFIX),)
     PREFIX := /usr/local
 endif
 
-.PHONY: install clean $(LIBRARY_RELEASE_$(OS)) $(LIBRARY_DEBUG_$(OS))
+.PHONY: install clean $(LIBRARY_RELEASE_$(OS)) $(LIBRARY_DEBUG_$(OS)) libkrun.pc
 
 all: $(LIBRARY_RELEASE_$(OS)) libkrun.pc
 
@@ -124,7 +124,7 @@ libkrun.pc: libkrun.pc.in Makefile
 	    libkrun.pc.in > $@-t
 	mv $@-t $@
 
-install:
+install: libkrun.pc
 	install -d $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/
 	install -d $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/pkgconfig
 	install -d $(DESTDIR)$(PREFIX)/include
