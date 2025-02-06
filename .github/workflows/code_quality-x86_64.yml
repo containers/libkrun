@@ -24,7 +24,7 @@ jobs:
             components: rustfmt, clippy
 
       - name: Install packages
-        run: sudo apt-get update && sudo apt-get install -y libvirglrenderer-dev libepoxy-dev libdrm-dev libpipewire-0.3-dev
+        run: sudo apt-get update && sudo apt-get install -y libvirglrenderer-dev libepoxy-dev libdrm-dev libpipewire-0.3-dev llvm libclang-dev
 
       - name: Create a fake init
         run: touch init/init
