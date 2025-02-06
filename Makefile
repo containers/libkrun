@@ -124,7 +124,7 @@ libkrun.pc: libkrun.pc.in Makefile
 	    libkrun.pc.in > $@-t
 	mv $@-t $@
 
-install:
+install: libkrun.pc
 	install -d $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/
 	install -d $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/pkgconfig
 	install -d $(DESTDIR)$(PREFIX)/include
