@@ -134,7 +134,7 @@ impl MmioTransport {
 
     fn reset(&mut self) {
         if self.locked_device().is_activated() {
-            warn!("reset device while it's still in active state");
+            debug!("reset device while it's still in active state");
         }
         self.features_select = 0;
         self.acked_features_select = 0;
