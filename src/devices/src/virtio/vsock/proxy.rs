@@ -25,6 +25,7 @@ pub enum ProxyError {
 pub enum ProxyStatus {
     Idle,
     Connecting,
+    ConnectedUnconfirmed,
     Connected,
     Listening,
     Closed,
