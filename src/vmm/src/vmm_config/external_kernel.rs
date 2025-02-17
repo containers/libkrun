@@ -30,4 +30,7 @@ impl Default for KernelFormat {
 pub struct ExternalKernel {
     pub path: PathBuf,
     pub format: KernelFormat,
+    pub initramfs_path: Option<PathBuf>,
+    pub initramfs_size: u64,
+    pub cmdline: Option<String>,
 }
