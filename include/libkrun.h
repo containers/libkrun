@@ -423,7 +423,9 @@ int32_t krun_set_exec(uint32_t ctx_id,
  /* Supported disk image formats */
 int32_t krun_set_kernel(uint32_t ctx_id,
                         const char *kernel_path,
-                        uint32_t kernel_format);
+                        uint32_t kernel_format,
+                        const char *initramfs,
+                        const char *cmdline);
 
 /**
  * Sets environment variables to be configured in the context of the executable.
