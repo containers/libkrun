@@ -69,6 +69,7 @@ pub fn arch_memory_regions(
     size: usize,
     kernel_load_addr: Option<u64>,
     kernel_size: usize,
+    initrd_size: u64,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
 
@@ -135,6 +136,7 @@ pub fn arch_memory_regions(
         ram_last_addr,
         shm_start_addr,
         page_size,
+        initrd_addr: ram_last_addr - initrd_size,
     };
     (info, regions)
 }
@@ -149,6 +151,7 @@ pub fn arch_memory_regions(
     size: usize,
     kernel_load_addr: Option<u64>,
     kernel_size: usize,
+    _initrd_size: u64,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
 
@@ -194,6 +197,7 @@ pub fn arch_memory_regions(
         ram_last_addr,
         shm_start_addr,
         page_size,
+        initrd_addr: layout::INITRD_SEV_START,
     };
     (info, regions)
 }
@@ -341,7 +345,8 @@ mod tests {
 
     #[test]
     fn regions_lt_4gb() {
-        let (_info, regions) = arch_memory_regions(1usize << 29, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+        let (_info, regions) =
+            arch_memory_regions(1usize << 29, Some(KERNEL_LOAD_ADDR), KERNEL_SIZE, 0);
         assert_eq!(2, regions.len());
         assert_eq!(GuestAddress(0), regions[0].0);
         assert_eq!(KERNEL_LOAD_ADDR as usize, regions[0].1);
@@ -354,8 +359,12 @@ mod tests {
 
     #[test]
     fn regions_gt_4gb() {
-        let (_info, regions) =
-            arch_memory_regions((1usize << 32) + 0x8000, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+        let (_info, regions) = arch_memory_regions(
+            (1usize << 32) + 0x8000,
+            Some(KERNEL_LOAD_ADDR),
+            KERNEL_SIZE,
+            0,
+        );
         assert_eq!(3, regions.len());
         assert_eq!(GuestAddress(0), regions[0].0);
         assert_eq!(KERNEL_LOAD_ADDR as usize, regions[0].1);
@@ -382,21 +391,21 @@ mod tests {
         // Now assigning some memory that falls before the 32bit memory hole.
         let mem_size = 128 << 20;
         let (arch_mem_info, arch_mem_regions) =
-            arch_memory_regions(mem_size, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+            arch_memory_regions(mem_size, Some(KERNEL_LOAD_ADDR), KERNEL_SIZE, 0);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
         configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus).unwrap();
 
         // Now assigning some memory that is equal to the start of the 32bit memory hole.
         let mem_size = 3328 << 20;
         let (arch_mem_info, arch_mem_regions) =
-            arch_memory_regions(mem_size, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+            arch_memory_regions(mem_size, Some(KERNEL_LOAD_ADDR), KERNEL_SIZE, 0);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
         configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus).unwrap();
 
         // Now assigning some memory that falls after the 32bit memory hole.
         let mem_size = 3330 << 20;
         let (arch_mem_info, arch_mem_regions) =
-            arch_memory_regions(mem_size, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+            arch_memory_regions(mem_size, Some(KERNEL_LOAD_ADDR), KERNEL_SIZE, 0);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
         configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus).unwrap();
     }
