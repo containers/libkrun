@@ -12,4 +12,15 @@ cargo test -p test_cases --features guest
 GUEST_TARGET_ARCH="$(uname -m)-unknown-linux-musl"
 
 cargo build --target=$GUEST_TARGET_ARCH -p guest-agent
-KRUN_TEST_GUEST_AGENT_PATH="target/$GUEST_TARGET_ARCH/debug/guest-agent" cargo run -p runner "$@"
+cargo build -p runner
+
+export KRUN_TEST_GUEST_AGENT_PATH="target/$GUEST_TARGET_ARCH/debug/guest-agent"
+
+if which unshare 2>&1 >/dev/null; then
+	unshare --user --map-root-user --net -- /bin/sh -c "ifconfig lo 127.0.0.1 && exec target/debug/runner $@"
+else
+	echo "WARNING: Running tests without a network namespace."
+	echo "Tests may fail if the required network ports are already in use."
+	echo
+	target/debug/runner $@
+fi
