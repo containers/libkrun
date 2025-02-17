@@ -416,13 +416,17 @@ int32_t krun_set_exec(uint32_t ctx_id,
  *  "ctx_id"        - the configuration context ID.
  *  "kernel_path"   - the path to the kernel, relative to the host's filesystem.
  *  "kernel_format" - the kernel format.
+ *  "initramfs"     - the path to the initramfs, relative to the host's filesystem.
+ *  "cmdline"       - the kernel command line.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_set_kernel(uint32_t ctx_id,
                         const char *kernel_path,
-                        uint32_t kernel_format);
+                        uint32_t kernel_format,
+                        const char *initramfs,
+                        const char *cmdline);
 
 /**
  * Sets environment variables to be configured in the context of the executable.

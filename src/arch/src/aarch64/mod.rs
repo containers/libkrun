@@ -47,7 +47,10 @@ use crate::DeviceType;
 
 /// Returns a Vec of the valid memory addresses for aarch64.
 /// See [`layout`](layout) module for a drawing of the specific memory model for this platform.
-pub fn arch_memory_regions(size: usize) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
+pub fn arch_memory_regions(
+    size: usize,
+    initrd_size: u64,
+) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
     let dram_size = round_up(size, page_size);
     let ram_last_addr = layout::DRAM_MEM_START + (dram_size as u64);
@@ -57,6 +60,7 @@ pub fn arch_memory_regions(size: usize) -> (ArchMemoryInfo, Vec<(GuestAddress, u
         ram_last_addr,
         shm_start_addr,
         page_size,
+        initrd_addr: ram_last_addr - layout::FDT_MAX_SIZE as u64 - initrd_size,
     };
     let regions = if cfg!(feature = "efi") {
         vec![
