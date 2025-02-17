@@ -330,6 +330,7 @@ mod tests {
             vm_config: VmConfig::default(),
             boot_config: default_boot_cfg(),
             kernel_bundle: Default::default(),
+            external_kernel: None,
             fs: Default::default(),
             vsock: Default::default(),
             #[cfg(feature = "net")]
