@@ -1,0 +1,15 @@
+[package]
+name = "krun-sys"
+version = "1.9.1"
+edition = "2021"
+rust-version = "1.77.0"
+description = "Rust bindings for libkrun"
+repository = "https://github.com/containers/libkrun"
+license = "Apache-2.0"
+links = "krun"
+
+[build-dependencies]
+bindgen = { version = "0.69.4", default-features = false }
+
+[features]
+default = []
