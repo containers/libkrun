@@ -1,0 +1,372 @@
+boot_source: BootSourceConfig { kernel_cmdline_prolog: Some("reboot=k panic=-1 panic_print=0 nomodule console=hvc0 root=/dev/vda rw quiet no-kvmapf init=/init.krun KRUN_INIT=/bin/sh KRUN_WORKDIR=/ KRUN_RLIMITS=\"6=4096:8192\" \"TEST=works\""), kernel_cmdline_epilog: Some(" -- ") }
+Injecting and measuring memory regions. This may take a while.
+serial device: false
+boot_ip: GuestAddress(
+    4294967280,
+)
+entry addr: GuestAddress(
+    4294967280,
+)
+kernel cmdline before adding to vmm: Cmdline { line: "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 root=/dev/vda rw quiet no-kvmapf init=/init.krun KRUN_INIT=/bin/sh KRUN_WORKDIR=/ KRUN_RLIMITS=\"6=4096:8192\" \"TEST=works\"", capacity: 65536 }
+EPILOG STRING: " -- "
+adding region: MeasuredRegion {
+    guest_addr: 0,
+    host_addr: 140125036085248,
+    size: 2147483648,
+}
+adding region: MeasuredRegion {
+    guest_addr: 4294901760,
+    host_addr: 140127214116864,
+    size: 65536,
+}
+Starting TEE/microVM.
+kernel cmdline before starting vcpus: Cmdline { line: "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 root=/dev/vda rw quiet no-kvmapf init=/init.krun KRUN_INIT=/bin/sh KRUN_WORKDIR=/ KRUN_RLIMITS=\"6=4096:8192\" \"TEST=works\" virtio_mmio.device=4K@0xd0000000:5 virtio_mmio.device=4K@0xd0001000:6 tsi_hijack  -- ", capacity: 65536 }
+KVM_RUN exited: Err(EINTR)
+//setting immediate_exit = 0, passing interrupt handling to the guest
+[    0.000000] tdx: Guest detected
+[    0.000000] boot_params: e820_nr_entries=2
+[    0.000000] boot_params: syssize=524288
+[    0.000000] real_mode_data: ptr=0xffff888000007000
+[    0.000000] boot_params: e820_nr_entries=2
+[    0.000000] boot_params: syssize=524288
+[    0.000000] real_mode_data: ptr=0xffff888000007000
+[    0.000000] Linux version 6.12.3 (root@libkrunfw) (gcc (GCC) 11.4.1 20231218 (Red Hat 11.4.1-3), GNU ld version 2.35.2-43.el9) #1 SMP PREEMPT_DYNAMIC Wed Dec 11 20:34:13 CET 2024
+[    0.000000] Command line: 
+[    0.000000] x86/split lock detection: #DB: warning on user-space bus_locks
+[    0.000000] e820 number of entries: 2
+[    0.000000] e820 number of entries: 2
+[    0.000000] BIOS-provided physical RAM map:
+[    0.000000] BIOS-e820: [mem 0x0000000000000000-0x000000000008fbff] usable
+[    0.000000] BIOS-e820: [mem 0x0000000000100000-0x0000000080000000] usable
+[    0.000000] printk: legacy bootconsole [earlyser0] enabled
+[    0.000000] NX (Execute Disable) protection: active
+[    0.000000] APIC: Static calls initialized
+[    0.000000] Hypervisor detected: KVM
+[    0.000000] tsc: Fast TSC calibration failed
+[    0.000000] tsc: Detected 2100.000 MHz processor
+[    0.000009] e820: update [mem 0x00000000-0x00000fff] usable ==> reserved
+[    0.002183] e820: remove [mem 0x000a0000-0x000fffff] usable
+[    0.004004] last_pfn = 0x80000 max_arch_pfn = 0x400000000
+[    0.005783] MTRR map: 0 entries (0 fixed + 0 variable; max 0), built from 0 variable MTRRs
+[    0.008449] MTRRs set to read-only
+[    0.009584] x86/PAT: Configuration [0-7]: WB  WC  UC- UC  WB  WP  UC- WT  
+[    0.011850] x2apic: enabled by BIOS, switching to x2apic ops
+[    0.013767] found SMP MP-table at [mem 0x0009fc00-0x0009fc0f]
+[    0.015677] software IO TLB: SWIOTLB bounce buffer size adjusted to 122MB
+[    0.015684] Using GB pages for direct mapping
+[    0.019388] RAMDISK: [mem 0x00a00000-0x00c0ffff]
+[    0.020892] ACPI: Early table checksum verification disabled
+[    0.022879] ACPI BIOS Error (bug): A valid RSDP was not found (20240827/tbxfroot-222)
+[    0.025409] Intel MultiProcessor Specification v1.4
+[    0.027059] MPTABLE: OEM ID: QBOOT   
+[    0.028271] MPTABLE: Product ID: 000000000000
+[    0.029680] MPTABLE: APIC at: 0xFEE00000
+[    0.030958] Zone ranges:
+[    0.031797]   DMA      [mem 0x0000000000001000-0x0000000000ffffff]
+[    0.033793]   DMA32    [mem 0x0000000001000000-0x000000007fffffff]
+[    0.035560]   Normal   empty
+[    0.036213] Movable zone start for each node
+[    0.037170] Early memory node ranges
+[    0.037910]   node   0: [mem 0x0000000000001000-0x000000000008efff]
+[    0.039209]   node   0: [mem 0x0000000000100000-0x000000007fffffff]
+[    0.040435] Initmem setup node 0 [mem 0x0000000000001000-0x000000007fffffff]
+[    0.041755] On node 0, zone DMA: 1 pages in unavailable ranges
+[    0.042868] On node 0, zone DMA: 113 pages in unavailable ranges
+[    0.047518] Intel MultiProcessor Specification v1.4
+[    0.048442] MPTABLE: OEM ID: QBOOT   
+[    0.049124] MPTABLE: Product ID: 000000000000
+[    0.049948] MPTABLE: APIC at: 0xFEE00000
+[    0.050709] Processor #0 (Bootup-CPU)
+[    0.051483] IOAPIC[0]: apic_id 2, version 1, address 0xfec00000, GSI 0-0
+[    0.052730] Processors: 1
+[    0.053222] CPU topo: Max. logical packages:   1
+[    0.054087] CPU topo: Max. logical dies:       1
+[    0.054944] CPU topo: Max. dies per package:   1
+[    0.055806] CPU topo: Max. threads per core:   1
+[    0.056664] CPU topo: Num. cores per package:     1
+[    0.057574] CPU topo: Num. threads per package:   1
+[    0.058478] CPU topo: Allowing 1 present CPUs plus 0 hotplug CPUs
+[    0.059662] kvm-guest: APIC: eoi() replaced with kvm_guest_apic_eoi_write()
+[    0.061015] [mem 0x80000001-0xffffffff] available for PCI devices
+[    0.062147] Booting paravirtualized kernel on KVM
+[    0.063026] clocksource: refined-jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645519600211568 ns
+[    0.065009] setup_percpu: NR_CPUS:8 nr_cpumask_bits:1 nr_cpu_ids:1 nr_node_ids:1
+[    0.066633] percpu: Embedded 46 pages/cpu s157336 r0 d31080 u2097152
+[    0.067825] pcpu-alloc: s157336 r0 d31080 u2097152 alloc=1*2097152
+[    0.068995] pcpu-alloc: [0] 0 
+[    0.069608] unchecked MSR access error: WRMSR to 0x4b564d04 (tried to write 0x000000007dc1b389) at rIP: 0xffffffff810591dd (kvm_guest_cpu_init+0x1ad/0x220)
+[    0.072196] Call Trace:
+[    0.072656]  <TASK>
+[    0.073044]  ? show_stack_regs+0x1d/0x30
+[    0.073775]  ? ex_handler_msr+0xf7/0x150
+[    0.074509]  ? search_extable+0x27/0x30
+[    0.075222]  ? fixup_exception+0x271/0x2f0
+[    0.076008]  ? exc_virtualization_exception+0xac/0x180
+[    0.076971]  ? asm_exc_virtualization_exception+0x1b/0x30
+[    0.077982]  ? kvm_guest_cpu_init+0x1ad/0x220
+[    0.078792]  kvm_smp_prepare_boot_cpu+0x12/0x90
+[    0.079639]  smp_prepare_boot_cpu+0xd/0x20
+[    0.080399]  start_kernel+0xa5/0x430
+[    0.081065]  x86_64_start_reservations+0x18/0x30
+[    0.081941]  x86_64_start_kernel+0x7c/0x80
+[    0.082704]  common_startup_64+0x13e/0x148
+[    0.083484]  </TASK>
+[    0.083913] kvm-guest: PV spinlocks disabled, single CPU
+[    0.084905] Kernel command line: reboot=k panic=-1 panic_print=0 nomodules console=ttyS0 earlyprintk=ttyS0 rootfstype=virtiofs rw no-kvmapf tsi_hijack init=/init.krun virtio_mmio.device=4K@0xd0000000:5 virtio_mmio.device=4K@0xd0001000:6 virtio_mmio.device=4K@0xd0002000:7 virtio_mmio.device=4K@0xd0003000:8 virtio_mmio.device=4K@0xd0004000:9 no-kvmclock
+[    0.090782] random: crng init done
+[    0.091636] Dentry cache hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+[    0.093207] Inode-cache hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[    0.094678] Built 1 zonelists, mobility grouping on.  Total pages: 524174
+[    0.095974] mem auto-init: stack:off, heap alloc:off, heap free:off
+[    0.097173] software IO TLB: area num 1.
+[    0.097932] software IO TLB: SWIOTLB bounce buffer size roundup to 128MB
+[    0.128939] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=1, Nodes=1
+Poking KASLR using RDRAND RDTSC...
+[    0.132527] Dynamic Preempt: none
+[    0.133176] rcu: Preemptible hierarchical RCU implementation.
+[    0.134276] rcu: 	RCU restricting CPUs from NR_CPUS=8 to nr_cpu_ids=1.
+[    0.135535] 	Trampoline variant of Tasks RCU enabled.
+[    0.136494] 	Tracing variant of Tasks RCU enabled.
+[    0.137401] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[    0.138864] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=1
+[    0.140153] RCU Tasks: Setting shift to 0 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=1.
+[    0.141816] RCU Tasks Trace: Setting shift to 0 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=1.
+[    0.143601] Using NULL legacy PIC
+[    0.144229] NR_IRQS: 4352, nr_irqs: 25, preallocated irqs: 0
+[    0.145325] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[    0.146853] Console: colour dummy device 80x25
+[    0.147780] printk: legacy console [ttyS0] enabled
+[    0.147780] printk: legacy console [ttyS0] enabled
+[    0.149656] printk: legacy bootconsole [earlyser0] disabled
+[    0.149656] printk: legacy bootconsole [earlyser0] disabled
+[    0.151867] Failed to register legacy timer interrupt
+[    0.152859] APIC: Switch to symmetric I/O mode setup
+[    0.153981] APIC: Switched APIC routing to: physical x2apic
+[    0.155201] clocksource: tsc-early: mask: 0xffffffffffffffff max_cycles: 0x1e4530a99b6, max_idle_ns: 440795257976 ns
+[    0.157250] Calibrating delay loop (skipped), value calculated using timer frequency.. 4200.00 BogoMIPS (lpj=8400000)
+[    0.159503] x86/cpu: User Mode Instruction Prevention (UMIP) activated
+[    0.161248] Last level iTLB entries: 4KB 0, 2MB 0, 4MB 0
+[    0.161248] Last level dTLB entries: 4KB 0, 2MB 0, 4MB 0, 1GB 0
+[    0.161248] process: using TDX aware idle routine
+[    0.161248] Spectre V1 : Mitigation: usercopy/swapgs barriers and __user pointer sanitization
+[    0.161248] Spectre V2 : WARNING: Unprivileged eBPF is enabled with eIBRS on, data leaks possible via Spectre v2 BHB attacks!
+[    0.161248] Spectre V2 : Mitigation: Enhanced / Automatic IBRS
+[    0.161248] Spectre V2 : Spectre v2 / SpectreRSB mitigation: Filling RSB on context switch
+[    0.161248] Spectre V2 : Spectre v2 / PBRSB-eIBRS: Retire a single CALL on VMEXIT
+[    0.161248] Spectre V2 : mitigation: Enabling conditional Indirect Branch Prediction Barrier
+[    0.161248] Speculative Store Bypass: Mitigation: Speculative Store Bypass disabled via prctl
+[    0.161248] x86/fpu: Supporting XSAVE feature 0x001: 'x87 floating point registers'
+[    0.161248] x86/fpu: Supporting XSAVE feature 0x002: 'SSE registers'
+[    0.161248] x86/fpu: Supporting XSAVE feature 0x004: 'AVX registers'
+[    0.161248] x86/fpu: Supporting XSAVE feature 0x020: 'AVX-512 opmask'
+[    0.161248] x86/fpu: Supporting XSAVE feature 0x040: 'AVX-512 Hi256'
+[    0.161248] x86/fpu: Supporting XSAVE feature 0x080: 'AVX-512 ZMM_Hi256'
+[    0.161248] x86/fpu: Supporting XSAVE feature 0x200: 'Protection Keys User registers'
+[    0.161248] x86/fpu: xstate_offset[2]:  576, xstate_sizes[2]:  256
+[    0.161248] x86/fpu: xstate_offset[5]:  832, xstate_sizes[5]:   64
+[    0.161248] x86/fpu: xstate_offset[6]:  896, xstate_sizes[6]:  512
+[    0.161248] x86/fpu: xstate_offset[7]: 1408, xstate_sizes[7]: 1024
+[    0.161248] x86/fpu: xstate_offset[9]: 2432, xstate_sizes[9]:    8
+[    0.161248] x86/fpu: Enabled xstate features 0x2e7, context size is 2440 bytes, using 'compacted' format.
+[    0.161248] Freeing SMP alternatives memory: 36K
+[    0.161248] Memory Encryption Features active: Intel TDX
+[    0.161248] pid_max: default: 32768 minimum: 301
+[    0.161248] LSM: initializing lsm=capability,selinux
+[    0.161248] SELinux:  Initializing.
+[    0.161248] Mount-cache hash table entries: 4096 (order: 3, 32768 bytes, linear)
+[    0.161248] Mountpoint-cache hash table entries: 4096 (order: 3, 32768 bytes, linear)
+[    0.161248] smpboot: CPU0: Intel 06/cf (family: 0x6, model: 0xcf, stepping: 0x2)
+[    0.177295] Performance Events: unsupported p6 CPU model 207 no PMU driver, software events only.
+[    0.181280] signal: max sigframe size: 3632
+[    0.185289] rcu: Hierarchical SRCU implementation.
+[    0.189248] rcu: 	Max phase no-delay instances is 1000.
+[    0.197304] smp: Bringing up secondary CPUs ...
+[    0.201249] smpboot: Parallel CPU startup disabled by the platform
+[    0.209250] smp: Brought up 1 node, 1 CPU
+[    0.213251] smpboot: Total of 1 processors activated (4200.00 BogoMIPS)
+[    0.217301] Memory: 1901932K/2096696K available (12288K kernel code, 711K rwdata, 2860K rodata, 1940K init, 1312K bss, 191856K reserved, 0K cma-reserved)
+[    0.229352] devtmpfs: initialized
+[    0.233299] x86/mm: Memory block size: 128MB
+[    0.249266] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.253250] futex hash table entries: 256 (order: 2, 16384 bytes, linear)
+[    0.257431] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[    0.269301] audit: initializing netlink subsys (disabled)
+[    0.273333] thermal_sys: Registered thermal governor 'step_wise'
+[    0.273334] thermal_sys: Registered thermal governor 'user_space'
+[    0.277252] audit: type=2000 audit(943920000.116:1): state=initialized audit_enabled=0 res=1
+[    0.285252] cpuidle: using governor ladder
+[    0.289251] cpuidle: using governor menu
+[    0.305367] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+[    0.309248] HugeTLB: 16380 KiB vmemmap can be freed for a 1.00 GiB page
+[    0.313249] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+[    0.317248] HugeTLB: 28 KiB vmemmap can be freed for a 2.00 MiB page
+[    0.329305] cryptd: max_cpu_qlen set to 1000
+[    0.405248] raid6: avx512x4 gen()   798 MB/s
+[    0.477249] raid6: avx512x2 gen()   781 MB/s
+[    0.549249] raid6: avx512x1 gen()   600 MB/s
+[    0.621248] raid6: avx2x4   gen()   900 MB/s
+[    0.693248] raid6: avx2x2   gen()   895 MB/s
+[    0.765248] raid6: avx2x1   gen()   748 MB/s
+[    0.769249] raid6: using algorithm avx2x4 gen() 900 MB/s
+[    0.841249] raid6: .... xor() 116 MB/s, rmw enabled
+[    0.845249] raid6: using avx512x2 recovery algorithm
+[    0.849254] ACPI: Interpreter disabled.
+[    0.853299] pps_core: LinuxPPS API ver. 1 registered
+[    0.857248] pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+[    0.861250] PTP clock support registered
+[    0.869401] NetLabel: Initializing
+[    0.873248] NetLabel:  domain hash size = 128
+[    0.877248] NetLabel:  protocols = UNLABELED CIPSOv4 CALIPSO
+[    0.881266] NetLabel:  unlabeled traffic allowed by default
+[    0.885382] clocksource: Switched to clocksource tsc-early
+[    0.890590] pnp: PnP ACPI: disabled
+[    0.899192] NET: Registered PF_INET protocol family
+[    0.902953] IP idents hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.910828] tcp_listen_portaddr_hash hash table entries: 1024 (order: 2, 16384 bytes, linear)
+[    0.917087] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+[    0.922618] TCP established hash table entries: 16384 (order: 5, 131072 bytes, linear)
+[    0.928398] TCP bind hash table entries: 16384 (order: 7, 524288 bytes, linear)
+[    0.934636] TCP: Hash tables configured (established 16384 bind 16384)
+[    0.939530] UDP hash table entries: 1024 (order: 3, 32768 bytes, linear)
+[    0.944442] UDP-Lite hash table entries: 1024 (order: 3, 32768 bytes, linear)
+[    0.950492] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[    0.954751] PCI-DMA: Using software bounce buffering for IO (SWIOTLB)
+[    0.959557] software IO TLB: mapped [mem 0x0000000075a00000-0x000000007da00000] (128MB)
+[    0.966508] virtio-mmio: Registering device virtio-mmio.0 at 0xd0000000-0xd0000fff, IRQ 5.
+[    0.972609] virtio-mmio: Registering device virtio-mmio.1 at 0xd0001000-0xd0001fff, IRQ 6.
+[    0.978759] virtio-mmio: Registering device virtio-mmio.2 at 0xd0002000-0xd0002fff, IRQ 7.
+[    0.985101] virtio-mmio: Registering device virtio-mmio.3 at 0xd0003000-0xd0003fff, IRQ 8.
+[    0.991255] virtio-mmio: Registering device virtio-mmio.4 at 0xd0004000-0xd0004fff, IRQ 9.
+[    0.998493] clocksource: tsc: mask: 0xffffffffffffffff max_cycles: 0x1e4530a99b6, max_idle_ns: 440795257976 ns
+[    1.006732] Unpacking initramfs...
+[    1.018514] clocksource: Switched to clocksource tsc
+[    1.020263] platform rtc_cmos: registered platform RTC device (no PNP device found)
+[    1.031490] workingset: timestamp_bits=46 max_order=19 bucket_order=0
+[    1.043155] SGI XFS with security attributes, no debug enabled
+[    1.090979] xor: automatically using best checksumming function   avx       
+[    1.095863] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 252)
+[    1.141281] Freeing initrd memory: 2112K
+[    1.142854] virtio-mmio virtio-mmio.2: Wrong magic value 0x00000001!
+[    1.144235] virtio-mmio virtio-mmio.3: Wrong magic value 0x00001000!
+[    1.145508] virtio-mmio virtio-mmio.4: Wrong magic value 0x00001000!
+[    1.146810] Serial: 8250/16550 driver, 4 ports, IRQ sharing disabled
+[    1.148274] serial8250: ttyS0 at I/O 0x3f8 (irq = 4, base_baud = 115200) is a 16550A
+[    1.150258] serial8250: ttyS1 at I/O 0x2f8 (irq = 3, base_baud = 115200) is a 16550A
+[    1.152073] serial8250: ttyS2 at I/O 0x3e8 (irq = 4, base_baud = 115200) is a 16550A
+[    1.154471] virtio_console virtio0: Error -22 initializing vqs
+[    1.155668] virtio_console virtio0: probe with driver virtio_console failed with error -22
+[    1.158785] loop: module loaded
+[    1.159485] tun: Universal TUN/TAP device driver, 1.6
+[    1.160577] ------------[ cut here ]------------
+[    1.161526] CPA VMM failure to convert memory (addr=000000009ff496fc, numpages=1) to private: -5
+[    1.163266] WARNING: CPU: 0 PID: 1 at arch/x86/mm/pat/set_memory.c:2224 __set_memory_enc_pgtable+0x1c1/0x1d0
+[    1.165189] CPU: 0 UID: 0 PID: 1 Comm: swapper/0 Not tainted 6.12.3 #1
+[    1.166502] RIP: 0010:__set_memory_enc_pgtable+0x1c1/0x1d0
+[    1.167600] Code: e4 81 48 8b 75 88 45 89 e0 48 c7 c1 75 2b e3 81 44 89 ea 48 c7 c7 c0 83 e2 81 c6 05 79 33 03 01 01 48 0f 44 c8 e8 1f b4 00 00 <0f> 0b e9 12 ff ff ff e8 b3 9d 97 00 0f 1f 00 90 90 90 90 90 90 90
+[    1.171263] RSP: 0000:ffffc9000000bd68 EFLAGS: 00010282
+[    1.172317] RAX: 0000000000000000 RBX: 0000000000000001 RCX: 0000000000000000
+[    1.173741] RDX: 0000000000000002 RSI: 00000000fffff7ff RDI: 00000000ffffffff
+[    1.175154] RBP: ffffc9000000bde0 R08: 0000000000000000 R09: ffffc9000000bbc8
+[    1.176582] R10: ffffc9000000bbc0 R11: ffffffff82061468 R12: 00000000fffffffb
+[    1.177988] R13: 0000000000000001 R14: 0000000000000001 R15: 0000000000000000
+[    1.179413] FS:  0000000000000000(0000) GS:ffff88807dc00000(0000) knlGS:0000000000000000
+[    1.180996] CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+[    1.182145] CR2: ffff888002400000 CR3: 0000000002016001 CR4: 0000000000770ef0
+[    1.183598] DR0: 0000000000000000 DR1: 0000000000000000 DR2: 0000000000000000
+[    1.185003] DR3: 0000000000000000 DR6: 00000000fffe07f0 DR7: 0000000000000400
+[    1.186470] PKRU: 55555554
+[    1.187025] Call Trace:
+[    1.187558]  <TASK>
+[    1.187998]  ? show_regs+0x64/0x70
+[    1.188690]  ? __warn+0x76/0xe0
+[    1.189333]  ? __set_memory_enc_pgtable+0x1c1/0x1d0
+[    1.190448]  ? report_bug+0x1f2/0x200
+[    1.191195]  ? handle_bug+0x5b/0x90
+[    1.191913]  ? exc_invalid_op+0x19/0x70
+[    1.192694]  ? asm_exc_invalid_op+0x1b/0x20
+[    1.193540]  ? __set_memory_enc_pgtable+0x1c1/0x1d0
+[    1.194516]  ? __set_memory_enc_pgtable+0x1c1/0x1d0
+[    1.195491]  set_memory_encrypted+0x4d/0x80
+[    1.196353]  kvm_arch_ptp_exit+0x29/0x50
+[    1.197144]  kvm_arch_ptp_init+0x70/0x110
+[    1.197956]  ? __pfx_ptp_kvm_init+0x10/0x10
+[    1.198798]  ptp_kvm_init+0xb/0xf0
+[    1.199500]  ? __pfx_ptp_kvm_init+0x10/0x10
+[    1.200367]  do_one_initcall+0x6e/0x2a0
+[    1.201140]  do_initcalls+0xa3/0xf0
+[    1.201847]  kernel_init_freeable+0xff/0x160
+[    1.202724]  ? __pfx_kernel_init+0x10/0x10
+[    1.203559]  kernel_init+0x15/0x1a0
+[    1.204275]  ret_from_fork+0x34/0x60
+[    1.205025]  ? __pfx_kernel_init+0x10/0x10
+[    1.205881]  ret_from_fork_asm+0x1a/0x30
+[    1.206676]  </TASK>
+[    1.207152] ---[ end trace 0000000000000000 ]---
+[    1.208082] ------------[ cut here ]------------
+[    1.209004] WARNING: CPU: 0 PID: 1 at drivers/ptp/ptp_kvm_x86.c:71 kvm_arch_ptp_exit+0x4c/0x50
+[    1.210732] CPU: 0 UID: 0 PID: 1 Comm: swapper/0 Tainted: G        W          6.12.3 #1
+[    1.212334] Tainted: [W]=WARN
+[    1.212959] RIP: 0010:kvm_arch_ptp_exit+0x4c/0x50
+[    1.213940] Code: 00 00 e8 47 26 87 ff 85 c0 75 1f 48 8b 3d 1c 08 b2 00 31 f6 e8 25 81 a6 ff 5d 48 c7 05 09 08 b2 00 00 00 00 00 c3 cc cc cc cc <0f> 0b eb dd 90 90 90 90 90 90 90 90 90 90 90 90 90 90 90 90 55 48
+[    1.217625] RSP: 0000:ffffc9000000be18 EFLAGS: 00010282
+[    1.218674] RAX: 00000000fffffffb RBX: 0000000000000000 RCX: 0000000000000000
+[    1.220088] RDX: 0000000000000001 RSI: 00000000fffff7ff RDI: 00000000ffffffff
+[    1.221525] RBP: ffffc9000000be18 R08: 0000000000000000 R09: ffffc9000000bbc8
+[    1.222949] R10: ffffc9000000bbc0 R11: ffffffff82061468 R12: ffffea00000c7980
+[    1.224395] R13: ffff888002998400 R14: 00000000000000bd R15: 0000000000000000
+[    1.225824] FS:  0000000000000000(0000) GS:ffff88807dc00000(0000) knlGS:0000000000000000
+[    1.227452] CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+[    1.228590] CR2: ffff888002400000 CR3: 0000000002016001 CR4: 0000000000770ef0
+[    1.230020] DR0: 0000000000000000 DR1: 0000000000000000 DR2: 0000000000000000
+[    1.231476] DR3: 0000000000000000 DR6: 00000000fffe07f0 DR7: 0000000000000400
+[    1.232890] PKRU: 55555554
+[    1.233467] Call Trace:
+[    1.233973]  <TASK>
+[    1.234446]  ? show_regs+0x64/0x70
+[    1.235136]  ? __warn+0x76/0xe0
+[    1.235784]  ? kvm_arch_ptp_exit+0x4c/0x50
+[    1.236608]  ? report_bug+0x1f2/0x200
+[    1.237365]  ? handle_bug+0x5b/0x90
+[    1.238078]  ? exc_invalid_op+0x19/0x70
+[    1.238861]  ? asm_exc_invalid_op+0x1b/0x20
+[    1.239708]  ? kvm_arch_ptp_exit+0x4c/0x50
+[    1.240557]  ? kvm_arch_ptp_exit+0x29/0x50
+[    1.241392]  kvm_arch_ptp_init+0x70/0x110
+[    1.242239]  ? __pfx_ptp_kvm_init+0x10/0x10
+[    1.243099]  ptp_kvm_init+0xb/0xf0
+[    1.243790]  ? __pfx_ptp_kvm_init+0x10/0x10
+[    1.244653]  do_one_initcall+0x6e/0x2a0
+[    1.245458]  do_initcalls+0xa3/0xf0
+[    1.246166]  kernel_init_freeable+0xff/0x160
+[    1.247023]  ? __pfx_kernel_init+0x10/0x10
+[    1.247870]  kernel_init+0x15/0x1a0
+[    1.248583]  ret_from_fork+0x34/0x60
+[    1.249325]  ? __pfx_kernel_init+0x10/0x10
+[    1.250157]  ret_from_fork_asm+0x1a/0x30
+[    1.250949]  </TASK>
+[    1.251417] ---[ end trace 0000000000000000 ]---
+[    1.252368] fail to initialize ptp_kvm
+[    1.252590] device-mapper: ioctl: 4.48.0-ioctl (2023-03-01) initialised: dm-devel@lists.linux.dev
+[    1.255172] intel_pstate: CPU model not supported
+[    1.256284] Initializing XFRM netlink socket
+[    1.257175] NET: Registered PF_PACKET protocol family
+[    1.258475] NET: Registered PF_VSOCK protocol family
+[    1.259631] vmw_vsock_virtio_transport virtio1: probe with driver vmw_vsock_virtio_transport failed with error -22
+[    1.261697] NET: Registered PF_TSI protocol family
+[    1.263030] IPI shorthand broadcast: enabled
+[    1.264742] sched_clock: Marking stable (1252230594, 10430159)->(798932568, 463728185)
+[    1.268323] registered taskstats version 1
+[    1.271385] Btrfs loaded, zoned=no, fsverity=no
+[    1.272401] Key type encrypted registered
+[    1.273246] clk: Disabling unused clocks
+[    1.274781] Freeing unused kernel image (initmem) memory: 1940K
+[    1.276013] Write protecting the kernel read-only data: 16384k
+[    1.277641] Freeing unused kernel image (rodata/data gap) memory: 1236K
+[    1.278956] Run /init as init process
+[    1.279707]   with arguments:
+[    1.280342]     /init
+[    1.280824]   with environment:
+[    1.281485]     HOME=/
+[    1.281976]     TERM=linux
+[    1.283166] reboot: Failed to start orderly reboot: forcing the issue
+[    1.284563] reboot: machine restart

@@ -234,9 +234,15 @@ int main(int argc, char *const argv[])
     }
 
     // Configure the number of vCPUs (1) and the amount of RAM (512 MiB).
-    if (err = krun_set_vm_config(ctx_id, 4, 4096)) {
+    if (err = krun_set_vm_config(ctx_id, 1, 4096)) {
         errno = -err;
         perror("Error configuring the number of vCPUs and/or the amount of RAM");
+        return -1;
+    }
+
+    if (err = krun_set_tee_config_file(ctx_id, "/home/jcorrent/slp-libkrun/examples/tdx-config-noattest.json")) {
+        errno = -err;
+        perror("Error setting the TEE config file");
         return -1;
     }
 

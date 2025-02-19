@@ -810,6 +810,7 @@ int setup_redirects()
 
 int main(int argc, char **argv)
 {
+	printf("HELLO FROM THE INIT BINARY\n");
 	struct ifreq ifr;
 	int sockfd;
 	char localhost[] = "localhost\0";

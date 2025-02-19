@@ -643,6 +643,7 @@ pub fn build_microvm(
         )?;
     }
 
+    println!("kernel cmdline before adding to vmm: {:?}", kernel_cmdline);
     let mut vmm = Vmm {
         guest_memory,
         guest_memfd_regions,
@@ -713,6 +714,7 @@ pub fn build_microvm(
     }
 
     if let Some(s) = &vm_resources.boot_config.kernel_cmdline_epilog {
+        println!("EPILOG STRING: {:?}", s);
         vmm.kernel_cmdline.insert_str(s).unwrap();
     };
 
@@ -789,6 +791,7 @@ pub fn build_microvm(
         println!("Starting TEE/microVM.");
     }
 
+    println!("kernel cmdline before starting vcpus: {:?}", vmm.kernel_cmdline);
     vmm.start_vcpus(vcpus)
         .map_err(StartMicrovmError::Internal)?;
 
@@ -1175,6 +1178,41 @@ fn create_vcpus_x86_64(
         for entry in cpuid.as_mut_slice().iter_mut() {
             if entry.index == 0x1 {
                 entry.ecx &= 1 << 21;
+            }
+
+            if entry.function == 0xD && entry.index == 0 {
+                const XFEATURE_MASK_XTILE: u32 = (1 << 17) | (1 << 18);
+                if (entry.eax & XFEATURE_MASK_XTILE) != XFEATURE_MASK_XTILE {
+                    entry.eax &= !XFEATURE_MASK_XTILE;
+                }
+            }
+
+            if entry.function == 0xD && entry.index == 1 {
+                entry.ecx &= !(1 << 15);
+                const XFEATURE_MASK_CET: u32 = (1 << 11) | (1 << 12);
+                if entry.ecx & XFEATURE_MASK_CET > 0 {
+                    entry.ecx |= XFEATURE_MASK_CET;
+                }
+            }
+
+            if entry.function == 0x4000_0001  {
+                // KVM feature bits
+                const KVM_FEATURE_CLOCKSOURCE_BIT: u8 = 0;
+                const KVM_FEATURE_CLOCKSOURCE2_BIT: u8 = 3;
+                const KVM_FEATURE_CLOCKSOURCE_STABLE_BIT: u8 = 24;
+                const KVM_FEATURE_ASYNC_PF_BIT: u8 = 4;
+                const KVM_FEATURE_ASYNC_PF_VMEXIT_BIT: u8 = 10;
+                const KVM_FEATURE_STEAL_TIME_BIT: u8 = 5;
+                const KVM_FEATURE_PV_EOI: u8 = 6;
+                
+                // These features are not supported by TDX
+                entry.eax &= !(1 << KVM_FEATURE_CLOCKSOURCE_BIT
+                    | 1 << KVM_FEATURE_CLOCKSOURCE2_BIT
+                    | 1 << KVM_FEATURE_CLOCKSOURCE_STABLE_BIT
+                    | 1 << KVM_FEATURE_ASYNC_PF_BIT
+                    | 1 << KVM_FEATURE_ASYNC_PF_VMEXIT_BIT
+                    | 1 << KVM_FEATURE_PV_EOI
+                    | 1 << KVM_FEATURE_STEAL_TIME_BIT);
             }
         }
 

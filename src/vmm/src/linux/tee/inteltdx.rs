@@ -24,7 +24,7 @@ pub enum Error {
 }
 
 pub struct IntelTdx {
-    caps: TdxCapabilities,
+//     caps: TdxCapabilities,
     vm: TdxVm,
     tdvf_sections: Vec<TdvfSection>,
     tdvf_file: File,
@@ -34,9 +34,9 @@ impl IntelTdx {
     pub fn new(vm_fd: &VmFd) -> Result<Self, Error> {
         // FIXME(jakecorrenti): need to specify the max number of VCPUs here and not just assume 100. This should come from the VmResources that we set when doing krun_set_vm_config()
         let vm = TdxVm::new(vm_fd, 1).or_else(|_| return Err(Error::CreateTdxVmStruct))?;
-        let caps = vm
-            .get_capabilities(vm_fd)
-            .or_else(|_| return Err(Error::GetCapabilities))?;
+        // let caps = vm
+        //     .get_capabilities(vm_fd)
+        //     .or_else(|_| return Err(Error::GetCapabilities))?;
 
         // let mut firmware = std::fs::File::open("/home/jcorrent/edk2/Build/IntelTdx/RELEASE_GCC5/FV/OVMF.fd")
         let mut firmware = std::fs::File::open("/home/slp/OVMF.fd")
@@ -45,7 +45,7 @@ impl IntelTdx {
             tdx::tdvf::parse_sections(&mut firmware).map_err(Error::ParseTdvfSections)?;
 
         Ok(IntelTdx {
-            caps,
+            // caps,
             vm,
             tdvf_sections,
             tdvf_file: firmware,
