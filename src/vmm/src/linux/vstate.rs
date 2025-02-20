@@ -1500,16 +1500,21 @@ impl Vcpu {
                         error!("KVM_EXIT_MEMORY_FAULT: Unknown flag {}", flags);
                         Err(Error::VcpuUnhandledKvmExit)
                     } else {
-                        // from private to shared
-                        let mut attr = 0;
-                        // from shared to private
-                        if flags & kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64
-                            == kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64
-                        {
-                            attr = kvm_bindings::KVM_MEMORY_ATTRIBUTE_PRIVATE;
-                        };
+                        // // from private to shared
+                        // let mut attr = 0;
+                        // // from shared to private
+                        // if flags & kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64
+                        //     == kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64
+                        // {
+                        //     attr = kvm_bindings::KVM_MEMORY_ATTRIBUTE_PRIVATE;
+                        // };
+                        let attr = (flags & kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64);
 
-                        let _ = self.vmcall_sender.try_send((gpa, size, attr > 0));
+                        let res = self.vmcall_sender.try_send((gpa, size, attr > 0));
+                        if res.is_err() {
+                            error!("KVM_EXIT_MEMORY_FAULT: unable to convert memory: Exit {:#?}", res);
+                            return Err(Error::VcpuUnhandledKvmExit);
+                        }
                         Ok(VcpuEmulation::Handled)
                     }
                 }
@@ -1784,7 +1789,7 @@ impl Vcpu {
 
     #[cfg(feature = "intel-tdx")]
     pub fn tdx_secure_virt_init(&self, hob_addr: u64, cpuid: &CpuId) -> Result<()> {
-        self.fd.set_cpuid2(cpuid).unwrap();
+        // self.fd.set_cpuid2(cpuid).unwrap();
         tdx::launch::TdxVcpu::init_raw(&self.fd, hob_addr)
             .or_else(|_| return Err(Error::TdxSecVirtInitVcpu))
     }

@@ -1175,53 +1175,47 @@ fn create_vcpus_x86_64(
         .map_err(Error::Vcpu)?;
 
         let mut cpuid = vm.supported_cpuid().clone();
-        for entry in cpuid.as_mut_slice().iter_mut() {
-            if entry.index == 0x1 {
-                entry.ecx &= 1 << 21;
-            }
+        // for entry in cpuid.as_mut_slice().iter_mut() {
+        //     if entry.index == 0x1 {
+        //         entry.ecx &= 1 << 21;
+        //     }
 
-            if entry.function == 0xD && entry.index == 0 {
-                const XFEATURE_MASK_XTILE: u32 = (1 << 17) | (1 << 18);
-                if (entry.eax & XFEATURE_MASK_XTILE) != XFEATURE_MASK_XTILE {
-                    entry.eax &= !XFEATURE_MASK_XTILE;
-                }
-            }
+        //     if entry.function == 0xD && entry.index == 0 {
+        //         const XFEATURE_MASK_XTILE: u32 = (1 << 17) | (1 << 18);
+        //         if (entry.eax & XFEATURE_MASK_XTILE) != XFEATURE_MASK_XTILE {
+        //             entry.eax &= !XFEATURE_MASK_XTILE;
+        //         }
+        //     }
 
-            if entry.function == 0xD && entry.index == 1 {
-                entry.ecx &= !(1 << 15);
-                const XFEATURE_MASK_CET: u32 = (1 << 11) | (1 << 12);
-                if entry.ecx & XFEATURE_MASK_CET > 0 {
-                    entry.ecx |= XFEATURE_MASK_CET;
-                }
-            }
+        //     if entry.function == 0xD && entry.index == 1 {
+        //         entry.ecx &= !(1 << 15);
+        //         const XFEATURE_MASK_CET: u32 = (1 << 11) | (1 << 12);
+        //         if entry.ecx & XFEATURE_MASK_CET > 0 {
+        //             entry.ecx |= XFEATURE_MASK_CET;
+        //         }
+        //     }
 
-            if entry.function == 0x4000_0001  {
-                // KVM feature bits
-                const KVM_FEATURE_CLOCKSOURCE_BIT: u8 = 0;
-                const KVM_FEATURE_CLOCKSOURCE2_BIT: u8 = 3;
-                const KVM_FEATURE_CLOCKSOURCE_STABLE_BIT: u8 = 24;
-                const KVM_FEATURE_ASYNC_PF_BIT: u8 = 4;
-                const KVM_FEATURE_ASYNC_PF_VMEXIT_BIT: u8 = 10;
-                const KVM_FEATURE_STEAL_TIME_BIT: u8 = 5;
-                const KVM_FEATURE_PV_EOI: u8 = 6;
+        //     if entry.function == 0x4000_0001  {
+        //         // KVM feature bits
+        //         const NOP_IO_RELAY: u32 = 1;
+        //         const PV_UNHALT: u32 = 1;
+        //         const PV_TLB_FLUSH: u32 = 9;
+        //         const PV_SEND_IPI: u32 = 11;
+        //         const POLL_CONTROL: u32 = 12;
+        //         const PV_SCHED_YIELD: u32 = 13;
+        //         const MSI_EXT_DEST_ID: u32 = 15;
                 
-                // These features are not supported by TDX
-                entry.eax &= !(1 << KVM_FEATURE_CLOCKSOURCE_BIT
-                    | 1 << KVM_FEATURE_CLOCKSOURCE2_BIT
-                    | 1 << KVM_FEATURE_CLOCKSOURCE_STABLE_BIT
-                    | 1 << KVM_FEATURE_ASYNC_PF_BIT
-                    | 1 << KVM_FEATURE_ASYNC_PF_VMEXIT_BIT
-                    | 1 << KVM_FEATURE_PV_EOI
-                    | 1 << KVM_FEATURE_STEAL_TIME_BIT);
-            }
-        }
-
-        #[cfg(feature = "intel-tdx")]
-        vcpu.tdx_secure_virt_init(hob_section_addr, &cpuid)
-            .map_err(Error::Vcpu)?;
+        //         // These features are not supported by TDX
+        //         entry.eax &= (1 << NOP_IO_RELAY) | (1 << PV_UNHALT) | (1 << PV_TLB_FLUSH) | (1 << PV_SEND_IPI) | (1 << POLL_CONTROL) | (1 << PV_SCHED_YIELD) | (1 << MSI_EXT_DEST_ID);
+        //     }
+        // }
 
         println!("entry addr: {:#?}", entry_addr);
         vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config)
+            .map_err(Error::Vcpu)?;
+
+        #[cfg(feature = "intel-tdx")]
+        vcpu.tdx_secure_virt_init(0, &cpuid)
             .map_err(Error::Vcpu)?;
 
         vcpus.push(vcpu);
