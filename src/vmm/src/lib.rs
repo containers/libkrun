@@ -39,6 +39,7 @@ use macos::vstate;
 
 use std::fmt::{Display, Formatter};
 use std::io;
+use std::os::fd::RawFd;
 use std::os::unix::io::AsRawFd;
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "linux")]
@@ -187,6 +188,8 @@ pub struct Vmm {
     // Guest VM core resources.
     guest_memory: GuestMemoryMmap,
     arch_memory_info: ArchMemoryInfo,
+
+    pub guest_memfd_vec: Vec<RawFd>,
 
     kernel_cmdline: KernelCmdline,
 
