@@ -20,5 +20,5 @@ Name: @PACKAGE_NAME@
 Version: @PACKAGE_VERSION@
 Description: Library providing Virtualization-based process isolation
 Requires:
-Cflags:
-Libs: -lkrun
+Cflags: -I${includedir}
+Libs: -L${libdir} -lkrun
