@@ -45,10 +45,12 @@ static void print_help(char *const name)
         "              --passt-socket=PATH   Instead of starting passt, connect to passt socket at PATH"
         "NET_MODE can be either TSI (default) or PASST\n"
         "              --kernel              Path for loading a kernel in place of one supplied by libkrunfw\n"
+        "              --kernel-format       Format of a custom kernel\n"
         "              --kernel-cmdline      Cmdline for externally-loaded kernel\n"
         "              --initrd-path         Initrd for externally-loaded kernel (optional)\n"
         "              --boot-disk           Add a boot disk (virtio-blk)\n"
         "              --data-disk           Add a data disk (virtio-blk)\n"
+        "              --loglevel            Set a logging level (0-5)\n"
         "\n"
         "NEWROOT:      the root directory of the vm (virtio-fs)\n"
         "COMMAND:      the command you want to execute in the vm\n"
@@ -66,6 +68,8 @@ static const struct option long_options[] = {
     { "initrd-path", required_argument, NULL, 'i'},
     { "boot-disk", required_argument, NULL, 'b'},
     { "data-disk", required_argument, NULL, 'd'},
+    { "loglevel", required_argument, NULL, 'l'},
+    { "kernel-format", required_argument, NULL, 'F'},
     { NULL, 0, NULL, 0 }
 };
 
@@ -80,6 +84,8 @@ struct cmdline {
     char const *kernel_path;
     char const *kernel_cmdline;
     char const *initrd_path;
+    uint loglevel;
+    int kernel_format;
 };
 
 bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
@@ -98,6 +104,8 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         .initrd_path = NULL,
         .boot_disk = NULL,
         .data_disk = NULL,
+        .loglevel = 0,
+        .kernel_format = KERNEL_FORMAT,
     };
 
     int option_index = 0;
@@ -135,6 +143,12 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
             break;
         case 'd':
             cmdline->data_disk = optarg;
+            break;
+        case 'l':
+            cmdline->loglevel = atoi(optarg);
+            break;
+        case 'F':
+            cmdline->kernel_format = atoi(optarg);
             break;
         case '?':
             return false;
@@ -264,8 +278,7 @@ int main(int argc, char *const argv[])
         return 0;
     }
 
-    // Set the log level to "off".
-    err = krun_set_log_level(0);
+    err = krun_set_log_level(cmdline.loglevel);
     if (err) {
         errno = -err;
         perror("Error configuring log level");
@@ -360,7 +373,7 @@ int main(int argc, char *const argv[])
     }
 
     if (cmdline.kernel_path &&
-        (err = krun_set_kernel(ctx_id, cmdline.kernel_path, KERNEL_FORMAT,
+        (err = krun_set_kernel(ctx_id, cmdline.kernel_path, cmdline.kernel_format,
         cmdline.initrd_path, cmdline.kernel_cmdline)))
     {
         errno = -err;
