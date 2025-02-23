@@ -1166,6 +1166,46 @@ pub unsafe extern "C" fn krun_set_kernel(
         3 => KernelFormat::ImageBz2,
         4 => KernelFormat::ImageGz,
         5 => KernelFormat::ImageZstd,
+        6 => {
+            let data: Vec<u8> = std::fs::read(path.clone()).ok().unwrap();
+            if data.len() >= 4 && &data[0..4] == [0x7f, b'E', b'L', b'F'] {
+                debug!("Found ELF header at offset 0");
+                KernelFormat::Elf
+            } else if data.len() >= 0x202
+                && &data[0x1FE..0x200] == [0x55, 0xAA]
+                && &data[0x202..0x206] == [b'H', b'd', b'r', b'S']
+            {
+                // Linux 2.00+ boot protocol
+                if let Some(magic) = data
+                    .windows(4)
+                    .position(|window| window == [b'B', b'Z', b'h'])
+                {
+                    debug!("Found BZIP2 header on Image file at: 0x{:x}", magic);
+                    KernelFormat::ImageBz2
+                } else if let Some(magic) = data
+                    .windows(3)
+                    .position(|window| window == [0x1f, 0x8b, 0x8])
+                {
+                    debug!("Found GZIP header on Image file at: 0x{:x}", magic);
+                    KernelFormat::ImageGz
+                } else if let Some(magic) = data
+                    .windows(4)
+                    .position(|window| window == [0x28, 0xb5, 0x2f, 0xfd])
+                {
+                    debug!("Found ZSTD header on Image file at: 0x{:x}", magic);
+                    KernelFormat::ImageZstd
+                } else {
+                    info!("No known header found on Image, defaulting to raw");
+                    KernelFormat::Raw
+                }
+            } else if data.len() >= 2 && &data[0..2] == [b'M', b'Z'] {
+                debug!("Found PE header at offset 0");
+                KernelFormat::PeGz
+            } else {
+                info!("No known header found, defaulting to raw");
+                KernelFormat::Raw
+            }
+        }
         _ => {
             return -libc::EINVAL;
         }

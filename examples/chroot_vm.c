@@ -28,9 +28,8 @@ enum net_mode {
     NET_MODE_TSI,
 };
 
-// TODO: autodetect
 #if defined(__x86_64__)
-#define KERNEL_FORMAT KRUN_KERNEL_FORMAT_ELF
+#define KERNEL_FORMAT KRUN_KERNEL_FORMAT_AUTO
 #else
 #define KERNEL_FORMAT KRUN_KERNEL_FORMAT_RAW
 #endif
@@ -45,7 +44,7 @@ static void print_help(char *const name)
         "              --passt-socket=PATH   Instead of starting passt, connect to passt socket at PATH"
         "NET_MODE can be either TSI (default) or PASST\n"
         "              --kernel              Path for loading a kernel in place of one supplied by libkrunfw\n"
-        "              --kernel-format       Format of a custom kernel\n"
+        "              --kernel-format       Format of a custom kernel (default: autodetect)\n"
         "              --kernel-cmdline      Cmdline for externally-loaded kernel\n"
         "              --initrd-path         Initrd for externally-loaded kernel (optional)\n"
         "              --boot-disk           Add a boot disk (virtio-blk)\n"

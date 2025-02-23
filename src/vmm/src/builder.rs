@@ -856,6 +856,14 @@ fn load_external_kernel(
         }
         #[cfg(target_arch = "x86_64")]
         KernelFormat::Elf => {
+            let data: Vec<u8> = std::fs::read(external_kernel.path.clone())
+                .map_err(StartMicrovmError::ImageBz2OpenKernel)?;
+            if let Some(magic) = data
+                .windows(4)
+                .position(|window| window == [b'\x7f', b'E', b'L', b'F'])
+            {
+                debug!("Found ELF header on Image file at: 0x{:x}", magic);
+            }
             let mut file = File::options()
                 .read(true)
                 .write(false)
