@@ -10,3 +10,5 @@ __pycache__
 init/init
 examples/chroot_vm
 test-prefix
+examples/external_kernel
+examples/rootfs_*
