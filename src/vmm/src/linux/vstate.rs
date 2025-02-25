@@ -23,9 +23,6 @@ use std::thread;
 use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 
 #[cfg(feature = "amd-sev")]
-use super::tee::amdsev::{AmdSev, Error as SevError};
-
-#[cfg(feature = "amd-sev")]
 use super::tee::amdsnp::{AmdSnp, Error as SnpError};
 
 #[cfg(feature = "tee")]
@@ -53,9 +50,6 @@ use utils::sm::StateMachine;
 use vm_memory::{
     Address, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion,
 };
-
-#[cfg(feature = "amd-sev")]
-use sev::launch::sev as sev_launch;
 
 #[cfg(feature = "amd-sev")]
 use sev::launch::snp;
@@ -112,15 +106,6 @@ pub enum Error {
     SetUserMemoryRegion(kvm_ioctls::Error),
     /// Error creating memory map for SHM region.
     ShmMmap(io::Error),
-    #[cfg(feature = "amd-sev")]
-    /// Error initializing the Secure Virtualization Backend (SEV).
-    SevSecVirtInit(SevError),
-    #[cfg(feature = "amd-sev")]
-    /// Error preparing the VM for Secure Virtualization (SEV).
-    SevSecVirtPrepare(SevError),
-    #[cfg(feature = "amd-sev")]
-    /// Error attesting the Secure VM (SEV).
-    SevSecVirtAttest(SevError),
     #[cfg(feature = "amd-sev")]
     /// Error initializing the Secure Virtualization Backend (SNP).
     SnpSecVirtInit(SnpError),
@@ -272,21 +257,6 @@ impl Display for Error {
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
             ShmMmap(e) => write!(f, "Error creating memory map for SHM region: {e}"),
-            #[cfg(feature = "tee")]
-            SevSecVirtInit(e) => {
-                write!(
-                    f,
-                    "Error initializing the Secure Virtualization Backend (SEV): {e:?}"
-                )
-            }
-            #[cfg(feature = "tee")]
-            SevSecVirtPrepare(e) => write!(
-                f,
-                "Error preparing the VM for Secure Virtualization (SEV): {e:?}"
-            ),
-            #[cfg(feature = "tee")]
-            SevSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SEV): {e:?}"),
-
             #[cfg(feature = "tee")]
             SnpSecVirtInit(e) => write!(
                 f,
@@ -469,13 +439,10 @@ pub struct Vm {
     irqchip_handle: Option<Box<dyn GICDevice>>,
 
     #[cfg(feature = "amd-sev")]
-    sev: Option<AmdSev>,
+    tee: Option<AmdSnp>,
 
     #[cfg(feature = "amd-sev")]
-    snp: Option<AmdSnp>,
-
-    #[cfg(feature = "amd-sev")]
-    pub tee: Tee,
+    pub tee_config: Tee,
 }
 
 impl Vm {
@@ -517,12 +484,8 @@ impl Vm {
         let supported_msrs =
             arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
 
-        let (sev, snp) = match tee_config.tee {
-            Tee::Sev => (
-                Some(AmdSev::new(tee_config).map_err(Error::SevSecVirtInit)?),
-                None,
-            ),
-            Tee::Snp => (None, Some(AmdSnp::new().map_err(Error::SnpSecVirtInit)?)),
+        let tee = match tee_config.tee {
+            Tee::Snp => Some(AmdSnp::new().map_err(Error::SnpSecVirtInit)?),
             _ => return Err(Error::InvalidTee),
         };
 
@@ -531,9 +494,8 @@ impl Vm {
             next_mem_slot: 0,
             supported_cpuid,
             supported_msrs,
-            sev,
-            snp,
-            tee: tee_config.tee,
+            tee,
+            tee_config: tee_config.tee,
         })
     }
 
@@ -588,39 +550,11 @@ impl Vm {
     }
 
     #[cfg(feature = "amd-sev")]
-    pub fn sev_secure_virt_prepare(
-        &mut self,
-        guest_mem: &GuestMemoryMmap,
-    ) -> Result<sev_launch::Launcher<sev_launch::Started, RawFd, RawFd>> {
-        match &self.sev {
-            Some(s) => s
-                .vm_prepare(&self.fd, guest_mem)
-                .map_err(Error::SevSecVirtPrepare),
-            None => Err(Error::InvalidTee),
-        }
-    }
-
-    #[cfg(feature = "amd-sev")]
-    pub fn sev_secure_virt_attest(
-        &self,
-        guest_mem: &GuestMemoryMmap,
-        measured_regions: Vec<MeasuredRegion>,
-        launcher: sev_launch::Launcher<sev_launch::Started, RawFd, RawFd>,
-    ) -> Result<()> {
-        match &self.sev {
-            Some(s) => s
-                .vm_attest(&self.fd, guest_mem, measured_regions, launcher)
-                .map_err(Error::SevSecVirtAttest),
-            None => Err(Error::InvalidTee),
-        }
-    }
-
-    #[cfg(feature = "amd-sev")]
     pub fn snp_secure_virt_prepare(
         &self,
         guest_mem: &GuestMemoryMmap,
     ) -> Result<snp::Launcher<snp::Started, RawFd, RawFd>> {
-        match &self.snp {
+        match &self.tee {
             Some(s) => s
                 .vm_prepare(&self.fd, guest_mem)
                 .map_err(Error::SnpSecVirtPrepare),
@@ -636,7 +570,7 @@ impl Vm {
         measured_regions: Vec<MeasuredRegion>,
         launcher: snp::Launcher<snp::Started, RawFd, RawFd>,
     ) -> Result<()> {
-        match &self.snp {
+        match &self.tee {
             Some(s) => s
                 .vm_measure(cpuid, guest_mem, measured_regions, launcher)
                 .map_err(Error::SnpSecVirtAttest),
