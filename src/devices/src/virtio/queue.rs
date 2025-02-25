@@ -395,7 +395,7 @@ impl Queue {
             false
         } else if desc_table
             .checked_add(desc_table_size)
-            .map_or(true, |v| !mem.address_in_range(v))
+            .is_none_or(|v| !mem.address_in_range(v))
         {
             error!(
                 "virtio queue descriptor table goes out of bounds: start:0x{:08x} size:0x{:08x}",
@@ -405,7 +405,7 @@ impl Queue {
             false
         } else if avail_ring
             .checked_add(avail_ring_size)
-            .map_or(true, |v| !mem.address_in_range(v))
+            .is_none_or(|v| !mem.address_in_range(v))
         {
             error!(
                 "virtio queue available ring goes out of bounds: start:0x{:08x} size:0x{:08x}",
@@ -415,7 +415,7 @@ impl Queue {
             false
         } else if used_ring
             .checked_add(used_ring_size)
-            .map_or(true, |v| !mem.address_in_range(v))
+            .is_none_or(|v| !mem.address_in_range(v))
         {
             error!(
                 "virtio queue used ring goes out of bounds: start:0x{:08x} size:0x{:08x}",
