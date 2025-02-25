@@ -41,18 +41,18 @@ mod defs {
     pub const RXQ_INDEX: usize = 3;
     pub const QUEUE_INDEXES: [usize; 4] = [CTL_INDEX, EVT_INDEX, TXQ_INDEX, RXQ_INDEX];
 
-    pub const SUPPORTED_FORMATS: u64 = 1 << VIRTIO_SND_PCM_FMT_U8
-        | 1 << VIRTIO_SND_PCM_FMT_S16
-        | 1 << VIRTIO_SND_PCM_FMT_S24
-        | 1 << VIRTIO_SND_PCM_FMT_S32;
+    pub const SUPPORTED_FORMATS: u64 = (1 << VIRTIO_SND_PCM_FMT_U8)
+        | (1 << VIRTIO_SND_PCM_FMT_S16)
+        | (1 << VIRTIO_SND_PCM_FMT_S24)
+        | (1 << VIRTIO_SND_PCM_FMT_S32);
 
-    pub const SUPPORTED_RATES: u64 = 1 << VIRTIO_SND_PCM_RATE_8000
-        | 1 << VIRTIO_SND_PCM_RATE_11025
-        | 1 << VIRTIO_SND_PCM_RATE_16000
-        | 1 << VIRTIO_SND_PCM_RATE_22050
-        | 1 << VIRTIO_SND_PCM_RATE_32000
-        | 1 << VIRTIO_SND_PCM_RATE_44100
-        | 1 << VIRTIO_SND_PCM_RATE_48000;
+    pub const SUPPORTED_RATES: u64 = (1 << VIRTIO_SND_PCM_RATE_8000)
+        | (1 << VIRTIO_SND_PCM_RATE_11025)
+        | (1 << VIRTIO_SND_PCM_RATE_16000)
+        | (1 << VIRTIO_SND_PCM_RATE_22050)
+        | (1 << VIRTIO_SND_PCM_RATE_32000)
+        | (1 << VIRTIO_SND_PCM_RATE_44100)
+        | (1 << VIRTIO_SND_PCM_RATE_48000);
 
     pub mod uapi {
         pub const VIRTIO_F_VERSION_1: u32 = 32;
