@@ -637,7 +637,7 @@ impl Vm {
         &mut self,
         guest_mem: &GuestMemoryMmap,
         kvm_max_memslots: usize,
-        guest_memfd_regions: &mut Vec<(GuestAddress, u64)>,
+        guest_memfd_regions: &mut Vec<(vm_memory::GuestAddress, u64, u64)>,
     ) -> Result<()> {
         if guest_mem.num_regions() > kvm_max_memslots {
             return Err(Error::NotEnoughMemorySlots);
@@ -692,7 +692,7 @@ impl Vm {
                     .set_memory_attributes(attr)
                     .map_err(Error::SetMemoryAttributes)?;
 
-                guest_memfd_regions.push((region.start_addr(), region.len()));
+                guest_memfd_regions.push((region.start_addr(), region.len(), gmem as u64));
             }
 
             #[cfg(not(feature = "intel-tdx"))]
@@ -1465,7 +1465,8 @@ impl Vcpu {
                         match vmcall.__bindgen_anon_3.subfunction {
                             TDG_VP_VMCALL_MAP_GPA => {
                                 // self.vmcall_sender.send(vmcall).unwrap();
-                                if self.tdx_handle_map_gpa(&mut vmcall) < 0 {
+                                let ret = self.tdx_handle_map_gpa(&mut vmcall);
+                                if ret < 0 {
                                     return Err(Error::VcpuUnhandledKvmExit);
                                 }
                                 return Ok(VcpuEmulation::Handled);
@@ -1495,9 +1496,11 @@ impl Vcpu {
                     Err(Error::VcpuUnhandledKvmExit)
                 }
                 VcpuExit::MemoryFault { flags, gpa, size } => {
+                    println!("MEMORY FAULT EXIT");
                     // TODO: flags can be private or shared
                     if flags & !kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64 != 0 {
-                        error!("KVM_EXIT_MEMORY_FAULT: Unknown flag {}", flags);
+                            println!("OH NO TOO");
+                        println!("KVM_EXIT_MEMORY_FAULT: Unknown flag {}", flags);
                         Err(Error::VcpuUnhandledKvmExit)
                     } else {
                         // // from private to shared
@@ -1512,7 +1515,8 @@ impl Vcpu {
 
                         let res = self.vmcall_sender.try_send((gpa, size, attr > 0));
                         if res.is_err() {
-                            error!("KVM_EXIT_MEMORY_FAULT: unable to convert memory: Exit {:#?}", res);
+                            println!("OH NO");
+                            println!("KVM_EXIT_MEMORY_FAULT: unable to convert memory: Exit {:#?}", res);
                             return Err(Error::VcpuUnhandledKvmExit);
                         }
                         Ok(VcpuEmulation::Handled)
@@ -1542,6 +1546,10 @@ impl Vcpu {
                         self.fd.set_kvm_immediate_exit(0);
                         // Notify that this KVM_RUN was interrupted.
                         Ok(VcpuEmulation::Interrupted)
+                    }
+                    libc::EFAULT => {
+                        println!("EXIT EFAULT");
+                        Err(Error::VcpuUnhandledKvmExit)
                     }
                     _ => {
                         error!("Failure during vcpu run: {}", e);
@@ -1608,40 +1616,43 @@ impl Vcpu {
         -1
     }
 
-
     unsafe fn tdx_handle_map_gpa(&self, vmcall: &mut kvm_bindings::kvm_tdx_exit__bindgen_ty_1_kvm_tdx_vmcall) -> i32 {
-        const TDX_MAP_GPA_MAX_LEN: u64 = 64 * 1024 * 1024;
-
-        let is_aligned = |n: u64, m: u64| -> bool {
-            ((n) % (m)) == 0
-        };
-
+        println!("HANDLE MAP GPA");
+        const TDX_MAP_GPA_MAX_LEN: u64 = (64 * 1024 * 1024);
         let phys_bits = unsafe { std::arch::x86_64::__cpuid(0x8000_0008).eax } & 0xff;
+        let mut retry = false;
+        let mut size = vmcall.in_r13;
+        let mut ret = 0;
+
         let shared_bit = if phys_bits > 48 {
-              1 << 51
+            1 << 51
         } else {
             1 << 47
         };
         let gpa = vmcall.in_r12 & !shared_bit;
-        let private: bool = if vmcall.in_r12 & shared_bit > 0 { false } else { true }; // !(vmcall.in_r12 & shared_bit)
-        let mut size = vmcall.in_r13;
-        let mut retry = false;
-        let mut ret = 0;
-        
+
+        let private: bool = if vmcall.in_r12 & shared_bit > 0 {
+            false
+        } else {
+            true
+        };
+
         vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_INVALID_OPERAND;
 
-        // check to make sure the ram range is 4k aligned
-        if !is_aligned(gpa, 4096) || !is_aligned(size, 4096) {
-            vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_ALIGN_ERROR;
-            return 0;
-        }
+        if (gpa % 4096) != 0 || (size % 4096) != 0 {
+           println!("TDG_VP_VMCALL_ALIGN_ERROR: {:x} {:x}", gpa, size);
+           vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_ALIGN_ERROR;
+           return 0;
+       }
 
         // overflow case
-        if gpa + size < gpa {
+        if (gpa + size < gpa) {
+            println!("OVERFLOWING");
             return 0;
         }
 
         if gpa >= (1 << phys_bits) || gpa + size >= (1 << phys_bits) {
+            println!("ANOTHER ERROR");
             return 0;
         }
 
@@ -1650,13 +1661,15 @@ impl Vcpu {
             size = TDX_MAP_GPA_MAX_LEN;
         }
 
-        // if we are passed a valid memory range, convert it
-        if size > 0 {
+        if (size > 0) {
             // convert memory
-            self.vmcall_sender.send((gpa, size, private)).unwrap();
+            if let Err(e) = self.vmcall_sender.send((gpa, size, private)) {
+                panic!("THERE WAS AN ERROR CONVERTING THE MEMORY: {}", e);
+                ret = -1;
+            }
         }
 
-        if ret == 0 {
+        if ret < 0 {
             if retry {
                 vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_RETRY;
                 vmcall.out_r11 = gpa + size;
@@ -1664,11 +1677,72 @@ impl Vcpu {
                     vmcall.out_r11 |= shared_bit;
                 }
             } else {
+                println!("SUCCESS");
                 vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_SUCCESS;
             }
         }
 
         0
+
+        // const TDX_MAP_GPA_MAX_LEN: u64 = 64 * 1024 * 1024;
+
+        // let is_aligned = |n: u64, m: u64| -> bool {
+        //     ((n) % (m)) == 0
+        // };
+
+        // let phys_bits = unsafe { std::arch::x86_64::__cpuid(0x8000_0008).eax } & 0xff;
+        // let shared_bit = if phys_bits > 48 {
+        //       1 << 51
+        // } else {
+        //     1 << 47
+        // };
+        // let gpa = vmcall.in_r12 & !shared_bit;
+        // let private: bool = if vmcall.in_r12 & shared_bit > 0 { false } else { true }; // !(vmcall.in_r12 & shared_bit)
+        // let mut size = vmcall.in_r13;
+        // let mut retry = false;
+        // let mut ret = 0;
+        
+        // vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_INVALID_OPERAND;
+
+        // // check to make sure the ram range is 4k aligned
+        // if !is_aligned(gpa, 4096) || !is_aligned(size, 4096) {
+        //     vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_ALIGN_ERROR;
+        //     return 0;
+        // }
+
+        // // overflow case
+        // if gpa + size < gpa {
+        //     return 0;
+        // }
+
+        // if gpa >= (1 << phys_bits) || gpa + size >= (1 << phys_bits) {
+        //     return 0;
+        // }
+
+        // if size > TDX_MAP_GPA_MAX_LEN {
+        //     retry = true;
+        //     size = TDX_MAP_GPA_MAX_LEN;
+        // }
+
+        // // if we are passed a valid memory range, convert it
+        // if size > 0 {
+        //     // convert memory
+        //     self.vmcall_sender.send((gpa, size, private)).unwrap();
+        // }
+
+        // if ret == 0 {
+        //     if retry {
+        //         vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_RETRY;
+        //         vmcall.out_r11 = gpa + size;
+        //         if !private {
+        //             vmcall.out_r11 |= shared_bit;
+        //         }
+        //     } else {
+        //         vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_SUCCESS;
+        //     }
+        // }
+
+        // 0
     }
 
     /// Main loop of the vCPU thread.

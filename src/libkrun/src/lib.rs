@@ -1193,7 +1193,10 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             match receiver.recv() {
                 Err(e) => error!("Error in receiver: {:?}", e),
                 Ok((gpa, size, private)) => {
-                    let _ = convert_memory(&mapper_vmm, gpa, size, private);
+                    let ret = convert_memory(&mapper_vmm, gpa, size, private);
+                    if ret < 0 {
+                        panic!("{}", format!("ERROR CONVERTING MEMORY: {:x} {:x} {}", gpa, size, private));
+                    }
                 },
             }
         }).unwrap();
@@ -1227,74 +1230,139 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     }
 }
 
+use vm_memory::Address;
+fn has_guest_memory(gpa: u64, size: u64, memfd_regions: &Vec<(vm_memory::GuestAddress, u64, u64)>) -> (bool, i64) {
+    for (a, s, i) in memfd_regions.iter() {
+        if gpa >= a.0 && gpa + size <= a.0 + *s {
+            return (true, *i as i64);
+        }
+    }
+    (false, -1)
+}
+
 use std::sync::Arc;
 use vm_memory::GuestAddress;
+use vm_memory::GuestMemory;
+use libc::fallocate;
+use libc::madvise;
+use libc::FALLOC_FL_KEEP_SIZE;
+use libc::FALLOC_FL_PUNCH_HOLE;
+use libc::MADV_DONTNEED;
+use libc::MADV_REMOVE;
 fn convert_memory(vmm: &Arc<Mutex<vmm::Vmm>>, gpa: u64, size: u64, to_private: bool) -> i32 {
+
+    // check to make sure the starting address is aligned with the page size
+    // check to make sure the size of the memory block is also aligned with the page size
+    // if size is non-positive then return -1
+    // retrive the memory region associated with the starting address and the size
+    // set the memory attributes to the desired value
+    // if converting memory from shared to private, then discard the ram range
+    // if converting from private to shared, then discard the guest memfd range
+
     let mut ret = -1;
-    let is_aligned = |n: u64, m: u64| -> bool {
-        ((n) % (m)) == 0
-    };
-    
-    if !is_aligned(gpa, 4096) || !is_aligned(size, 4096) {
+    let vmm = vmm.as_ref().lock().unwrap();
+    let guest_memfd_regions = vmm.guest_memfd_regions();
+
+    let page_size = 4096;
+
+    // check to make sure the starting address is aligned with the page size
+    // check to make sure the size of the memory block is also aligned with the page size
+    if (gpa % page_size) != 0 || (size % page_size) != 0 {
+        println!("ALIGNMENT ERROR");
         return -1;
     }
 
+    // if size is non-positive then return -1
     if size < 1 {
+        println!("BAD SIZE");
         return -1;
     }
 
-    use vm_memory::guest_memory::GuestMemory;
-    let binding = vmm.as_ref().lock().unwrap();
-    let region = binding.guest_memory().find_region(GuestAddress(gpa));
-
+    let region = vmm.guest_memory().find_region(GuestAddress(gpa));
     if let None = region {
-        // Ignore converting non-assigned region to shared
+        // ignore converting non-assigned region to shared
         //
         // TDX requires vMMIO region to be shared to inject #VE to guest. OVMF issues
-        // conservatively MapGPA(shared) on 32bit PCI MMIO region, and V vIO-APIC 0xFEC00000 4K
-        // page. OVMF assigns 32bit PCI MMIO region to [top of low memory: typically 2GB=0xC000000,
-        // 0xFC00000)
+        // conservatively MapGPA(shared) on 32bit PCI MMIO region, and vIO-APIC 0xFEC 4k page. OVMF
+        // assignes 32bit PCI MMIO region to [top of low memory: typically 2GB=0xC0000000,
+        // 0xFC000000)
         if !to_private {
+            println!("IGNORE NON-ASSIGNED");
             return 0;
         }
+
+        println!("ERROR FINDING REGION");
+        return -1;
+    }
+    let region = region.unwrap();
+
+    // retrive the memory region associated with the starting address and the size
+    let (region_has_guest_memfd, memfd_id) = has_guest_memory(gpa, size, guest_memfd_regions);
+
+    // check to make sure there is a guest memfd backing
+    if !region_has_guest_memfd {
+        panic!("cannot convert non guest_memfd backed memory region");
         return -1;
     }
 
-    let region = region.unwrap();
-
-    use vm_memory::Address;
-    let mut region_has_guest_memfd = false;
-    for region in binding.guest_memfd_regions().iter() {
-       if gpa >= region.0.raw_value() && gpa + size <= region.0.raw_value() + region.1 {
-           region_has_guest_memfd = true;
-       }
-    }
-
-    if !region_has_guest_memfd {
-        println!("DOESNT HAVE MEMFD");
-
-        // Because vMMIO region must be shared, guest TD may convert vMMIO region to shared
-        // explicitly. Don't complain such case. See memory_region_type() for checking if the
-        // region is MMIO region.
-      // if !to_private && !is_ram && !is_ram_device && !is_rom && !is_romd {
-      //     ret = 0;
-      // } else {
-      //     println!("Convert non guest_memfd backed memory region (0x{:x}, 0x{:x}, {}", gpa, size, if to_private { "private" } else { "shared" });
-      // }
-
-        return ret;
-    }
-    
+    // set the memory attributes to the desired value
     let attr = kvm_bindings::kvm_memory_attributes {
-        address: gpa,
-        size,
-        attributes: if to_private {
-        // KVM_MEMORY_ATTRIBUTE_PRIVATE,
-        1 << 3 } else { 0 },
-        flags: 0,
+       address: gpa,
+       size,
+       attributes: if to_private {
+       // KVM_MEMORY_ATTRIBUTE_PRIVATE,
+       1 << 3 } else { 0 },
+       flags: 0,
     };
 
-    binding.vm_fd().set_memory_attributes(attr).unwrap();
+    vmm.vm_fd().set_memory_attributes(attr).unwrap();
 
+    use vm_memory::GuestMemoryRegion;
+
+    let offset = gpa - region.start_addr().raw_value();
+    if to_private {
+        // ram_block_discard_range
+        println!("DISCARDING MEMORY RANGE WHEN CONVERTING SHARED TO PRIVATE");
+
+       let host_addr = region.get_host_address(vm_memory::MemoryRegionAddress(gpa)).unwrap();
+
+       // let host_addr = gpa + offset;
+       unsafe {
+           let _ret = madvise(
+               host_addr as *mut libc::c_void,
+               size.try_into().unwrap(),
+               // madv_remove,
+               MADV_DONTNEED,
+           );
+           println!("gpa: {:x} size: {:x}", gpa, size);
+           
+           if _ret < 0 {
+              println!("error discarding memory range: gpa: 0x{:x} size: 0x{:x} res: {}", gpa, size, std::io::Error::last_os_error()); 
+              return _ret;
+           }
+       }
+    } else {
+        // ram_block_discard_guest_memfd_range
+        println!("DISCARDING GUEST MEMFD MEMORY REGION WHEN CONVERTING PRIVATE TO SHARED");
+        unsafe {
+            let _ret = fallocate(
+                memfd_id as i32,
+                FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                offset as i64,
+                size as i64,
+            );
+
+            if _ret < 0 {
+               println!("error discarding guest memfd memory range: {}", std::io::Error::last_os_error()); 
+               return _ret;
+            }
+        }
+    }
+
+    0
+}
+
+fn ram_block_discard_range<T>(rb: &vm_memory::GuestRegionMmap<T>, start: u64, length: u64) -> i64 {
+    let mut ret = -1;
     ret
 }

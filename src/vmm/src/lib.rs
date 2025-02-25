@@ -186,7 +186,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Vmm {
     // Guest VM core resources.
     guest_memory: GuestMemoryMmap,
-    guest_memfd_regions: Vec<(vm_memory::GuestAddress, u64)>,
+    guest_memfd_regions: Vec<(vm_memory::GuestAddress, u64, u64)>,
     arch_memory_info: ArchMemoryInfo,
 
     kernel_cmdline: KernelCmdline,
@@ -337,7 +337,7 @@ impl Vmm {
         &self.guest_memory
     }
 
-    pub fn guest_memfd_regions(&self) -> &Vec<(vm_memory::GuestAddress, u64)> {
+    pub fn guest_memfd_regions(&self) -> &Vec<(vm_memory::GuestAddress, u64, u64)> {
         &self.guest_memfd_regions
     }
 
