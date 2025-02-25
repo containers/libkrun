@@ -109,7 +109,7 @@ impl DrmFormat {
     /// Constructs a format identifer using a fourcc byte sequence.
     #[inline(always)]
     pub fn new(a: u8, b: u8, c: u8, d: u8) -> DrmFormat {
-        DrmFormat(a as u32 | (b as u32) << 8 | (c as u32) << 16 | (d as u32) << 24)
+        DrmFormat((a as u32) | ((b as u32) << 8) | ((c as u32) << 16) | ((d as u32) << 24))
     }
 
     /// Returns the fourcc code as a sequence of bytes.
