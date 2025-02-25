@@ -418,7 +418,7 @@ pub fn build_microvm(
     let mut vm = setup_vm(&guest_memory)?;
 
     #[cfg(feature = "tee")]
-    let (kvm, mut vm) = {
+    let (kvm, vm) = {
         let kvm = KvmContext::new()
             .map_err(Error::KvmContext)
             .map_err(StartMicrovmError::Internal)?;
@@ -428,15 +428,6 @@ pub fn build_microvm(
 
     #[cfg(feature = "tee")]
     let tee = vm_resources.tee_config().tee;
-
-    #[cfg(feature = "tee")]
-    let sev_launcher = match tee {
-        Tee::Sev => Some(
-            vm.sev_secure_virt_prepare(&guest_memory)
-                .map_err(StartMicrovmError::SecureVirtPrepare)?,
-        ),
-        _ => None,
-    };
 
     #[cfg(feature = "tee")]
     let snp_launcher = match tee {
@@ -721,11 +712,6 @@ pub fn build_microvm(
     #[cfg(feature = "tee")]
     {
         match tee {
-            Tee::Sev => vmm
-                .kvm_vm()
-                .sev_secure_virt_attest(vmm.guest_memory(), measured_regions, sev_launcher.unwrap())
-                .map_err(StartMicrovmError::SecureVirtAttest)?,
-
             Tee::Snp => {
                 let cpuid = kvm
                     .fd()
