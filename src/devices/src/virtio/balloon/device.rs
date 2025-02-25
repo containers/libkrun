@@ -28,10 +28,10 @@ pub(crate) const PHQ_INDEX: usize = 3;
 pub(crate) const FRQ_INDEX: usize = 4;
 
 // Supported features.
-pub(crate) const AVAIL_FEATURES: u64 = 1 << uapi::VIRTIO_F_VERSION_1 as u64
-    | 1 << uapi::VIRTIO_BALLOON_F_STATS_VQ as u64
-    | 1 << uapi::VIRTIO_BALLOON_F_FREE_PAGE_HINT as u64
-    | 1 << uapi::VIRTIO_BALLOON_F_REPORTING as u64;
+pub(crate) const AVAIL_FEATURES: u64 = (1 << uapi::VIRTIO_F_VERSION_1 as u64)
+    | (1 << uapi::VIRTIO_BALLOON_F_STATS_VQ as u64)
+    | (1 << uapi::VIRTIO_BALLOON_F_FREE_PAGE_HINT as u64)
+    | (1 << uapi::VIRTIO_BALLOON_F_REPORTING as u64);
 
 #[derive(Copy, Clone, Debug, Default)]
 #[repr(C, packed)]
