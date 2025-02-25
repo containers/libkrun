@@ -33,9 +33,9 @@ pub(crate) const EVQ_INDEX: usize = 2;
 /// - VIRTIO_F_VERSION_1: the device conforms to at least version 1.0 of the VirtIO spec.
 /// - VIRTIO_F_IN_ORDER: the device returns used buffers in the same order that the driver makes
 ///   them available.
-pub(crate) const AVAIL_FEATURES: u64 = 1 << uapi::VIRTIO_F_VERSION_1 as u64
-    | 1 << uapi::VIRTIO_F_IN_ORDER as u64
-    | 1 << uapi::VIRTIO_VSOCK_F_DGRAM;
+pub(crate) const AVAIL_FEATURES: u64 = (1 << uapi::VIRTIO_F_VERSION_1 as u64)
+    | (1 << uapi::VIRTIO_F_IN_ORDER as u64)
+    | (1 << uapi::VIRTIO_VSOCK_F_DGRAM);
 
 pub struct Vsock {
     cid: u64,
