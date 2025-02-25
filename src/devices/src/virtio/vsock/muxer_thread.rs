@@ -120,7 +120,7 @@ impl MuxerThread {
 
         if let Some((peer_port, accept_fd, proxy_type)) = update.new_proxy {
             let local_port: u32 = thread_rng.gen_range(1024..u32::MAX);
-            let new_id: u64 = (peer_port as u64) << 32 | local_port as u64;
+            let new_id: u64 = ((peer_port as u64) << 32) | (local_port as u64);
             let new_proxy: Box<dyn Proxy> = match proxy_type {
                 NewProxyType::Tcp => Box::new(TcpProxy::new_reverse(
                     new_id,
@@ -171,7 +171,7 @@ impl MuxerThread {
             if !do_listen {
                 continue;
             }
-            let id = (*port as u64) << 32 | defs::TSI_PROXY_PORT as u64;
+            let id = ((*port as u64) << 32) | (defs::TSI_PROXY_PORT as u64);
             let proxy = match UnixAcceptorProxy::new(id, path, *port) {
                 Ok(proxy) => proxy,
                 Err(e) => {
