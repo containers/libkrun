@@ -62,6 +62,25 @@ use sev::launch::snp;
 /// Signal number (SIGRTMIN) used to kick Vcpus.
 pub(crate) const VCPU_RTSIG_OFFSET: i32 = 0;
 
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_MAP_GPA: u64 = 0x10001;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_GET_QUOTE: u64 = 0x10002;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_REPORT_FATAL_ERROR: u64 = 0x10003;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_SETUP_EVENT_NOTIFY_INTERRUPT: u64 = 0x10004;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_SUCCESS: u64 = 0x0000000000000000;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_RETRY: u64 = 0x0000000000000001;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_INVALID_OPERAND: u64 = 0x8000000000000000;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_GPA_INUSE: u64 = 0x8000000000000001;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_ALIGN_ERROR: u64 = 0x8000000000000002;
+
 /// Errors associated with the wrappers over KVM ioctls.
 #[derive(Debug)]
 pub enum Error {
@@ -1292,6 +1311,56 @@ impl Vcpu {
                         _ => error!("Received an unexpected System Event: {event}"),
                     }
                     Ok(VcpuEmulation::Stopped)
+                }
+                #[cfg(feature = "intel-tdx")]
+                VcpuExit::Tdx => {
+                    let kvm_run = self.fd.get_kvm_run();
+                    let tdx = unsafe { &mut kvm_run.__bindgen_anon_1.tdx };
+
+                    const KVM_EXIT_TDX_VMCALL: u32 = 1;
+
+                    // check if the exit type is KVM_EXIT_TDX_VMCALL
+                    if tdx.type_ != KVM_EXIT_TDX_VMCALL {
+                        error!("unknown tdx exit type 0x{:x}", tdx.type_);
+                        return Err(Error::VcpuUnhandledKvmExit);
+                    }
+
+                    // handle the vmcall
+                    let mut vmcall = unsafe { tdx.u.vmcall };
+                    unsafe {
+                        vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_INVALID_OPERAND;
+
+                        if vmcall.__bindgen_anon_2.type_ != 0 {
+                            error!(
+                                "unknown TDG.VP.VMCALL type 0x{:x} subfunction 0x{:x}",
+                                vmcall.__bindgen_anon_2.type_, vmcall.__bindgen_anon_3.subfunction
+                            );
+                            return Err(Error::VcpuUnhandledKvmExit);
+                        }
+
+                        match vmcall.__bindgen_anon_3.subfunction {
+                            TDG_VP_VMCALL_MAP_GPA => {
+                                return Ok(VcpuEmulation::Handled);
+                            }
+                            TDG_VP_VMCALL_GET_QUOTE => {
+                                return Ok(VcpuEmulation::Handled);
+                            }
+                            TDG_VP_VMCALL_REPORT_FATAL_ERROR => {
+                                return Err(Error::VcpuUnhandledKvmExit);
+                            }
+                            TDG_VP_VMCALL_SETUP_EVENT_NOTIFY_INTERRUPT => {
+                                return Ok(VcpuEmulation::Handled);
+                            }
+                            _ => {
+                                error!(
+                                    "unknown TDG.VP.VMCALL type 0x{:x} subfunction 0x{:x}",
+                                    vmcall.__bindgen_anon_2.type_,
+                                    vmcall.__bindgen_anon_3.subfunction
+                                );
+                                return Err(Error::VcpuUnhandledKvmExit);
+                            }
+                        }
+                    }
                 }
                 r => {
                     // TODO: Are we sure we want to finish running a vcpu upon
