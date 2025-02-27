@@ -571,7 +571,7 @@ pub fn build_microvm(
         _ => None,
     };
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", not(feature = "intel-tdx")))]
     let measured_regions = {
         println!("Injecting and measuring memory regions. This may take a while.");
 
@@ -621,6 +621,32 @@ pub fn build_microvm(
                 size: 4096,
             },
         ]
+    };
+
+    #[cfg(feature = "intel-tdx")]
+    let measured_regions = {
+        println!("Injecting and measuring memory regions. This may take a while.");
+        let qboot_size = if let Some(qboot_bundle) = &vm_resources.qboot_bundle {
+            qboot_bundle.size
+        } else {
+            return Err(StartMicrovmError::MissingKernelConfig);
+        };
+        let m = vec![
+            MeasuredRegion {
+                guest_addr: 0,
+                host_addr: guest_memory.get_host_address(GuestAddress(0)).unwrap() as u64,
+                size: 0x8000_0000,
+            },
+            MeasuredRegion {
+                guest_addr: arch::BIOS_START,
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(arch::BIOS_START))
+                    .unwrap() as u64,
+                size: qboot_size as usize,
+            },
+        ];
+
+        m
     };
 
     // On x86_64 always create a serial device,
