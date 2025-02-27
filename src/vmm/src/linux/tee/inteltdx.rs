@@ -54,4 +54,25 @@ impl IntelTdx {
 
         Ok(())
     }
+
+    pub fn configure_td_memory(&self, fd: &kvm_ioctls::VmFd, regions: &Vec<crate::vstate::MeasuredRegion>) -> Result<(), Error> {
+        for region in regions {
+            let ext = if arch::BIOS_START == region.guest_addr {
+                1
+            } else {
+                0
+            };
+
+            match self.vm.init_mem_region(fd, region.guest_addr, (region.size / 4096) as u64, ext, region.host_addr) {
+                Err(e) => if e.code == 11 {
+                        // continue
+                    } else {
+                        panic!("error: {:#?}", e)
+                    },
+                _ => (),
+            }
+        }
+        
+        Ok(())
+    }
 }
