@@ -957,12 +957,15 @@ impl Vcpu {
             .set_cpuid2(&self.cpuid)
             .map_err(Error::VcpuSetCpuid)?;
 
-        arch::x86_64::msr::setup_msrs(&self.fd).map_err(Error::MSRSConfiguration)?;
-        arch::x86_64::regs::setup_regs(&self.fd, kernel_start_addr.raw_value(), self.id)
-            .map_err(Error::REGSConfiguration)?;
-        arch::x86_64::regs::setup_fpu(&self.fd).map_err(Error::FPUConfiguration)?;
-        arch::x86_64::regs::setup_sregs(guest_mem, &self.fd, self.id)
-            .map_err(Error::SREGSConfiguration)?;
+        #[cfg(not(feature = "intel-tdx"))]
+        {
+            arch::x86_64::msr::setup_msrs(&self.fd).map_err(Error::MSRSConfiguration)?;
+            arch::x86_64::regs::setup_regs(&self.fd, kernel_start_addr.raw_value(), self.id)
+                .map_err(Error::REGSConfiguration)?;
+            arch::x86_64::regs::setup_fpu(&self.fd).map_err(Error::FPUConfiguration)?;
+            arch::x86_64::regs::setup_sregs(guest_mem, &self.fd, self.id)
+                .map_err(Error::SREGSConfiguration)?;
+        }
         arch::x86_64::interrupts::set_lint(&self.fd).map_err(Error::LocalIntConfiguration)?;
         Ok(())
     }
