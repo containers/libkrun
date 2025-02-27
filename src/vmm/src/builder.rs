@@ -741,6 +741,14 @@ pub fn build_microvm(
         .map_err(StartMicrovmError::Internal)?;
     }
 
+    #[cfg(feature = "tdx")]
+    {
+        for vcpu in &vcpus {
+            vcpu.tdx_secure_virt_prepare(&mut tdx_launcher);
+        }
+        vm.tdx_secure_virt_init_vcpus(&mut tdx_launcher).unwrap();
+    }
+
     // On aarch64, the vCPUs need to be created (i.e call KVM_CREATE_VCPU) and configured before
     // setting up the IRQ chip because the `KVM_CREATE_VCPU` ioctl will return error if the IRQCHIP
     // was already initialized.
