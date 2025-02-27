@@ -7,6 +7,7 @@ use std::os::unix::io::AsRawFd;
 pub enum Error {
     GetCapabilities(launch::Error),
     InitVm(launch::Error),
+    InitMemoryRegions(launch::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -25,5 +26,25 @@ impl IntelTdx {
             .map_err(Error::GetCapabilities)?;
         launcher.init_vm(&caps, cpuid).map_err(Error::InitVm)?;
         Ok(launcher)
+    }
+
+    pub fn configure_td_memory(
+        &self,
+        launcher: &mut Launcher,
+        regions: &Vec<crate::vstate::MeasuredRegion>,
+    ) -> Result<()> {
+        for region in regions {
+            let mem_region = tdx::launch::MemRegion::new(
+                region.guest_addr,
+                (region.size / 4096) as u64,
+                (arch::BIOS_START == region.guest_addr).into(),
+                region.host_addr,
+            );
+            launcher
+                .init_mem_region(mem_region)
+                .map_err(Error::InitMemoryRegions)?;
+        }
+
+        Ok(())
     }
 }

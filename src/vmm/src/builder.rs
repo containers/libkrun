@@ -950,6 +950,12 @@ pub fn build_microvm(
                     )
                     .map_err(StartMicrovmError::SecureVirtAttest)?;
             }
+            #[cfg(feature = "tdx")]
+            Tee::Tdx => {
+                vmm.kvm_vm()
+                    .tdx_secure_virt_prepare_memory(&mut tdx_launcher, &measured_regions)
+                    .unwrap();
+            }
             _ => return Err(StartMicrovmError::InvalidTee),
         }
 
