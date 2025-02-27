@@ -667,6 +667,19 @@ impl Vm {
         }
     }
 
+    #[cfg(feature = "intel-tdx")]
+    pub fn tdx_secure_virt_prepare_memory(
+        &self,
+        regions: &Vec<crate::vstate::MeasuredRegion>,
+    ) -> Result<()> {
+        match &self.tdx {
+            Some(t) => t
+                .configure_td_memory(&self.fd, &regions)
+                .map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
+    }
+
     #[cfg(feature = "amd-sev")]
     pub fn snp_secure_virt_prepare(
         &self,

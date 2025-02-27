@@ -905,6 +905,12 @@ pub fn build_microvm(
                     )
                     .map_err(StartMicrovmError::SecureVirtAttest)?;
             }
+            #[cfg(feature = "intel-tdx")]
+            Tee::Tdx => {
+                vmm.kvm_vm()
+                    .tdx_secure_virt_prepare_memory(&measured_regions)
+                    .map_err(StartMicrovmError::SecureVirtPrepare)?;
+            }
             _ => return Err(StartMicrovmError::InvalidTee),
         }
 
