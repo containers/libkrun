@@ -1365,6 +1365,7 @@ impl Vcpu {
                                 return Ok(VcpuEmulation::Handled);
                             },
                             TDG_VP_VMCALL_REPORT_FATAL_ERROR => {
+                                let _ = Self::tdx_handle_report_fatal_error(&mut vmcall);
                                 return Err(Error::VcpuUnhandledKvmExit);
                             },
                             TDG_VP_VMCALL_SETUP_EVENT_NOTIFY_INTERRUPT => {
@@ -1401,6 +1402,48 @@ impl Vcpu {
                 }
             }
         }
+    }
+
+    unsafe fn tdx_handle_report_fatal_error(vmcall: &mut kvm_bindings::kvm_tdx_exit__bindgen_ty_1_kvm_tdx_vmcall) -> i32 {
+        const GUEST_PANIC_INFO_TDX_MESSAGE_MAX: usize = 64;
+        let error_code = vmcall.in_r12;
+        // This is supposed to be initialized to -1... is 0 going to be ok here?
+        let mut gpa: u64 = 0;
+
+        if (error_code & 0xffff) > 0 {
+            println!("TDX: REPORT_FATAL_ERROR: invalid error code: 0x{:x}", error_code);
+            return -1;
+        }
+
+        let mut message = [char::default(); GUEST_PANIC_INFO_TDX_MESSAGE_MAX + 1]; 
+
+        // it has optional message
+        if vmcall.in_r14  > 0 {
+            message[1] = char::from_u32(u64::to_le(vmcall.in_r14) as u32).unwrap();
+            message[2] = char::from_u32(u64::to_le(vmcall.in_r15) as u32).unwrap();
+            message[3] = char::from_u32(u64::to_le(vmcall.in_rbx) as u32).unwrap();
+            message[4] = char::from_u32(u64::to_le(vmcall.in_rdi) as u32).unwrap();
+            message[5] = char::from_u32(u64::to_le(vmcall.in_rsi) as u32).unwrap();
+            message[6] = char::from_u32(u64::to_le(vmcall.in_r8) as u32).unwrap();
+            message[7] = char::from_u32(u64::to_le(vmcall.in_r9) as u32).unwrap();
+            message[8] = char::from_u32(u64::to_le(vmcall.in_rdx) as u32).unwrap();
+            message[GUEST_PANIC_INFO_TDX_MESSAGE_MAX] = '\0';
+        }
+
+        const TDX_REPORT_FATAL_ERROR_GPA_VALID: u64 = 1 << 63;
+        if (error_code & TDX_REPORT_FATAL_ERROR_GPA_VALID) > 0 {
+            gpa = vmcall.in_r13;
+        }
+
+        let message = {
+            let mut s = String::new();
+            message.iter_mut().for_each(|c| s.push(*c));
+            s
+        };
+
+        println!("TDX: REPORT_FATAL_ERROR: message: {} error_code: {} gpa: 0x{:x}", message, error_code, gpa);
+
+        -1
     }
 
     /// Main loop of the vCPU thread.
