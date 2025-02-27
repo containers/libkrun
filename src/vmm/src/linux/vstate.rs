@@ -1369,6 +1369,7 @@ impl Vcpu {
                                 return Err(Error::VcpuUnhandledKvmExit);
                             },
                             TDG_VP_VMCALL_SETUP_EVENT_NOTIFY_INTERRUPT => {
+                                let _ = Self::tdx_handle_setup_event_notify_interrupt(&mut vmcall);
                                 return Ok(VcpuEmulation::Handled);
                             },
                             _ => {
@@ -1402,6 +1403,20 @@ impl Vcpu {
                 }
             }
         }
+    }
+
+    unsafe fn tdx_handle_setup_event_notify_interrupt(vmcall: &mut kvm_bindings::kvm_tdx_exit__bindgen_ty_1_kvm_tdx_vmcall) -> i32 {
+        let vector = vmcall.in_r12;
+
+        if 32 <= vector && vector >= 255 {
+            // normally this is where we would update the runtime state
+            // with the vector and the apic_id of the cpu
+            vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_SUCCESS;
+        } else {
+            vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_INVALID_OPERAND;
+        }
+
+        0
     }
 
     unsafe fn tdx_handle_report_fatal_error(vmcall: &mut kvm_bindings::kvm_tdx_exit__bindgen_ty_1_kvm_tdx_vmcall) -> i32 {
