@@ -447,7 +447,11 @@ pub fn build_microvm(
         _ => None,
     };
 
-    #[cfg(feature = "tee")]
+    // TODO(jakecorrenti): this shouldn't be pointing to something in Sergio's user
+    let qboot_file = std::fs::File::open("/home/slp/src/qboot-krunfw/build/bios.bin").unwrap();
+    let qboot_size = qboot_file.metadata().unwrap().len();
+
+    #[cfg(all(feature = "tee", not(feature = "intel-tdx")))]
     let measured_regions = {
         println!("Injecting and measuring memory regions. This may take a while.");
 
@@ -482,6 +486,25 @@ pub fn build_microvm(
             },
         ];
 
+        m
+    };
+
+    #[cfg(feature = "intel-tdx")]
+    let measured_regions = {
+        println!("Injecting and measuring memory regions. This may take a while.");
+        let m = vec![
+          MeasuredRegion {
+            guest_addr: 0,
+            host_addr: guest_memory.get_host_address(GuestAddress(0)).unwrap() as u64,
+            size: 0x8000_0000,
+          },
+          MeasuredRegion {
+            guest_addr: arch::BIOS_START,
+            host_addr: guest_memory.get_host_address(GuestAddress(arch::BIOS_START)).unwrap() as u64,
+            size: qboot_size as usize,
+          },
+        ];
+        
         m
     };
 
