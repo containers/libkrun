@@ -8,6 +8,7 @@ pub enum Error {
     GetCapabilities(launch::Error),
     InitVm(launch::Error),
     InitMemoryRegions(launch::Error),
+    FinalizeVm(launch::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -46,5 +47,9 @@ impl IntelTdx {
         }
 
         Ok(())
+    }
+
+    pub fn finalize_vm(&self, mut launcher: Launcher) -> Result<()> {
+        launcher.finalize().map_err(Error::FinalizeVm)
     }
 }
