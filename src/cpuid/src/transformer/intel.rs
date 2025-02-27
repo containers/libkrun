@@ -17,7 +17,52 @@ pub fn update_feature_info_entry(
 
     common::update_feature_info_entry(entry, vm_spec)?;
 
+    if entry.index == 0x1 {
+        println!("adjusting 0x1 index feature");
+        entry.ecx &= (1 << 21);
+    }
+
     entry.ecx.write_bit(ecx::TSC_DEADLINE_TIMER_BITINDEX, true);
+
+    Ok(())
+}
+
+pub fn update_kvm_features(
+    entry: &mut kvm_cpuid_entry2,
+    vm_spec: &VmSpec,
+) -> Result<(), Error> {
+            // KVM feature bits
+            const NOP_IO_RELAY: u32 = 1;
+            const PV_UNHALT: u32 = 1;
+            const PV_TLB_FLUSH: u32 = 9;
+            const PV_SEND_IPI: u32 = 11;
+            const POLL_CONTROL: u32 = 12;
+            const PV_SCHED_YIELD: u32 = 13;
+            const MSI_EXT_DEST_ID: u32 = 15;
+
+            // These features are not supported by TDX
+            entry.eax &= (1 << NOP_IO_RELAY) | (1 << PV_UNHALT) | (1 << PV_TLB_FLUSH) | (1 << PV_SEND_IPI) | (1 << POLL_CONTROL) | (1 << PV_SCHED_YIELD) | (1 << MSI_EXT_DEST_ID);
+    Ok(())
+}
+
+pub fn update_0xd_for_tdx(
+    entry: &mut kvm_cpuid_entry2,
+    vm_spec: &VmSpec,
+) -> Result<(), Error> {
+            if entry.function == 0xD && entry.index == 0 {
+                const XFEATURE_MASK_XTILE: u32 = (1 << 17) | (1 << 18);
+                if (entry.eax & XFEATURE_MASK_XTILE) != XFEATURE_MASK_XTILE {
+                    entry.eax &= !XFEATURE_MASK_XTILE;
+                }
+            }
+
+            if entry.function == 0xD && entry.index == 1 {
+                entry.ecx &= !(1 << 15);
+                const XFEATURE_MASK_CET: u32 = (1 << 11) | (1 << 12);
+                if entry.ecx & XFEATURE_MASK_CET > 0 {
+                    entry.ecx |= XFEATURE_MASK_CET;
+                }
+            }
 
     Ok(())
 }
@@ -146,6 +191,8 @@ impl CpuidTransformer for IntelCpuidTransformer {
             leaf_0x6::LEAF_NUM => Some(intel::update_power_management_entry),
             leaf_0xa::LEAF_NUM => Some(intel::update_perf_mon_entry),
             leaf_0xb::LEAF_NUM => Some(intel::update_extended_cache_topology_entry),
+            leaf_0xd::LEAF_NUM => Some(intel::update_0xd_for_tdx),
+            0x4000_0001 => Some(intel::update_kvm_features),
             0x8000_0002..=0x8000_0004 => Some(common::update_brand_string_entry),
             _ => None,
         }
