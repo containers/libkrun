@@ -136,6 +136,9 @@ pub enum Error {
     #[cfg(feature = "tdx")]
     /// Error preparing the VM for Trust Domain Extensions (TDX)
     TdxSecVirtPrepare(TdxError),
+    #[cfg(feature = "tdx")]
+    /// Error initializing vCPU for Trust Domain Extensions (TDX)
+    TdxSecVirtInitVcpu,
     #[cfg(feature = "tee")]
     /// The TEE specified is not supported.
     InvalidTee,
@@ -314,6 +317,11 @@ impl Display for Error {
             TdxSecVirtPrepare(e) => write!(
                 f,
                 "Error preparing the VM for Trust Domain Extensions (TDX): {e:?}"
+            ),
+            #[cfg(feature = "tdx")]
+            TdxSecVirtInitVcpu => write!(
+                f,
+                "Error initializing vCPU for Trust Domain Extensions (TDX)"
             ),
             #[cfg(feature = "tee")]
             MissingTeeConfig => write!(f, "Missing TEE configuration"),
@@ -727,6 +735,17 @@ impl Vm {
             Some(t) => t
                 .vm_prepare(&self.fd, self.supported_cpuid.clone())
                 .map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
+    }
+
+    #[cfg(feature = "tdx")]
+    pub fn tdx_secure_virt_init_vcpus(&self, launcher: &mut tdx::launch::Launcher) -> Result<()> {
+        match &self.tdx {
+            Some(_) => {
+                launcher.init_vcpus(0).unwrap();
+                Ok(())
+            }
             None => Err(Error::InvalidTee),
         }
     }
@@ -1578,6 +1597,12 @@ impl Vcpu {
         barrier.wait();
 
         StateMachine::finish()
+    }
+
+    #[cfg(feature = "tdx")]
+    pub fn tdx_secure_virt_prepare(&self, launcher: &mut tdx::launch::Launcher) {
+        use std::os::fd::AsRawFd;
+        launcher.add_vcpu_fd(self.fd.as_raw_fd());
     }
 
     #[cfg(test)]
