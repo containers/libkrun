@@ -553,7 +553,7 @@ pub fn build_microvm(
     #[cfg(feature = "tee")]
     let tee = vm_resources.tee_config().tee;
 
-    #[cfg(feature = "tee")]
+    #[cfg(feature = "amd-sev")]
     let snp_launcher = match tee {
         Tee::Snp => Some(
             vm.snp_secure_virt_prepare(&guest_memory)
@@ -854,6 +854,7 @@ pub fn build_microvm(
     #[cfg(feature = "tee")]
     {
         match tee {
+            #[cfg(feature = "amd-sev")]
             Tee::Snp => {
                 let cpuid = kvm
                     .fd()
