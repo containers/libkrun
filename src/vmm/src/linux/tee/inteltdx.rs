@@ -13,6 +13,7 @@ pub enum Error {
     InitVm,
     OpenTdvfFirmwareFile(io::Error),
     ParseTdvfSections(tdvf::Error),
+    FinalizeVm,
 }
 
 pub struct IntelTdx {
@@ -74,5 +75,9 @@ impl IntelTdx {
         }
         
         Ok(())
+    }
+
+    pub fn finalize_vm(&self, fd: &kvm_ioctls::VmFd) -> Result<(), Error> {
+        self.vm.finalize(fd).or_else(|_| return Err(Error::FinalizeVm))
     }
 }
