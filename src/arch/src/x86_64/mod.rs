@@ -242,12 +242,20 @@ pub fn configure_system(
         params.0.hdr.ramdisk_size = initrd_config.size as u32;
     }
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", not(feature = "intel-tdx")))]
     {
         params.0.hdr.syssize = num_cpus as u32;
     }
 
-    add_e820_entry(&mut params.0, 0, EBDA_START, E820_RAM)?;
+    #[cfg(feature = "intel-tdx")]
+    {
+        // number of 4k pages
+        params.0.hdr.syssize = (arch_memory_info.ram_last_addr / 4096) as u32;
+        // nuymber of vCPUs
+        params.0.hdr.root_flags = num_cpus as u16;
+    }
+
+    add_e820_entry(&mut params.0, 0, EBDA_START - 0x10000 , E820_RAM)?;
 
     let last_addr = GuestAddress(arch_memory_info.ram_last_addr);
     if last_addr < end_32bit_gap_start {
