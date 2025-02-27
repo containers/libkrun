@@ -1113,6 +1113,9 @@ fn create_vcpus_x86_64(
         vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config)
             .map_err(Error::Vcpu)?;
 
+        #[cfg(feature = "intel-tdx")]
+        vcpu.tdx_secure_virt_init().map_err(Error::Vcpu)?;
+
         vcpus.push(vcpu);
     }
     Ok(vcpus)
