@@ -955,6 +955,9 @@ pub fn build_microvm(
                 vmm.kvm_vm()
                     .tdx_secure_virt_prepare_memory(&mut tdx_launcher, &measured_regions)
                     .unwrap();
+                vmm.kvm_vm()
+                    .tdx_secure_virt_finalize_vm(tdx_launcher)
+                    .map_err(StartMicrovmError::SecureVirtPrepare)?;
             }
             _ => return Err(StartMicrovmError::InvalidTee),
         }
