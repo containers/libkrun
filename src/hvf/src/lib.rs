@@ -159,6 +159,7 @@ pub struct HvfVm {}
 impl HvfVm {
     pub fn new() -> Result<Self, Error> {
         let ret = unsafe { hv_vm_create(std::ptr::null_mut()) };
+
         if ret != HV_SUCCESS {
             Err(Error::VmCreate)
         } else {
@@ -176,7 +177,7 @@ impl HvfVm {
             hv_vm_map(
                 host_start_addr as *mut core::ffi::c_void,
                 guest_start_addr,
-                size,
+                size.try_into().unwrap(),
                 (HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC).into(),
             )
         };
@@ -188,7 +189,7 @@ impl HvfVm {
     }
 
     pub fn unmap_memory(&self, guest_start_addr: u64, size: u64) -> Result<(), Error> {
-        let ret = unsafe { hv_vm_unmap(guest_start_addr, size) };
+        let ret = unsafe { hv_vm_unmap(guest_start_addr, size.try_into().unwrap()) };
         if ret != HV_SUCCESS {
             Err(Error::MemoryUnmap)
         } else {
