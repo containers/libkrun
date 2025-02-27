@@ -69,7 +69,7 @@ use device_manager::shm::ShmManager;
 #[cfg(not(any(feature = "tee", feature = "nitro")))]
 use devices::virtio::{fs::ExportTable, VirtioShmRegion};
 use flate2::read::GzDecoder;
-#[cfg(feature = "tee")]
+#[cfg(feature = "amd-sev")]
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
 use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 #[cfg(target_arch = "x86_64")]
@@ -565,7 +565,7 @@ pub fn build_microvm(
     #[cfg(feature = "tee")]
     let tee = vm_resources.tee_config().tee;
 
-    #[cfg(feature = "tee")]
+    #[cfg(feature = "amd-sev")]
     let snp_launcher = match tee {
         Tee::Snp => Some(
             vm.snp_secure_virt_prepare(&guest_memory)
@@ -894,6 +894,7 @@ pub fn build_microvm(
     #[cfg(feature = "tee")]
     {
         match tee {
+            #[cfg(feature = "amd-sev")]
             Tee::Snp => {
                 let cpuid = kvm
                     .fd()
