@@ -51,7 +51,10 @@ pub enum Error {
 
 // Where BIOS/VGA magic would live on a real PC.
 const EBDA_START: u64 = 0x9fc00;
+#[cfg(not(feature = "intel-tdx"))]
 pub const RESET_VECTOR: u64 = 0xfff0;
+#[cfg(feature = "intel-tdx")]
+pub const RESET_VECTOR: u64 = 0xffff_fff0;
 pub const RESET_VECTOR_SEV_AP: u64 = 0xfff3;
 pub const BIOS_START: u64 = 0xffff_0000;
 pub const BIOS_SIZE: usize = 65536;
