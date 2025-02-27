@@ -5,6 +5,8 @@ fn main() {
     println!("cargo:rustc-link-search=/opt/homebrew/lib");
     #[cfg(all(not(feature = "tee"), not(feature = "efi")))]
     println!("cargo:rustc-link-lib=krunfw");
-    #[cfg(feature = "tee")]
+    #[cfg(feature = "amd-sev")]
+    println!("cargo:rustc-link-lib=krunfw-sev");
+    #[cfg(feature = "intel-tdx")]
     println!("cargo:rustc-link-lib=krunfw-sev");
 }

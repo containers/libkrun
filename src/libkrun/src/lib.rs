@@ -253,7 +253,20 @@ extern "C" {
     fn krunfw_get_version() -> u32;
 }
 
-#[cfg(feature = "tee")]
+#[cfg(feature = "amd-sev")]
+#[link(name = "krunfw-sev")]
+extern "C" {
+    fn krunfw_get_qboot(size: *mut size_t) -> *mut c_char;
+    fn krunfw_get_initrd(size: *mut size_t) -> *mut c_char;
+    fn krunfw_get_kernel(
+        load_addr: *mut u64,
+        entry_addr: *mut u64,
+        size: *mut size_t,
+    ) -> *mut c_char;
+    fn krunfw_get_version() -> u32;
+}
+
+#[cfg(feature = "intel-tdx")]
 #[link(name = "krunfw-sev")]
 extern "C" {
     fn krunfw_get_qboot(size: *mut size_t) -> *mut c_char;
