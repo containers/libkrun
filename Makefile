@@ -14,6 +14,8 @@ SNP_INIT_SRC =	init/tee/snp_attest.c		\
 		init/tee/snp_attest.h		\
 		$(KBS_INIT_SRC)			\
 
+TDX_INIT_SRC = $(KBS_INIT_SRC)
+
 KBS_LD_FLAGS =	-lcurl -lidn2 -lssl -lcrypto -lzstd -lz -lbrotlidec-static \
 		-lbrotlicommon-static
 
@@ -26,6 +28,14 @@ ifeq ($(SEV),1)
     INIT_DEFS += $(KBS_LD_FLAGS)
     INIT_SRC += $(SNP_INIT_SRC)
 	BUILD_INIT = 0
+endif
+ifeq ($(TDX),1)
+    VARIANT = -tdx
+    FEATURE_FLAGS := --features tdx
+    INIT_DEFS += -DTDX=1
+    INIT_DEFS += $(KBS_LD_FLAGS)
+    INIT_SRC += $(KBS_INIT_SRC)
+    BUILD_INIT = 0
 endif
 ifeq ($(VIRGL_RESOURCE_MAP2),1)
 	FEATURE_FLAGS += --features virgl_resource_map2
@@ -99,6 +109,9 @@ endif
 ifeq ($(NITRO),1)
 	mv target/release/libkrun.so target/release/$(KRUN_BASE_$(OS))
 endif
+ifeq ($(TDX),1)
+	mv target/release/libkrun.so target/release/$(KRUN_BASE_$(OS))
+endif
 ifeq ($(OS),Darwin)
 ifeq ($(EFI),1)
 	install_name_tool -id $(PREFIX)/$(LIBDIR_$(OS))/$(KRUN_SONAME_$(OS)) target/release/libkrun.dylib
@@ -110,6 +123,9 @@ endif
 $(LIBRARY_DEBUG_$(OS)): $(INIT_BINARY)
 	cargo build $(FEATURE_FLAGS)
 ifeq ($(SEV),1)
+	mv target/debug/libkrun.so target/debug/$(KRUN_BASE_$(OS))
+endif
+ifeq ($(TDX),1)
 	mv target/debug/libkrun.so target/debug/$(KRUN_BASE_$(OS))
 endif
 	cp target/debug/$(KRUN_BASE_$(OS)) $(LIBRARY_DEBUG_$(OS))
