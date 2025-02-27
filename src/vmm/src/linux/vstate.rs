@@ -764,6 +764,14 @@ impl Vm {
         }
     }
 
+    #[cfg(feature = "tdx")]
+    pub fn tdx_secure_virt_finalize_vm(&self, launcher: tdx::launch::Launcher) -> Result<()> {
+        match &self.tdx {
+            Some(t) => t.finalize_vm(launcher).map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
+    }
+
     #[cfg(feature = "amd-sev")]
     pub fn snp_secure_virt_prepare(
         &self,
