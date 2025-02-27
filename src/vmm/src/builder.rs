@@ -809,8 +809,8 @@ fn load_payload(
             kernel_region,
             kernel_load_addr,
             kernel_size,
-            qboot_host_addr,
-            qboot_size,
+            _qboot_host_addr,
+            _qboot_size,
             initrd_host_addr,
             initrd_size,
         ) => {
@@ -820,11 +820,13 @@ fn load_payload(
                 .write(kernel_data, GuestAddress(kernel_load_addr))
                 .unwrap();
 
-            let qboot_data =
-                unsafe { std::slice::from_raw_parts(qboot_host_addr as *mut u8, qboot_size) };
-            guest_mem
-                .write(qboot_data, GuestAddress(arch::BIOS_START))
-                .unwrap();
+            let mut qboot_file = std::fs::File::open("/home/slp/src/qboot-krunfw/build/bios.bin").unwrap();
+            let qboot_size = qboot_file.metadata().unwrap().len();
+            guest_mem.read_exact_volatile_from(
+                GuestAddress(arch::BIOS_START),
+                &mut qboot_file,
+                qboot_size as usize,
+            ).unwrap();
 
             let initrd_data =
                 unsafe { std::slice::from_raw_parts(initrd_host_addr as *mut u8, initrd_size) };
