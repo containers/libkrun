@@ -537,6 +537,7 @@ pub fn build_microvm(
     // while on aarch64 we need to do it the other way around.
     #[cfg(target_arch = "x86_64")]
     {
+        #[cfg(not(feature = "intel-tdx"))]
         setup_interrupt_controller(&vm)?;
         attach_legacy_devices(&vm, &mut pio_device_manager)?;
 
@@ -1570,6 +1571,7 @@ pub mod tests {
 
         let (guest_memory, _arch_memory_info, _shm_manager) = default_guest_memory(128).unwrap();
         let mut vm = setup_vm(&guest_memory).unwrap();
+        #[cfg(not(feature = "intel-tdx"))]
         setup_interrupt_controller(&mut vm).unwrap();
         let vcpu_config = VcpuConfig {
             vcpu_count,
