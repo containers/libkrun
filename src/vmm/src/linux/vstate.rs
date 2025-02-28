@@ -599,6 +599,7 @@ impl Vm {
         &mut self,
         guest_mem: &GuestMemoryMmap,
         kvm_max_memslots: usize,
+        guest_memfd_regions: &mut Vec<(vm_memory::GuestAddress, u64, u64)>,
     ) -> Result<()> {
         if guest_mem.num_regions() > kvm_max_memslots {
             return Err(Error::NotEnoughMemorySlots);
@@ -652,6 +653,8 @@ impl Vm {
                 self.fd
                     .set_memory_attributes(attr)
                     .map_err(Error::SetMemoryAttributes)?;
+
+                guest_memfd_regions.push((region.start_addr(), region.len(), gmem as u64));
             }
 
             #[cfg(not(feature = "intel-tdx"))]
