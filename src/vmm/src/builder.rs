@@ -3,6 +3,7 @@
 
 //! Enables pre-boot setup, instantiation and booting of a Firecracker VMM.
 
+use crossbeam_channel::Sender;
 #[cfg(target_os = "macos")]
 use crossbeam_channel::{unbounded, Sender};
 use kernel::cmdline::Cmdline;
@@ -45,7 +46,7 @@ use hvf::MemoryMapping;
 use kbs_types::Tee;
 
 #[cfg(feature = "intel-tdx")]
-use crate::GuestMemfdProperties;
+use crate::{GuestMemfdProperties, MemoryConversionProperties};
 
 use crate::device_manager;
 #[cfg(feature = "tee")]
@@ -512,6 +513,7 @@ pub fn build_microvm(
     event_manager: &mut EventManager,
     _shutdown_efd: Option<EventFd>,
     #[cfg(target_os = "macos")] _map_sender: Sender<MemoryMapping>,
+    #[cfg(feature = "intel-tdx")] vmcall_sender: Sender<(MemoryConversionProperties, EventFd)>,
     #[cfg(target_arch = "x86_64")] irq_sender: crossbeam_channel::Sender<(
         devices::legacy::IrqWorkerMessage,
         EventFd,
@@ -557,6 +559,8 @@ pub fn build_microvm(
             vm_resources,
             #[cfg(feature = "intel-tdx")]
             &mut guest_memfd_regions,
+            #[cfg(feature = "intel-tdx")]
+            vmcall_sender,
         )?;
         (kvm, vm)
     };
@@ -678,6 +682,11 @@ pub fn build_microvm(
         .map_err(Error::EventFd)
         .map_err(StartMicrovmError::Internal)?;
 
+    #[cfg(feature = "intel-tdx")]
+    let memory_evt = EventFd::new(utils::eventfd::EFD_SEMAPHORE)
+        .map_err(Error::EventFd)
+        .map_err(StartMicrovmError::Internal)?;
+
     #[cfg(target_arch = "x86_64")]
     // Safe to unwrap 'serial_device' as it's always 'Some' on x86_64.
     // x86_64 uses the i8042 reset event as the Vmm exit event.
@@ -734,6 +743,10 @@ pub fn build_microvm(
             payload_config.entry_addr,
             &pio_device_manager.io_bus,
             &exit_evt,
+            #[cfg(feature = "intel-tdx")]
+            vm.vmcall_sender.clone(),
+            #[cfg(feature = "intel-tdx")]
+            &memory_evt,
         )
         .map_err(StartMicrovmError::Internal)?;
     }
@@ -1354,11 +1367,14 @@ pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
     resources: &super::resources::VmResources,
     #[cfg(feature = "intel-tdx")] guest_memfd_regions: &mut Vec<GuestMemfdProperties>,
+    #[cfg(feature = "intel-tdx")] vmcall_sender: Sender<(MemoryConversionProperties, EventFd)>,
 ) -> std::result::Result<Vm, StartMicrovmError> {
     let mut vm = Vm::new(
         kvm.fd(),
         resources.tee_config(),
         resources.vcpu_config().vcpu_count,
+        #[cfg(feature = "intel-tdx")]
+        vmcall_sender,
     )
     .map_err(Error::Vm)
     .map_err(StartMicrovmError::Internal)?;
@@ -1516,6 +1532,8 @@ fn create_vcpus_x86_64(
     entry_addr: GuestAddress,
     io_bus: &devices::Bus,
     exit_evt: &EventFd,
+    #[cfg(feature = "intel-tdx")] vmcall_sender: Sender<(MemoryConversionProperties, EventFd)>,
+    #[cfg(feature = "intel-tdx")] memory_evt: &EventFd,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
     for cpu_index in 0..vcpu_config.vcpu_count {
@@ -1526,6 +1544,10 @@ fn create_vcpus_x86_64(
             vm.supported_msrs().clone(),
             io_bus.clone(),
             exit_evt.try_clone().map_err(Error::EventFd)?,
+            #[cfg(feature = "intel-tdx")]
+            vmcall_sender.clone(),
+            #[cfg(feature = "intel-tdx")]
+            memory_evt.try_clone().map_err(Error::EventFd)?,
         )
         .map_err(Error::Vcpu)?;
 

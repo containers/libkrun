@@ -1492,6 +1492,9 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "macos")]
     let (sender, receiver) = unbounded();
 
+    #[cfg(feature = "intel-tdx")]
+    let (vmcall_sender, vmcall_receiver) = crossbeam_channel::unbounded();
+
     #[cfg(target_arch = "x86_64")]
     let (irq_sender, irq_receiver) = crossbeam_channel::unbounded();
 
@@ -1501,6 +1504,8 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         ctx_cfg.shutdown_efd,
         #[cfg(target_os = "macos")]
         sender,
+        #[cfg(feature = "intel-tdx")]
+        vmcall_sender,
         #[cfg(target_arch = "x86_64")]
         irq_sender,
     ) {
@@ -1516,6 +1521,9 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     #[cfg(target_arch = "x86_64")]
     let irq_vmm = _vmm.clone();
+
+    #[cfg(feature = "intel-tdx")]
+    let vmm = _vmm.clone();
 
     #[cfg(target_os = "macos")]
     if ctx_cfg.gpu_virgl_flags.is_some() {
@@ -1584,6 +1592,20 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             })
             .unwrap();
     }
+
+    #[cfg(feature = "intel-tdx")]
+    std::thread::Builder::new()
+        .name("vmcall worker".into())
+        .spawn(move || loop {
+            match vmcall_receiver.recv() {
+                Err(e) => error!("Error in receiver: {:?}", e),
+                Ok((conversion_properties, evt_fd)) => {
+                    let _ = convert_memory(&vmm, conversion_properties);
+                    evt_fd.write(1).unwrap();
+                }
+            }
+        })
+        .unwrap();
 
     loop {
         match event_manager.run() {

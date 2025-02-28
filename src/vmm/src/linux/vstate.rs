@@ -60,7 +60,7 @@ use vm_memory::{
 use sev::launch::snp;
 
 #[cfg(feature = "intel-tdx")]
-use crate::GuestMemfdProperties;
+use crate::{GuestMemfdProperties, MemoryConversionProperties};
 
 /// Signal number (SIGRTMIN) used to kick Vcpus.
 pub(crate) const VCPU_RTSIG_OFFSET: i32 = 0;
@@ -507,6 +507,9 @@ pub struct Vm {
 
     #[cfg(feature = "tee")]
     pub tee_config: Tee,
+
+    #[cfg(feature = "intel-tdx")]
+    pub vmcall_sender: crossbeam_channel::Sender<(MemoryConversionProperties, EventFd)>,
 }
 
 impl Vm {
@@ -562,7 +565,12 @@ impl Vm {
     }
 
     #[cfg(feature = "intel-tdx")]
-    pub fn new(kvm: &Kvm, tee_config: &TeeConfig, vcpu_count: u8) -> Result<Self> {
+    pub fn new(
+        kvm: &Kvm,
+        tee_config: &TeeConfig,
+        vcpu_count: u8,
+        vmcall_sender: crossbeam_channel::Sender<(MemoryConversionProperties, EventFd)>,
+    ) -> Result<Self> {
         // create fd for interacting with kvm-vm specific functions
         let vm_fd = kvm
             .create_vm_with_type(tdx::launch::KVM_X86_TDX_VM)
@@ -583,6 +591,7 @@ impl Vm {
             supported_msrs,
             tdx: Some(tdx),
             tee_config: tee_config.tee,
+            vmcall_sender,
         })
     }
 
@@ -872,6 +881,12 @@ pub struct Vcpu {
     response_receiver: Option<Receiver<VcpuResponse>>,
     // The transmitting end of the responses channel owned by the vcpu side.
     response_sender: Sender<VcpuResponse>,
+
+    #[cfg(feature = "intel-tdx")]
+    vmcall_sender: Sender<(MemoryConversionProperties, EventFd)>,
+
+    #[cfg(feature = "intel-tdx")]
+    memory_evt: EventFd,
 }
 
 impl Vcpu {
@@ -975,6 +990,8 @@ impl Vcpu {
         msr_list: MsrList,
         io_bus: devices::Bus,
         exit_evt: EventFd,
+        #[cfg(feature = "intel-tdx")] vmcall_sender: Sender<(MemoryConversionProperties, EventFd)>,
+        #[cfg(feature = "intel-tdx")] memory_evt: EventFd,
     ) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = unbounded();
@@ -993,6 +1010,10 @@ impl Vcpu {
             event_sender: Some(event_sender),
             response_receiver: Some(response_receiver),
             response_sender,
+            #[cfg(feature = "intel-tdx")]
+            vmcall_sender,
+            #[cfg(feature = "intel-tdx")]
+            memory_evt,
         })
     }
 
