@@ -556,7 +556,13 @@ pub fn build_microvm(
         let kvm = KvmContext::new()
             .map_err(Error::KvmContext)
             .map_err(StartMicrovmError::Internal)?;
-        let vm = setup_vm(&kvm, &guest_memory, vm_resources)?;
+        let vm = setup_vm(
+            &kvm,
+            &guest_memory,
+            vm_resources,
+            #[cfg(feature = "tdx")]
+            _sender.clone(),
+        )?;
         (kvm, vm)
     };
 
@@ -1385,10 +1391,16 @@ pub(crate) fn setup_vm(
     kvm: &KvmContext,
     guest_memory: &GuestMemoryMmap,
     resources: &super::resources::VmResources,
+    #[cfg(feature = "tdx")] _sender: Sender<WorkerMessage>,
 ) -> std::result::Result<Vm, StartMicrovmError> {
-    let mut vm = Vm::new(kvm.fd(), resources.tee_config())
-        .map_err(Error::Vm)
-        .map_err(StartMicrovmError::Internal)?;
+    let mut vm = Vm::new(
+        kvm.fd(),
+        resources.tee_config(),
+        #[cfg(feature = "tdx")]
+        _sender,
+    )
+    .map_err(Error::Vm)
+    .map_err(StartMicrovmError::Internal)?;
     vm.memory_init(guest_memory, kvm.max_memslots())
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;

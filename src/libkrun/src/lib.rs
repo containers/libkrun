@@ -1849,7 +1849,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         vmm::worker::start_worker_thread(_vmm.clone(), _receiver.clone()).unwrap();
     }
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(any(feature = "amd-sev", feature = "tdx"))]
     vmm::worker::start_worker_thread(_vmm.clone(), _receiver.clone()).unwrap();
 
     loop {
