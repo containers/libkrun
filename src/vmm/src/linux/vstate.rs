@@ -1366,6 +1366,10 @@ impl Vcpu {
 
                         match vmcall.__bindgen_anon_3.subfunction {
                             TDG_VP_VMCALL_MAP_GPA => {
+                                let ret = self.tdx_handle_map_gpa(&mut vmcall);
+                                if ret < 0 {
+                                    return Err(Error::VcpuUnhandledKvmExit);
+                                }
                                 return Ok(VcpuEmulation::Handled);
                             }
                             TDG_VP_VMCALL_GET_QUOTE => {
@@ -1410,6 +1414,71 @@ impl Vcpu {
                 }
             }
         }
+    }
+
+    unsafe fn tdx_handle_map_gpa(&self, vmcall: &mut kvm_bindings::kvm_tdx_exit__bindgen_ty_1_kvm_tdx_vmcall) -> i32 {
+        const TDX_MAP_GPA_MAX_LEN: u64 = (64 * 1024 * 1024);
+        let phys_bits = unsafe { std::arch::x86_64::__cpuid(0x8000_0008).eax } & 0xff;
+        let mut retry = false;
+        let mut size = vmcall.in_r13;
+        let mut ret = 0;
+
+        let shared_bit = if phys_bits > 48 {
+            1 << 51
+        } else {
+            1 << 47
+        };
+        let gpa = vmcall.in_r12 & !shared_bit;
+
+        let private: bool = if vmcall.in_r12 & shared_bit > 0 {
+            false
+        } else {
+            true
+        };
+
+        vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_INVALID_OPERAND;
+
+        if (gpa % 4096) != 0 || (size % 4096) != 0 {
+           vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_ALIGN_ERROR;
+           return 0;
+       }
+
+        // overflow case
+        if (gpa + size < gpa) {
+            return 0;
+        }
+
+        if gpa >= (1 << phys_bits) || gpa + size >= (1 << phys_bits) {
+            return 0;
+        }
+
+        if size > TDX_MAP_GPA_MAX_LEN {
+            retry = true;
+            size = TDX_MAP_GPA_MAX_LEN;
+        }
+
+        if (size > 0) {
+            // convert memory
+            if let Err(e) = self.vmcall_sender.send((gpa, size, private)) {
+                ret = -1;
+            }
+            // FIXME(jakecorrenti): this is not practical. Find a way to solve the race condition
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+        }
+
+        if ret == 0 {
+            if retry {
+                vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_RETRY;
+                vmcall.out_r11 = gpa + size;
+                if !private {
+                    vmcall.out_r11 |= shared_bit;
+                }
+            } else {
+                vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_SUCCESS;
+            }
+        }
+
+        0
     }
 
     unsafe fn tdx_handle_setup_event_notify_interrupt(vmcall: &mut kvm_bindings::kvm_tdx_exit__bindgen_ty_1_kvm_tdx_vmcall) -> i32 {
