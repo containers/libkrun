@@ -568,7 +568,11 @@ impl Vm {
     }
 
     #[cfg(feature = "tdx")]
-    pub fn new(kvm: &Kvm, tee_config: &TeeConfig) -> Result<Self> {
+    pub fn new(
+        kvm: &Kvm,
+        tee_config: &TeeConfig,
+        _sender: crossbeam_channel::Sender<WorkerMessage>,
+    ) -> Result<Self> {
         // create fd for interacting with kvm-vm specific functions
         let vm_fd = kvm
             .create_vm_with_type(tdx::launch::KVM_X86_TDX_VM)
