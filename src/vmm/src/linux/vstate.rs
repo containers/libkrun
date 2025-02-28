@@ -1342,6 +1342,21 @@ impl Vcpu {
                     error!("Received KVM_EXIT_INTERNAL_ERROR signal");
                     Err(Error::VcpuUnhandledKvmExit)
                 }
+                VcpuExit::MemoryFault { flags, gpa, size } => {
+                    if flags & !kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64 != 0 {
+                        println!("KVM_EXIT_MEMORY_FAULT: Unknown flag {}", flags);
+                        Err(Error::VcpuUnhandledKvmExit)
+                    } else {
+                        let attr = (flags & kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64);
+
+                        let res = self.vmcall_sender.try_send((gpa, size, attr > 0));
+                        if res.is_err() {
+                            println!("KVM_EXIT_MEMORY_FAULT: unable to convert memory: Exit {:#?}", res);
+                            return Err(Error::VcpuUnhandledKvmExit);
+                        }
+                        Ok(VcpuEmulation::Handled)
+                    }
+                }
                 VcpuExit::Tdx => {
                     let kvm_run = self.fd.get_kvm_run();
                     let tdx = unsafe { &mut kvm_run.__bindgen_anon_1.tdx };
