@@ -1348,6 +1348,44 @@ impl Vcpu {
                     }
                     Ok(VcpuEmulation::Stopped)
                 }
+                VcpuExit::MemoryFault { flags, gpa, size } => {
+                    #[cfg(feature = "intel-tdx")]
+                    if flags & !kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64 != 0 {
+                        println!("KVM_EXIT_MEMORY_FAULT: Unknown flag {}", flags);
+                        Err(Error::VcpuUnhandledKvmExit)
+                    } else {
+                        let attr = (flags & kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64);
+
+                        if let Err(e) = self.vmcall_sender.send((
+                            MemoryConversionProperties {
+                                gpa,
+                                size,
+                                to_private: attr > 0,
+                            },
+                            self.memory_evt.try_clone().unwrap(),
+                        )) {
+                            println!(
+                                "KVM_EXIT_MEMORY_FAULT: unable to convert memory: Exit {:#?}",
+                                e
+                            );
+                            return Err(Error::VcpuUnhandledKvmExit);
+                        }
+                        if let Err(e) = self.memory_evt.read() {
+                            println!(
+                                "KVM_EXIT_MEMORY_FAULT: unable to convert memory: Exit {:#?}",
+                                e
+                            );
+                            return Err(Error::VcpuUnhandledKvmExit);
+                        }
+                        Ok(VcpuEmulation::Handled)
+                    }
+
+                    #[cfg(not(feature = "intel-tdx"))]
+                    {
+                        error!("Received KVM_EXIT_MEMORY_FAULT: flags=0x{:x}, gpa=0x{:x}, size=0x{:x})", flags, gpa, size);
+                        Err(Error::VcpuUnhandledKvmExit)
+                    }
+                }
                 #[cfg(feature = "intel-tdx")]
                 VcpuExit::Tdx => {
                     let kvm_run = self.fd.get_kvm_run();
