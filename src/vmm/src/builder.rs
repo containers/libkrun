@@ -44,6 +44,9 @@ use hvf::MemoryMapping;
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
 
+#[cfg(feature = "intel-tdx")]
+use crate::GuestMemfdProperties;
+
 use crate::device_manager;
 #[cfg(feature = "tee")]
 use crate::resources::TeeConfig;
@@ -514,6 +517,8 @@ pub fn build_microvm(
         EventFd,
     )>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
+    #[cfg(feature = "intel-tdx")]
+    let mut guest_memfd_regions: Vec<GuestMemfdProperties> = vec![];
     let payload = choose_payload(vm_resources)?;
 
     let (guest_memory, arch_memory_info, mut _shm_manager, payload_config) = create_guest_memory(
@@ -546,7 +551,13 @@ pub fn build_microvm(
         let kvm = KvmContext::new()
             .map_err(Error::KvmContext)
             .map_err(StartMicrovmError::Internal)?;
-        let vm = setup_vm(&kvm, &guest_memory, vm_resources)?;
+        let vm = setup_vm(
+            &kvm,
+            &guest_memory,
+            vm_resources,
+            #[cfg(feature = "intel-tdx")]
+            &mut guest_memfd_regions,
+        )?;
         (kvm, vm)
     };
 
@@ -791,6 +802,8 @@ pub fn build_microvm(
 
     let mut vmm = Vmm {
         guest_memory,
+        #[cfg(feature = "intel-tdx")]
+        guest_memfd_regions,
         arch_memory_info,
         kernel_cmdline,
         vcpus_handles: Vec::new(),
@@ -1340,6 +1353,7 @@ pub(crate) fn setup_vm(
     kvm: &KvmContext,
     guest_memory: &GuestMemoryMmap,
     resources: &super::resources::VmResources,
+    #[cfg(feature = "intel-tdx")] guest_memfd_regions: &mut Vec<GuestMemfdProperties>,
 ) -> std::result::Result<Vm, StartMicrovmError> {
     let mut vm = Vm::new(
         kvm.fd(),
@@ -1348,9 +1362,14 @@ pub(crate) fn setup_vm(
     )
     .map_err(Error::Vm)
     .map_err(StartMicrovmError::Internal)?;
-    vm.memory_init(guest_memory, kvm.max_memslots())
-        .map_err(Error::Vm)
-        .map_err(StartMicrovmError::Internal)?;
+    vm.memory_init(
+        guest_memory,
+        kvm.max_memslots(),
+        #[cfg(feature = "intel-tdx")]
+        guest_memfd_regions,
+    )
+    .map_err(Error::Vm)
+    .map_err(StartMicrovmError::Internal)?;
     Ok(vm)
 }
 #[cfg(target_os = "macos")]

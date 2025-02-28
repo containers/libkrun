@@ -59,6 +59,9 @@ use vm_memory::{
 #[cfg(feature = "amd-sev")]
 use sev::launch::snp;
 
+#[cfg(feature = "intel-tdx")]
+use crate::GuestMemfdProperties;
+
 /// Signal number (SIGRTMIN) used to kick Vcpus.
 pub(crate) const VCPU_RTSIG_OFFSET: i32 = 0;
 
@@ -600,6 +603,7 @@ impl Vm {
         &mut self,
         guest_mem: &GuestMemoryMmap,
         kvm_max_memslots: usize,
+        #[cfg(feature = "intel-tdx")] guest_memfd_regions: &mut Vec<GuestMemfdProperties>,
     ) -> Result<()> {
         if guest_mem.num_regions() > kvm_max_memslots {
             return Err(Error::NotEnoughMemorySlots);
@@ -651,6 +655,12 @@ impl Vm {
                 self.fd
                     .set_memory_attributes(attr)
                     .map_err(Error::SetMemoryAttributes)?;
+
+                guest_memfd_regions.push(GuestMemfdProperties {
+                    gpa: region.start_addr(),
+                    size: region.len(),
+                    memfd_id: gmem as u64,
+                });
             }
 
             #[cfg(not(feature = "intel-tdx"))]
