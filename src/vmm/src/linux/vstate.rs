@@ -1427,23 +1427,25 @@ impl Vcpu {
                 }
                 #[cfg(feature = "tee")]
                 VcpuExit::MemoryFault { gpa, size, flags } => {
-                    let private = (flags & (KVM_MEMORY_EXIT_FLAG_PRIVATE as u64)) != 0;
-
-                    let mem_properties = MemoryProperties { gpa, size, private };
-
-                    let (response_sender, response_receiver) = unbounded();
-                    self.pm_sender
-                        .send(WorkerMessage::ConvertMemory(
-                            response_sender.clone(),
-                            mem_properties,
-                        ))
-                        .unwrap();
-                    if !response_receiver.recv().unwrap() {
-                        error!("Unable to convert memory with properties: gpa: 0x{gpa:x} size: 0x{size:x} to_private: {private}");
-                        return Err(Error::VcpuUnhandledKvmExit);
+                    if flags & !kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64 != 0 {
+                        println!("KVM_EXIT_MEMORY_FAULT: Unknown flag {flags}");
+                        Err(Error::VcpuUnhandledKvmExit)
+                    } else {
+                        let private = (flags & (KVM_MEMORY_EXIT_FLAG_PRIVATE as u64)) != 0;
+                        let mem_properties = MemoryProperties { gpa, size, private };
+                        let (response_sender, response_receiver) = unbounded();
+                        self.pm_sender
+                            .send(WorkerMessage::ConvertMemory(
+                                response_sender.clone(),
+                                mem_properties,
+                            ))
+                            .unwrap();
+                        if !response_receiver.recv().unwrap() {
+                            error!("Unable to convert memory with properties: gpa: 0x{gpa:x} size: 0x{size:x} to_private: {private}");
+                            return Err(Error::VcpuUnhandledKvmExit);
+                        }
+                        Ok(VcpuEmulation::Handled)
                     }
-
-                    Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::MmioRead(addr, data) => {
                     if let Some(ref mmio_bus) = self.mmio_bus {
