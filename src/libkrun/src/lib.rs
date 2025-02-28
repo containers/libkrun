@@ -18,7 +18,13 @@ use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
 #[cfg(not(feature = "efi"))]
 use std::sync::LazyLock;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryRegion};
+
+use libc::{
+    fallocate, madvise, FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, MADV_DONTNEED, MADV_REMOVE,
+};
 
 #[cfg(target_os = "macos")]
 use crossbeam_channel::unbounded;
@@ -1588,4 +1594,127 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             }
         }
     }
+}
+
+#[cfg(feature = "intel-tdx")]
+fn has_guest_memory(
+    memory_properties: &vmm::MemoryConversionProperties,
+    memfd_regions: &Vec<vmm::GuestMemfdProperties>,
+) -> Option<i64> {
+    for gp in memfd_regions.iter() {
+        if memory_properties.gpa >= gp.gpa.0
+            && memory_properties.gpa + memory_properties.size <= gp.gpa.0 + gp.size
+        {
+            return Some(gp.memfd_id as i64);
+        }
+    }
+    None
+}
+
+#[cfg(feature = "intel-tdx")]
+fn convert_memory(
+    vmm: &Arc<Mutex<vmm::Vmm>>,
+    memory_properties: vmm::MemoryConversionProperties,
+) -> i32 {
+    let mut ret = -1;
+    let vmm = vmm.as_ref().lock().unwrap();
+    let guest_memfd_regions = vmm.guest_memfd_regions();
+
+    let page_size = 4096;
+
+    // check to make sure the starting address is aligned with the page size
+    // check to make sure the size of the memory block is also aligned with the page size
+    if (memory_properties.gpa % page_size) != 0 || (memory_properties.size % page_size) != 0 {
+        return -1;
+    }
+
+    if memory_properties.size < 1 {
+        return -1;
+    }
+
+    let region = vmm
+        .guest_memory()
+        .find_region(GuestAddress(memory_properties.gpa));
+    if let None = region {
+        // ignore converting non-assigned region to shared
+        //
+        // TDX requires vMMIO region to be shared to inject #VE to guest. OVMF issues
+        // conservatively MapGPA(shared) on 32bit PCI MMIO region, and vIO-APIC 0xFEC 4k page. OVMF
+        // assignes 32bit PCI MMIO region to [top of low memory: typically 2GB=0xC0000000,
+        // 0xFC000000)
+        if !memory_properties.to_private {
+            return 0;
+        }
+
+        return -1;
+    }
+    let region = region.unwrap();
+
+    // retrive the memory region associated with the starting address and the size
+    // then check to make sure there is a guest memfd backing
+    let memfd_id = has_guest_memory(&memory_properties, guest_memfd_regions);
+    if memfd_id.is_none() {
+        println!("cannot convert non guest_memfd backed memory region");
+        return -1;
+    }
+    let memfd_id = memfd_id.unwrap();
+
+    let attr = kvm_bindings::kvm_memory_attributes {
+        address: memory_properties.gpa,
+        size: memory_properties.size,
+        attributes: if memory_properties.to_private {
+            kvm_bindings::KVM_MEMORY_ATTRIBUTE_PRIVATE as u64
+        } else {
+            0
+        },
+        flags: 0,
+    };
+
+    vmm.vm_fd().set_memory_attributes(attr).unwrap();
+
+    let offset = memory_properties.gpa - region.start_addr().raw_value();
+    if memory_properties.to_private {
+        // ram_block_discard_range
+        let host_addr = region
+            .get_host_address(vm_memory::MemoryRegionAddress(memory_properties.gpa))
+            .unwrap();
+
+        unsafe {
+            let _ret = madvise(
+                host_addr as *mut libc::c_void,
+                memory_properties.size.try_into().unwrap(),
+                MADV_DONTNEED,
+            );
+
+            if _ret < 0 {
+                error!(
+                    "error discarding memory range: gpa: 0x{:x} size: 0x{:x} res: {}",
+                    memory_properties.gpa,
+                    memory_properties.size,
+                    std::io::Error::last_os_error()
+                );
+                return _ret;
+            }
+        }
+    } else {
+        // ram_block_discard_guest_memfd_range
+        unsafe {
+            let _ret = fallocate(
+                memfd_id as i32,
+                FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                offset as i64,
+                memory_properties.size as i64,
+            );
+
+            if _ret < 0 {
+                error!(
+                    "error discarding guest memfd memory range: {}",
+                    std::io::Error::last_os_error()
+                );
+                return _ret;
+            }
+        }
+    }
+
+    0
 }

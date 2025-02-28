@@ -197,6 +197,13 @@ pub struct GuestMemfdProperties {
     pub memfd_id: u64,
 }
 
+#[cfg(feature = "intel-tdx")]
+pub struct MemoryConversionProperties {
+    pub gpa: u64,
+    pub size: u64,
+    pub to_private: bool,
+}
+
 /// Contains the state and associated methods required for the Firecracker VMM.
 pub struct Vmm {
     // Guest VM core resources.
