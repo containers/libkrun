@@ -1246,14 +1246,17 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         ctx_cfg.vmr.set_console_output(console_output);
     }
 
-    #[cfg(target_os = "macos")]
-    let (sender, receiver) = unbounded();
+    // #[cfg(target_os = "macos")]
+    // let (sender, receiver) = unbounded();
+
+    let (sender, receiver) = crossbeam_channel::unbounded();
 
     let _vmm = match vmm::builder::build_microvm(
         &ctx_cfg.vmr,
         &mut event_manager,
         ctx_cfg.shutdown_efd,
-        #[cfg(target_os = "macos")]
+        // #[cfg(target_os = "macos")]
+        // sender,
         sender,
     ) {
         Ok(vmm) => vmm,
@@ -1265,6 +1268,8 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     #[cfg(target_os = "macos")]
     let mapper_vmm = _vmm.clone();
+
+    let vmm = _vmm.clone();
 
     #[cfg(target_os = "macos")]
     std::thread::Builder::new()
@@ -1283,6 +1288,17 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             }
         })
         .unwrap();
+
+    std::thread::Builder::new()
+        .name("vmcall worker".into())
+        .spawn(move || loop {
+            match receiver.recv() {
+                Err(e) => error!("Error in receiver: {:?}", e),
+                Ok((gpa, size, private)) => {
+                    let _ = convert_memory(&vmm, gpa, size, private);
+                },
+            }
+        }).unwrap();
 
     loop {
         match event_manager.run() {

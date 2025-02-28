@@ -891,6 +891,8 @@ pub struct Vcpu {
     response_receiver: Option<Receiver<VcpuResponse>>,
     // The transmitting end of the responses channel owned by the vcpu side.
     response_sender: Sender<VcpuResponse>,
+
+    vmcall_sender: Sender<(u64, u64, bool)>,
 }
 
 impl Vcpu {
@@ -994,6 +996,7 @@ impl Vcpu {
         msr_list: MsrList,
         io_bus: devices::Bus,
         exit_evt: EventFd,
+        vmcall_sender: Sender<(u64, u64, bool)>,
     ) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = unbounded();
@@ -1012,6 +1015,7 @@ impl Vcpu {
             event_sender: Some(event_sender),
             response_receiver: Some(response_receiver),
             response_sender,
+            vmcall_sender,
         })
     }
 

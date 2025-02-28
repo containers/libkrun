@@ -5,6 +5,7 @@
 
 #[cfg(target_os = "macos")]
 use crossbeam_channel::{unbounded, Sender};
+use crossbeam_channel::Sender;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io;
@@ -354,6 +355,7 @@ pub fn build_microvm(
     event_manager: &mut EventManager,
     _shutdown_efd: Option<EventFd>,
     #[cfg(target_os = "macos")] _map_sender: Sender<MemoryMapping>,
+    vmcall_sender: Sender<(u64, u64, bool)>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
     let mut guest_memfd_regions: Vec<(vm_memory::GuestAddress, u64, u64)> = vec![];
     
@@ -582,6 +584,7 @@ pub fn build_microvm(
             boot_ip,
             &pio_device_manager.io_bus,
             &exit_evt,
+            vmcall_sender,
         )
         .map_err(StartMicrovmError::Internal)?;
     }
@@ -1110,6 +1113,7 @@ fn create_vcpus_x86_64(
     entry_addr: GuestAddress,
     io_bus: &devices::Bus,
     exit_evt: &EventFd,
+    vmcall_sender: Sender<(u64, u64, bool)>,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
     for cpu_index in 0..vcpu_config.vcpu_count {
@@ -1120,6 +1124,7 @@ fn create_vcpus_x86_64(
             vm.supported_msrs().clone(),
             io_bus.clone(),
             exit_evt.try_clone().map_err(Error::EventFd)?,
+            vmcall_sender.clone(),
         )
         .map_err(Error::Vcpu)?;
 
