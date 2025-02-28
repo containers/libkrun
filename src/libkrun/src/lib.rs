@@ -14,7 +14,18 @@ use std::os::fd::RawFd;
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+use vm_memory::{Address, GuestAddress, GuestMemory};
+
+use libc::{
+    fallocate,
+    madvise,
+    FALLOC_FL_KEEP_SIZE,
+    FALLOC_FL_PUNCH_HOLE,
+    MADV_DONTNEED,
+    MADV_REMOVE,
+};
 
 #[cfg(target_os = "macos")]
 use crossbeam_channel::unbounded;
@@ -1282,4 +1293,110 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             }
         }
     }
+}
+
+// FIXME(jakecorrenti): this should return an option for the guestmemfd id
+fn has_guest_memory(gpa: u64, size: u64, memfd_regions: &Vec<(vm_memory::GuestAddress, u64, u64)>) -> (bool, i64) {
+    for (a, s, i) in memfd_regions.iter() {
+        if gpa >= a.0 && gpa + size <= a.0 + *s {
+            return (true, *i as i64);
+        }
+    }
+    (false, -1)
+}
+
+fn convert_memory(vmm: &Arc<Mutex<vmm::Vmm>>, gpa: u64, size: u64, to_private: bool) -> i32 {
+    let mut ret = -1;
+    let vmm = vmm.as_ref().lock().unwrap();
+    let guest_memfd_regions = vmm.guest_memfd_regions();
+
+    let page_size = 4096;
+
+    // check to make sure the starting address is aligned with the page size
+    // check to make sure the size of the memory block is also aligned with the page size
+    if (gpa % page_size) != 0 || (size % page_size) != 0 {
+        return -1;
+    }
+
+    // if size is non-positive then return -1
+    if size < 1 {
+        return -1;
+    }
+
+    let region = vmm.guest_memory().find_region(GuestAddress(gpa));
+    if let None = region {
+        // ignore converting non-assigned region to shared
+        //
+        // TDX requires vMMIO region to be shared to inject #VE to guest. OVMF issues
+        // conservatively MapGPA(shared) on 32bit PCI MMIO region, and vIO-APIC 0xFEC 4k page. OVMF
+        // assignes 32bit PCI MMIO region to [top of low memory: typically 2GB=0xC0000000,
+        // 0xFC000000)
+        if !to_private {
+            return 0;
+        }
+
+        return -1;
+    }
+    let region = region.unwrap();
+
+    // retrive the memory region associated with the starting address and the size
+    let (region_has_guest_memfd, memfd_id) = has_guest_memory(gpa, size, guest_memfd_regions);
+
+    // check to make sure there is a guest memfd backing
+    if !region_has_guest_memfd {
+        println!("cannot convert non guest_memfd backed memory region");
+        return -1;
+    }
+
+    // set the memory attributes to the desired value
+    let attr = kvm_bindings::kvm_memory_attributes {
+       address: gpa,
+       size,
+       attributes: if to_private {
+       // KVM_MEMORY_ATTRIBUTE_PRIVATE,
+       1 << 3 } else { 0 },
+       flags: 0,
+    };
+
+    vmm.vm_fd().set_memory_attributes(attr).unwrap();
+
+    use vm_memory::GuestMemoryRegion;
+
+    let offset = gpa - region.start_addr().raw_value();
+    if to_private {
+        // ram_block_discard_range
+       let host_addr = region.get_host_address(vm_memory::MemoryRegionAddress(gpa)).unwrap();
+
+       // let host_addr = gpa + offset;
+       unsafe {
+           let _ret = madvise(
+               host_addr as *mut libc::c_void,
+               size.try_into().unwrap(),
+               // madv_remove,
+               MADV_DONTNEED,
+           );
+
+           if _ret < 0 {
+              println!("error discarding memory range: gpa: 0x{:x} size: 0x{:x} res: {}", gpa, size, std::io::Error::last_os_error()); 
+              return _ret;
+           }
+       }
+    } else {
+        // ram_block_discard_guest_memfd_range
+        unsafe {
+            let _ret = fallocate(
+                memfd_id as i32,
+                FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                offset as i64,
+                size as i64,
+            );
+
+            if _ret < 0 {
+               println!("error discarding guest memfd memory range: {}", std::io::Error::last_os_error()); 
+               return _ret;
+            }
+        }
+    }
+
+    0
 }
