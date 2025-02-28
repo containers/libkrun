@@ -340,6 +340,10 @@ impl Vmm {
         &self.guest_memfd_regions
     }
 
+    pub fn vm_fd(&self) -> &kvm_ioctls::VmFd {
+        &self.vm.fd()
+    }
+
     /// Injects CTRL+ALT+DEL keystroke combo in the i8042 device.
     #[cfg(target_arch = "x86_64")]
     pub fn send_ctrl_alt_del(&mut self) -> Result<()> {
