@@ -14,6 +14,8 @@ SNP_INIT_SRC =	init/tee/snp_attest.c		\
 		init/tee/snp_attest.h		\
 		$(KBS_INIT_SRC)			\
 
+TDX_INIT_SRC = $(KBS_INIT_SRC)
+
 KBS_LD_FLAGS =	-lcurl -lidn2 -lssl -lcrypto -lzstd -lz -lbrotlidec-static \
 		-lbrotlicommon-static
 
@@ -26,6 +28,14 @@ ifeq ($(SEV),1)
     INIT_DEFS += $(KBS_LD_FLAGS)
     INIT_SRC += $(SNP_INIT_SRC)
 	BUILD_INIT = 0
+endif
+ifeq ($(TDX),1)
+    VARIANT = -tdx
+    FEATURE_FLAGS := --features intel-tdx,tee,blk,kbs-types,serde,serde_json,curl
+    INIT_DEFS += -DTDX=1
+    INIT_DEFS += $(KBS_LD_FLAGS)
+    INIT_SRC += $(KBS_INIT_SRC)
+    BUILD_INIT = 0
 endif
 ifeq ($(GPU),1)
     FEATURE_FLAGS += --features gpu
@@ -91,6 +101,9 @@ $(LIBRARY_RELEASE_$(OS)): $(INIT_BINARY)
 ifeq ($(SEV),1)
 	mv target/release/libkrun.so target/release/$(KRUN_BASE_$(OS))
 endif
+ifeq ($(TDX),1)
+	mv target/release/libkrun.so target/release/$(KRUN_BASE_$(OS))
+endif
 ifeq ($(OS),Linux)
 	patchelf --set-soname $(KRUN_SONAME_$(OS)) --output $(LIBRARY_RELEASE_$(OS)) target/release/$(KRUN_BASE_$(OS))
 else
@@ -106,6 +119,9 @@ endif
 $(LIBRARY_DEBUG_$(OS)): $(INIT_BINARY)
 	cargo build $(FEATURE_FLAGS)
 ifeq ($(SEV),1)
+	mv target/debug/libkrun.so target/debug/$(KRUN_BASE_$(OS))
+endif
+ifeq ($(TDX),1)
 	mv target/debug/libkrun.so target/debug/$(KRUN_BASE_$(OS))
 endif
 ifeq ($(OS),Linux)
