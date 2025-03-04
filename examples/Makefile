@@ -11,7 +11,7 @@ ROOTFS_DIR = rootfs_$(ROOTFS_DISTRO)
 
 .PHONY: clean rootfs
 
-EXAMPLES := chroot_vm
+EXAMPLES := chroot_vm external_kernel
 ifeq ($(SEV),1)
     EXAMPLES := launch-tee
 endif
@@ -36,6 +36,12 @@ ifeq ($(OS),Darwin)
 	codesign --entitlements chroot_vm.entitlements --force -s - $@
 endif
 
+external_kernel: external_kernel.c
+	gcc -o $@ $< $(CFLAGS) $(LDFLAGS_$(ARCH)_$(OS))
+ifeq ($(OS),Darwin)
+	codesign --entitlements chroot_vm.entitlements --force -s - $@
+endif
+
 # Build the rootfs to be used with chroot_vm.
 rootfs:
 	mkdir -p $(ROOTFS_DIR)
@@ -44,4 +50,4 @@ rootfs:
 	podman rm libkrun_chroot_vm
 
 clean:
-	rm -rf chroot_vm $(ROOTFS_DIR) launch-tee boot_efi
+	rm -rf chroot_vm $(ROOTFS_DIR) launch-tee boot_efi external_kernel

@@ -67,54 +67,77 @@ pub const MMIO_MEM_START: u64 = FIRST_ADDR_PAST_32BITS - MEM_32BIT_GAP_SIZE;
 #[cfg(not(feature = "tee"))]
 pub fn arch_memory_regions(
     size: usize,
-    kernel_load_addr: u64,
+    kernel_load_addr: Option<u64>,
     kernel_size: usize,
+    initrd_size: u64,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
 
     let size = round_up(size, page_size);
-    if size < (kernel_load_addr + kernel_size as u64) as usize {
-        panic!("Kernel doesn't fit in RAM");
-    }
 
     // It's safe to cast MMIO_MEM_START to usize because it fits in a u32 variable
     // (It points to an address in the 32 bit space).
     let (ram_last_addr, shm_start_addr, regions) = match size.checked_sub(MMIO_MEM_START as usize) {
         // case1: guest memory fits before the gap
         None | Some(0) => {
-            let ram_last_addr = kernel_load_addr + kernel_size as u64 + size as u64;
-            let shm_start_addr = FIRST_ADDR_PAST_32BITS;
-            (
-                ram_last_addr,
-                shm_start_addr,
-                vec![
-                    (GuestAddress(0), kernel_load_addr as usize),
-                    (GuestAddress(kernel_load_addr + kernel_size as u64), size),
-                ],
-            )
+            if let Some(kernel_load_addr) = kernel_load_addr {
+                if size < (kernel_load_addr + kernel_size as u64) as usize {
+                    panic!("Kernel doesn't fit in RAM");
+                }
+
+                let ram_last_addr = kernel_load_addr + kernel_size as u64 + size as u64;
+                let shm_start_addr = FIRST_ADDR_PAST_32BITS;
+                (
+                    ram_last_addr,
+                    shm_start_addr,
+                    vec![
+                        (GuestAddress(0), kernel_load_addr as usize),
+                        (GuestAddress(kernel_load_addr + kernel_size as u64), size),
+                    ],
+                )
+            } else {
+                let ram_last_addr = size as u64;
+                let shm_start_addr = FIRST_ADDR_PAST_32BITS;
+                (ram_last_addr, shm_start_addr, vec![(GuestAddress(0), size)])
+            }
         }
+
         // case2: guest memory extends beyond the gap
         Some(remaining) => {
-            let ram_last_addr = FIRST_ADDR_PAST_32BITS + remaining as u64;
-            let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
-            (
-                ram_last_addr,
-                shm_start_addr,
-                vec![
-                    (GuestAddress(0), kernel_load_addr as usize),
-                    (
-                        GuestAddress(kernel_load_addr + kernel_size as u64),
-                        (MMIO_MEM_START - (kernel_load_addr + kernel_size as u64)) as usize,
-                    ),
-                    (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
-                ],
-            )
+            if let Some(kernel_load_addr) = kernel_load_addr {
+                let ram_last_addr = FIRST_ADDR_PAST_32BITS + remaining as u64;
+                let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
+                (
+                    ram_last_addr,
+                    shm_start_addr,
+                    vec![
+                        (GuestAddress(0), kernel_load_addr as usize),
+                        (
+                            GuestAddress(kernel_load_addr + kernel_size as u64),
+                            (MMIO_MEM_START - (kernel_load_addr + kernel_size as u64)) as usize,
+                        ),
+                        (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
+                    ],
+                )
+            } else {
+                let ram_last_addr = FIRST_ADDR_PAST_32BITS + remaining as u64;
+                let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
+                (
+                    ram_last_addr,
+                    shm_start_addr,
+                    vec![
+                        (GuestAddress(0), MMIO_MEM_START as usize),
+                        (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
+                    ],
+                )
+            }
         }
     };
     let info = ArchMemoryInfo {
         ram_last_addr,
         shm_start_addr,
         page_size,
+        initrd_addr: ram_last_addr - initrd_size,
     };
     (info, regions)
 }
@@ -127,14 +150,17 @@ pub fn arch_memory_regions(
 #[cfg(feature = "tee")]
 pub fn arch_memory_regions(
     size: usize,
-    kernel_load_addr: u64,
+    kernel_load_addr: Option<u64>,
     kernel_size: usize,
+    _initrd_size: u64,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
 
     let size = round_up(size, page_size);
-    if size < (kernel_load_addr + kernel_size as u64) as usize {
-        panic!("Kernel doesn't fit in RAM");
+    if let Some(kernel_load_addr) = kernel_load_addr {
+        if size < (kernel_load_addr + kernel_size as u64) as usize {
+            panic!("Kernel doesn't fit in RAM");
+        }
     }
 
     // It's safe to cast MMIO_MEM_START to usize because it fits in a u32 variable
@@ -172,6 +198,7 @@ pub fn arch_memory_regions(
         ram_last_addr,
         shm_start_addr,
         page_size,
+        initrd_addr: layout::INITRD_SEV_START,
     };
     (info, regions)
 }
@@ -319,7 +346,8 @@ mod tests {
 
     #[test]
     fn regions_lt_4gb() {
-        let (_info, regions) = arch_memory_regions(1usize << 29, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+        let (_info, regions) =
+            arch_memory_regions(1usize << 29, Some(KERNEL_LOAD_ADDR), KERNEL_SIZE, 0);
         assert_eq!(2, regions.len());
         assert_eq!(GuestAddress(0), regions[0].0);
         assert_eq!(KERNEL_LOAD_ADDR as usize, regions[0].1);
@@ -332,8 +360,12 @@ mod tests {
 
     #[test]
     fn regions_gt_4gb() {
-        let (_info, regions) =
-            arch_memory_regions((1usize << 32) + 0x8000, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+        let (_info, regions) = arch_memory_regions(
+            (1usize << 32) + 0x8000,
+            Some(KERNEL_LOAD_ADDR),
+            KERNEL_SIZE,
+            0,
+        );
         assert_eq!(3, regions.len());
         assert_eq!(GuestAddress(0), regions[0].0);
         assert_eq!(KERNEL_LOAD_ADDR as usize, regions[0].1);
@@ -360,21 +392,21 @@ mod tests {
         // Now assigning some memory that falls before the 32bit memory hole.
         let mem_size = 128 << 20;
         let (arch_mem_info, arch_mem_regions) =
-            arch_memory_regions(mem_size, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+            arch_memory_regions(mem_size, Some(KERNEL_LOAD_ADDR), KERNEL_SIZE, 0);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
         configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus).unwrap();
 
         // Now assigning some memory that is equal to the start of the 32bit memory hole.
         let mem_size = 3328 << 20;
         let (arch_mem_info, arch_mem_regions) =
-            arch_memory_regions(mem_size, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+            arch_memory_regions(mem_size, Some(KERNEL_LOAD_ADDR), KERNEL_SIZE, 0);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
         configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus).unwrap();
 
         // Now assigning some memory that falls after the 32bit memory hole.
         let mem_size = 3330 << 20;
         let (arch_mem_info, arch_mem_regions) =
-            arch_memory_regions(mem_size, KERNEL_LOAD_ADDR, KERNEL_SIZE);
+            arch_memory_regions(mem_size, Some(KERNEL_LOAD_ADDR), KERNEL_SIZE, 0);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
         configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus).unwrap();
     }
