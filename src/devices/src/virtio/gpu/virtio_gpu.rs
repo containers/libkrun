@@ -38,7 +38,7 @@ use super::protocol::{
 };
 
 use super::{GpuError, Result};
-use crate::legacy::GicV3;
+use crate::legacy::IrqChip;
 use crate::virtio::fs::ExportTable;
 use crate::virtio::gpu::protocol::VIRTIO_GPU_FLAG_INFO_RING_IDX;
 use crate::virtio::{VirtioShmRegion, VIRTIO_MMIO_INT_VRING};
@@ -117,7 +117,7 @@ impl VirtioGpu {
         fence_state: Arc<Mutex<FenceState>>,
         interrupt_status: Arc<AtomicUsize>,
         interrupt_evt: EventFd,
-        intc: Option<GicV3>,
+        intc: Option<IrqChip>,
         irq_line: Option<u32>,
     ) -> RutabagaFenceHandler {
         RutabagaFenceHandler::new(move |completed_fence: RutabagaFence| {
@@ -157,9 +157,10 @@ impl VirtioGpu {
 
                     interrupt_status.fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
                     if let Some(intc) = &intc {
-                        intc.set_irq(irq_line.unwrap());
-                    } else if let Err(e) = interrupt_evt.write(1) {
-                        error!("Failed to signal used queue: {:?}", e);
+                        if let Err(e) = intc.lock().unwrap().set_irq(irq_line, Some(&interrupt_evt))
+                        {
+                            error!("Failed to signal used queue: {:?}", e);
+                        }
                     }
                 } else {
                     i += 1;
@@ -178,7 +179,7 @@ impl VirtioGpu {
         queue_ctl: Arc<Mutex<VirtQueue>>,
         interrupt_status: Arc<AtomicUsize>,
         interrupt_evt: EventFd,
-        intc: Option<GicV3>,
+        intc: Option<IrqChip>,
         irq_line: Option<u32>,
         virgl_flags: u32,
         #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,

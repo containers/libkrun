@@ -74,7 +74,6 @@ dependencies = [
  "smbios",
  "tdx",
  "utils",
- "vm-fdt",
  "vm-memory",
 ]
 
@@ -387,6 +386,8 @@ dependencies = [
  "env_logger",
  "hvf",
  "imago",
+ "kvm-bindings",
+ "kvm-ioctls",
  "libc",
  "log",
  "lru",
@@ -398,6 +399,7 @@ dependencies = [
  "thiserror",
  "utils",
  "virtio-bindings",
+ "vm-fdt",
  "vm-memory",
  "zerocopy 0.6.6",
  "zerocopy-derive 0.6.6",

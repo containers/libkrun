@@ -10,11 +10,8 @@ use std::sync::{Arc, Mutex};
 use std::{fmt, io};
 
 #[cfg(target_arch = "aarch64")]
-use arch::aarch64::DeviceInfoForFDT;
-use arch::DeviceType;
-use devices;
-
-use devices::BusDevice;
+use devices::fdt::DeviceInfoForFDT;
+use devices::{BusDevice, DeviceType};
 use kernel::cmdline as kernel_cmdline;
 use kvm_ioctls::{IoEventAddress, VmFd};
 #[cfg(target_arch = "aarch64")]
@@ -284,7 +281,10 @@ mod tests {
     use super::super::super::super::builder;
     use super::*;
     use arch;
-    use devices::virtio::{ActivateResult, Queue, VirtioDevice};
+    use devices::{
+        legacy::KvmIoapic,
+        virtio::{ActivateResult, Queue, VirtioDevice},
+    };
     use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
     use utils::errno;
@@ -401,16 +401,14 @@ mod tests {
         let start_addr2 = GuestAddress(0x1000);
         let guest_mem =
             GuestMemoryMmap::from_ranges(&[(start_addr1, 0x1000), (start_addr2, 0x1000)]).unwrap();
-        let mut vm = builder::setup_vm(&guest_mem).unwrap();
+        let vcpu_count: u8 = 1;
+        let vm = builder::setup_vm(&guest_mem, vcpu_count).unwrap();
         let mut device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
+        let _kvmioapic = KvmIoapic::new(vm.fd()).unwrap();
 
         let mut cmdline = kernel_cmdline::Cmdline::new(4096);
         let dummy = Arc::new(Mutex::new(DummyDevice::new()));
-        #[cfg(target_arch = "x86_64")]
-        assert!(builder::setup_interrupt_controller(&mut vm).is_ok());
-        #[cfg(target_arch = "aarch64")]
-        assert!(builder::setup_interrupt_controller(&mut vm, 1).is_ok());
 
         assert!(device_manager
             .register_virtio_device(vm.fd(), guest_mem, dummy, &mut cmdline, 0, "dummy")
@@ -423,15 +421,13 @@ mod tests {
         let start_addr2 = GuestAddress(0x1000);
         let guest_mem =
             GuestMemoryMmap::from_ranges(&[(start_addr1, 0x1000), (start_addr2, 0x1000)]).unwrap();
-        let mut vm = builder::setup_vm(&guest_mem).unwrap();
+        let vcpu_count: u8 = 1;
+        let vm = builder::setup_vm(&guest_mem, vcpu_count).unwrap();
         let mut device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
+        let _kvmioapic = KvmIoapic::new(vm.fd()).unwrap();
 
         let mut cmdline = kernel_cmdline::Cmdline::new(4096);
-        #[cfg(target_arch = "x86_64")]
-        assert!(builder::setup_interrupt_controller(&mut vm).is_ok());
-        #[cfg(target_arch = "aarch64")]
-        assert!(builder::setup_interrupt_controller(&mut vm, 1).is_ok());
 
         for _i in arch::IRQ_BASE..=arch::IRQ_MAX {
             device_manager
@@ -526,7 +522,8 @@ mod tests {
         let start_addr2 = GuestAddress(0x1000);
         let guest_mem =
             GuestMemoryMmap::from_ranges(&[(start_addr1, 0x1000), (start_addr2, 0x1000)]).unwrap();
-        let vm = builder::setup_vm(&guest_mem).unwrap();
+        let vcpu_count = 1;
+        let vm = builder::setup_vm(&guest_mem, vcpu_count).unwrap();
         let mut device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
         let mut cmdline = kernel_cmdline::Cmdline::new(4096);

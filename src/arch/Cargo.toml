@@ -23,8 +23,5 @@ kvm-bindings = { path = "../../../kvm-ioctls/kvm-bindings", features = ["fam-wra
 kvm-ioctls = { path = "../../../kvm-ioctls/kvm-ioctls"}
 tdx = { path = "../../../tdx", optional = true }
 
-[target.'cfg(target_arch = "aarch64")'.dependencies]
-vm-fdt = ">= 0.2.0"
-
 [dev-dependencies]
 utils = { path = "../utils" }

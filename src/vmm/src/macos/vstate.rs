@@ -17,7 +17,6 @@ use std::time::Duration;
 use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 
-use arch::aarch64::gic::GICDevice;
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use devices::legacy::VcpuList;
 use hvf::{HvfVcpu, HvfVm, VcpuExit, Vcpus};
@@ -35,8 +34,6 @@ pub enum Error {
     NotEnoughMemorySlots,
     /// Error configuring the general purpose aarch64 registers.
     REGSConfiguration(arch::aarch64::regs::Error),
-    /// Error setting up the global interrupt controller.
-    SetupGIC(arch::aarch64::gic::Error),
     /// Cannot set the memory regions.
     SetUserMemoryRegion(hvf::Error),
     /// Failed to signal Vcpu.
@@ -85,11 +82,6 @@ impl Display for Error {
             VcpuTlsInit => write!(f, "Cannot clean init vcpu TLS"),
             VcpuTlsNotPresent => write!(f, "Vcpu not present in TLS"),
             VcpuUnhandledKvmExit => write!(f, "Unexpected KVM_RUN exit reason"),
-            SetupGIC(e) => write!(
-                f,
-                "Error setting up the global interrupt controller: {:?}",
-                e
-            ),
             VcpuArmPreferredTarget => write!(f, "Error getting the Vcpu preferred target on Arm"),
             VcpuArmInit => write!(f, "Error doing Vcpu Init on Arm"),
         }
@@ -101,7 +93,6 @@ pub type Result<T> = result::Result<T, Error>;
 /// A wrapper around creating and using a VM.
 pub struct Vm {
     hvf_vm: HvfVm,
-    irqchip_handle: Option<Box<dyn GICDevice>>,
 }
 
 impl Vm {
@@ -109,10 +100,7 @@ impl Vm {
     pub fn new() -> Result<Self> {
         let hvf_vm = HvfVm::new().map_err(Error::VmSetup)?;
 
-        Ok(Vm {
-            hvf_vm,
-            irqchip_handle: None,
-        })
+        Ok(Vm { hvf_vm })
     }
 
     /// Initializes the guest memory.
@@ -136,18 +124,6 @@ impl Vm {
         }
 
         Ok(())
-    }
-
-    pub fn setup_irqchip(&mut self, vcpu_count: u8) -> Result<()> {
-        self.irqchip_handle =
-            Some(arch::aarch64::gic::create_gic(vcpu_count.into()).map_err(Error::SetupGIC)?);
-        Ok(())
-    }
-
-    /// Gets a reference to the irqchip of the VM
-    #[allow(clippy::borrowed_box)]
-    pub fn get_irqchip(&self) -> &Box<dyn GICDevice> {
-        self.irqchip_handle.as_ref().unwrap()
     }
 
     pub fn add_mapping(

@@ -1,4 +1,4 @@
-use crate::legacy::GicV3;
+use crate::legacy::IrqChip;
 use crate::virtio::descriptor_utils::{Reader, Writer};
 use crate::Error as DeviceError;
 
@@ -51,7 +51,7 @@ pub struct BlockWorker {
     queue_evt: EventFd,
     interrupt_status: Arc<AtomicUsize>,
     interrupt_evt: EventFd,
-    intc: Option<GicV3>,
+    intc: Option<IrqChip>,
     irq_line: Option<u32>,
 
     mem: GuestMemoryMmap,
@@ -66,7 +66,7 @@ impl BlockWorker {
         queue_evt: EventFd,
         interrupt_status: Arc<AtomicUsize>,
         interrupt_evt: EventFd,
-        intc: Option<GicV3>,
+        intc: Option<IrqChip>,
         irq_line: Option<u32>,
         mem: GuestMemoryMmap,
         disk: DiskProperties,
@@ -271,12 +271,9 @@ impl BlockWorker {
         self.interrupt_status
             .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
         if let Some(intc) = &self.intc {
-            intc.set_irq(self.irq_line.unwrap());
-        } else {
-            self.interrupt_evt.write(1).map_err(|e| {
-                error!("Failed to signal used queue: {:?}", e);
-                DeviceError::FailedSignalingUsedQueue(e)
-            })?;
+            intc.lock()
+                .unwrap()
+                .set_irq(self.irq_line, Some(&self.interrupt_evt))?;
         }
         Ok(())
     }
