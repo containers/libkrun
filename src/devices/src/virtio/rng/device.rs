@@ -11,7 +11,7 @@ use super::super::{
     VIRTIO_MMIO_INT_VRING,
 };
 use super::{defs, defs::uapi};
-use crate::legacy::GicV3;
+use crate::legacy::IrqChip;
 use crate::Error as DeviceError;
 
 // Request queue.
@@ -33,7 +33,7 @@ pub struct Rng {
     pub(crate) interrupt_evt: EventFd,
     pub(crate) activate_evt: EventFd,
     pub(crate) device_state: DeviceState,
-    intc: Option<GicV3>,
+    intc: Option<IrqChip>,
     irq_line: Option<u32>,
 }
 
@@ -71,7 +71,7 @@ impl Rng {
         defs::RNG_DEV_ID
     }
 
-    pub fn set_intc(&mut self, intc: GicV3) {
+    pub fn set_intc(&mut self, intc: IrqChip) {
         self.intc = Some(intc);
     }
 
@@ -80,14 +80,11 @@ impl Rng {
         self.interrupt_status
             .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
         if let Some(intc) = &self.intc {
-            intc.set_irq(self.irq_line.unwrap());
-            Ok(())
-        } else {
-            self.interrupt_evt.write(1).map_err(|e| {
-                error!("Failed to signal used queue: {:?}", e);
-                DeviceError::FailedSignalingUsedQueue(e)
-            })
+            intc.lock()
+                .unwrap()
+                .set_irq(self.irq_line, Some(&self.interrupt_evt))?;
         }
+        Ok(())
     }
 
     pub fn process_req(&mut self) -> bool {

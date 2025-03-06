@@ -3,7 +3,6 @@
 
 #![allow(clippy::borrowed_box)]
 
-mod fdt;
 /// Layout for this aarch64 system.
 pub mod layout;
 
@@ -16,10 +15,8 @@ pub mod macos;
 #[cfg(target_os = "macos")]
 pub use self::macos::*;
 
-use std::collections::HashMap;
 use std::fmt::Debug;
 
-use self::gic::GICDevice;
 use crate::{round_up, ArchMemoryInfo};
 use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMmap};
 
@@ -29,8 +26,6 @@ use smbios;
 /// Errors thrown while configuring aarch64 system.
 #[derive(Debug)]
 pub enum Error {
-    /// Failed to create a Flattened Device Tree for this aarch64 microVM.
-    SetupFDT(fdt::Error),
     /// Failed to compute the initrd address.
     InitrdAddress,
 
@@ -41,9 +36,6 @@ pub enum Error {
 
 /// The start of the memory area reserved for MMIO devices.
 pub const MMIO_MEM_START: u64 = layout::MAPPED_IO_START;
-
-pub use self::fdt::DeviceInfoForFDT;
-use crate::DeviceType;
 
 /// Returns a Vec of the valid memory addresses for aarch64.
 /// See [`layout`](layout) module for a drawing of the specific memory model for this platform.
@@ -87,29 +79,12 @@ pub fn arch_memory_regions(
 /// * `gic_device` - The GIC device.
 /// * `initrd` - Information about an optional initrd.
 #[allow(clippy::too_many_arguments)]
-pub fn configure_system<T: DeviceInfoForFDT + Clone + Debug>(
-    guest_mem: &GuestMemoryMmap,
-    arch_memory_info: &ArchMemoryInfo,
-    cmdline_cstring: &str,
-    vcpu_mpidr: Vec<u64>,
-    device_info: &HashMap<(DeviceType, String), T>,
-    gic_device: &Box<dyn GICDevice>,
-    initrd: &Option<super::InitrdConfig>,
+pub fn configure_system(
+    _guest_mem: &GuestMemoryMmap,
     _smbios_oem_strings: &Option<Vec<String>>,
 ) -> super::Result<()> {
-    fdt::create_fdt(
-        guest_mem,
-        arch_memory_info,
-        vcpu_mpidr,
-        cmdline_cstring,
-        device_info,
-        gic_device,
-        initrd,
-    )
-    .map_err(Error::SetupFDT)?;
-
     #[cfg(feature = "efi")]
-    smbios::setup_smbios(guest_mem, layout::SMBIOS_START, _smbios_oem_strings)
+    smbios::setup_smbios(_guest_mem, layout::SMBIOS_START, _smbios_oem_strings)
         .map_err(Error::Smbios)?;
 
     Ok(())
