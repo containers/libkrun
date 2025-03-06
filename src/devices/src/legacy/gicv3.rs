@@ -1,10 +1,14 @@
 use std::convert::TryInto;
-use std::sync::{Arc, Mutex};
-
-use arch::aarch64::gicv3::GICv3;
+use std::io;
+use std::sync::Arc;
 
 use crate::bus::BusDevice;
+use crate::legacy::gic::GICDevice;
+use crate::legacy::irqchip::IrqChipT;
 use crate::legacy::VcpuList;
+use crate::Error as DeviceError;
+
+use utils::eventfd::EventFd;
 
 const IRQ_NUM: u32 = 288;
 const MAXIRQ: u32 = 1020;
@@ -81,79 +85,76 @@ const GICR_TYPER_LAST_SHIFT: u64 = 4;
 const GICV3_PIDR0_DIST: u8 = 0x92;
 const GICV3_PIDR0_REDIST: u8 = 0x93;
 
+// Device tree specific constants
+const GICV3_BASE_SIZE: u64 = 0x0001_0000;
+const GICV3_MAINT_IRQ: u32 = 8;
+
 #[derive(Clone)]
 pub struct GicV3 {
-    gic: Arc<Mutex<GicV3Internal>>,
-}
+    dist_addr: u64,
+    dist_size: u64,
+    redist_size: u64,
+    redists_addr: u64,
+    redists_size: u64,
 
-impl GicV3 {
-    pub fn new(vcpu_list: Arc<VcpuList>) -> Self {
-        Self {
-            gic: Arc::new(Mutex::new(GicV3Internal::new(vcpu_list))),
-        }
-    }
-
-    pub fn get_mmio_addr(&self) -> u64 {
-        self.gic.lock().unwrap().get_mmio_addr()
-    }
-
-    pub fn get_mmio_size(&self) -> u64 {
-        self.gic.lock().unwrap().get_mmio_size()
-    }
-
-    pub fn set_irq(&self, irq_line: u32) {
-        self.gic.lock().unwrap().set_irq(irq_line)
-    }
-
-    pub fn as_device(&self) -> Arc<Mutex<dyn BusDevice>> {
-        self.gic.clone()
-    }
-}
-
-impl BusDevice for GicV3 {
-    fn read(&mut self, vcpuid: u64, offset: u64, data: &mut [u8]) {
-        self.gic.lock().unwrap().read(vcpuid, offset, data)
-    }
-
-    fn write(&mut self, vcpuid: u64, offset: u64, data: &[u8]) {
-        self.gic.lock().unwrap().write(vcpuid, offset, data)
-    }
-}
-
-struct GicV3Internal {
     gicd_ctlr: u32,
     vcpu_list: Arc<VcpuList>,
     revision: u8,
     edge_trigger: [u32; BITMAP_SZ],
     gicr_waker: u32,
     gicd_irouter: [u64; MAXIRQ as usize],
+
+    /// GIC device properties, to be used for setting up the fdt entry
+    properties: [u64; 4],
 }
 
-impl GicV3Internal {
+impl GicV3 {
+    /// Get the address of the GICv3 distributor.
+    pub fn get_dist_addr(&self) -> u64 {
+        self.dist_addr
+    }
+
+    /// Get the size of the GIC_v3 distributor.
+    pub const fn get_dist_size(&self) -> u64 {
+        self.dist_size
+    }
+
+    pub fn get_redists_addr(&self) -> u64 {
+        self.redists_addr
+    }
+
+    pub fn get_redists_size(&self) -> u64 {
+        self.redists_size
+    }
+
+    pub const fn get_redist_size(&self) -> u64 {
+        self.redist_size
+    }
+
     pub fn new(vcpu_list: Arc<VcpuList>) -> Self {
+        let vcpu_count = vcpu_list.get_cpu_count();
+        let dist_size = GICV3_BASE_SIZE;
+        let dist_addr = arch::MMIO_MEM_START - 3 * dist_size;
+        let redist_size = 2 * dist_size;
+        let redists_size = redist_size * vcpu_count;
+        let redists_addr = dist_addr - redists_size;
+
         Self {
+            dist_addr,
+            dist_size,
+            redist_size,
+            redists_addr,
+            redists_size,
+
             gicd_ctlr: GICD_CTLR_DS | GICD_CTLR_ARE,
             vcpu_list,
             revision: 3,
             edge_trigger: [0; BITMAP_SZ],
             gicr_waker: GICR_WAKER_PROCESSOR_SLEEP | GICR_WAKER_CHILDREN_ASLEEP,
             gicd_irouter: [0; MAXIRQ as usize],
+
+            properties: [dist_addr, dist_size, redists_addr, redists_size],
         }
-    }
-
-    pub fn get_mmio_addr(&self) -> u64 {
-        GICv3::compute_redists_addr(self.vcpu_list.get_cpu_count())
-    }
-
-    pub fn get_mmio_size(&self) -> u64 {
-        GICv3::get_dist_size() + GICv3::compute_redists_size(self.vcpu_list.get_cpu_count())
-    }
-
-    pub fn set_irq(&self, irq_line: u32) {
-        assert!(irq_line < MAXIRQ, "[GICv3] intid out of range");
-        // TODO(p1-0tr): extract full MPID, but for now Aff0 will do
-        let mpid = self.gicd_irouter[irq_line as usize] & 0xff;
-        self.vcpu_list.set_irq_common(mpid, irq_line);
     }
 
     fn handle_dist_read32(&self, _vcpuid: u64, offset: u64, data: &mut [u8]) {
@@ -390,10 +391,39 @@ impl GicV3Internal {
     }
 }
 
-impl BusDevice for GicV3Internal {
+impl IrqChipT for GicV3 {
+    fn get_mmio_addr(&self) -> u64 {
+        self.redists_addr
+    }
+
+    fn get_mmio_size(&self) -> u64 {
+        self.dist_size + self.redists_size
+    }
+
+    fn set_irq(
+        &self,
+        irq_line: Option<u32>,
+        _interrupt_evt: Option<&EventFd>,
+    ) -> Result<(), DeviceError> {
+        if let Some(irq_line) = irq_line {
+            assert!(irq_line < MAXIRQ, "[GICv3] intid out of range");
+            // TODO(p1-0tr): extract full MPID, but for now Aff0 will do
+            let mpid = self.gicd_irouter[irq_line as usize] & 0xff;
+            self.vcpu_list.set_irq_common(mpid, irq_line);
+            Ok(())
+        } else {
+            Err(DeviceError::FailedSignalingUsedQueue(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "IRQ not line configured",
+            )))
+        }
+    }
+}
+
+impl BusDevice for GicV3 {
     fn read(&mut self, vcpuid: u64, offset: u64, data: &mut [u8]) {
-        if offset >= GICv3::compute_redists_size(self.vcpu_list.get_cpu_count()) {
-            let offset = offset - GICv3::compute_redists_size(self.vcpu_list.get_cpu_count());
+        if offset >= self.redists_size {
+            let offset = offset - self.redists_size;
             match data.len() {
                 1 => panic!("GIC DIST read8 vcpuid={} offset=0x{:x}", vcpuid, offset),
                 2 => panic!("GIC DIST read16 vcpuid={} offset=0x{:x}", vcpuid, offset),
@@ -402,8 +432,8 @@ impl BusDevice for GicV3Internal {
                 _ => panic!("GIC DIST unsupported read size"),
             }
         } else {
-            let vcpuid = offset / GICv3::get_redist_size();
-            let offset = offset % GICv3::get_redist_size();
+            let vcpuid = offset / self.redist_size;
+            let offset = offset % self.redist_size;
 
             match data.len() {
                 1 => panic!("GIC REDIST read8 vcpuid={} offset=0x{:x}", vcpuid, offset),
@@ -416,8 +446,8 @@ impl BusDevice for GicV3Internal {
     }
 
     fn write(&mut self, vcpuid: u64, offset: u64, data: &[u8]) {
-        if offset >= GICv3::compute_redists_size(self.vcpu_list.get_cpu_count()) {
-            let offset = offset - GICv3::compute_redists_size(self.vcpu_list.get_cpu_count());
+        if offset >= self.redists_size {
+            let offset = offset - self.redists_size;
             match data.len() {
                 1 => panic!(
                     "GIC DIST write8 vcpuid={} offset=0x{:x}, data={:?}",
@@ -432,8 +462,8 @@ impl BusDevice for GicV3Internal {
                 _ => panic!("GIC DIST unsupported read size"),
             }
         } else {
-            let vcpuid = offset / GICv3::get_redist_size();
-            let offset = offset % GICv3::get_redist_size();
+            let vcpuid = offset / self.redist_size;
+            let offset = offset % self.redist_size;
 
             match data.len() {
                 1 => panic!(
@@ -452,6 +482,28 @@ impl BusDevice for GicV3Internal {
                 _ => panic!("GIC REDIST unsupported write size"),
             }
         }
+    }
+}
+
+impl GICDevice for GicV3 {
+    fn device_properties(&self) -> Vec<u64> {
+        self.properties.to_vec()
+    }
+
+    fn vcpu_count(&self) -> u64 {
+        self.vcpu_list.get_cpu_count()
+    }
+
+    fn fdt_compatibility(&self) -> String {
+        "arm,gic-v3".to_string()
+    }
+
+    fn fdt_maint_irq(&self) -> u32 {
+        GICV3_MAINT_IRQ
+    }
+
+    fn version(&self) -> u32 {
+        0
     }
 }
 

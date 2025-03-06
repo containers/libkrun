@@ -5,9 +5,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
+pub mod gic;
 #[cfg(target_os = "macos")]
 mod gicv3;
 mod i8042;
+mod irqchip;
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+mod kvmgicv3;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+mod kvmioapic;
 #[cfg(target_arch = "aarch64")]
 mod rtc_pl031;
 #[cfg(target_os = "macos")]
@@ -29,6 +35,11 @@ pub use self::gicv3::GicV3;
 pub use self::gpio::Gpio;
 pub use self::i8042::Error as I8042DeviceError;
 pub use self::i8042::I8042Device;
+pub use self::irqchip::{IrqChip, IrqChipDevice, IrqChipT};
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+pub use self::kvmgicv3::KvmGicV3;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub use self::kvmioapic::KvmIoapic;
 #[cfg(target_arch = "aarch64")]
 pub use self::rtc_pl031::RTC;
 pub use self::serial::Serial;
