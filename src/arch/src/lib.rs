@@ -4,7 +4,6 @@
 //! Implements platform specific functionality.
 //! Supported platforms: x86_64 and aarch64.
 
-use std::fmt;
 use std::result;
 
 #[derive(Default)]
@@ -39,22 +38,6 @@ pub use crate::x86_64::{
 /// Type for returning public functions outcome.
 pub type Result<T> = result::Result<T, Error>;
 
-/// Types of devices that can get attached to this platform.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
-pub enum DeviceType {
-    /// Device Type: Virtio.
-    Virtio(u32),
-    /// Device Type: GPIO (PL061).
-    #[cfg(target_arch = "aarch64")]
-    Gpio,
-    /// Device Type: Serial.
-    #[cfg(target_arch = "aarch64")]
-    Serial,
-    /// Device Type: RTC.
-    #[cfg(target_arch = "aarch64")]
-    RTC,
-}
-
 /// Type for passing information about the initrd in the guest memory.
 pub struct InitrdConfig {
     /// Load address of initrd in guest memory
@@ -73,10 +56,4 @@ pub fn round_up(size: usize, align: usize) -> usize {
 pub fn round_down(size: usize, align: usize) -> usize {
     let page_mask = !(align - 1);
     size & page_mask
-}
-
-impl fmt::Display for DeviceType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{self:?}")
-    }
 }

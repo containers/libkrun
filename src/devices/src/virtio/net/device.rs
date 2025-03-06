@@ -4,7 +4,7 @@
 // Portions Copyright 2017 The Chromium OS Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
-use crate::legacy::GicV3;
+use crate::legacy::IrqChip;
 use crate::virtio::net::{Error, Result};
 use crate::virtio::net::{QUEUE_SIZES, RX_INDEX, TX_INDEX};
 use crate::virtio::queue::Error as QueueError;
@@ -84,7 +84,7 @@ pub struct Net {
 
     pub(crate) device_state: DeviceState,
 
-    intc: Option<GicV3>,
+    intc: Option<IrqChip>,
     irq_line: Option<u32>,
 
     config: VirtioNetConfig,
@@ -143,7 +143,7 @@ impl Net {
         &self.id
     }
 
-    pub fn set_intc(&mut self, intc: GicV3) {
+    pub fn set_intc(&mut self, intc: IrqChip) {
         self.intc = Some(intc);
     }
 }

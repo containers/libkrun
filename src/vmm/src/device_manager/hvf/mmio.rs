@@ -9,13 +9,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::{fmt, io};
 
-#[cfg(target_arch = "aarch64")]
-use arch::aarch64::DeviceInfoForFDT;
-use arch::DeviceType;
-use devices;
-
-use devices::legacy::GicV3;
-use devices::BusDevice;
+use devices::fdt::DeviceInfoForFDT;
+use devices::legacy::IrqChip;
+use devices::{BusDevice, DeviceType};
 use kernel::cmdline as kernel_cmdline;
 use polly::event_manager::EventManager;
 #[cfg(target_arch = "aarch64")]
@@ -142,14 +138,14 @@ impl MMIODeviceManager {
         &mut self,
         _vm: &Vm,
         cmdline: &mut kernel_cmdline::Cmdline,
-        intc: Option<GicV3>,
+        intc: IrqChip,
         serial: Arc<Mutex<devices::legacy::Serial>>,
     ) -> Result<()> {
         if self.irq > self.last_irq {
             return Err(Error::IrqsExhausted);
         }
 
-        if let Some(intc) = intc {
+        {
             let mut serial = serial.lock().unwrap();
             serial.set_intc(intc);
             serial.set_irq_line(self.irq);
@@ -184,7 +180,7 @@ impl MMIODeviceManager {
 
     #[cfg(target_arch = "aarch64")]
     /// Register a MMIO RTC device.
-    pub fn register_mmio_rtc(&mut self, _vm: &Vm, _intc: Option<GicV3>) -> Result<()> {
+    pub fn register_mmio_rtc(&mut self, _vm: &Vm, _intc: IrqChip) -> Result<()> {
         if self.irq > self.last_irq {
             return Err(Error::IrqsExhausted);
         }
@@ -218,7 +214,7 @@ impl MMIODeviceManager {
     pub fn register_mmio_gpio(
         &mut self,
         _vm: &Vm,
-        intc: Option<GicV3>,
+        intc: IrqChip,
         event_manager: &mut EventManager,
         shutdown_efd: EventFd,
     ) -> Result<()> {
@@ -235,7 +231,7 @@ impl MMIODeviceManager {
             return Err(Error::IrqsExhausted);
         }
 
-        if let Some(intc) = intc {
+        {
             let mut gpio = gpio.lock().unwrap();
             gpio.set_intc(intc);
             gpio.set_irq_line(self.irq);
@@ -263,14 +259,15 @@ impl MMIODeviceManager {
 
     #[cfg(target_arch = "aarch64")]
     /// Register a MMIO GIC device.
-    pub fn register_mmio_gic(&mut self, _vm: &Vm, intc: Option<GicV3>) -> Result<()> {
-        if let Some(intc) = intc {
-            let mmio_addr = intc.get_mmio_addr();
-            let mmio_size = intc.get_mmio_size();
-            self.bus
-                .insert(intc.as_device(), mmio_addr, mmio_size)
-                .map_err(Error::BusError)?;
-        }
+    pub fn register_mmio_gic(&mut self, _vm: &Vm, intc: IrqChip) -> Result<()> {
+        let (mmio_addr, mmio_size) = {
+            let intc = intc.lock().unwrap();
+            (intc.get_mmio_addr(), intc.get_mmio_size())
+        };
+
+        self.bus
+            .insert(intc, mmio_addr, mmio_size)
+            .map_err(Error::BusError)?;
 
         Ok(())
     }
