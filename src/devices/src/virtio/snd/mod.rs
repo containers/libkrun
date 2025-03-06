@@ -22,7 +22,7 @@ use virtio_sound::*;
 
 use super::{Descriptor, Queue};
 use crate::{
-    legacy::GicV3,
+    legacy::IrqChip,
     virtio::{
         snd::virtio_sound::{VirtioSoundHeader, VirtioSoundPcmStatus},
         VIRTIO_MMIO_INT_VRING,
@@ -182,7 +182,7 @@ pub struct Vring {
     queue: Queue,
     interrupt_evt: EventFd,
     interrupt_status: Arc<AtomicUsize>,
-    intc: Option<GicV3>,
+    intc: Option<IrqChip>,
     irq_line: Option<u32>,
 }
 
@@ -194,9 +194,13 @@ impl Vring {
             std::sync::atomic::Ordering::SeqCst,
         );
         if let Some(intc) = &self.intc {
-            intc.set_irq(self.irq_line.unwrap());
-        } else if let Err(e) = self.interrupt_evt.write(1) {
-            error!("Failed to signal used queue: {:?}", e);
+            if let Err(e) = intc
+                .lock()
+                .unwrap()
+                .set_irq(self.irq_line, Some(&self.interrupt_evt))
+            {
+                warn!("Failed to signal queue: {e:?}");
+            }
         }
     }
 }

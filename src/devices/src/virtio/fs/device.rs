@@ -19,7 +19,7 @@ use super::passthrough;
 use super::worker::FsWorker;
 use super::ExportTable;
 use super::{defs, defs::uapi};
-use crate::legacy::GicV3;
+use crate::legacy::IrqChip;
 
 #[derive(Copy, Clone)]
 #[repr(C, packed)]
@@ -46,7 +46,7 @@ pub struct Fs {
     acked_features: u64,
     interrupt_status: Arc<AtomicUsize>,
     interrupt_evt: EventFd,
-    intc: Option<GicV3>,
+    intc: Option<IrqChip>,
     irq_line: Option<u32>,
     device_state: DeviceState,
     config: VirtioFsConfig,
@@ -114,7 +114,7 @@ impl Fs {
         defs::FS_DEV_ID
     }
 
-    pub fn set_intc(&mut self, intc: GicV3) {
+    pub fn set_intc(&mut self, intc: IrqChip) {
         self.intc = Some(intc);
     }
 
