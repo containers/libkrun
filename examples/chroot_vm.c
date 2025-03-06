@@ -218,7 +218,7 @@ int main(int argc, char *const argv[])
     }
 
     // Set the log level to "off".
-    err = krun_set_log_level(0);
+    err = krun_set_log_level(4);
     if (err) {
         errno = -err;
         perror("Error configuring log level");
@@ -278,6 +278,12 @@ int main(int argc, char *const argv[])
             perror("Error configuring net mode");
             return -1;
         }
+    }
+
+    if (err = krun_set_tee_config_file(ctx_id, "/home/jcorrent/libkrun/examples/tdx-config-noattest.json")) {
+        errno = -err;
+        perror("Error setting the TEE config file");
+        return -1;
     }
 
     // Configure the rlimits that will be set in the guest

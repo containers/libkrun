@@ -420,7 +420,7 @@ pub extern "C" fn krun_set_vm_config(ctx_id: u32, num_vcpus: u8, ram_mib: u32) -
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-#[cfg(not(feature = "tee"))]
+// #[cfg(not(feature = "tee"))]
 pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) -> i32 {
     let root_path = match CStr::from_ptr(c_root_path).to_str() {
         Ok(root) => root,
@@ -433,7 +433,7 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            cfg.vmr.add_fs_device(FsDeviceConfig {
+            cfg.vmr.add_fs_device(vmm::vmm_config::fs::FsDeviceConfig {
                 fs_id,
                 shared_dir,
                 // Default to a conservative 512 MB window.
@@ -1322,6 +1322,7 @@ fn has_guest_memory(gpa: u64, size: u64, memfd_regions: &Vec<(vm_memory::GuestAd
 }
 
 fn convert_memory(vmm: &Arc<Mutex<vmm::Vmm>>, gpa: u64, size: u64, to_private: bool) -> i32 {
+    println!("GPA: 0x{:x} SIZE: 0x{:x}, to_private: {}", gpa, size, to_private);
     let mut ret = -1;
     let vmm = vmm.as_ref().lock().unwrap();
     let guest_memfd_regions = vmm.guest_memfd_regions();
@@ -1379,9 +1380,9 @@ fn convert_memory(vmm: &Arc<Mutex<vmm::Vmm>>, gpa: u64, size: u64, to_private: b
     use vm_memory::GuestMemoryRegion;
 
     let offset = gpa - region.start_addr().raw_value();
+    // ram_block_discard_range
+   let host_addr = region.get_host_address(vm_memory::MemoryRegionAddress(gpa)).unwrap();
     if to_private {
-        // ram_block_discard_range
-       let host_addr = region.get_host_address(vm_memory::MemoryRegionAddress(gpa)).unwrap();
 
        // let host_addr = gpa + offset;
        unsafe {
@@ -1403,7 +1404,7 @@ fn convert_memory(vmm: &Arc<Mutex<vmm::Vmm>>, gpa: u64, size: u64, to_private: b
             let _ret = fallocate(
                 memfd_id as i32,
                 FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
-                offset as i64,
+                host_addr as i64,
                 size as i64,
             );
 

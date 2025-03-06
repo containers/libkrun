@@ -26,7 +26,8 @@ endif
 all: $(EXAMPLES)
 
 chroot_vm: chroot_vm.c
-	gcc -o $@ $< $(CFLAGS) $(LDFLAGS_$(ARCH)_$(OS))
+	# gcc -o $@ $< $(CFLAGS) $(LDFLAGS_$(ARCH)_$(OS))
+	gcc -o $@ $< $(CFLAGS) $(LDFLAGS_tdx)
 ifeq ($(OS),Darwin)
 	codesign --entitlements chroot_vm.entitlements --force -s - $@
 endif

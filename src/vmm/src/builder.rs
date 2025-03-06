@@ -452,7 +452,7 @@ pub fn build_microvm(
     };
 
     // TODO(jakecorrenti): this shouldn't be pointing to something in Sergio's user
-    let qboot_file = std::fs::File::open("/home/slp/src/qboot-krunfw/build/bios.bin").unwrap();
+    let qboot_file = std::fs::File::open("/home/jcorrent/qboot-krunfw/build/bios.bin").unwrap();
     let qboot_size = qboot_file.metadata().unwrap().len();
 
     #[cfg(all(feature = "tee", not(feature = "intel-tdx")))]
@@ -835,7 +835,7 @@ fn load_payload(
                 .write(kernel_data, GuestAddress(kernel_load_addr))
                 .unwrap();
 
-            let mut qboot_file = std::fs::File::open("/home/slp/src/qboot-krunfw/build/bios.bin").unwrap();
+            let mut qboot_file = std::fs::File::open("/home/jcorrent/qboot-krunfw/build/bios.bin").unwrap();
             let qboot_size = qboot_file.metadata().unwrap().len();
             guest_mem.read_exact_volatile_from(
                 GuestAddress(arch::BIOS_START),
@@ -843,6 +843,7 @@ fn load_payload(
                 qboot_size as usize,
             ).unwrap();
 
+            println!("initrd is present");
             let initrd_data =
                 unsafe { std::slice::from_raw_parts(initrd_host_addr as *mut u8, initrd_size) };
             guest_mem
@@ -1217,6 +1218,7 @@ fn attach_mmio_device(
         .device_type();
     let _cmdline = &mut vmm.kernel_cmdline;
 
+    debug!("cmdline before: {:?}", _cmdline);
     #[cfg(target_os = "linux")]
     let (_mmio_base, _irq) =
         vmm.mmio_device_manager
@@ -1229,6 +1231,7 @@ fn attach_mmio_device(
     #[cfg(target_arch = "x86_64")]
     vmm.mmio_device_manager
         .add_device_to_cmdline(_cmdline, _mmio_base, _irq)?;
+    debug!("cmdline after: {:?}", _cmdline);
 
     Ok(())
 }
@@ -1295,12 +1298,14 @@ fn attach_console_devices(
     use self::StartMicrovmError::*;
 
     let ports = if let Some(console_output) = console_output {
+        debug!("console output is present");
         let file = File::create(console_output.as_path()).map_err(OpenConsoleFile)?;
         vec![PortDescription::Console {
             input: Some(port_io::input_empty().unwrap()),
             output: Some(port_io::output_file(file).unwrap()),
         }]
     } else {
+        debug!("defaulting to using std in, out, err for console");
         let stdin_is_terminal = isatty(STDIN_FILENO).unwrap_or(false);
         let stdout_is_terminal = isatty(STDOUT_FILENO).unwrap_or(false);
         let stderr_is_terminal = isatty(STDERR_FILENO).unwrap_or(false);
@@ -1324,6 +1329,7 @@ fn attach_console_devices(
         };
 
         let console_output = if stdout_is_terminal {
+            debug!("stdout is a terminal");
             Some(port_io::stdout().unwrap())
         } else {
             Some(port_io::output_to_log_as_err())
@@ -1363,6 +1369,7 @@ fn attach_console_devices(
     vmm.exit_observers.push(console.clone());
 
     if let Some(intc) = intc {
+        debug!("setting interrupt controller for console");
         console.lock().unwrap().set_intc(intc);
     }
 
@@ -1374,6 +1381,7 @@ fn attach_console_devices(
     register_sigwinch_handler(console.lock().unwrap().get_sigwinch_fd())
         .map_err(RegisterFsSigwinch)?;
 
+    debug!("attaching hvc0 device");
     // The device mutex mustn't be locked here otherwise it will deadlock.
     attach_mmio_device(
         vmm,

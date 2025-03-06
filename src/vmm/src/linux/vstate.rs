@@ -1313,6 +1313,7 @@ impl Vcpu {
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::MmioRead(addr, data) => {
+                    println!("vcpu_exit::mmio_read");
                     if let Some(ref mmio_bus) = self.mmio_bus {
                         mmio_bus.read(0, addr, data);
                     }
@@ -1343,6 +1344,7 @@ impl Vcpu {
                     Err(Error::VcpuUnhandledKvmExit)
                 }
                 VcpuExit::MemoryFault { flags, gpa, size } => {
+                    println!("vcpu_exit::memory_fault");
                     if flags & !kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64 != 0 {
                         println!("KVM_EXIT_MEMORY_FAULT: Unknown flag {}", flags);
                         Err(Error::VcpuUnhandledKvmExit)
@@ -1416,8 +1418,12 @@ impl Vcpu {
             // error in our code in which case it is better to panic.
             Err(ref e) => {
                 match e.errno() {
-                    libc::EAGAIN => Ok(VcpuEmulation::Handled),
+                    libc::EAGAIN => {
+                        println!("Error: EAGAIN");
+                        Ok(VcpuEmulation::Handled)
+                    },
                     libc::EINTR => {
+                        println!("Error: EINTR");
                         self.fd.set_kvm_immediate_exit(0);
                         // Notify that this KVM_RUN was interrupted.
                         Ok(VcpuEmulation::Interrupted)

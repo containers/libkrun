@@ -344,7 +344,7 @@ impl Vmm {
 
     /// Waits for all vCPUs to exit and terminates the Firecracker process.
     pub fn stop(&mut self, exit_code: i32) {
-        info!("Vmm is stopping.");
+        info!("Vmm is stopping. {}", exit_code);
 
         if let Err(e) = term_set_canonical_mode() {
             log::error!("Failed to restore terminal to canonical mode: {e}")

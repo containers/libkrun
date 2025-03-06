@@ -207,6 +207,7 @@ impl MmioTransport {
 
 impl BusDevice for MmioTransport {
     fn read(&mut self, _vcpuid: u64, offset: u64, data: &mut [u8]) {
+        println!("MMIO read: offset={offset:x}");
         match offset {
             0x00..=0xff if data.len() == 4 => {
                 let v = match offset {

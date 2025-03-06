@@ -808,6 +808,8 @@ int setup_redirects()
     return 0;
 }
 
+#include<unistd.h>
+
 int main(int argc, char **argv)
 {
 	struct ifreq ifr;
@@ -822,10 +824,12 @@ int main(int argc, char **argv)
 	char **config_argv, **exec_argv;
 
 #ifdef SEV
-	if (chroot_luks() < 0) {
-		printf("Couldn't switch to LUKS volume, bailing out\n");
-		exit(-1);
-	}
+  if (chroot_luks() < 0) {
+      const char msg[] = "Couldn't switch to LUKS volume, bailing out\n";
+      write(STDOUT_FILENO, msg, sizeof(msg)-1);
+  	printf("Couldn't switch to LUKS volume, bailing out\n");
+  	exit(-1);
+  }
 #endif
 	if (mount_filesystems() < 0) {
 		printf("Couldn't mount filesystems, bailing out\n");

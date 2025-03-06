@@ -9,7 +9,7 @@ pub mod block;
 pub mod boot_source;
 
 /// Wrapper for configuring the Fs devices attached to the microVM.
-#[cfg(not(feature = "tee"))]
+// #[cfg(not(feature = "tee"))]
 pub mod fs;
 
 /// Wrapper over the microVM general information attached to the microVM.
