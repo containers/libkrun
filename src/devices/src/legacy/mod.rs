@@ -8,6 +8,8 @@
 pub mod gic;
 #[cfg(target_os = "macos")]
 mod gicv3;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+mod hvfgicv3;
 mod i8042;
 mod irqchip;
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
@@ -33,6 +35,8 @@ use aarch64::serial;
 pub use self::gicv3::GicV3;
 #[cfg(target_arch = "aarch64")]
 pub use self::gpio::Gpio;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub use self::hvfgicv3::HvfGicV3;
 pub use self::i8042::Error as I8042DeviceError;
 pub use self::i8042::I8042Device;
 pub use self::irqchip::{IrqChip, IrqChipDevice, IrqChipT};

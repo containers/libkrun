@@ -104,6 +104,10 @@ impl Vm {
         Ok(Vm { hvf_vm })
     }
 
+    pub fn hvf_vm(&self) -> &HvfVm {
+        &self.hvf_vm
+    }
+
     /// Initializes the guest memory.
     pub fn memory_init(&mut self, guest_mem: &GuestMemoryMmap) -> Result<()> {
         for region in guest_mem.iter() {

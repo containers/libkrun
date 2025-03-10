@@ -265,9 +265,13 @@ impl MMIODeviceManager {
             (intc.get_mmio_addr(), intc.get_mmio_size())
         };
 
-        self.bus
-            .insert(intc, mmio_addr, mmio_size)
-            .map_err(Error::BusError)?;
+        // The in-kernel GIC reports a size of 0 to tell us we don't need to map
+        // anything in the guest.
+        if mmio_size != 0 {
+            self.bus
+                .insert(intc, mmio_addr, mmio_size)
+                .map_err(Error::BusError)?;
+        }
 
         Ok(())
     }
