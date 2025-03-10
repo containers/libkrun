@@ -451,6 +451,137 @@ static int mount_filesystems()
 	return 0;
 }
 
+/*
+ * hexToDigit, Utf32toUtf8 and parts of unescape_string are taken from libyajl:
+ *
+ * Copyright (c) 2007-2014, Lloyd Hilaiel <me@lloyd.io>
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+static void hexToDigit(unsigned int * val, const unsigned char * hex)
+{
+	unsigned int i;
+	for (i=0;i<4;i++) {
+          unsigned char c = hex[i];
+		if (c >= 'A') c = (c & ~0x20) - 7;
+		c -= '0';
+		*val = (*val << 4) | c;
+	}
+}
+
+static void Utf32toUtf8(unsigned int codepoint, char * utf8Buf)
+{
+	if (codepoint < 0x80) {
+		utf8Buf[0] = (char) codepoint;
+		utf8Buf[1] = 0;
+	} else if (codepoint < 0x0800) {
+		utf8Buf[0] = (char) ((codepoint >> 6) | 0xC0);
+		utf8Buf[1] = (char) ((codepoint & 0x3F) | 0x80);
+		utf8Buf[2] = 0;
+	} else if (codepoint < 0x10000) {
+		utf8Buf[0] = (char) ((codepoint >> 12) | 0xE0);
+		utf8Buf[1] = (char) (((codepoint >> 6) & 0x3F) | 0x80);
+		utf8Buf[2] = (char) ((codepoint & 0x3F) | 0x80);
+		utf8Buf[3] = 0;
+        } else if (codepoint < 0x200000) {
+		utf8Buf[0] =(char)((codepoint >> 18) | 0xF0);
+		utf8Buf[1] =(char)(((codepoint >> 12) & 0x3F) | 0x80);
+		utf8Buf[2] =(char)(((codepoint >> 6) & 0x3F) | 0x80);
+		utf8Buf[3] =(char)((codepoint & 0x3F) | 0x80);
+		utf8Buf[4] = 0;
+        } else {
+		utf8Buf[0] = '?';
+		utf8Buf[1] = 0;
+	}
+}
+
+
+/* Do not worry about invalid JSON, it was already parsed by jsmn.  */
+static void unescape_string(char *string, int len)
+{
+	unsigned char *val = (unsigned char *) string;
+	unsigned char *end;
+        int i = 0;
+
+	end = val + len;
+	while (val < end) {
+		if (*val != '\\') {
+			string[i++] = *val++;
+			continue;
+		}
+		switch (*++val) {
+			case 'n':
+				string[i++] = '\n';
+				break;
+			case 't':
+				string[i++] = '\t';
+				break;
+			case 'r':
+				string[i++] = '\r';
+				break;
+			case 'b':
+				string[i++] = '\b';
+				break;
+			case 'f':
+				string[i++] = '\f';
+				break;
+			case '\\':
+				string[i++] = '\\';
+				break;
+			case '\"':
+				string[i++] = '\"';
+				break;
+			case '/':
+				string[i++] = '/';
+				break;
+			case 'u': {
+				const char * unescaped = "?";
+				char utf8Buf[5];
+				unsigned int codepoint = 0;
+				hexToDigit(&codepoint, val++);
+				val+=3;
+				/* check if this is a surrogate */
+				if ((codepoint & 0xFC00) == 0xD800) {
+					val++;
+					if (val[0] == '\\' && val[1] == 'u') {
+						unsigned int surrogate = 0;
+						hexToDigit(&surrogate, val + 2);
+						codepoint =
+						  (((codepoint & 0x3F) << 10) |
+						  ((((codepoint >> 6) & 0xF) + 1) << 16) |
+						  (surrogate & 0x3FF));
+						val += 5;
+					} else {
+						unescaped = "?";
+						break;
+					}
+				}
+
+				Utf32toUtf8(codepoint, utf8Buf);
+				unescaped = utf8Buf;
+
+				if (codepoint == 0) {
+					memcpy(&string[i++], unescaped, 1);
+					continue;
+				}
+				memcpy(&string[i], unescaped, (unsigned int)strlen(unescaped));
+				break;
+			}
+		}
+	}
+	string[i] = '\0';
+}
+
 static void config_parse_env(char *data, jsmntok_t *token)
 {
 	jsmntok_t *tenv;
@@ -463,6 +594,8 @@ static void config_parse_env(char *data, jsmntok_t *token)
 
 		env = data + tenv->start;
 		len = tenv->end - tenv->start;
+
+		unescape_string(env, len);
 
 		env_val = strstr(env, "=");
 		if (!env_val) {
@@ -503,6 +636,8 @@ static char ** config_parse_args(char *data, jsmntok_t *token)
 		memcpy(arg, value, len);
 		arg[len] = '\0';
 
+		unescape_string(arg, len);
+
 		argv[j] = arg;
 		j++;
 	}
@@ -536,6 +671,8 @@ static char * config_parse_string(char *data, jsmntok_t *token)
 	}
 	memcpy(string, val, len);
 	string[len] = '\0';
+
+	unescape_string(string, len);
 
 	return string;
 }
