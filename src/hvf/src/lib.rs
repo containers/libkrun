@@ -7,7 +7,7 @@
 #[allow(non_snake_case)]
 #[allow(non_upper_case_globals)]
 #[allow(deref_nullptr)]
-mod bindings;
+pub mod bindings;
 
 use bindings::*;
 
@@ -51,8 +51,9 @@ const EC_SYSTEMREGISTERTRAP: u64 = 0x18;
 const EC_DATAABORT: u64 = 0x24;
 const EC_AA64_BKPT: u64 = 0x3c;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Error {
+    FindSymbol(libloading::Error),
     MemoryMap,
     MemoryUnmap,
     VcpuCreate,
@@ -73,6 +74,7 @@ impl Display for Error {
         use self::Error::*;
 
         match self {
+            FindSymbol(ref err) => write!(f, "Couldn't find symbol in HVF library: {}", err),
             MemoryMap => write!(f, "Error registering memory region in HVF"),
             MemoryUnmap => write!(f, "Error unregistering memory region in HVF"),
             VcpuCreate => write!(f, "Error creating HVF vCPU instance"),
