@@ -23,13 +23,13 @@ use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
 use crate::resources::VmResources;
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
-#[cfg(target_os = "macos")]
-use devices::legacy::GicV3;
 #[cfg(target_arch = "x86_64")]
 use devices::legacy::KvmIoapic;
 use devices::legacy::Serial;
 #[cfg(target_os = "macos")]
 use devices::legacy::VcpuList;
+#[cfg(target_os = "macos")]
+use devices::legacy::{GicV3, HvfGicV3};
 use devices::legacy::{IrqChip, IrqChipDevice};
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 use devices::legacy::{IrqChipDevice, KvmGicV3};
@@ -90,6 +90,9 @@ static EDK2_BINARY: &[u8] = include_bytes!("../../../edk2/KRUN_EFI.silent.fd");
 pub enum StartMicrovmError {
     /// Unable to attach block device to Vmm.
     AttachBlockDevice(io::Error),
+    #[cfg(target_os = "macos")]
+    /// Failed to create HVF in-kernel IrqChip.
+    CreateHvfIrqChip(hvf::Error),
     #[cfg(target_os = "linux")]
     /// Failed to create KVM in-kernel IrqChip.
     CreateKvmIrqChip(kvm_ioctls::Error),
@@ -208,6 +211,10 @@ impl Display for StartMicrovmError {
         match *self {
             AttachBlockDevice(ref err) => {
                 write!(f, "Unable to attach block device to Vmm. Error: {err}")
+            }
+            #[cfg(target_os = "macos")]
+            CreateHvfIrqChip(ref err) => {
+                write!(f, "Cannot create HVF in-kernel IrqChip: {err}")
             }
             #[cfg(target_os = "linux")]
             CreateKvmIrqChip(ref err) => {
@@ -735,9 +742,15 @@ pub fn build_microvm(
 
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     {
-        intc = Arc::new(Mutex::new(IrqChipDevice::new(Box::new(GicV3::new(
-            vcpu_list.clone(),
-        )))));
+        intc = {
+            // If the system supports the in-kernel GIC, use it. Otherwise, fall back to the
+            // userspace implementation.
+            let gic = match HvfGicV3::new(vm_resources.vm_config().vcpu_count.unwrap() as u64) {
+                Ok(hvfgic) => IrqChipDevice::new(Box::new(hvfgic)),
+                Err(_) => IrqChipDevice::new(Box::new(GicV3::new(vcpu_list.clone()))),
+            };
+            Arc::new(Mutex::new(gic))
+        };
 
         vcpus = create_vcpus_aarch64(
             &vm,
@@ -1294,7 +1307,6 @@ fn load_cmdline(vmm: &Vmm) -> std::result::Result<(), StartMicrovmError> {
 #[cfg(all(target_os = "linux", not(feature = "tee")))]
 pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
-    _vcpu_count: u8,
 ) -> std::result::Result<Vm, StartMicrovmError> {
     let kvm = KvmContext::new()
         .map_err(Error::KvmContext)
