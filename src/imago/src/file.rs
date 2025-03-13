@@ -5,9 +5,11 @@ use crate::storage::drivers::CommonStorageHelper;
 use crate::{Storage, StorageOpenOptions};
 use std::fmt::{self, Display, Formatter};
 use std::fs;
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io::{self, Write};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
+use std::os::unix::fs::FileTypeExt;
 #[cfg(all(unix, not(target_os = "macos")))]
 use std::os::unix::fs::OpenOptionsExt;
 #[cfg(windows)]
@@ -52,8 +54,8 @@ impl TryFrom<fs::File> for File {
     ///
     /// When using this, the resulting object will not know its own filename.  That makes it
     /// impossible to auto-resolve relative paths to it, e.g. qcow2 backing file names.
-    fn try_from(mut file: fs::File) -> io::Result<Self> {
-        let size = file.seek(SeekFrom::End(0))?;
+    fn try_from(file: fs::File) -> io::Result<Self> {
+        let size = get_file_size(&file)?;
 
         Ok(File {
             file: RwLock::new(file),
@@ -389,9 +391,9 @@ impl File {
         }
 
         let filename_owned = filename.to_owned();
-        let mut file = file_opts.open(filename)?;
+        let file = file_opts.open(filename)?;
 
-        let size = file.seek(SeekFrom::End(0))?;
+        let size = get_file_size(&file)?;
 
         #[cfg(target_os = "macos")]
         if opts.direct {
@@ -453,4 +455,59 @@ impl Display for File {
             write!(f, "file:<unknown path>")
         }
     }
+}
+
+fn get_file_size(file: &fs::File) -> io::Result<u64> {
+    file.metadata().and_then(|m| {
+        #[cfg(windows)]
+        let is_block_device = false;
+        #[cfg(unix)]
+        let is_block_device = m.file_type().is_block_device();
+
+        if is_block_device {
+            get_block_device_size(file)
+        } else {
+            Ok(m.len())
+        }
+    })
+}
+
+#[cfg(windows)]
+fn get_block_device_size(file: &fs::File) -> io::Result<u64> {
+    unreachable!("never called on Windows")
+}
+
+#[cfg(target_os = "linux")]
+fn get_block_device_size(file: &fs::File) -> io::Result<u64> {
+    let mut size: u64 = 0;
+    unsafe { ioctl::blkgetsize64(file.as_raw_fd(), &mut size) }?;
+    Ok(size)
+}
+
+#[cfg(target_os = "macos")]
+fn get_block_device_size(file: &fs::File) -> io::Result<u64> {
+    let mut block_size: u32 = 0;
+    unsafe { ioctl::dkiocgetblocksize(file.as_raw_fd(), &mut block_size) }?;
+    let mut block_count: u64 = 0;
+    unsafe { ioctl::dkiocgetblockcount(file.as_raw_fd(), &mut block_count) }?;
+    Ok(u64::from(block_size) * block_count)
+}
+
+#[allow(missing_docs)]
+mod ioctl {
+    #[cfg(unix)]
+    use nix::ioctl_read;
+
+    // https://github.com/torvalds/linux/blob/master/include/uapi/linux/fs.h#L200
+
+    #[cfg(target_os = "linux")]
+    ioctl_read!(blkgetsize64, 0x12, 114, u64);
+
+    // https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/disk.h#L198-L199
+
+    #[cfg(target_os = "macos")]
+    ioctl_read!(dkiocgetblocksize, b'd', 24, u32);
+
+    #[cfg(target_os = "macos")]
+    ioctl_read!(dkiocgetblockcount, b'd', 25, u64);
 }
