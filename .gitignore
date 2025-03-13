@@ -9,3 +9,4 @@ __pycache__
 /libkrun.pc
 init/init
 examples/chroot_vm
+test-prefix
