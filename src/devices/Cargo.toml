@@ -33,8 +33,7 @@ arch = { path = "../arch" }
 utils = { path = "../utils" }
 polly = { path = "../polly" }
 rutabaga_gfx = { path = "../rutabaga_gfx", features = ["virgl_renderer", "virgl_renderer_next"], optional = true }
-
-imago = { path = "../imago", features = ["sync-wrappers", "vm-memory"] }
+imago = { version = "0.1.3", features = ["sync-wrappers", "vm-memory"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 hvf = { path = "../hvf" }

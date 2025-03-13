@@ -642,6 +642,8 @@ dependencies = [
 [[package]]
 name = "imago"
 version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0617bd92ef776c6bc20db7b795af2cb6cf5f7ad53542e7b0223c0e35ccf3339e"
 dependencies = [
  "async-trait",
  "bincode",
@@ -652,6 +654,7 @@ dependencies = [
  "tokio",
  "tracing",
  "vm-memory",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
