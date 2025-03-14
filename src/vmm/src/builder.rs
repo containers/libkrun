@@ -824,8 +824,10 @@ pub fn build_microvm(
         println!("Starting TEE/microVM.");
     }
 
+    println!("Starting microVM.");
     vmm.start_vcpus(vcpus)
         .map_err(StartMicrovmError::Internal)?;
+    println!("MicroVM started.");
 
     // Clippy thinks we don't need Arc<Mutex<...
     // but we don't want to change the event_manager interface
@@ -871,7 +873,20 @@ fn load_external_kernel(
                 .map_err(StartMicrovmError::ElfOpenKernel)?;
             let load_result = loader::Elf::load(guest_mem, None, &mut file, None)
                 .map_err(StartMicrovmError::ElfLoadKernel)?;
-            load_result.kernel_load
+            match load_result.pvh_boot_cap {
+                loader::PvhBootCapability::PvhEntryPresent(guest_address) => {
+                    println!("PvhEntryPresent");
+                    guest_address
+                },
+                loader::PvhBootCapability::PvhEntryNotPresent => {
+                    println!("PvhEntryNotPresent");
+                    load_result.kernel_load
+                },
+                loader::PvhBootCapability::PvhEntryIgnored => {
+                    println!("PvhEntryIgnored");
+                    load_result.kernel_load
+                },
+            }
         }
         #[cfg(target_arch = "aarch64")]
         KernelFormat::PeGz => {

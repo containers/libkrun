@@ -1453,6 +1453,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             return -libc::EINVAL;
         }
     };
+    println!("MicroVM created");
 
     #[cfg(target_os = "macos")]
     let mapper_vmm = _vmm.clone();

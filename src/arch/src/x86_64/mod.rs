@@ -1,3 +1,5 @@
+// Copyright © 2020, Oracle and/or its affiliates.
+//
 // Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -18,10 +20,16 @@ pub mod msr;
 pub mod regs;
 
 use crate::{round_up, ArchMemoryInfo, InitrdConfig};
-use arch_gen::x86::bootparam::{boot_params, E820_RAM};
+use arch_gen::x86::bootparam::{boot_params, E820_RAM, E820_RESERVED};
+use linux_loader::configurator::{BootConfigurator, BootParams};
 use vm_memory::Bytes;
 use vm_memory::{
     Address, ByteValued, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion,
+};
+
+use linux_loader::configurator::pvh::PvhBootConfigurator;
+use linux_loader::loader::elf::start_info::{
+    hvm_memmap_table_entry, hvm_modlist_entry, hvm_start_info,
 };
 
 // This is a workaround to the Rust enforcement specifying that any implementation of a foreign
@@ -47,6 +55,8 @@ pub enum Error {
     ZeroPageSetup,
     /// Failed to compute initrd address.
     InitrdAddress,
+    /// Error writing hvm_start_info to guest memory.
+    StartInfoSetup,
 }
 
 // Where BIOS/VGA magic would live on a real PC.
@@ -240,6 +250,133 @@ pub fn configure_system(
     cmdline_size: usize,
     initrd: &Option<InitrdConfig>,
     num_cpus: u8,
+    pvh: bool,
+) -> Result<(), Error> {
+    // Note that this puts the mptable at the last 1k of Linux's 640k base RAM
+    #[cfg(not(feature = "tee"))]
+    mptable::setup_mptable(guest_mem, num_cpus).map_err(Error::MpTableSetup)?;
+
+    match pvh {
+        true => {
+            configure_pvh(guest_mem, arch_memory_info, cmdline_addr, initrd)?;
+        }
+        false => {
+            configure_64bit_boot(guest_mem, arch_memory_info, cmdline_addr, cmdline_size, initrd)?;
+        }
+    }
+    Ok(())
+}
+
+fn configure_pvh(
+    guest_mem: &GuestMemoryMmap,
+    arch_memory_info: &ArchMemoryInfo,
+    cmdline_addr: GuestAddress,
+    initrd: &Option<InitrdConfig>,
+) -> Result<(), Error> {
+    const XEN_HVM_START_MAGIC_VALUE: u32 = 0x336e_c578;
+    let first_addr_past_32bits = GuestAddress(FIRST_ADDR_PAST_32BITS);
+    let end_32bit_gap_start = GuestAddress(MMIO_MEM_START);
+    let himem_start = GuestAddress(layout::HIMEM_START);
+    // Vector to hold modules (currently either empty or holding initrd).
+    let mut modules: Vec<hvm_modlist_entry> = Vec::new();
+    if let Some(initrd_config) = initrd {
+        // The initrd has been written to guest memory already, here we just need to
+        // create the module structure that describes it.
+        modules.push(hvm_modlist_entry {
+            paddr: initrd_config.address.raw_value(),
+            size: initrd_config.size as u64,
+            ..Default::default()
+        });
+    }
+    // Vector to hold the memory maps which needs to be written to guest memory
+    // at MEMMAP_START after all of the mappings are recorded.
+    let mut memmap: Vec<hvm_memmap_table_entry> = Vec::new();
+    // Create the memory map entries.
+    add_memmap_entry(&mut memmap, 0, mptable::MPTABLE_START, E820_RAM)?;
+    add_memmap_entry(
+        &mut memmap,
+        mptable::MPTABLE_START,
+        layout::RSDP_ADDR - mptable::MPTABLE_START,
+        E820_RESERVED,
+    )?;
+    let last_addr = GuestAddress(arch_memory_info.ram_last_addr); // firecracker: guest_mem.last_addr();
+    println!("last_addr: {:?}/{:?}", last_addr, guest_mem.last_addr());
+    if last_addr < end_32bit_gap_start {
+        add_memmap_entry(
+            &mut memmap,
+            himem_start.raw_value(),
+            last_addr.unchecked_offset_from(himem_start) + 1,
+            E820_RAM,
+        )?;
+    } else {
+        add_memmap_entry(
+            &mut memmap,
+            himem_start.raw_value(),
+            end_32bit_gap_start.unchecked_offset_from(himem_start),
+            E820_RAM,
+        )?;
+        if last_addr > first_addr_past_32bits {
+            add_memmap_entry(
+                &mut memmap,
+                first_addr_past_32bits.raw_value(),
+                last_addr.unchecked_offset_from(first_addr_past_32bits) + 1,
+                E820_RAM,
+            )?;
+        }
+    }
+    
+    // Construct the hvm_start_info structure and serialize it into
+    // boot_params.  This will be stored at PVH_INFO_START address, and %rbx
+    // will be initialized to contain PVH_INFO_START prior to starting the
+    // guest, as required by the PVH ABI.
+    let mut start_info = hvm_start_info {
+        magic: XEN_HVM_START_MAGIC_VALUE,
+        version: 1,
+        cmdline_paddr: cmdline_addr.raw_value(),
+        memmap_paddr: layout::MEMMAP_START,
+        memmap_entries: memmap.len() as u32,
+        nr_modules: modules.len() as u32,
+        ..Default::default()
+    };
+    if !modules.is_empty() {
+        start_info.modlist_paddr = layout::MODLIST_START;
+    }
+    let mut boot_params =
+        BootParams::new::<hvm_start_info>(&start_info, GuestAddress(layout::PVH_INFO_START));
+    // Copy the vector with the memmap table to the MEMMAP_START address
+    // which is already saved in the memmap_paddr field of hvm_start_info struct.
+    boot_params.set_sections::<hvm_memmap_table_entry>(&memmap, GuestAddress(layout::MEMMAP_START));
+    // Copy the vector with the modules list to the MODLIST_START address.
+    // Note that we only set the modlist_paddr address if there is a nonzero
+    // number of modules, but serializing an empty list is harmless.
+    boot_params.set_modules::<hvm_modlist_entry>(&modules, GuestAddress(layout::MODLIST_START));
+    // Write the hvm_start_info struct to guest memory.
+    println!("start_info: {:#?}", start_info);
+    PvhBootConfigurator::write_bootparams(&boot_params, guest_mem)
+        .map_err(|_| Error::StartInfoSetup)
+}
+
+fn add_memmap_entry(
+    memmap: &mut Vec<hvm_memmap_table_entry>,
+    addr: u64,
+    size: u64,
+    mem_type: u32,
+) -> Result<(), Error> {
+    // Add the table entry to the vector
+    memmap.push(hvm_memmap_table_entry {
+        addr,
+        size,
+        type_: mem_type,
+        reserved: 0,
+    });
+    Ok(())
+}
+fn configure_64bit_boot(
+    guest_mem: &GuestMemoryMmap,
+    arch_memory_info: &ArchMemoryInfo,
+    cmdline_addr: GuestAddress,
+    cmdline_size: usize,
+    initrd: &Option<InitrdConfig>,
 ) -> super::Result<()> {
     const KERNEL_BOOT_FLAG_MAGIC: u16 = 0xaa55;
     const KERNEL_HDR_MAGIC: u32 = 0x5372_6448;
@@ -249,10 +386,6 @@ pub fn configure_system(
     let end_32bit_gap_start = GuestAddress(MMIO_MEM_START);
 
     let himem_start = GuestAddress(layout::HIMEM_START);
-
-    // Note that this puts the mptable at the last 1k of Linux's 640k base RAM
-    #[cfg(not(feature = "tee"))]
-    mptable::setup_mptable(guest_mem, num_cpus).map_err(Error::MpTableSetup)?;
 
     let mut params: BootParamsWrapper = BootParamsWrapper(boot_params::default());
 

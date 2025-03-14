@@ -279,6 +279,7 @@ impl Vmm {
                 cmdline_len,
                 initrd,
                 vcpus.len() as u8,
+                true,
             )
             .map_err(Error::ConfigureSystem)?;
         }

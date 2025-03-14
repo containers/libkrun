@@ -1,3 +1,5 @@
+// Copyright © 2020, Oracle and/or its affiliates.
+//
 // Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -24,8 +26,15 @@ fn get_base(entry: u64) -> u64 {
         | (((entry) & 0x0000_0000_FFFF_0000) >> 16)
 }
 
+// https://github.com/firecracker-microvm/firecracker/blob/20b50ce11ed45d99e514f3eda025c185188cd15d/src/vmm/src/arch/x86_64/gdt.rs#L29
 fn get_limit(entry: u64) -> u32 {
-    ((((entry) & 0x000F_0000_0000_0000) >> 32) | ((entry) & 0x0000_0000_0000_FFFF)) as u32
+    let limit = ((((entry) & 0x000F_0000_0000_0000) >> 32) | ((entry) & 0x0000_0000_0000_FFFF)) as u32;
+
+    if get_g(entry) == 1 {
+        (limit << 12) | 0xFFF
+    } else {
+        limit
+    }
 }
 
 fn get_g(entry: u64) -> u8 {
@@ -109,7 +118,7 @@ mod tests {
         assert_eq!(0xB, seg.type_);
         // base and limit
         assert_eq!(0x10_0000, seg.base);
-        assert_eq!(0xfffff, seg.limit);
+        assert_eq!(0xffffffff, seg.limit);
         assert_eq!(0x0, seg.unusable);
     }
 }
