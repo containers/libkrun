@@ -292,13 +292,13 @@ fn configure_pvh(
     // at MEMMAP_START after all of the mappings are recorded.
     let mut memmap: Vec<hvm_memmap_table_entry> = Vec::new();
     // Create the memory map entries.
-    add_memmap_entry(&mut memmap, 0, mptable::MPTABLE_START, E820_RAM)?;
+    add_memmap_entry(&mut memmap, 0, mptable::MPTABLE_START, E820_RAM);
     add_memmap_entry(
         &mut memmap,
         mptable::MPTABLE_START,
         layout::RSDP_ADDR - mptable::MPTABLE_START,
         E820_RESERVED,
-    )?;
+    );
     let last_addr = GuestAddress(arch_memory_info.ram_last_addr); // firecracker: guest_mem.last_addr();
     println!("last_addr: {:?}/{:?}", last_addr, guest_mem.last_addr());
     if last_addr < end_32bit_gap_start {
@@ -307,21 +307,21 @@ fn configure_pvh(
             himem_start.raw_value(),
             last_addr.unchecked_offset_from(himem_start) + 1,
             E820_RAM,
-        )?;
+        );
     } else {
         add_memmap_entry(
             &mut memmap,
             himem_start.raw_value(),
             end_32bit_gap_start.unchecked_offset_from(himem_start),
             E820_RAM,
-        )?;
+        );
         if last_addr > first_addr_past_32bits {
             add_memmap_entry(
                 &mut memmap,
                 first_addr_past_32bits.raw_value(),
                 last_addr.unchecked_offset_from(first_addr_past_32bits) + 1,
                 E820_RAM,
-            )?;
+            );
         }
     }
     
@@ -361,7 +361,7 @@ fn add_memmap_entry(
     addr: u64,
     size: u64,
     mem_type: u32,
-) -> Result<(), Error> {
+) {
     // Add the table entry to the vector
     memmap.push(hvm_memmap_table_entry {
         addr,
@@ -369,7 +369,6 @@ fn add_memmap_entry(
         type_: mem_type,
         reserved: 0,
     });
-    Ok(())
 }
 fn configure_64bit_boot(
     guest_mem: &GuestMemoryMmap,
