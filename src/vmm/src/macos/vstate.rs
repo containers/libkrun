@@ -6,6 +6,7 @@
 // found in the THIRD-PARTY file.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::result;
@@ -176,7 +177,7 @@ pub struct Vcpu {
     id: u8,
     boot_entry_addr: u64,
     boot_receiver: Option<Receiver<u64>>,
-    boot_senders: Option<Vec<Sender<u64>>>,
+    boot_senders: Option<HashMap<u64, Sender<u64>>>,
     fdt_addr: u64,
     mmio_bus: Option<devices::Bus>,
     #[cfg_attr(all(test, target_arch = "aarch64"), allow(unused))]
@@ -280,7 +281,7 @@ impl Vcpu {
             fdt_addr: 0,
             mmio_bus: None,
             exit_evt,
-            mpidr: 0,
+            mpidr: id as u64,
             event_receiver,
             event_sender: Some(event_sender),
             response_receiver: Some(response_receiver),
@@ -304,7 +305,7 @@ impl Vcpu {
         self.mmio_bus = Some(mmio_bus);
     }
 
-    pub fn set_boot_senders(&mut self, boot_senders: Vec<Sender<u64>>) {
+    pub fn set_boot_senders(&mut self, boot_senders: HashMap<u64, Sender<u64>>) {
         self.boot_senders = Some(boot_senders);
     }
 
@@ -312,11 +313,8 @@ impl Vcpu {
     ///
     /// # Arguments
     ///
-    /// * `vm_fd` - The kvm `VmFd` for this microvm.
     /// * `guest_mem` - The guest memory used by this microvm.
-    /// * `kernel_load_addr` - Offset from `guest_mem` at which the kernel is loaded.
     pub fn configure_aarch64(&mut self, guest_mem: &GuestMemoryMmap) -> Result<()> {
-        self.mpidr = self.id as u64;
         self.fdt_addr = arch::aarch64::get_fdt_addr(guest_mem);
 
         Ok(())
@@ -369,13 +367,12 @@ impl Vcpu {
                         "CpuOn: mpidr=0x{:x} entry=0x{:x} context_id={}",
                         mpidr, entry, context_id
                     );
-                    // assuming a flat CPU hierarchy, only the bottom bits of mpidr should be used,
-                    // and cpuid == mpidr
-                    let cpuid: usize = mpidr as usize;
                     if let Some(boot_senders) = &self.boot_senders {
-                        if let Some(sender) = boot_senders.get(cpuid - 1) {
+                        if let Some(sender) = boot_senders.get(&mpidr) {
                             sender.send(entry).unwrap()
                         }
+                    } else {
+                        error!("CpuOn request coming from an unexpected vCPU={}", self.id);
                     }
                     Ok(VcpuEmulation::Handled)
                 }
@@ -432,7 +429,7 @@ impl Vcpu {
 
     /// Main loop of the vCPU thread.
     pub fn run(&mut self, init_tls_sender: Sender<bool>) {
-        let mut hvf_vcpu = HvfVcpu::new().expect("Can't create HVF vCPU");
+        let mut hvf_vcpu = HvfVcpu::new(self.mpidr).expect("Can't create HVF vCPU");
         let hvf_vcpuid = hvf_vcpu.id();
 
         init_tls_sender
