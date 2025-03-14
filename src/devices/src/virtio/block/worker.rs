@@ -223,6 +223,7 @@ impl BlockWorker {
     ) -> result::Result<usize, RequestError> {
         match request_header.request_type {
             VIRTIO_BLK_T_IN => {
+                println!("blk req VIRTIO_BLK_T_IN {}", request_header.sector);
                 let data_len = writer.available_bytes() - 1;
                 if data_len % 512 != 0 {
                     Err(RequestError::InvalidDataLength)
@@ -233,6 +234,7 @@ impl BlockWorker {
                 }
             }
             VIRTIO_BLK_T_OUT => {
+                println!("blk req VIRTIO_BLK_T_OUT {}", request_header.sector);
                 let data_len = reader.available_bytes();
                 if data_len % 512 != 0 {
                     Err(RequestError::InvalidDataLength)
@@ -252,6 +254,7 @@ impl BlockWorker {
                 CacheType::Unsafe => Ok(0),
             },
             VIRTIO_BLK_T_GET_ID => {
+                println!("blk req VIRTIO_BLK_T_GET_ID {}", request_header.sector);
                 let data_len = writer.available_bytes();
                 let disk_id = self.disk.image_id();
                 if data_len < disk_id.len() {
