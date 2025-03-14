@@ -231,7 +231,7 @@ pub struct HvfVcpu<'a> {
 }
 
 impl HvfVcpu<'_> {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(mpidr: u64) -> Result<Self, Error> {
         let mut vcpuid: hv_vcpu_t = 0;
         let vcpu_exit_ptr: *mut hv_vcpu_exit_t = std::ptr::null_mut();
 
@@ -257,8 +257,7 @@ impl HvfVcpu<'_> {
 
         // We write vcpuid to Aff1 as otherwise it won't match the redistributor ID
         // when using HVF in-kernel GICv3.
-        let ret =
-            unsafe { hv_vcpu_set_sys_reg(vcpuid, hv_sys_reg_t_HV_SYS_REG_MPIDR_EL1, vcpuid << 8) };
+        let ret = unsafe { hv_vcpu_set_sys_reg(vcpuid, hv_sys_reg_t_HV_SYS_REG_MPIDR_EL1, mpidr) };
         if ret != HV_SUCCESS {
             return Err(Error::VcpuCreate);
         }
