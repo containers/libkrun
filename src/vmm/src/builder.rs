@@ -7,6 +7,7 @@
 use crossbeam_channel::{unbounded, Sender};
 use crossbeam_channel::Sender;
 use kernel::cmdline::Cmdline;
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::{self, Read};
@@ -1515,15 +1516,14 @@ fn create_vcpus_aarch64(
     vcpu_list: Arc<VcpuList>,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
-    let mut boot_senders = Vec::with_capacity(vcpu_config.vcpu_count as usize - 1);
+    let mut boot_senders: HashMap<u64, Sender<u64>> = HashMap::new();
 
     for cpu_index in 0..vcpu_config.vcpu_count {
-        let boot_receiver = if cpu_index != 0 {
+        let (boot_sender, boot_receiver) = if cpu_index != 0 {
             let (boot_sender, boot_receiver) = unbounded();
-            boot_senders.push(boot_sender);
-            Some(boot_receiver)
+            (Some(boot_sender), Some(boot_receiver))
         } else {
-            None
+            (None, None)
         };
 
         let mut vcpu = Vcpu::new_aarch64(
@@ -1536,6 +1536,10 @@ fn create_vcpus_aarch64(
         .map_err(Error::Vcpu)?;
 
         vcpu.configure_aarch64(guest_mem).map_err(Error::Vcpu)?;
+
+        if let Some(boot_sender) = boot_sender {
+            boot_senders.insert(vcpu.get_mpidr(), boot_sender);
+        }
 
         vcpus.push(vcpu);
     }
