@@ -397,6 +397,10 @@ impl Vcpu {
                     }
                     Ok(VcpuEmulation::Handled)
                 }
+                VcpuExit::PsciHandled => {
+                    debug!("vCPU {} PSCI", vcpuid);
+                    Ok(VcpuEmulation::Handled)
+                }
                 VcpuExit::SecureMonitorCall => {
                     debug!("vCPU {} SMC", vcpuid);
                     Ok(VcpuEmulation::Handled)

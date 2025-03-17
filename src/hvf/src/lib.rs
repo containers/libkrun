@@ -208,6 +208,7 @@ pub enum VcpuExit<'a> {
     HypervisorCall,
     MmioRead(u64, &'a mut [u8]),
     MmioWrite(u64, &'a [u8]),
+    PsciHandled,
     SecureMonitorCall,
     Shutdown,
     SystemRegister,
@@ -345,6 +346,33 @@ impl HvfVcpu<'_> {
         if !irq_state {
             vcpu_set_vtimer_mask(self.vcpuid, false).unwrap();
             self.vtimer_masked = false;
+        }
+    }
+
+    fn handle_psci_request(&self) -> Result<VcpuExit, Error> {
+        match self.read_reg(hv_reg_t_HV_REG_X0)? {
+            0x8400_0000 /* QEMU_PSCI_0_2_FN_PSCI_VERSION */ => {
+                self.write_reg(hv_reg_t_HV_REG_X0, 2)?;
+                Ok(VcpuExit::PsciHandled)
+            },
+            0x8400_0006 /* QEMU_PSCI_0_2_FN_MIGRATE_INFO_TYPE */ => {
+                self.write_reg(hv_reg_t_HV_REG_X0, 2)?;
+                Ok(VcpuExit::PsciHandled)
+            },
+            0x8400_0008 /* QEMU_PSCI_0_2_FN_SYSTEM_OFF */ => {
+                Ok(VcpuExit::Shutdown)
+            },
+            0x8400_0009 /* QEMU_PSCI_0_2_FN_SYSTEM_RESET */ => {
+                Ok(VcpuExit::Shutdown)
+            },
+            0xc400_0003 /* QEMU_PSCI_0_2_FN64_CPU_ON */ => {
+                let mpidr = self.read_reg(hv_reg_t_HV_REG_X1)?;
+                let entry = self.read_reg(hv_reg_t_HV_REG_X2)?;
+                let context_id = self.read_reg(hv_reg_t_HV_REG_X3)?;
+                self.write_reg(hv_reg_t_HV_REG_X0, 0)?;
+                Ok(VcpuExit::CpuOn(mpidr, entry, context_id))
+            }
+            val => panic!("Unexpected val={}", val)
         }
     }
 
@@ -518,35 +546,10 @@ impl HvfVcpu<'_> {
                 let timeout = Duration::from_nanos((cval - now) * (1_000_000_000 / self.cntfrq));
                 Ok(VcpuExit::WaitForEventTimeout(timeout))
             }
-            EC_AA64_HVC => {
-                match self.read_reg(hv_reg_t_HV_REG_X0)? {
-                    0x8400_0000 /* QEMU_PSCI_0_2_FN_PSCI_VERSION */ => {
-                        self.write_reg(hv_reg_t_HV_REG_X0, 2)?;
-                        Ok(VcpuExit::HypervisorCall)
-                    },
-                    0x8400_0006 /* QEMU_PSCI_0_2_FN_MIGRATE_INFO_TYPE */ => {
-                        self.write_reg(hv_reg_t_HV_REG_X0, 2)?;
-                        Ok(VcpuExit::HypervisorCall)
-                    },
-                    0x8400_0008 /* QEMU_PSCI_0_2_FN_SYSTEM_OFF */ => {
-                        Ok(VcpuExit::Shutdown)
-                    },
-                    0x8400_0009 /* QEMU_PSCI_0_2_FN_SYSTEM_RESET */ => {
-                        Ok(VcpuExit::Shutdown)
-                    },
-                    0xc400_0003 /* QEMU_PSCI_0_2_FN64_CPU_ON */ => {
-                        let mpidr = self.read_reg(hv_reg_t_HV_REG_X1)?;
-                        let entry = self.read_reg(hv_reg_t_HV_REG_X2)?;
-                        let context_id = self.read_reg(hv_reg_t_HV_REG_X3)?;
-                        self.write_reg(hv_reg_t_HV_REG_X0, 0)?;
-                        Ok(VcpuExit::CpuOn(mpidr, entry, context_id))
-                    }
-                    val => panic!("Unexpected val={}", val)
-                }
-            }
+            EC_AA64_HVC => self.handle_psci_request(),
             EC_AA64_SMC => {
                 self.pending_advance_pc = true;
-                Ok(VcpuExit::SecureMonitorCall)
+                self.handle_psci_request()
             }
             _ => panic!("unexpected exception: 0x{ec:x}"),
         }
