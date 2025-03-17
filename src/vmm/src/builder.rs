@@ -1019,13 +1019,13 @@ fn attach_legacy_devices(
 ) -> std::result::Result<(), StartMicrovmError> {
     if let Some(serial) = serial {
         mmio_device_manager
-            .register_mmio_serial(vm.fd(), kernel_cmdline, serial)
+            .register_mmio_serial(&vm.fd.lock().unwrap(), kernel_cmdline, serial)
             .map_err(Error::RegisterMMIODevice)
             .map_err(StartMicrovmError::Internal)?;
     }
 
     mmio_device_manager
-        .register_mmio_rtc(vm.fd())
+        .register_mmio_rtc(&vm.fd.lock().unwrap())
         .map_err(Error::RegisterMMIODevice)
         .map_err(StartMicrovmError::Internal)?;
 
@@ -1110,12 +1110,12 @@ fn create_vcpus_aarch64(
     for cpu_index in 0..vcpu_config.vcpu_count {
         let mut vcpu = Vcpu::new_aarch64(
             cpu_index,
-            vm.fd(),
+            &vm.fd.lock().unwrap(),
             exit_evt.try_clone().map_err(Error::EventFd)?,
         )
         .map_err(Error::Vcpu)?;
 
-        vcpu.configure_aarch64(vm.fd(), guest_mem, entry_addr)
+        vcpu.configure_aarch64(&vm.fd.lock().unwrap(), guest_mem, entry_addr)
             .map_err(Error::Vcpu)?;
 
         vcpus.push(vcpu);
@@ -1177,9 +1177,12 @@ fn attach_mmio_device(
     let _cmdline = &mut vmm.kernel_cmdline;
 
     #[cfg(target_os = "linux")]
-    let (_mmio_base, _irq) =
-        vmm.mmio_device_manager
-            .register_mmio_device(vmm.vm.fd(), device, type_id, id)?;
+    let (_mmio_base, _irq) = vmm.mmio_device_manager.register_mmio_device(
+        &vmm.vm.fd.lock().unwrap(),
+        device,
+        type_id,
+        id,
+    )?;
     #[cfg(target_os = "macos")]
     let (_mmio_base, _irq) = vmm
         .mmio_device_manager

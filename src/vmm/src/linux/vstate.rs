@@ -14,6 +14,9 @@ use std::io;
 #[cfg(feature = "tee")]
 use std::os::unix::io::RawFd;
 
+use std::sync::Arc;
+use std::sync::Mutex;
+
 use std::result;
 use std::sync::atomic::{fence, Ordering};
 #[cfg(not(test))]
@@ -470,7 +473,7 @@ impl KvmContext {
 
 /// A wrapper around creating and using a VM.
 pub struct Vm {
-    fd: VmFd,
+    pub fd: Arc<Mutex<VmFd>>,
     next_mem_slot: u32,
 
     // X86 specific fields.
@@ -510,7 +513,7 @@ impl Vm {
             arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
 
         Ok(Vm {
-            fd: vm_fd,
+            fd: Arc::new(Mutex::new(vm_fd)),
             next_mem_slot: 0,
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             supported_cpuid,
@@ -590,6 +593,8 @@ impl Vm {
 
                 let id: RawFd = self
                     .fd
+                    .lock()
+                    .unwrap()
                     .create_guest_memfd(gmem)
                     .map_err(Error::CreateGuestMemfd)?;
 
@@ -611,6 +616,8 @@ impl Vm {
                 // are not overlapping.
                 unsafe {
                     self.fd
+                        .lock()
+                        .unwrap()
                         .set_user_memory_region2(memory_region)
                         .map_err(Error::SetUserMemoryRegion2)?;
                 };
@@ -623,7 +630,7 @@ impl Vm {
                     attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE as u64,
                     flags: 0,
                 };
-                self.fd.set_memory_attributes(attr).unwrap();
+                self.fd.lock().unwrap().set_memory_attributes(attr).unwrap();
             }
             #[cfg(not(feature = "tee"))]
             {
@@ -638,6 +645,8 @@ impl Vm {
                 // are not overlapping.
                 unsafe {
                     self.fd
+                        .lock()
+                        .unwrap()
                         .set_user_memory_region(memory_region)
                         .map_err(Error::SetUserMemoryRegion)?;
                 };
@@ -727,7 +736,8 @@ impl Vm {
     #[cfg(target_arch = "aarch64")]
     pub fn setup_irqchip(&mut self, vcpu_count: u8) -> Result<()> {
         self.irqchip_handle = Some(
-            arch::aarch64::gic::create_gic(&self.fd, vcpu_count.into()).map_err(Error::SetupGIC)?,
+            arch::aarch64::gic::create_gic(&self.fd.lock().unwrap(), vcpu_count.into())
+                .map_err(Error::SetupGIC)?,
         );
         Ok(())
     }
@@ -737,11 +747,6 @@ impl Vm {
     #[cfg(target_arch = "aarch64")]
     pub fn get_irqchip(&self) -> &Box<dyn GICDevice> {
         self.irqchip_handle.as_ref().unwrap()
-    }
-
-    /// Gets a reference to the kvm file descriptor owned by this VM.
-    pub fn fd(&self) -> &VmFd {
-        &self.fd
     }
 
     #[allow(unused)]
@@ -835,7 +840,7 @@ type VcpuCell = Cell<Option<*mut Vcpu>>;
 
 /// A wrapper around creating and using a kvm-based VCPU.
 pub struct Vcpu {
-    fd: VcpuFd,
+    pub fd: VcpuFd,
     id: u8,
     mmio_bus: Option<devices::Bus>,
     #[allow(dead_code)]
