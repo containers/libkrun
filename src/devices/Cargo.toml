@@ -43,8 +43,8 @@ lru = ">=0.9"
 [target.'cfg(target_os = "linux")'.dependencies]
 rutabaga_gfx = { path = "../rutabaga_gfx", features = ["x"], optional = true }
 caps = "0.5.5"
-kvm-bindings = { version = ">=0.11", features = ["fam-wrappers"] }
-kvm-ioctls = ">=0.21"
+kvm-bindings = { version = ">=0.8", features = ["fam-wrappers"] , git = "https://github.com/virtee/kvm-bindings", branch = "add_bindings_for_realms" }
+kvm-ioctls = { version = ">=0.17", git = "https://github.com/virtee/kvm-ioctls", branch = "cca" }
 
 [target.'cfg(any(target_arch = "aarch64", target_arch = "riscv64"))'.dependencies]
 vm-fdt = ">= 0.2.0"
