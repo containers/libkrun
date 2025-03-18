@@ -13,6 +13,12 @@ use std::io;
 
 use std::os::unix::io::RawFd;
 
+#[cfg(feature = "tee")]
+use kvm_ioctls::VcpuExit::Unsupported;
+
+use std::sync::Arc;
+use std::sync::Mutex;
+
 use std::result;
 use std::sync::atomic::{fence, Ordering};
 #[cfg(not(test))]
@@ -39,18 +45,18 @@ use kvm_bindings::{
     KVM_CLOCK_TSC_STABLE, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
     KVM_MAX_CPUID_ENTRIES,
 };
+#[cfg(feature = "tee")]
+use kvm_bindings::{
+    kvm_create_guest_memfd, kvm_memory_attributes, kvm_userspace_memory_region2, KVM_API_VERSION,
+    KVM_EXIT_MEMORY_FAULT, KVM_MEMORY_ATTRIBUTE_PRIVATE, KVM_MEMORY_EXIT_FLAG_PRIVATE,
+    KVM_MEM_GUEST_MEMFD,
+};
+#[cfg(not(feature = "tee"))]
+use kvm_bindings::{kvm_userspace_memory_region, KVM_API_VERSION};
 use kvm_bindings::{
     kvm_userspace_memory_region, KVM_API_VERSION, KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN,
 };
-#[cfg(feature = "tee")]
-use kvm_bindings::{
-    kvm_create_guest_memfd, kvm_memory_attributes, kvm_userspace_memory_region,
-    kvm_userspace_memory_region2, KVM_API_VERSION, KVM_MEMORY_ATTRIBUTE_PRIVATE,
-    KVM_MEM_GUEST_MEMFD,
-};
-#[cfg(feature = "tee")]
-use kvm_bindings::{kvm_enable_cap, KVM_CAP_EXIT_HYPERCALL};
-use kvm_ioctls::{Cap::*, *};
+use kvm_ioctls::*;
 use utils::eventfd::EventFd;
 use utils::signal::{register_signal_handler, sigrtmin, Killable};
 use utils::sm::StateMachine;
@@ -768,6 +774,13 @@ pub struct VcpuConfig {
     pub cpu_template: Option<CpuFeaturesTemplate>,
 }
 
+#[cfg(feature = "tee")]
+pub struct MemProperties {
+    pub addr: u64,
+    pub size: u64,
+    pub attributes: u32,
+}
+
 // Using this for easier explicit type-casting to help IDEs interpret the code.
 type VcpuCell = Cell<Option<*mut Vcpu>>;
 
@@ -789,6 +802,10 @@ pub struct Vcpu {
 
     #[cfg(target_arch = "aarch64")]
     mpidr: u64,
+
+    // The transmitting end of the events channel which will be given to the vcpu side
+    #[cfg(feature = "tee")]
+    sender_io: Sender<MemProperties>,
 
     // The receiving end of events channel owned by the vcpu side.
     event_receiver: Receiver<VcpuEvent>,
@@ -937,7 +954,12 @@ impl Vcpu {
     /// * `exit_evt` - An `EventFd` that will be written into when this vcpu exits.
     /// * `create_ts` - A timestamp used by the vcpu to calculate its lifetime.
     #[cfg(target_arch = "aarch64")]
-    pub fn new_aarch64(id: u8, vm_fd: &VmFd, exit_evt: EventFd) -> Result<Self> {
+    pub fn new_aarch64(
+        id: u8,
+        vm_fd: &VmFd,
+        exit_evt: EventFd,
+        #[cfg(feature = "tee")] sender_io: Sender<MemProperties>,
+    ) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = unbounded();
         let (response_sender, response_receiver) = unbounded();
@@ -952,6 +974,8 @@ impl Vcpu {
             event_sender: Some(event_sender),
             response_receiver: Some(response_receiver),
             response_sender,
+            #[cfg(feature = "tee")]
+            sender_io,
         })
     }
 
@@ -1259,6 +1283,38 @@ impl Vcpu {
                 VcpuExit::Shutdown => {
                     info!("Received KVM_EXIT_SHUTDOWN signal");
                     Ok(VcpuEmulation::Stopped)
+                }
+                #[cfg(feature = "tee")]
+                VcpuExit::MemoryFault { flags, gpa, size } => {
+                    if flags & !KVM_MEMORY_EXIT_FLAG_PRIVATE as u64 != 0 {
+                        error!("KVM_EXIT_MEMORY_FAULT: Unknown flag {}", flags);
+                        Err(Error::VcpuUnhandledKvmExit)
+                    } else {
+                        // from private to shared
+                        let mut attr = 0;
+                        // from shared to private
+                        if flags & KVM_MEMORY_EXIT_FLAG_PRIVATE as u64
+                            == KVM_MEMORY_EXIT_FLAG_PRIVATE as u64
+                        {
+                            attr = KVM_MEMORY_ATTRIBUTE_PRIVATE;
+                        };
+
+                        let _ = self.sender_io.try_send(MemProperties {
+                            addr: gpa,
+                            size,
+                            attributes: attr,
+                        });
+                        Ok(VcpuEmulation::Handled)
+                    }
+                }
+                // Documentation specifices that when KVM exists with KVM_EXIT_MEMORY_FAULT,
+                // userspace should assume kvm_run.exit_reason is stale/undefined for error numbers
+                // different than EFAULT or EHWPOISON
+                #[cfg(feature = "tee")]
+                Unsupported(KVM_EXIT_MEMORY_FAULT) => Ok(VcpuEmulation::Handled),
+                VcpuExit::InternalError => {
+                    error!("Received KVM_EXIT_INTERNAL_ERROR signal");
+                    Err(Error::VcpuUnhandledKvmExit)
                 }
                 // Documentation specifies that below kvm exits are considered
                 // errors.
