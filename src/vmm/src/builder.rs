@@ -3,6 +3,8 @@
 
 //! Enables pre-boot setup, instantiation and booting of a Firecracker VMM.
 
+#[cfg(feature = "tee")]
+use crate::vstate::MemProperties;
 #[cfg(target_os = "macos")]
 use crossbeam_channel::unbounded;
 
@@ -713,6 +715,8 @@ pub fn build_microvm(
             &guest_memory,
             payload_config.entry_addr,
             &exit_evt,
+            #[cfg(feature = "tee")]
+            io_sender,
         )
         .map_err(StartMicrovmError::Internal)?;
 
@@ -1490,6 +1494,7 @@ fn create_vcpus_aarch64(
     guest_mem: &GuestMemoryMmap,
     entry_addr: GuestAddress,
     exit_evt: &EventFd,
+    #[cfg(feature = "tee")] sender_io: Sender<MemProperties>,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
     for cpu_index in 0..vcpu_config.vcpu_count {
@@ -1497,6 +1502,8 @@ fn create_vcpus_aarch64(
             cpu_index,
             vm.fd(),
             exit_evt.try_clone().map_err(Error::EventFd)?,
+            #[cfg(feature = "tee")]
+            sender_io.clone(),
         )
         .map_err(Error::Vcpu)?;
 
