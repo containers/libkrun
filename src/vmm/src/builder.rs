@@ -3,8 +3,12 @@
 
 //! Enables pre-boot setup, instantiation and booting of a Firecracker VMM.
 
+#[cfg(feature = "tee")]
+use crate::vstate::MemProperties;
 #[cfg(target_os = "macos")]
-use crossbeam_channel::{unbounded, Sender};
+use crossbeam_channel::unbounded;
+#[cfg(any(target_os = "macos", feature = "tee"))]
+use crossbeam_channel::Sender;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io;
@@ -354,6 +358,7 @@ pub fn build_microvm(
     event_manager: &mut EventManager,
     _shutdown_efd: Option<EventFd>,
     #[cfg(target_os = "macos")] _map_sender: Sender<MemoryMapping>,
+    #[cfg(feature = "tee")] io_sender: Sender<MemProperties>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
     #[cfg(not(feature = "efi"))]
     let kernel_bundle = vm_resources
@@ -556,6 +561,7 @@ pub fn build_microvm(
             boot_ip,
             &pio_device_manager.io_bus,
             &exit_evt,
+            // TODO: missing the io_sender
         )
         .map_err(StartMicrovmError::Internal)?;
     }
@@ -572,6 +578,8 @@ pub fn build_microvm(
             &guest_memory,
             GuestAddress(kernel_bundle.guest_addr),
             &exit_evt,
+            #[cfg(feature = "tee")]
+            io_sender,
         )
         .map_err(StartMicrovmError::Internal)?;
 
@@ -1105,6 +1113,7 @@ fn create_vcpus_aarch64(
     guest_mem: &GuestMemoryMmap,
     entry_addr: GuestAddress,
     exit_evt: &EventFd,
+    #[cfg(feature = "tee")] sender_io: Sender<MemProperties>,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
     for cpu_index in 0..vcpu_config.vcpu_count {
@@ -1112,6 +1121,8 @@ fn create_vcpus_aarch64(
             cpu_index,
             &vm.fd.lock().unwrap(),
             exit_evt.try_clone().map_err(Error::EventFd)?,
+            #[cfg(feature = "tee")]
+            sender_io.clone(),
         )
         .map_err(Error::Vcpu)?;
 

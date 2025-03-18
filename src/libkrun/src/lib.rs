@@ -1,6 +1,12 @@
 #[macro_use]
 extern crate log;
 
+#[cfg(feature = "tee")]
+use crossbeam_channel::unbounded;
+#[cfg(feature = "tee")]
+use kvm_bindings::kvm_memory_attributes;
+#[cfg(feature = "tee")]
+use libc::{fallocate, MADV_DONTNEED, madvise, FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -11,10 +17,14 @@ use std::ffi::CString;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::os::fd::RawFd;
+#[cfg(feature = "tee")]
+use std::os::raw::c_void;
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Mutex;
+#[cfg(feature = "tee")]
+use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryRegion, MemoryRegionAddress};
 
 #[cfg(target_os = "macos")]
 use crossbeam_channel::unbounded;
@@ -1225,12 +1235,17 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "macos")]
     let (sender, receiver) = unbounded();
 
+    #[cfg(feature = "tee")]
+    let (io_sender, receiver) = unbounded();
+
     let _vmm = match vmm::builder::build_microvm(
         &ctx_cfg.vmr,
         &mut event_manager,
         ctx_cfg.shutdown_efd,
         #[cfg(target_os = "macos")]
         sender,
+        #[cfg(feature = "tee")]
+        io_sender,
     ) {
         Ok(vmm) => vmm,
         Err(e) => {
@@ -1241,6 +1256,83 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     #[cfg(target_os = "macos")]
     let mapper_vmm = _vmm.clone();
+
+    #[cfg(feature = "tee")]
+    let vm = _vmm.lock().unwrap().kvm_vm().fd.clone();
+    #[cfg(feature = "tee")]
+    let guest_mem = _vmm.lock().unwrap().guest_memory().clone();
+    #[cfg(feature = "tee")]
+    let guest_memfd = _vmm.lock().unwrap().guest_memfd_vec.clone();
+
+    #[cfg(feature = "tee")]
+    std::thread::spawn(move || loop {
+        match receiver.recv() {
+            Err(e) => error!("Error in receiver: {:?}", e),
+            Ok(m) => {
+                let _ret = vm
+                    .lock()
+                    .unwrap()
+                    .set_memory_attributes(kvm_memory_attributes {
+                        address: m.addr,
+                        size: m.size,
+                        attributes: m.attributes as u64,
+                        flags: 0,
+                    });
+
+                let region = guest_mem.find_region(GuestAddress(m.addr));
+
+                if let None = region {
+                    error!("Region not found");
+                    continue;
+                }
+
+                let offset = m.addr - region.unwrap().start_addr().raw_value();
+
+                let mut guest_memfd_index = 0;
+
+                // loop through the regions to get the index of the guestmemfd fd
+                // in the future, the fd may be stored in the GuestRegionMmap
+                for (index, region) in guest_mem.iter().enumerate() {
+                    if (region.start_addr().raw_value() + region.size() as u64) > m.addr {
+                        break;
+                    }
+                    guest_memfd_index = index;
+                }
+
+                // from private to shared
+                if m.attributes == 0 {
+                    let ret = unsafe {
+                        fallocate(
+                            *guest_memfd.get(guest_memfd_index).unwrap(),
+                            FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                            offset as i64,
+                            m.size as i64,
+                        )
+                    };
+                    if ret < 0 {
+                        error!("fallocate has failed");
+                    }
+                // from shared to private
+                } else {
+                    let host_startaddr = region
+                        .unwrap()
+                        .get_host_address(MemoryRegionAddress(m.addr + offset));
+
+                    let ret = unsafe {
+                        madvise(
+                            host_startaddr.unwrap() as *mut c_void,
+                            m.size.try_into().unwrap(),
+                            MADV_DONTNEED,
+                        )
+                    };
+
+                    if ret < 0 {
+                        error!("madvise has failed");
+                    }
+                }
+            }
+        }
+    });
 
     #[cfg(target_os = "macos")]
     std::thread::Builder::new()
