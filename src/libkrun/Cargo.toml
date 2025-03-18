@@ -23,6 +23,8 @@ libloading = "0.8"
 log = "0.4.0"
 once_cell = "1.4.1"
 
+kvm-bindings = { version = ">=0.8", features = ["fam-wrappers"] , git = "https://github.com/virtee/kvm-bindings", branch = "add_bindings_for_realms" }
+
 devices = { path = "../devices" }
 polly = { path = "../polly" }
 utils = { path = "../utils" }
@@ -32,8 +34,8 @@ vmm = { path = "../vmm" }
 hvf = { path = "../hvf" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-kvm-bindings = { version = ">=0.11", features = ["fam-wrappers"] }
-kvm-ioctls = ">=0.21"
+kvm-bindings = { version = ">=0.8", features = ["fam-wrappers"] , git = "https://github.com/virtee/kvm-bindings", branch = "add_bindings_for_realms" }
+kvm-ioctls = { version = ">=0.17", git = "https://github.com/virtee/kvm-ioctls", branch = "cca" }
 vm-memory = ">=0.13"
 
 [lib]
