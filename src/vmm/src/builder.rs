@@ -33,11 +33,11 @@ use devices::virtio::{port_io, MmioTransport, PortDescription, Vsock};
 #[cfg(target_os = "macos")]
 use hvf::MemoryMapping;
 
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use kbs_types::Tee;
 
 use crate::device_manager;
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use crate::resources::TeeConfig;
 #[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigint_handler;
@@ -55,12 +55,12 @@ use crate::vstate::KvmContext;
 use crate::vstate::MeasuredRegion;
 use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
 use arch::ArchMemoryInfo;
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use arch::InitrdConfig;
 use device_manager::shm::ShmManager;
 #[cfg(not(feature = "tee"))]
 use devices::virtio::{fs::ExportTable, VirtioShmRegion};
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
 use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 use nix::unistd::isatty;
@@ -342,7 +342,7 @@ enum Payload {
     Empty,
     #[cfg(feature = "efi")]
     Efi,
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     Tee(MmapRegion, u64, usize, u64, usize, u64, usize),
 }
 
@@ -370,17 +370,17 @@ pub fn build_microvm(
             .map_err(StartMicrovmError::KernelBundle)?
     };
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     let qboot_bundle = vm_resources
         .qboot_bundle()
         .ok_or(StartMicrovmError::MissingKernelConfig)?;
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     let initrd_bundle = vm_resources
         .initrd_bundle()
         .ok_or(StartMicrovmError::MissingKernelConfig)?;
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     let payload = Payload::Tee(
         kernel_region,
         kernel_bundle.guest_addr,
@@ -402,7 +402,7 @@ pub fn build_microvm(
             .vm_config()
             .mem_size_mib
             .ok_or(StartMicrovmError::MissingMemSizeConfig)?,
-        #[cfg(feature = "tee")]
+        #[cfg(all(feature = "tee", target_arch = "x86_64"))]
         None,
         #[cfg(not(feature = "tee"))]
         Some(vm_resources),
@@ -422,7 +422,7 @@ pub fn build_microvm(
     #[allow(unused_mut)]
     let mut vm = setup_vm(&guest_memory)?;
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     let (kvm, mut vm) = {
         let kvm = KvmContext::new()
             .map_err(Error::KvmContext)
@@ -431,10 +431,10 @@ pub fn build_microvm(
         (kvm, vm)
     };
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     let tee = vm_resources.tee_config().tee;
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     let sev_launcher = match tee {
         Tee::Sev => Some(
             vm.sev_secure_virt_prepare(&guest_memory)
@@ -443,7 +443,7 @@ pub fn build_microvm(
         _ => None,
     };
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     let snp_launcher = match tee {
         Tee::Snp => Some(
             vm.snp_secure_virt_prepare(&guest_memory)
@@ -452,7 +452,7 @@ pub fn build_microvm(
         _ => None,
     };
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     let measured_regions = {
         println!("Injecting and measuring memory regions. This may take a while.");
 
@@ -543,7 +543,7 @@ pub fn build_microvm(
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "tee")))]
     let boot_ip: GuestAddress = GuestAddress(kernel_bundle.entry_addr);
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     let boot_ip: GuestAddress = GuestAddress(arch::RESET_VECTOR);
 
     let vcpus;
@@ -712,7 +712,7 @@ pub fn build_microvm(
     #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
     load_cmdline(&vmm)?;
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     let initrd_config = Some(InitrdConfig {
         address: GuestAddress(arch::x86_64::layout::INITRD_SEV_START),
         size: initrd_bundle.size,
@@ -728,7 +728,7 @@ pub fn build_microvm(
     )
     .map_err(StartMicrovmError::Internal)?;
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     {
         match tee {
             Tee::Sev => vmm
@@ -794,7 +794,7 @@ fn load_payload(
             .map_err(StartMicrovmError::GuestMemoryMmap),
         #[cfg(test)]
         Payload::Empty => Ok(guest_mem),
-        #[cfg(feature = "tee")]
+        #[cfg(all(feature = "tee", target_arch = "x86_64"))]
         Payload::Tee(
             kernel_region,
             kernel_load_addr,
@@ -919,7 +919,7 @@ pub(crate) fn setup_vm(
         .map_err(StartMicrovmError::Internal)?;
     Ok(vm)
 }
-#[cfg(all(target_os = "linux", feature = "tee"))]
+#[cfg(all(target_os = "linux", feature = "tee", target_arch = "x86_64"))]
 pub(crate) fn setup_vm(
     kvm: &KvmContext,
     guest_memory: &GuestMemoryMmap,

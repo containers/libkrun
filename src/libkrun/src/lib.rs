@@ -51,7 +51,7 @@ use vmm::vmm_config::boot_source::{BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
 use vmm::vmm_config::fs::FsDeviceConfig;
 #[cfg(not(feature = "efi"))]
 use vmm::vmm_config::kernel_bundle::KernelBundle;
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use vmm::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
 use vmm::vmm_config::machine_config::VmConfig;
 #[cfg(feature = "net")]
@@ -103,7 +103,7 @@ struct ContextConfig {
     root_block_cfg: Option<BlockDeviceConfig>,
     #[cfg(feature = "blk")]
     data_block_cfg: Option<BlockDeviceConfig>,
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     tee_config_file: Option<PathBuf>,
     unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
     shutdown_efd: Option<EventFd>,
@@ -220,12 +220,12 @@ impl ContextConfig {
         }
     }
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     fn set_tee_config_file(&mut self, filepath: PathBuf) {
         self.tee_config_file = Some(filepath);
     }
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     fn get_tee_config_file(&self) -> Option<PathBuf> {
         self.tee_config_file.clone()
     }
@@ -263,7 +263,7 @@ extern "C" {
     fn krunfw_get_version() -> u32;
 }
 
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 #[link(name = "krunfw-sev")]
 extern "C" {
     fn krunfw_get_qboot(size: *mut size_t) -> *mut c_char;
@@ -320,7 +320,7 @@ pub extern "C" fn krun_create_ctx() -> i32 {
     };
     ctx_cfg.vmr.set_kernel_bundle(kernel_bundle).unwrap();
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     {
         let mut qboot_size: usize = 0;
         let qboot_host_addr = unsafe { krunfw_get_qboot(&mut qboot_size as *mut usize) };
@@ -919,7 +919,7 @@ pub unsafe extern "C" fn krun_set_env(ctx_id: u32, c_envp: *const *const c_char)
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 pub unsafe extern "C" fn krun_set_tee_config_file(ctx_id: u32, c_filepath: *const c_char) -> i32 {
     let filepath = match CStr::from_ptr(c_filepath).to_str() {
         Ok(f) => f,
@@ -1152,7 +1152,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
      * config is not set by this point, print the relevant error message and
      * fail.
      */
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     if let Some(tee_config) = ctx_cfg.get_tee_config_file() {
         if let Err(e) = ctx_cfg.vmr.set_tee_config(tee_config) {
             error!("Error setting up TEE config: {:?}", e);

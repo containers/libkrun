@@ -269,7 +269,7 @@ impl Vmm {
     ) -> Result<()> {
         #[cfg(target_arch = "x86_64")]
         {
-            let cmdline_len = if cfg!(feature = "tee") {
+            let cmdline_len = if cfg!(all(feature = "tee", target_arch = "x86_64")) {
                 arch::x86_64::layout::CMDLINE_SEV_SIZE
             } else {
                 self.kernel_cmdline.len() + 1

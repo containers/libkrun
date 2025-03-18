@@ -34,10 +34,10 @@ use super::tee::amdsev::{AmdSev, Error as SevError};
 #[cfg(feature = "amd-sev")]
 use super::tee::amdsnp::{AmdSnp, Error as SnpError};
 
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use kbs_types::Tee;
 
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use crate::resources::TeeConfig;
 use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 #[cfg(target_arch = "aarch64")]
@@ -103,7 +103,7 @@ pub enum Error {
     #[cfg(target_arch = "x86_64")]
     /// Cannot set the local interruption due to bad configuration.
     LocalIntConfiguration(arch::x86_64::interrupts::Error),
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     /// Missing TEE config
     MissingTeeConfig,
     #[cfg(target_arch = "x86_64")]
@@ -148,7 +148,7 @@ pub enum Error {
     #[cfg(feature = "amd-sev")]
     /// Error attesting the Secure VM (SNP).
     SnpSecVirtAttest(SnpError),
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     /// The TEE specified is not supported.
     InvalidTee,
     /// Failed to signal Vcpu.
@@ -294,38 +294,38 @@ impl Display for Error {
             SetUserMemoryRegion2(e) => write!(f, "Cannot set the memory regions: {e}"),
             #[cfg(feature = "tee")]
             CreateGuestMemfd(e) => write!(f, "Cannot create guest memfd: {e}"),
-            #[cfg(feature = "tee")]
+            #[cfg(all(feature = "tee", target_arch = "x86_64"))]
             SevSecVirtInit(e) => {
                 write!(
                     f,
                     "Error initializing the Secure Virtualization Backend (SEV): {e:?}"
                 )
             }
-            #[cfg(feature = "tee")]
+            #[cfg(all(feature = "tee", target_arch = "x86_64"))]
             SevSecVirtPrepare(e) => write!(
                 f,
                 "Error preparing the VM for Secure Virtualization (SEV): {e:?}"
             ),
-            #[cfg(feature = "tee")]
+            #[cfg(all(feature = "tee", target_arch = "x86_64"))]
             SevSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SEV): {e:?}"),
 
-            #[cfg(feature = "tee")]
+            #[cfg(all(feature = "tee", target_arch = "x86_64"))]
             SnpSecVirtInit(e) => write!(
                 f,
                 "Error initializing the Secure Virtualization Backend (SEV): {e:?}"
             ),
 
-            #[cfg(feature = "tee")]
+            #[cfg(all(feature = "tee", target_arch = "x86_64"))]
             SnpSecVirtPrepare(e) => write!(
                 f,
                 "Error preparing the VM for Secure Virtualization (SNP): {e:?}"
             ),
 
-            #[cfg(feature = "tee")]
+            #[cfg(all(feature = "tee", target_arch = "x86_64"))]
             SnpSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SNP): {e:?}"),
 
             SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {e}"),
-            #[cfg(feature = "tee")]
+            #[cfg(all(feature = "tee", target_arch = "x86_64"))]
             MissingTeeConfig => write!(f, "Missing TEE configuration"),
             #[cfg(target_arch = "x86_64")]
             MSRSConfiguration(e) => write!(f, "Error configuring the MSR registers: {e:?}"),
@@ -409,7 +409,7 @@ impl Display for Error {
             #[cfg(target_arch = "aarch64")]
             VcpuArmInit(e) => write!(f, "Error doing Vcpu Init on Arm: {e}"),
 
-            #[cfg(feature = "tee")]
+            #[cfg(all(feature = "tee", target_arch = "x86_64"))]
             InvalidTee => write!(f, "TEE selected is not currently supported"),
         }
     }
