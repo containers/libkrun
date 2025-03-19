@@ -21,7 +21,7 @@ pub mod console;
 pub mod descriptor_utils;
 pub mod device;
 pub mod file_traits;
-#[cfg(not(any(feature = "tee", feature = "nitro")))]
+#[cfg(not(any(feature = "tee", feature = "nitro", feature = "cca")))]
 pub mod fs;
 #[cfg(feature = "gpu")]
 pub mod gpu;
@@ -42,7 +42,7 @@ pub use self::balloon::*;
 pub use self::block::{Block, CacheType};
 pub use self::console::*;
 pub use self::device::*;
-#[cfg(not(any(feature = "tee", feature = "nitro")))]
+#[cfg(not(any(feature = "tee", feature = "nitro", feature = "cca")))]
 pub use self::fs::*;
 #[cfg(feature = "gpu")]
 pub use self::gpu::*;
