@@ -59,7 +59,7 @@ use crate::terminal::term_set_raw_mode;
 #[cfg(feature = "blk")]
 use crate::vmm_config::block::BlockBuilder;
 use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
-#[cfg(not(any(feature = "tee", feature = "nitro")))]
+#[cfg(not(any(feature = "tee", feature = "nitro", feature = "cca")))]
 use crate::vmm_config::fs::FsDeviceConfig;
 #[cfg(target_os = "linux")]
 use crate::vstate::KvmContext;
@@ -68,7 +68,7 @@ use crate::vstate::MeasuredRegion;
 use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
 use arch::{ArchMemoryInfo, InitrdConfig};
 use device_manager::shm::ShmManager;
-#[cfg(not(any(feature = "tee", feature = "nitro")))]
+#[cfg(not(any(feature = "tee", feature = "nitro", feature = "cca")))]
 use devices::virtio::{fs::ExportTable, VirtioShmRegion};
 use flate2::read::GzDecoder;
 #[cfg(feature = "tee")]
@@ -878,7 +878,7 @@ pub fn build_microvm(
         vm_resources.console_output.clone(),
     )?;
 
-    #[cfg(not(any(feature = "tee", feature = "nitro")))]
+    #[cfg(not(any(feature = "tee", feature = "nitro", feature = "cca")))]
     let export_table: Option<ExportTable> = if cfg!(feature = "gpu") {
         Some(Default::default())
     } else {
@@ -899,12 +899,12 @@ pub fn build_microvm(
             _sender.clone(),
         )?;
     }
-    #[cfg(not(any(feature = "tee", feature = "nitro")))]
+    #[cfg(not(any(feature = "tee", feature = "nitro", feature = "cca")))]
     attach_fs_devices(
         &mut vmm,
         &vm_resources.fs,
         &mut _shm_manager,
-        #[cfg(not(feature = "tee"))]
+        #[cfg(any(not(feature = "tee"), feature = "cca"))]
         export_table,
         intc.clone(),
         exit_code,
@@ -1767,12 +1767,12 @@ fn attach_mmio_device(
     Ok(())
 }
 
-#[cfg(not(any(feature = "tee", feature = "nitro")))]
+#[cfg(not(any(feature = "tee", feature = "nitro", feature = "cca")))]
 fn attach_fs_devices(
     vmm: &mut Vmm,
     fs_devs: &[FsDeviceConfig],
     shm_manager: &mut ShmManager,
-    #[cfg(not(feature = "tee"))] export_table: Option<ExportTable>,
+    #[cfg(any(not(feature = "tee"), feature = "cca"))] export_table: Option<ExportTable>,
     intc: IrqChip,
     exit_code: Arc<AtomicI32>,
     #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
@@ -1804,7 +1804,7 @@ fn attach_fs_devices(
             });
         }
 
-        #[cfg(not(feature = "tee"))]
+        #[cfg(any(not(feature = "tee"), feature = "cca"))]
         if let Some(export_table) = export_table.as_ref() {
             fs.lock().unwrap().set_export_table(export_table.clone());
         }

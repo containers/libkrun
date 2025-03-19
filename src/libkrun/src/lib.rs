@@ -41,7 +41,7 @@ use vmm::vmm_config::block::BlockDeviceConfig;
 use vmm::vmm_config::boot_source::{BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
 #[cfg(not(feature = "tee"))]
 use vmm::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
-#[cfg(not(feature = "tee"))]
+#[cfg(any(not(feature = "tee"), feature = "cca"))]
 use vmm::vmm_config::fs::FsDeviceConfig;
 #[cfg(not(feature = "efi"))]
 use vmm::vmm_config::kernel_bundle::KernelBundle;
@@ -474,7 +474,7 @@ pub extern "C" fn krun_set_vm_config(ctx_id: u32, num_vcpus: u8, ram_mib: u32) -
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-#[cfg(not(feature = "tee"))]
+#[cfg(any(not(feature = "tee"), feature = "cca"))]
 pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) -> i32 {
     let root_path = match CStr::from_ptr(c_root_path).to_str() {
         Ok(root) => root,

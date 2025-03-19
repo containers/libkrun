@@ -47,7 +47,7 @@ impl ShmManager {
         regions
     }
 
-    #[cfg(not(any(feature = "tee", feature = "nitro")))]
+    #[cfg(not(any(feature = "tee", feature = "nitro", feature = "cca")))]
     pub fn fs_region(&self, index: usize) -> Option<&ShmRegion> {
         self.fs_regions.get(&index)
     }
