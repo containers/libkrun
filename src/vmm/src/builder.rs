@@ -49,7 +49,7 @@ use crate::terminal::term_set_raw_mode;
 #[cfg(feature = "blk")]
 use crate::vmm_config::block::BlockBuilder;
 use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
-#[cfg(not(feature = "tee"))]
+#[cfg(any(not(feature = "tee"), feature = "cca"))]
 use crate::vmm_config::fs::FsDeviceConfig;
 #[cfg(target_os = "linux")]
 use crate::vstate::KvmContext;
@@ -60,7 +60,7 @@ use arch::ArchMemoryInfo;
 #[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use arch::InitrdConfig;
 use device_manager::shm::ShmManager;
-#[cfg(not(feature = "tee"))]
+#[cfg(any(not(feature = "tee"), feature = "cca"))]
 use devices::virtio::{fs::ExportTable, VirtioShmRegion};
 #[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
@@ -708,7 +708,7 @@ pub fn build_microvm(
         vm_resources.console_output.clone(),
     )?;
 
-    #[cfg(not(feature = "tee"))]
+    #[cfg(any(not(feature = "tee"), feature = "cca"))]
     let export_table: Option<ExportTable> = if cfg!(feature = "gpu") {
         Some(Default::default())
     } else {
@@ -729,12 +729,12 @@ pub fn build_microvm(
             _map_sender.clone(),
         )?;
     }
-    #[cfg(not(feature = "tee"))]
+    #[cfg(any(not(feature = "tee"), feature = "cca"))]
     attach_fs_devices(
         &mut vmm,
         &vm_resources.fs,
         &mut _shm_manager,
-        #[cfg(not(feature = "tee"))]
+        #[cfg(any(not(feature = "tee"), feature = "cca"))]
         export_table,
         intc.clone(),
         #[cfg(target_os = "macos")]
@@ -1340,12 +1340,12 @@ fn attach_mmio_device(
     Ok(())
 }
 
-#[cfg(not(feature = "tee"))]
+#[cfg(any(not(feature = "tee"), feature = "cca"))]
 fn attach_fs_devices(
     vmm: &mut Vmm,
     fs_devs: &[FsDeviceConfig],
     shm_manager: &mut ShmManager,
-    #[cfg(not(feature = "tee"))] export_table: Option<ExportTable>,
+    #[cfg(any(not(feature = "tee"), feature = "cca"))] export_table: Option<ExportTable>,
     intc: Option<GicV3>,
     #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
 ) -> std::result::Result<(), StartMicrovmError> {
@@ -1373,7 +1373,7 @@ fn attach_fs_devices(
             });
         }
 
-        #[cfg(not(feature = "tee"))]
+        #[cfg(any(not(feature = "tee"), feature = "cca"))]
         if let Some(export_table) = export_table.as_ref() {
             fs.lock().unwrap().set_export_table(export_table.clone());
         }
