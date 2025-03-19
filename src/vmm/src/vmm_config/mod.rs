@@ -12,7 +12,7 @@ pub mod boot_source;
 pub mod external_kernel;
 
 /// Wrapper for configuring the Fs devices attached to the microVM.
-#[cfg(not(feature = "tee"))]
+#[cfg(any(not(feature = "tee"), feature = "cca"))]
 pub mod fs;
 
 /// Wrapper over the microVM general information attached to the microVM.
