@@ -4,6 +4,12 @@ use test_vm_config::TestVmConfig;
 mod test_vsock_guest_connect;
 use test_vsock_guest_connect::TestVsockGuestConnect;
 
+mod test_tsi_tcp_guest_connect;
+use test_tsi_tcp_guest_connect::TestTsiTcpGuestConnect;
+
+mod test_tsi_tcp_guest_listen;
+use test_tsi_tcp_guest_listen::TestTsiTcpGuestListen;
+
 pub fn test_cases() -> Vec<TestCase> {
     // Register your test here:
     vec![
@@ -22,6 +28,11 @@ pub fn test_cases() -> Vec<TestCase> {
             }),
         ),
         TestCase::new("vsock-guest-connect", Box::new(TestVsockGuestConnect)),
+        TestCase::new("tsi-tcp-guest-connect", Box::new(TestTsiTcpGuestConnect::new())),
+        TestCase::new(
+            "tsi-tcp-guest-listen",
+            Box::new(TestTsiTcpGuestListen::new()),
+        ),
     ]
 }
 
@@ -42,6 +53,7 @@ mod common;
 
 #[cfg(feature = "host")]
 mod krun;
+mod tcp_tester;
 
 #[host]
 #[derive(Clone, Debug)]
