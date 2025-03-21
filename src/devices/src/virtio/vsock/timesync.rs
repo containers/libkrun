@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time;
 
-use super::super::super::legacy::GicV3;
+use super::super::super::legacy::IrqChip;
 use super::super::Queue as VirtQueue;
 use super::super::VIRTIO_MMIO_INT_VRING;
 use super::defs::uapi;
@@ -22,7 +22,7 @@ pub struct TimesyncThread {
     queue_mutex: Arc<Mutex<VirtQueue>>,
     interrupt_evt: EventFd,
     interrupt_status: Arc<AtomicUsize>,
-    intc: Option<GicV3>,
+    intc: Option<IrqChip>,
     irq_line: Option<u32>,
 }
 
@@ -33,7 +33,7 @@ impl TimesyncThread {
         queue_mutex: Arc<Mutex<VirtQueue>>,
         interrupt_evt: EventFd,
         interrupt_status: Arc<AtomicUsize>,
-        intc: Option<GicV3>,
+        intc: Option<IrqChip>,
         irq_line: Option<u32>,
     ) -> Self {
         Self {
@@ -68,9 +68,13 @@ impl TimesyncThread {
                 self.interrupt_status
                     .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
                 if let Some(intc) = &self.intc {
-                    intc.set_irq(self.irq_line.unwrap());
-                } else if let Err(e) = self.interrupt_evt.write(1) {
-                    warn!("failed to signal used queue: {:?}", e);
+                    if let Err(e) = intc
+                        .lock()
+                        .unwrap()
+                        .set_irq(self.irq_line, Some(&self.interrupt_evt))
+                    {
+                        warn!("failed to signal used queue: {:?}", e);
+                    }
                 }
             }
         }

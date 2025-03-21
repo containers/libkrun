@@ -1,4 +1,4 @@
-use crate::legacy::GicV3;
+use crate::legacy::IrqChip;
 use crate::virtio::net::gvproxy::Gvproxy;
 use crate::virtio::net::passt::Passt;
 use crate::virtio::net::{MAX_BUFFER_SIZE, QUEUE_SIZE, RX_INDEX, TX_INDEX};
@@ -36,7 +36,7 @@ pub struct NetWorker {
     queue_evts: Vec<EventFd>,
     interrupt_status: Arc<AtomicUsize>,
     interrupt_evt: EventFd,
-    intc: Option<GicV3>,
+    intc: Option<IrqChip>,
     irq_line: Option<u32>,
 
     mem: GuestMemoryMmap,
@@ -58,7 +58,7 @@ impl NetWorker {
         queue_evts: Vec<EventFd>,
         interrupt_status: Arc<AtomicUsize>,
         interrupt_evt: EventFd,
-        intc: Option<GicV3>,
+        intc: Option<IrqChip>,
         irq_line: Option<u32>,
         mem: GuestMemoryMmap,
         cfg_backend: VirtioNetBackend,
@@ -383,14 +383,11 @@ impl NetWorker {
         self.interrupt_status
             .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
         if let Some(intc) = &self.intc {
-            intc.set_irq(self.irq_line.unwrap());
-            Ok(())
-        } else {
-            self.interrupt_evt.write(1).map_err(|e| {
-                error!("Failed to signal used queue: {:?}", e);
-                DeviceError::FailedSignalingUsedQueue(e)
-            })
+            intc.lock()
+                .unwrap()
+                .set_irq(self.irq_line, Some(&self.interrupt_evt))?;
         }
+        Ok(())
     }
 
     // Copies a single frame from `self.rx_frame_buf` into the guest.

@@ -35,7 +35,7 @@ use super::{
     Error, QUEUE_SIZES, SECTOR_SHIFT, SECTOR_SIZE,
 };
 
-use crate::legacy::GicV3;
+use crate::legacy::IrqChip;
 use crate::virtio::{block::ImageType, ActivateError};
 
 /// Configuration options for disk caching.
@@ -189,7 +189,7 @@ pub struct Block {
     pub(crate) partuuid: Option<String>,
 
     // Interrupt specific fields.
-    intc: Option<GicV3>,
+    intc: Option<IrqChip>,
     irq_line: Option<u32>,
 }
 
@@ -271,7 +271,7 @@ impl Block {
         })
     }
 
-    pub fn set_intc(&mut self, intc: GicV3) {
+    pub fn set_intc(&mut self, intc: IrqChip) {
         self.intc = Some(intc);
     }
 

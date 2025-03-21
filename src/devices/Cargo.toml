@@ -19,6 +19,7 @@ bitflags = "1.2.0"
 crossbeam-channel = "0.5"
 env_logger = "0.9.0"
 libc = ">=0.2.39"
+libloading = "0.8"
 log = "0.4.0"
 nix = { version = "0.24.1", features = ["poll"] }
 pw = { package = "pipewire", version = "0.8.0", optional = true }
@@ -42,3 +43,8 @@ lru = ">=0.9"
 [target.'cfg(target_os = "linux")'.dependencies]
 rutabaga_gfx = { path = "../rutabaga_gfx", features = ["x"], optional = true }
 caps = "0.5.5"
+kvm-bindings = { version = ">=0.8", features = ["fam-wrappers"] }
+kvm-ioctls = ">=0.17"
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+vm-fdt = ">= 0.2.0"

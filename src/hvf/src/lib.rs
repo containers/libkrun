@@ -7,7 +7,7 @@
 #[allow(non_snake_case)]
 #[allow(non_upper_case_globals)]
 #[allow(deref_nullptr)]
-mod bindings;
+pub mod bindings;
 
 use bindings::*;
 
@@ -51,8 +51,9 @@ const EC_SYSTEMREGISTERTRAP: u64 = 0x18;
 const EC_DATAABORT: u64 = 0x24;
 const EC_AA64_BKPT: u64 = 0x3c;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Error {
+    FindSymbol(libloading::Error),
     MemoryMap,
     MemoryUnmap,
     VcpuCreate,
@@ -73,6 +74,7 @@ impl Display for Error {
         use self::Error::*;
 
         match self {
+            FindSymbol(ref err) => write!(f, "Couldn't find symbol in HVF library: {}", err),
             MemoryMap => write!(f, "Error registering memory region in HVF"),
             MemoryUnmap => write!(f, "Error unregistering memory region in HVF"),
             VcpuCreate => write!(f, "Error creating HVF vCPU instance"),
@@ -159,6 +161,7 @@ pub struct HvfVm {}
 impl HvfVm {
     pub fn new() -> Result<Self, Error> {
         let ret = unsafe { hv_vm_create(std::ptr::null_mut()) };
+
         if ret != HV_SUCCESS {
             Err(Error::VmCreate)
         } else {
@@ -176,7 +179,7 @@ impl HvfVm {
             hv_vm_map(
                 host_start_addr as *mut core::ffi::c_void,
                 guest_start_addr,
-                size,
+                size.try_into().unwrap(),
                 (HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC).into(),
             )
         };
@@ -188,7 +191,7 @@ impl HvfVm {
     }
 
     pub fn unmap_memory(&self, guest_start_addr: u64, size: u64) -> Result<(), Error> {
-        let ret = unsafe { hv_vm_unmap(guest_start_addr, size) };
+        let ret = unsafe { hv_vm_unmap(guest_start_addr, size.try_into().unwrap()) };
         if ret != HV_SUCCESS {
             Err(Error::MemoryUnmap)
         } else {
@@ -231,7 +234,7 @@ pub struct HvfVcpu<'a> {
 }
 
 impl HvfVcpu<'_> {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(mpidr: u64) -> Result<Self, Error> {
         let mut vcpuid: hv_vcpu_t = 0;
         let vcpu_exit_ptr: *mut hv_vcpu_exit_t = std::ptr::null_mut();
 
@@ -257,8 +260,7 @@ impl HvfVcpu<'_> {
 
         // We write vcpuid to Aff1 as otherwise it won't match the redistributor ID
         // when using HVF in-kernel GICv3.
-        let ret =
-            unsafe { hv_vcpu_set_sys_reg(vcpuid, hv_sys_reg_t_HV_SYS_REG_MPIDR_EL1, vcpuid << 8) };
+        let ret = unsafe { hv_vcpu_set_sys_reg(vcpuid, hv_sys_reg_t_HV_SYS_REG_MPIDR_EL1, mpidr) };
         if ret != HV_SUCCESS {
             return Err(Error::VcpuCreate);
         }

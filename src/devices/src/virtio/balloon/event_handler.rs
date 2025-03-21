@@ -81,7 +81,9 @@ impl Balloon {
                 e
             );
         } else if self.process_frq() {
-            self.signal_used_queue().unwrap();
+            if let Err(e) = self.signal_used_queue() {
+                warn!("Failed to signal queue: {e:?}");
+            }
         }
     }
 

@@ -17,7 +17,7 @@ use utils::epoll::{EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 
 use crate::bus::BusDevice;
-use crate::legacy::GicV3;
+use crate::legacy::IrqChip;
 
 const OFS_DATA: u64 = 0x400; // Data Register
 const GPIODIR: u64 = 0x400; // Direction Register
@@ -73,7 +73,7 @@ pub struct Gpio {
     afsel: u32,
     // GPIO irq_field
     interrupt_evt: EventFd,
-    intc: Option<GicV3>,
+    intc: Option<IrqChip>,
     irq_line: Option<u32>,
     shutdown_efd: EventFd,
 }
@@ -97,7 +97,7 @@ impl Gpio {
         }
     }
 
-    pub fn set_intc(&mut self, intc: GicV3) {
+    pub fn set_intc(&mut self, intc: IrqChip) {
         self.intc = Some(intc);
     }
 
@@ -166,9 +166,13 @@ impl Gpio {
 
     fn trigger_gpio_interrupt(&self) {
         if let Some(intc) = &self.intc {
-            intc.set_irq(self.irq_line.unwrap());
-        } else if let Err(e) = self.interrupt_evt.write(1) {
-            error!("Failed to signal used queue: {:?}", e);
+            if let Err(e) = intc
+                .lock()
+                .unwrap()
+                .set_irq(self.irq_line, Some(&self.interrupt_evt))
+            {
+                warn!("Error signalling irq: {e:?}");
+            }
         }
     }
 }

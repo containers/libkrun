@@ -9,12 +9,12 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::{io, result};
 
-use super::super::DeviceType;
-use super::super::InitrdConfig;
-use super::get_fdt_addr;
-use super::gic::GICDevice;
-use super::layout::{GTIMER_HYP, GTIMER_PHYS, GTIMER_SEC, GTIMER_VIRT};
-use crate::ArchMemoryInfo;
+use crate::legacy::gic::GICDevice;
+use crate::legacy::IrqChip;
+use crate::DeviceType;
+use arch::aarch64::get_fdt_addr;
+use arch::aarch64::layout::{GTIMER_HYP, GTIMER_PHYS, GTIMER_SEC, GTIMER_VIRT};
+use arch::{ArchMemoryInfo, InitrdConfig};
 use vm_fdt::{Error as FdtError, FdtWriter};
 use vm_memory::{Address, Bytes, GuestAddress, GuestMemoryError, GuestMemoryMmap};
 
@@ -76,7 +76,7 @@ pub fn create_fdt<T: DeviceInfoForFDT + Clone + Debug>(
     vcpu_mpidr: Vec<u64>,
     cmdline: &str,
     device_info: &HashMap<(DeviceType, String), T>,
-    gic_device: &Box<dyn GICDevice>,
+    gic_device: &IrqChip,
     initrd: &Option<InitrdConfig>,
 ) -> Result<Vec<u8>> {
     // Alocate stuff necessary for the holding the blob.
@@ -177,10 +177,10 @@ fn create_memory_node(
     _guest_mem: &GuestMemoryMmap,
     arch_memory_info: &ArchMemoryInfo,
 ) -> Result<()> {
-    let mem_size = arch_memory_info.ram_last_addr - super::layout::DRAM_MEM_START;
+    let mem_size = arch_memory_info.ram_last_addr - arch::aarch64::layout::DRAM_MEM_START;
     // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/booting-without-of.txt#L960
     // for an explanation of this.
-    let mem_reg_prop = generate_prop64(&[super::layout::DRAM_MEM_START, mem_size]);
+    let mem_reg_prop = generate_prop64(&[arch::aarch64::layout::DRAM_MEM_START, mem_size]);
 
     let mem_node = fdt.begin_node("memory")?;
     fdt.property_string("device_type", "memory")?;
@@ -210,11 +210,12 @@ fn create_chosen_node(
     Ok(())
 }
 
-fn create_gic_node(fdt: &mut FdtWriter, gic_device: &Box<dyn GICDevice>) -> Result<()> {
-    let gic_reg_prop = generate_prop64(gic_device.device_properties());
+fn create_gic_node(fdt: &mut FdtWriter, gic_device: &IrqChip) -> Result<()> {
+    let gic_device = gic_device.lock().unwrap();
+    let gic_reg_prop = generate_prop64(&gic_device.device_properties());
 
     let intc_node = fdt.begin_node("intc")?;
-    fdt.property_string("compatible", gic_device.fdt_compatibility())?;
+    fdt.property_string("compatible", &gic_device.fdt_compatibility())?;
     fdt.property_null("interrupt-controller")?;
     // "interrupt-cells" field specifies the number of cells needed to encode an
     // interrupt source. The type shall be a <u32> and the value shall be 3 if no PPI affinity description
@@ -421,75 +422,4 @@ fn create_devices_node<T: DeviceInfoForFDT + Clone + Debug>(
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::aarch64::gic::create_gic;
-    use crate::aarch64::{arch_memory_regions, layout};
-    use kvm_ioctls::Kvm;
-
-    const LEN: u64 = 4096;
-
-    #[derive(Clone, Debug)]
-    pub struct MMIODeviceInfo {
-        addr: u64,
-        irq: u32,
-    }
-
-    impl DeviceInfoForFDT for MMIODeviceInfo {
-        fn addr(&self) -> u64 {
-            self.addr
-        }
-        fn irq(&self) -> u32 {
-            self.irq
-        }
-        fn length(&self) -> u64 {
-            LEN
-        }
-    }
-
-    #[test]
-    fn test_create_fdt_with_devices() {
-        let (mem_info, regions) = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000);
-        let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
-
-        let dev_info: HashMap<(DeviceType, std::string::String), MMIODeviceInfo> = [
-            (
-                (DeviceType::Serial, DeviceType::Serial.to_string()),
-                MMIODeviceInfo { addr: 0x00, irq: 1 },
-            ),
-            (
-                (DeviceType::Virtio(1), "virtio".to_string()),
-                MMIODeviceInfo {
-                    addr: 0x00 + LEN,
-                    irq: 2,
-                },
-            ),
-            (
-                (DeviceType::RTC, "rtc".to_string()),
-                MMIODeviceInfo {
-                    addr: 0x00 + 2 * LEN,
-                    irq: 3,
-                },
-            ),
-        ]
-        .iter()
-        .cloned()
-        .collect();
-        let kvm = Kvm::new().unwrap();
-        let vm = kvm.create_vm().unwrap();
-        let gic = create_gic(&vm, 1).unwrap();
-        assert!(create_fdt(
-            &mem,
-            &mem_info,
-            vec![0],
-            "console=tty0",
-            &dev_info,
-            &gic,
-            &None,
-        )
-        .is_ok())
-    }
 }

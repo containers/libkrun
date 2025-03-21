@@ -12,7 +12,7 @@ use super::virtio_sound::VirtioSoundConfig;
 use super::worker::SndWorker;
 use super::{defs, defs::uapi, defs::QUEUE_INDEXES, Error};
 
-use crate::legacy::GicV3;
+use crate::legacy::IrqChip;
 use crate::virtio::DeviceState;
 
 // Supported features.
@@ -31,7 +31,7 @@ pub struct Snd {
     pub(crate) interrupt_evt: EventFd,
     pub(crate) activate_evt: EventFd,
     pub(crate) device_state: DeviceState,
-    intc: Option<GicV3>,
+    intc: Option<IrqChip>,
     irq_line: Option<u32>,
     worker_thread: Option<JoinHandle<()>>,
     worker_stopfd: EventFd,
@@ -76,7 +76,7 @@ impl Snd {
         defs::SND_DEV_ID
     }
 
-    pub fn set_intc(&mut self, intc: GicV3) {
+    pub fn set_intc(&mut self, intc: IrqChip) {
         self.intc = Some(intc);
     }
 }

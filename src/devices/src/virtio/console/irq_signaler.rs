@@ -3,14 +3,14 @@ use std::sync::Arc;
 
 use utils::eventfd::EventFd;
 
-use crate::legacy::GicV3;
+use crate::legacy::IrqChip;
 use crate::virtio::{VIRTIO_MMIO_INT_CONFIG, VIRTIO_MMIO_INT_VRING};
 
 #[derive(Clone)]
 pub struct IRQSignaler {
     interrupt_status: Arc<AtomicUsize>,
     interrupt_evt: Arc<EventFd>,
-    intc: Option<GicV3>,
+    intc: Option<IrqChip>,
     irq_line: Option<u32>,
 }
 
@@ -32,9 +32,13 @@ impl IRQSignaler {
         self.interrupt_status
             .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
         if let Some(intc) = &self.intc {
-            intc.set_irq(self.irq_line.unwrap());
-        } else if let Err(e) = self.interrupt_evt.write(1) {
-            error!("Failed to signal used queue: {e:?}");
+            if let Err(e) = intc
+                .lock()
+                .unwrap()
+                .set_irq(self.irq_line, Some(&self.interrupt_evt))
+            {
+                error!("Failed to signal used queue: {e:?}");
+            }
         }
     }
 
@@ -55,7 +59,7 @@ impl IRQSignaler {
         self.interrupt_status.clone()
     }
 
-    pub fn set_intc(&mut self, intc: GicV3) {
+    pub fn set_intc(&mut self, intc: IrqChip) {
         self.intc = Some(intc);
     }
 

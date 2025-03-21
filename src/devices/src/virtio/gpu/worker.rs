@@ -21,7 +21,7 @@ use super::protocol::{
     virtio_gpu_ctrl_hdr, virtio_gpu_mem_entry, GpuCommand, GpuResponse, VirtioGpuResult,
 };
 use super::virtio_gpu::VirtioGpu;
-use crate::legacy::GicV3;
+use crate::legacy::IrqChip;
 use crate::virtio::fs::ExportTable;
 use crate::virtio::gpu::protocol::{VIRTIO_GPU_FLAG_FENCE, VIRTIO_GPU_FLAG_INFO_RING_IDX};
 use crate::virtio::gpu::virtio_gpu::VirtioGpuRing;
@@ -34,7 +34,7 @@ pub struct Worker {
     queue_ctl: Arc<Mutex<VirtQueue>>,
     interrupt_status: Arc<AtomicUsize>,
     interrupt_evt: EventFd,
-    intc: Option<GicV3>,
+    intc: Option<IrqChip>,
     irq_line: Option<u32>,
     shm_region: VirtioShmRegion,
     virgl_flags: u32,
@@ -51,7 +51,7 @@ impl Worker {
         queue_ctl: Arc<Mutex<VirtQueue>>,
         interrupt_status: Arc<AtomicUsize>,
         interrupt_evt: EventFd,
-        intc: Option<GicV3>,
+        intc: Option<IrqChip>,
         irq_line: Option<u32>,
         shm_region: VirtioShmRegion,
         virgl_flags: u32,
@@ -110,14 +110,11 @@ impl Worker {
         self.interrupt_status
             .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
         if let Some(intc) = &self.intc {
-            intc.set_irq(self.irq_line.unwrap());
-            Ok(())
-        } else {
-            self.interrupt_evt.write(1).map_err(|e| {
-                error!("Failed to signal used queue: {:?}", e);
-                DeviceError::FailedSignalingUsedQueue(e)
-            })
+            intc.lock()
+                .unwrap()
+                .set_irq(self.irq_line, Some(&self.interrupt_evt))?;
         }
+        Ok(())
     }
 
     fn process_gpu_command(
