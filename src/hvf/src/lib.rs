@@ -16,7 +16,7 @@ use std::arch::asm;
 
 use std::convert::TryInto;
 use std::fmt::{Display, Formatter};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -37,11 +37,54 @@ const TMR_CTL_IMASK: u64 = 1 << 1;
 const TMR_CTL_ISTATUS: u64 = 1 << 2;
 
 const PSR_MODE_EL1H: u64 = 0x0000_0005;
+const PSR_MODE_EL2H: u64 = 0x0000_0009;
 const PSR_F_BIT: u64 = 0x0000_0040;
 const PSR_I_BIT: u64 = 0x0000_0080;
 const PSR_A_BIT: u64 = 0x0000_0100;
 const PSR_D_BIT: u64 = 0x0000_0200;
-const PSTATE_FAULT_BITS_64: u64 = PSR_MODE_EL1H | PSR_A_BIT | PSR_F_BIT | PSR_I_BIT | PSR_D_BIT;
+const PSTATE_EL1_FAULT_BITS_64: u64 = PSR_MODE_EL1H | PSR_A_BIT | PSR_F_BIT | PSR_I_BIT | PSR_D_BIT;
+const PSTATE_EL2_FAULT_BITS_64: u64 = PSR_MODE_EL2H | PSR_A_BIT | PSR_F_BIT | PSR_I_BIT | PSR_D_BIT;
+
+const HCR_TLOR: u64 = 1 << 35;
+const HCR_RW: u64 = 1 << 31;
+const HCR_TSW: u64 = 1 << 22;
+const HCR_TACR: u64 = 1 << 21;
+const HCR_TIDCP: u64 = 1 << 20;
+const HCR_TSC: u64 = 1 << 19;
+const HCR_TID3: u64 = 1 << 18;
+const HCR_TWE: u64 = 1 << 14;
+const HCR_TWI: u64 = 1 << 13;
+const HCR_BSU_IS: u64 = 1 << 10;
+const HCR_FB: u64 = 1 << 9;
+const HCR_AMO: u64 = 1 << 5;
+const HCR_IMO: u64 = 1 << 4;
+const HCR_FMO: u64 = 1 << 3;
+const HCR_PTW: u64 = 1 << 2;
+const HCR_SWIO: u64 = 1 << 1;
+const HCR_VM: u64 = 1 << 0;
+// Use the same bits as KVM uses in vcpu reset.
+const HCR_EL2_BITS: u64 = HCR_TSC
+    | HCR_TSW
+    | HCR_TWE
+    | HCR_TWI
+    | HCR_VM
+    | HCR_BSU_IS
+    | HCR_FB
+    | HCR_TACR
+    | HCR_AMO
+    | HCR_SWIO
+    | HCR_TIDCP
+    | HCR_RW
+    | HCR_TLOR
+    | HCR_FMO
+    | HCR_IMO
+    | HCR_PTW
+    | HCR_TID3;
+
+const CNTHCTL_EL0VCTEN: u64 = 1 << 1;
+const CNTHCTL_EL0PCTEN: u64 = 1 << 0;
+// Trap accesses to both virtual and physical counter registers.
+const CNTHCTL_EL2_BITS: u64 = CNTHCTL_EL0VCTEN | CNTHCTL_EL0PCTEN;
 
 const EC_WFX_TRAP: u64 = 0x1;
 const EC_AA64_HVC: u64 = 0x16;
@@ -53,9 +96,11 @@ const EC_AA64_BKPT: u64 = 0x3c;
 
 #[derive(Debug)]
 pub enum Error {
+    EnableEL2,
     FindSymbol(libloading::Error),
     MemoryMap,
     MemoryUnmap,
+    NestedCheck,
     VcpuCreate,
     VcpuInitialRegisters,
     VcpuReadRegister,
@@ -74,9 +119,14 @@ impl Display for Error {
         use self::Error::*;
 
         match self {
+            EnableEL2 => write!(f, "Error enabling EL2 mode in HVF"),
             FindSymbol(ref err) => write!(f, "Couldn't find symbol in HVF library: {}", err),
             MemoryMap => write!(f, "Error registering memory region in HVF"),
             MemoryUnmap => write!(f, "Error unregistering memory region in HVF"),
+            NestedCheck => write!(
+                f,
+                "Nested virtualization was requested but it's not support in this system"
+            ),
             VcpuCreate => write!(f, "Error creating HVF vCPU instance"),
             VcpuInitialRegisters => write!(f, "Error setting up initial HVF vCPU registers"),
             VcpuReadRegister => write!(f, "Error reading HVF vCPU register"),
@@ -156,11 +206,56 @@ pub fn vcpu_set_vtimer_mask(vcpuid: u64, masked: bool) -> Result<(), Error> {
     }
 }
 
+pub struct HvfNestedBindings {
+    hv_vm_config_get_el2_supported:
+        libloading::Symbol<'static, unsafe extern "C" fn(*mut bool) -> hv_return_t>,
+    hv_vm_config_set_el2_enabled:
+        libloading::Symbol<'static, unsafe extern "C" fn(hv_vm_config_t, *mut bool) -> hv_return_t>,
+}
+
 pub struct HvfVm {}
 
+static HVF: LazyLock<libloading::Library> = LazyLock::new(|| unsafe {
+    libloading::Library::new(
+        "/System/Library/Frameworks/Hypervisor.framework/Versions/A/Hypervisor",
+    )
+    .unwrap()
+});
+
 impl HvfVm {
-    pub fn new() -> Result<Self, Error> {
-        let ret = unsafe { hv_vm_create(std::ptr::null_mut()) };
+    pub fn new(nested_enabled: bool) -> Result<Self, Error> {
+        let config = unsafe { hv_vm_config_create() };
+
+        if nested_enabled {
+            let bindings = unsafe {
+                HvfNestedBindings {
+                    hv_vm_config_get_el2_supported: HVF
+                        .get(b"hv_vm_config_get_el2_supported")
+                        .map_err(Error::FindSymbol)?,
+                    hv_vm_config_set_el2_enabled: HVF
+                        .get(b"hv_vm_config_set_el2_enabled")
+                        .map_err(Error::FindSymbol)?,
+                }
+            };
+
+            let mut el2_supported: bool = false;
+            let ret = unsafe { (bindings.hv_vm_config_get_el2_supported)(&mut el2_supported) };
+            if ret != HV_SUCCESS {
+                return Err(Error::NestedCheck);
+            }
+
+            if !el2_supported {
+                return Err(Error::NestedCheck);
+            }
+
+            let mut el2_enabled = true;
+            let ret = unsafe { (bindings.hv_vm_config_set_el2_enabled)(config, &mut el2_enabled) };
+            if ret != HV_SUCCESS {
+                return Err(Error::EnableEL2);
+            }
+        }
+
+        let ret = unsafe { hv_vm_create(config) };
 
         if ret != HV_SUCCESS {
             Err(Error::VmCreate)
@@ -232,10 +327,11 @@ pub struct HvfVcpu<'a> {
     pending_mmio_read: Option<MmioRead>,
     pending_advance_pc: bool,
     vtimer_masked: bool,
+    nested_enabled: bool,
 }
 
 impl HvfVcpu<'_> {
-    pub fn new(mpidr: u64) -> Result<Self, Error> {
+    pub fn new(mpidr: u64, nested_enabled: bool) -> Result<Self, Error> {
         let mut vcpuid: hv_vcpu_t = 0;
         let vcpu_exit_ptr: *mut hv_vcpu_exit_t = std::ptr::null_mut();
 
@@ -276,14 +372,43 @@ impl HvfVcpu<'_> {
             pending_mmio_read: None,
             pending_advance_pc: false,
             vtimer_masked: false,
+            nested_enabled,
         })
     }
 
     pub fn set_initial_state(&self, entry_addr: u64, fdt_addr: u64) -> Result<(), Error> {
-        let ret =
-            unsafe { hv_vcpu_set_reg(self.vcpuid, hv_reg_t_HV_REG_CPSR, PSTATE_FAULT_BITS_64) };
-        if ret != HV_SUCCESS {
-            return Err(Error::VcpuInitialRegisters);
+        if self.nested_enabled {
+            let ret = unsafe {
+                hv_vcpu_set_reg(self.vcpuid, hv_reg_t_HV_REG_CPSR, PSTATE_EL2_FAULT_BITS_64)
+            };
+            if ret != HV_SUCCESS {
+                return Err(Error::VcpuInitialRegisters);
+            }
+
+            let ret = unsafe {
+                hv_vcpu_set_sys_reg(self.vcpuid, hv_sys_reg_t_HV_SYS_REG_HCR_EL2, HCR_EL2_BITS)
+            };
+            if ret != HV_SUCCESS {
+                return Err(Error::VcpuInitialRegisters);
+            }
+
+            let ret = unsafe {
+                hv_vcpu_set_sys_reg(
+                    self.vcpuid,
+                    hv_sys_reg_t_HV_SYS_REG_CNTHCTL_EL2,
+                    CNTHCTL_EL2_BITS,
+                )
+            };
+            if ret != HV_SUCCESS {
+                return Err(Error::VcpuInitialRegisters);
+            }
+        } else {
+            let ret = unsafe {
+                hv_vcpu_set_reg(self.vcpuid, hv_reg_t_HV_REG_CPSR, PSTATE_EL1_FAULT_BITS_64)
+            };
+            if ret != HV_SUCCESS {
+                return Err(Error::VcpuInitialRegisters);
+            }
         }
 
         let ret = unsafe { hv_vcpu_set_reg(self.vcpuid, hv_reg_t_HV_REG_PC, entry_addr) };
