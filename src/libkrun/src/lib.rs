@@ -71,8 +71,8 @@ const KRUNFW_NAME: &str = "libkrunfw.4.dylib";
 const INIT_PATH: &str = "/init.krun";
 
 #[cfg(not(feature = "efi"))]
-static KRUNFW: LazyLock<libloading::Library> =
-    LazyLock::new(|| unsafe { libloading::Library::new(KRUNFW_NAME).unwrap() });
+static KRUNFW: LazyLock<Option<libloading::Library>> =
+    LazyLock::new(|| unsafe { libloading::Library::new(KRUNFW_NAME).ok() });
 
 #[cfg(not(feature = "efi"))]
 pub struct KrunfwBindings {
@@ -89,13 +89,17 @@ pub struct KrunfwBindings {
 #[cfg(not(feature = "efi"))]
 impl KrunfwBindings {
     fn load_bindings() -> Result<KrunfwBindings, libloading::Error> {
+        let krunfw = match KRUNFW.as_ref() {
+            Some(krunfw) => krunfw,
+            None => return Err(libloading::Error::DlOpenUnknown),
+        };
         Ok(unsafe {
             KrunfwBindings {
-                get_kernel: KRUNFW.get(b"krunfw_get_kernel")?,
+                get_kernel: krunfw.get(b"krunfw_get_kernel")?,
                 #[cfg(feature = "tee")]
-                get_initrd: KRUNFW.get(b"krunfw_get_initrd")?,
+                get_initrd: krunfw.get(b"krunfw_get_initrd")?,
                 #[cfg(feature = "tee")]
-                get_qboot: KRUNFW.get(b"krunfw_get_qboot")?,
+                get_qboot: krunfw.get(b"krunfw_get_qboot")?,
             }
         })
     }
