@@ -1290,7 +1290,7 @@ pub(crate) fn setup_vm(
 pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
 ) -> std::result::Result<Vm, StartMicrovmError> {
-    let mut vm = Vm::new()
+    let mut vm = Vm::new(false)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     vm.memory_init(guest_memory)
@@ -1491,6 +1491,7 @@ fn create_vcpus_aarch64(
             boot_receiver,
             exit_evt.try_clone().map_err(Error::EventFd)?,
             vcpu_list.clone(),
+            false,
         )
         .map_err(Error::Vcpu)?;
 

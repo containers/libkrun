@@ -98,8 +98,8 @@ pub struct Vm {
 
 impl Vm {
     /// Constructs a new `Vm` using the given `Kvm` instance.
-    pub fn new() -> Result<Self> {
-        let hvf_vm = HvfVm::new().map_err(Error::VmSetup)?;
+    pub fn new(nested_enabled: bool) -> Result<Self> {
+        let hvf_vm = HvfVm::new(nested_enabled).map_err(Error::VmSetup)?;
 
         Ok(Vm { hvf_vm })
     }
@@ -200,6 +200,7 @@ pub struct Vcpu {
     response_sender: Sender<VcpuResponse>,
 
     vcpu_list: Arc<VcpuList>,
+    nested_enabled: bool,
 }
 
 impl Vcpu {
@@ -273,6 +274,7 @@ impl Vcpu {
         boot_receiver: Option<Receiver<u64>>,
         exit_evt: EventFd,
         vcpu_list: Arc<VcpuList>,
+        nested_enabled: bool,
     ) -> Result<Self> {
         let (event_sender, event_receiver) = unbounded();
         let (response_sender, response_receiver) = unbounded();
@@ -291,6 +293,7 @@ impl Vcpu {
             response_receiver: Some(response_receiver),
             response_sender,
             vcpu_list,
+            nested_enabled,
         })
     }
 
@@ -437,7 +440,8 @@ impl Vcpu {
 
     /// Main loop of the vCPU thread.
     pub fn run(&mut self, init_tls_sender: Sender<bool>) {
-        let mut hvf_vcpu = HvfVcpu::new(self.mpidr).expect("Can't create HVF vCPU");
+        let mut hvf_vcpu =
+            HvfVcpu::new(self.mpidr, self.nested_enabled).expect("Can't create HVF vCPU");
         let hvf_vcpuid = hvf_vcpu.id();
 
         init_tls_sender
