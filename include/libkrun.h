@@ -409,6 +409,7 @@ int32_t krun_set_exec(uint32_t ctx_id,
 #define KRUN_KERNEL_FORMAT_IMAGE_BZ2 3
 #define KRUN_KERNEL_FORMAT_IMAGE_GZ 4
 #define KRUN_KERNEL_FORMAT_IMAGE_ZSTD 5
+#define KRUN_KERNEL_FORMAT_AUTO 6
 /**
  * Sets the path to the kernel to be loaded in the microVM.
  *

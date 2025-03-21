@@ -824,8 +824,10 @@ pub fn build_microvm(
         println!("Starting TEE/microVM.");
     }
 
+    println!("Starting microVM.");
     vmm.start_vcpus(vcpus)
         .map_err(StartMicrovmError::Internal)?;
+    println!("MicroVM started.");
 
     // Clippy thinks we don't need Arc<Mutex<...
     // but we don't want to change the event_manager interface
@@ -856,6 +858,14 @@ fn load_external_kernel(
         }
         #[cfg(target_arch = "x86_64")]
         KernelFormat::Elf => {
+            let data: Vec<u8> = std::fs::read(external_kernel.path.clone())
+                .map_err(StartMicrovmError::ImageBz2OpenKernel)?;
+            if let Some(magic) = data
+                .windows(4)
+                .position(|window| window == [b'\x7f', b'E', b'L', b'F'])
+            {
+                debug!("Found ELF header on Image file at: 0x{:x}", magic);
+            }
             let mut file = File::options()
                 .read(true)
                 .write(false)
@@ -863,7 +873,20 @@ fn load_external_kernel(
                 .map_err(StartMicrovmError::ElfOpenKernel)?;
             let load_result = loader::Elf::load(guest_mem, None, &mut file, None)
                 .map_err(StartMicrovmError::ElfLoadKernel)?;
-            load_result.kernel_load
+            match load_result.pvh_boot_cap {
+                loader::PvhBootCapability::PvhEntryPresent(guest_address) => {
+                    println!("PvhEntryPresent");
+                    guest_address
+                },
+                loader::PvhBootCapability::PvhEntryNotPresent => {
+                    println!("PvhEntryNotPresent");
+                    load_result.kernel_load
+                },
+                loader::PvhBootCapability::PvhEntryIgnored => {
+                    println!("PvhEntryIgnored");
+                    load_result.kernel_load
+                },
+            }
         }
         #[cfg(target_arch = "aarch64")]
         KernelFormat::PeGz => {
