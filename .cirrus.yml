@@ -1,8 +1,7 @@
-container:
-  image: rust:latest
-  kvm: true
-
-task:
+unit_test_task:
+  container:
+    image: rust:latest
+    kvm: true
   name: Unit Tests (x86_64)
   fake_init_script: touch init/init
   download_libkrunfw_script:
@@ -14,3 +13,16 @@ task:
     - apt-get update && apt-get install -y libvirglrenderer-dev libepoxy-dev libdrm-dev
   test_script: cargo test
   before_cache_script: rm -rf $CARGO_HOME/registry/index
+
+ci_test_task:
+  container:
+    image: fedora:41
+    kvm: true
+  name: Integration Tests (x86_64)
+  download_libkrunfw_script:
+    - curl -L -o /tmp/libkrunfw-4.9.0-x86_64.tgz https://github.com/containers/libkrunfw/releases/download/v4.9.0/libkrunfw-4.9.0-x86_64.tgz && tar xpf /tmp/libkrunfw-4.9.0-x86_64.tgz -C /usr
+  install_packages_script:
+    - dnf install -y clang-devel gcc glibc-static make patchelf rustup
+  install_rust_script:
+    - rustup-init -y -t x86_64-unknown-linux-musl
+  test_script: . "$HOME/.cargo/env" && make test
