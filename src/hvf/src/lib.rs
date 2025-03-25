@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-use arch::aarch64::sysreg::{icc_reg_name, SYSREG_MASK};
+use arch::aarch64::sysreg::{sys_reg_name, SYSREG_MASK};
 use crossbeam_channel::Sender;
 use log::debug;
 
@@ -486,7 +486,7 @@ impl HvfVcpu<'_> {
                     syndrome,
                     rt,
                     reg,
-                    icc_reg_name(reg).unwrap_or("non-ICC reg")
+                    sys_reg_name(reg).unwrap_or("unknown sysreg")
                 );
 
                 self.pending_advance_pc = true;
@@ -508,7 +508,7 @@ impl HvfVcpu<'_> {
                             "UNKNOWN rt={}, reg={} name={}",
                             rt,
                             reg,
-                            icc_reg_name(reg).unwrap()
+                            sys_reg_name(reg).unwrap_or("unknown sysreg")
                         ),
                     }
                 } else {
@@ -523,8 +523,8 @@ impl HvfVcpu<'_> {
                         panic!(
                             "unexpected write: {} name={}",
                             reg,
-                            icc_reg_name(reg).unwrap_or("non-ICC reg")
-                        )
+                            sys_reg_name(reg).unwrap_or("unknown sysreg")
+                        );
                     }
                 }
             }
