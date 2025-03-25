@@ -537,6 +537,23 @@ int32_t krun_setuid(uint32_t ctx_id, uid_t uid);
 int32_t krun_setgid(uint32_t ctx_id, gid_t gid);
 
 /**
+ * Configures the microVM to support Nested Virtualization
+ *
+ * Arguments:
+ *  "ctx_id"  - the configuration context ID.
+ *  "enabled" - true to enable Nested Virtualization in the microVM.
+ *
+ * Notes:
+ *  This feature is only supported on macOS.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure. Success doesn't imply that
+ *  Nested Virtualization is supported on the system, only that it's going to be requested
+ *  when the microVM is created after calling "krun_start_enter".
+ */
+int32_t krun_set_nested_virt(uint32_t ctx_id, bool enabled);
+
+/**
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
  * stdin/stdout to manage them on behalf of the process running inside the isolated environment,
  * simulating that the latter has direct control of the terminal.

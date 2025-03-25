@@ -533,7 +533,7 @@ pub fn build_microvm(
 
     #[cfg(not(feature = "tee"))]
     #[allow(unused_mut)]
-    let mut vm = setup_vm(&guest_memory)?;
+    let mut vm = setup_vm(&guest_memory, vm_resources.nested_enabled)?;
 
     #[cfg(feature = "tee")]
     let (kvm, vm) = {
@@ -723,6 +723,7 @@ pub fn build_microvm(
             payload_config.entry_addr,
             &exit_evt,
             vcpu_list.clone(),
+            vm_resources.nested_enabled,
         )
         .map_err(StartMicrovmError::Internal)?;
 
@@ -1260,6 +1261,7 @@ fn load_cmdline(vmm: &Vmm) -> std::result::Result<(), StartMicrovmError> {
 #[cfg(all(target_os = "linux", not(feature = "tee")))]
 pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
+    _nested_enabled: bool,
 ) -> std::result::Result<Vm, StartMicrovmError> {
     let kvm = KvmContext::new()
         .map_err(Error::KvmContext)
@@ -1289,8 +1291,9 @@ pub(crate) fn setup_vm(
 #[cfg(target_os = "macos")]
 pub(crate) fn setup_vm(
     guest_memory: &GuestMemoryMmap,
+    nested_enabled: bool,
 ) -> std::result::Result<Vm, StartMicrovmError> {
-    let mut vm = Vm::new(false)
+    let mut vm = Vm::new(nested_enabled)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     vm.memory_init(guest_memory)
@@ -1473,6 +1476,7 @@ fn create_vcpus_aarch64(
     entry_addr: GuestAddress,
     exit_evt: &EventFd,
     vcpu_list: Arc<VcpuList>,
+    nested_enabled: bool,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
     let mut boot_senders: HashMap<u64, Sender<u64>> = HashMap::new();
@@ -1491,7 +1495,7 @@ fn create_vcpus_aarch64(
             boot_receiver,
             exit_evt.try_clone().map_err(Error::EventFd)?,
             vcpu_list.clone(),
-            false,
+            nested_enabled,
         )
         .map_err(Error::Vcpu)?;
 
@@ -1916,7 +1920,7 @@ pub mod tests {
 
         let (guest_memory, _arch_memory_info, _shm_manager, _payload_config) =
             default_guest_memory(128).unwrap();
-        let vm = setup_vm(&guest_memory).unwrap();
+        let vm = setup_vm(&guest_memory, false).unwrap();
         let _kvmioapic = KvmIoapic::new(&vm.fd()).unwrap();
 
         // Dummy entry_addr, vcpus will not boot.
@@ -1939,7 +1943,7 @@ pub mod tests {
     fn test_create_vcpus_aarch64() {
         let (guest_memory, _arch_memory_info) =
             create_guest_memory(128, None, Payload::Empty).unwrap();
-        let vm = setup_vm(&guest_memory).unwrap();
+        let vm = setup_vm(&guest_memory, false).unwrap();
         let vcpu_count = 2;
 
         let vcpu_config = VcpuConfig {
