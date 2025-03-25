@@ -118,6 +118,8 @@ pub struct VmResources {
     pub console_output: Option<PathBuf>,
     /// SMBIOS OEM Strings
     pub smbios_oem_strings: Option<Vec<String>>,
+    /// Whether to enable nested virtualization.
+    pub nested_enabled: bool,
 }
 
 impl VmResources {
@@ -341,6 +343,7 @@ mod tests {
             enable_snd: False,
             console_output: None,
             smbios_oem_strings: None,
+            nested_enabled: false,
         }
     }
 
