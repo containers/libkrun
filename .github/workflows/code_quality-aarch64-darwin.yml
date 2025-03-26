@@ -1,42 +1,29 @@
-name: Code Quality (rustfmt and clippy)
+name: macOS-aarch64
 on: [pull_request, create]
 
 jobs:
   build:
     if: github.event_name == 'pull_request'
-    name: Code Quality (clippy, rustfmt)
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        rust:
-          - stable
-        target:
-          - aarch64-apple-darwin
+    name: Code Quality (fmt, clippy)
+    runs-on: macos-latest
     steps:
       - name: Code checkout
         uses: actions/checkout@v2
-      - name: Install Rust toolchain (${{ matrix.rust }})
+      - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
-            toolchain: ${{ matrix.rust }}
-            target: ${{ matrix.target }}
-            override: true
+            toolchain: stable
             components: rustfmt, clippy
 
-      - name: Create a fake init
-        run: touch init/init
+      - name: Set up Homebrew
+        id: set-up-homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
+      - name: Install dependencies
+        run: brew tap slp/krunkit && brew install virglrenderer
 
       - name: Formatting (rustfmt)
         run: cargo fmt -- --check
 
-      - name: Clippy (default features)
-        run: cargo clippy --target aarch64-apple-darwin -- -D warnings
-
-      - name: Clippy (net feature)
-        run: cargo clippy --target aarch64-apple-darwin --features net -- -D warnings
-
-      - name: Clippy (blk feature)
-        run: cargo clippy --target aarch64-apple-darwin --features blk -- -D warnings
-
-      - name: Clippy (efi(blk+net) feature)
-        run: cargo clippy --target aarch64-apple-darwin --features efi -- -D warnings
+      - name: Formatting (rustfmt)
+        run: cargo clippy --features efi,gpu -- -D warnings
