@@ -1,26 +1,18 @@
-name: Code Quality (rustfmt and clippy)
+name: linux-aarch64
 on: [pull_request, create]
 
 jobs:
   build:
     if: github.event_name == 'pull_request'
-    name: Code Quality (clippy, rustfmt)
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        rust:
-          - stable
-        target:
-          - aarch64-unknown-linux-gnu
+    name: Code Quality (fmt, clippy)
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Code checkout
         uses: actions/checkout@v2
-      - name: Install Rust toolchain (${{ matrix.rust }})
+      - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
-            toolchain: ${{ matrix.rust }}
-            target: ${{ matrix.target }}
-            override: true
+            toolchain: stable
             components: rustfmt, clippy
 
       - name: Install packages
