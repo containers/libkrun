@@ -314,7 +314,7 @@ pub extern "C" fn krun_set_log_level(level: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn krun_create_ctx() -> i32 {
     let ctx_cfg = {
-        let shutdown_efd = if cfg!(feature = "tee") {
+        let shutdown_efd = if cfg!(feature = "efi") {
             Some(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap())
         } else {
             None
