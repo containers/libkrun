@@ -1,3 +1,5 @@
+// Copyright © 2020, Oracle and/or its affiliates.
+//
 // Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -67,14 +69,18 @@ pub fn setup_regs(vcpu: &VcpuFd, boot_ip: u64, id: u8) -> Result<()> {
         kvm_regs {
             rflags: 0x0000_0000_0000_0002u64,
             rip: boot_ip,
-            // Frame pointer. It gets a snapshot of the stack pointer (rsp) so that when adjustments are
-            // made to rsp (i.e. reserving space for local variables or pushing values on to the stack),
-            // local variables and function parameters are still accessible from a constant offset from rbp.
-            rsp: super::layout::BOOT_STACK_POINTER,
-            // Starting stack pointer.
-            rbp: super::layout::BOOT_STACK_POINTER,
-            // Must point to zero page address per Linux ABI. This is x86_64 specific.
-            rsi: super::layout::ZERO_PAGE_START,
+            // pvh
+            rbx: super::layout::PVH_INFO_START,
+
+            // linux boot protocol
+            // // Frame pointer. It gets a snapshot of the stack pointer (rsp) so that when adjustments are
+            // // made to rsp (i.e. reserving space for local variables or pushing values on to the stack),
+            // // local variables and function parameters are still accessible from a constant offset from rbp.
+            // rsp: super::layout::BOOT_STACK_POINTER,
+            // // Starting stack pointer.
+            // rbp: super::layout::BOOT_STACK_POINTER,
+            // // Must point to zero page address per Linux ABI. This is x86_64 specific.
+            // rsi: super::layout::ZERO_PAGE_START,
             ..Default::default()
         }
     } else {
@@ -98,8 +104,10 @@ pub fn setup_sregs(mem: &GuestMemoryMmap, vcpu: &VcpuFd, id: u8) -> Result<()> {
     let mut sregs: kvm_sregs = vcpu.get_sregs().map_err(Error::GetStatusRegisters)?;
 
     if cfg!(not(feature = "tee")) {
-        configure_segments_and_sregs(mem, &mut sregs)?;
-        setup_page_tables(mem, &mut sregs)?; // TODO(dgreid) - Can this be done once per system instead
+        configure_segments_and_sregs(mem, &mut sregs, true)?;
+        if !true { // 64-bit Linux boot only
+            setup_page_tables(mem, &mut sregs)?; // TODO(dgreid) - Can this be done once per system instead
+        }
     } else if id != 0 {
         //sregs.cs.selector = 0x9100;
         //sregs.cs.base = 0x91000;
@@ -117,6 +125,7 @@ const EFER_LMA: u64 = 0x400;
 const EFER_LME: u64 = 0x100;
 
 const X86_CR0_PE: u64 = 0x1;
+const X86_CR0_ET: u64 = 0x10;
 const X86_CR0_PG: u64 = 0x8000_0000;
 const X86_CR4_PAE: u64 = 0x20;
 
@@ -140,13 +149,22 @@ fn write_idt_value(val: u64, guest_mem: &GuestMemoryMmap) -> Result<()> {
         .map_err(|_| Error::WriteIDT)
 }
 
-fn configure_segments_and_sregs(mem: &GuestMemoryMmap, sregs: &mut kvm_sregs) -> Result<()> {
-    let gdt_table: [u64; BOOT_GDT_MAX] = [
-        gdt_entry(0, 0, 0),            // NULL
-        gdt_entry(0xa09b, 0, 0xfffff), // CODE
-        gdt_entry(0xc093, 0, 0xfffff), // DATA
-        gdt_entry(0x808b, 0, 0xfffff), // TSS
-    ];
+fn configure_segments_and_sregs(mem: &GuestMemoryMmap, sregs: &mut kvm_sregs, pvh: bool) -> Result<()> {
+    let gdt_table: [u64; BOOT_GDT_MAX] = if pvh {
+        [
+            gdt_entry(0, 0, 0),                // NULL
+            gdt_entry(0xc09b, 0, 0xffff_ffff), // CODE
+            gdt_entry(0xc093, 0, 0xffff_ffff), // DATA
+            gdt_entry(0x008b, 0, 0x67),        // TSS
+        ]
+    } else {
+        [
+            gdt_entry(0, 0, 0),            // NULL
+            gdt_entry(0xa09b, 0, 0xfffff), // CODE
+            gdt_entry(0xc093, 0, 0xfffff), // DATA
+            gdt_entry(0x808b, 0, 0xfffff), // TSS
+        ]
+    };
 
     let code_seg = kvm_segment_from_gdt(gdt_table[1], 1);
     let data_seg = kvm_segment_from_gdt(gdt_table[2], 2);
@@ -169,9 +187,15 @@ fn configure_segments_and_sregs(mem: &GuestMemoryMmap, sregs: &mut kvm_sregs) ->
     sregs.ss = data_seg;
     sregs.tr = tss_seg;
 
-    /* 64-bit protected mode */
-    sregs.cr0 |= X86_CR0_PE;
-    sregs.efer |= EFER_LME | EFER_LMA;
+    // https://github.com/firecracker-microvm/firecracker/blob/20b50ce11ed45d99e514f3eda025c185188cd15d/src/vmm/src/arch/x86_64/regs.rs#L243
+    if pvh {
+        sregs.cr0 = X86_CR0_PE | X86_CR0_ET;
+        sregs.cr4 = 0;
+    } else {
+        /* 64-bit protected mode */
+        sregs.cr0 |= X86_CR0_PE;
+        sregs.efer |= EFER_LME | EFER_LMA;
+    }
 
     Ok(())
 }

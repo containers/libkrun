@@ -28,6 +28,12 @@ enum net_mode {
     NET_MODE_TSI,
 };
 
+#if defined(__x86_64__)
+#define KERNEL_FORMAT KRUN_KERNEL_FORMAT_AUTO
+#else
+#define KERNEL_FORMAT KRUN_KERNEL_FORMAT_RAW
+#endif
+
 static void print_help(char *const name)
 {
     fprintf(stderr,
@@ -37,8 +43,15 @@ static void print_help(char *const name)
         "              --net=NET_MODE        Set network mode\n"
         "              --passt-socket=PATH   Instead of starting passt, connect to passt socket at PATH"
         "NET_MODE can be either TSI (default) or PASST\n"
+        "              --kernel              Path for loading a kernel in place of one supplied by libkrunfw\n"
+        "              --kernel-format       Format of a custom kernel (default: autodetect)\n"
+        "              --kernel-cmdline      Cmdline for externally-loaded kernel\n"
+        "              --initrd-path         Initrd for externally-loaded kernel (optional)\n"
+        "              --boot-disk           Add a boot disk (virtio-blk)\n"
+        "              --data-disk           Add a data disk (virtio-blk)\n"
+        "              --loglevel            Set a logging level (0-5)\n"
         "\n"
-        "NEWROOT:      the root directory of the vm\n"
+        "NEWROOT:      the root directory of the vm (virtio-fs)\n"
         "COMMAND:      the command you want to execute in the vm\n"
         "COMMAND_ARGS: arguments of COMMAND\n",
         name
@@ -49,6 +62,13 @@ static const struct option long_options[] = {
     { "help", no_argument, NULL, 'h' },
     { "net_mode", required_argument, NULL, 'N' },
     { "passt-socket", required_argument, NULL, 'P' },
+    { "kernel", required_argument, NULL, 'k'},
+    { "kernel-cmdline", required_argument, NULL, 'c'},
+    { "initrd-path", required_argument, NULL, 'i'},
+    { "boot-disk", required_argument, NULL, 'b'},
+    { "data-disk", required_argument, NULL, 'd'},
+    { "loglevel", required_argument, NULL, 'l'},
+    { "kernel-format", required_argument, NULL, 'F'},
     { NULL, 0, NULL, 0 }
 };
 
@@ -58,6 +78,13 @@ struct cmdline {
     char const *passt_socket_path;
     char const *new_root;
     char *const *guest_argv;
+    char const *boot_disk;
+    char const *data_disk;
+    char const *kernel_path;
+    char const *kernel_cmdline;
+    char const *initrd_path;
+    uint loglevel;
+    int kernel_format;
 };
 
 bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
@@ -71,6 +98,13 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         .passt_socket_path = NULL,
         .new_root = NULL,
         .guest_argv = NULL,
+        .kernel_path = NULL,
+        .kernel_cmdline = NULL,
+        .initrd_path = NULL,
+        .boot_disk = NULL,
+        .data_disk = NULL,
+        .loglevel = 0,
+        .kernel_format = KERNEL_FORMAT,
     };
 
     int option_index = 0;
@@ -94,6 +128,27 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         case 'P':
             cmdline->passt_socket_path = optarg;
             break;
+        case 'k':
+            cmdline->kernel_path = optarg;
+            break;
+        case 'c':
+            cmdline->kernel_cmdline = optarg;
+            break;
+        case 'i':
+            cmdline->initrd_path = optarg;
+            break;
+        case 'b':
+            cmdline->boot_disk = optarg;
+            break;
+        case 'd':
+            cmdline->data_disk = optarg;
+            break;
+        case 'l':
+            cmdline->loglevel = atoi(optarg);
+            break;
+        case 'F':
+            cmdline->kernel_format = atoi(optarg);
+            break;
         case '?':
             return false;
         default:
@@ -108,12 +163,17 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         return true;
     }
 
+    // User must either supply rootfs and command or boot disk
+    if (cmdline->boot_disk) {
+        return true;
+    }
+
     if (optind >= argc - 1) {
-        fprintf(stderr, "Missing COMMAND argument\n");
+        fprintf(stderr, "Missing COMMAND argument, but no boot disk has been specified\n");
     }
 
     if (optind == argc) {
-        fprintf(stderr, "Missing NEWROOT argument\n");
+        fprintf(stderr, "Missing NEWROOT argument, but no boot disk has been specified\n");
     }
 
     return false;
@@ -217,8 +277,7 @@ int main(int argc, char *const argv[])
         return 0;
     }
 
-    // Set the log level to "off".
-    err = krun_set_log_level(0);
+    err = krun_set_log_level(cmdline.loglevel);
     if (err) {
         errno = -err;
         perror("Error configuring log level");
@@ -245,7 +304,18 @@ int main(int argc, char *const argv[])
     rlim.rlim_cur = rlim.rlim_max;
     setrlimit(RLIMIT_NOFILE, &rlim);
 
-    if (err = krun_set_root(ctx_id, cmdline.new_root)) {
+    if (cmdline.boot_disk && (err = krun_add_disk(ctx_id, "boot", cmdline.boot_disk, 0))) {
+        errno = -err,
+        perror("Error configuring boot disk");
+        return -1;
+    }
+    if (cmdline.data_disk && (err = krun_add_disk(ctx_id, "data", cmdline.data_disk, 0))) {
+        errno = -err,
+        perror("Error configuring data disk");
+        return -1;
+    }
+
+    if (cmdline.new_root && (err = krun_set_root(ctx_id, cmdline.new_root))) {
         errno = -err;
         perror("Error configuring root path");
         return -1;
@@ -295,9 +365,18 @@ int main(int argc, char *const argv[])
     }
 
     // Specify the path of the binary to be executed in the isolated context, relative to the root path.
-    if (err = krun_set_exec(ctx_id, cmdline.guest_argv[0], (const char* const*) &cmdline.guest_argv[1], &envp[0])) {
+    if (cmdline.guest_argv && (err = krun_set_exec(ctx_id, cmdline.guest_argv[0], (const char* const*) &cmdline.guest_argv[1], &envp[0]))) {
         errno = -err;
         perror("Error configuring the parameters for the executable to be run");
+        return -1;
+    }
+
+    if (cmdline.kernel_path &&
+        (err = krun_set_kernel(ctx_id, cmdline.kernel_path, cmdline.kernel_format,
+        cmdline.initrd_path, cmdline.kernel_cmdline)))
+    {
+        errno = -err;
+        perror("Error configuring kernel");
         return -1;
     }
 
