@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-use super::super::super::legacy::GicV3;
+use super::super::super::legacy::IrqChip;
 use super::super::Queue as VirtQueue;
 use super::super::VIRTIO_MMIO_INT_VRING;
 use super::defs;
@@ -107,7 +107,7 @@ pub struct VsockMuxer {
     epoll: Epoll,
     interrupt_evt: EventFd,
     interrupt_status: Arc<AtomicUsize>,
-    intc: Option<GicV3>,
+    intc: Option<IrqChip>,
     irq_line: Option<u32>,
     proxy_map: ProxyMap,
     reaper_sender: Option<Sender<u64>>,
@@ -143,7 +143,7 @@ impl VsockMuxer {
         &mut self,
         mem: GuestMemoryMmap,
         queue: Arc<Mutex<VirtQueue>>,
-        intc: Option<GicV3>,
+        intc: Option<IrqChip>,
         irq_line: Option<u32>,
     ) {
         self.queue = Some(queue.clone());
@@ -242,9 +242,13 @@ impl VsockMuxer {
             self.interrupt_status
                 .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
             if let Some(intc) = &self.intc {
-                intc.set_irq(self.irq_line.unwrap());
-            } else if let Err(e) = self.interrupt_evt.write(1) {
-                warn!("failed to signal used queue: {:?}", e);
+                if let Err(e) = intc
+                    .lock()
+                    .unwrap()
+                    .set_irq(self.irq_line, Some(&self.interrupt_evt))
+                {
+                    warn!("failed to signal used queue: {:?}", e);
+                }
             }
         }
     }

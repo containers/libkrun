@@ -6,6 +6,7 @@
 // found in the THIRD-PARTY file.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::result;
@@ -17,7 +18,6 @@ use std::time::Duration;
 use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 
-use arch::aarch64::gic::GICDevice;
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use devices::legacy::VcpuList;
 use hvf::{HvfVcpu, HvfVm, VcpuExit, Vcpus};
@@ -35,8 +35,6 @@ pub enum Error {
     NotEnoughMemorySlots,
     /// Error configuring the general purpose aarch64 registers.
     REGSConfiguration(arch::aarch64::regs::Error),
-    /// Error setting up the global interrupt controller.
-    SetupGIC(arch::aarch64::gic::Error),
     /// Cannot set the memory regions.
     SetUserMemoryRegion(hvf::Error),
     /// Failed to signal Vcpu.
@@ -85,11 +83,6 @@ impl Display for Error {
             VcpuTlsInit => write!(f, "Cannot clean init vcpu TLS"),
             VcpuTlsNotPresent => write!(f, "Vcpu not present in TLS"),
             VcpuUnhandledKvmExit => write!(f, "Unexpected KVM_RUN exit reason"),
-            SetupGIC(e) => write!(
-                f,
-                "Error setting up the global interrupt controller: {:?}",
-                e
-            ),
             VcpuArmPreferredTarget => write!(f, "Error getting the Vcpu preferred target on Arm"),
             VcpuArmInit => write!(f, "Error doing Vcpu Init on Arm"),
         }
@@ -101,18 +94,18 @@ pub type Result<T> = result::Result<T, Error>;
 /// A wrapper around creating and using a VM.
 pub struct Vm {
     hvf_vm: HvfVm,
-    irqchip_handle: Option<Box<dyn GICDevice>>,
 }
 
 impl Vm {
     /// Constructs a new `Vm` using the given `Kvm` instance.
-    pub fn new() -> Result<Self> {
-        let hvf_vm = HvfVm::new().map_err(Error::VmSetup)?;
+    pub fn new(nested_enabled: bool) -> Result<Self> {
+        let hvf_vm = HvfVm::new(nested_enabled).map_err(Error::VmSetup)?;
 
-        Ok(Vm {
-            hvf_vm,
-            irqchip_handle: None,
-        })
+        Ok(Vm { hvf_vm })
+    }
+
+    pub fn hvf_vm(&self) -> &HvfVm {
+        &self.hvf_vm
     }
 
     /// Initializes the guest memory.
@@ -136,18 +129,6 @@ impl Vm {
         }
 
         Ok(())
-    }
-
-    pub fn setup_irqchip(&mut self, vcpu_count: u8) -> Result<()> {
-        self.irqchip_handle =
-            Some(arch::aarch64::gic::create_gic(vcpu_count.into()).map_err(Error::SetupGIC)?);
-        Ok(())
-    }
-
-    /// Gets a reference to the irqchip of the VM
-    #[allow(clippy::borrowed_box)]
-    pub fn get_irqchip(&self) -> &Box<dyn GICDevice> {
-        self.irqchip_handle.as_ref().unwrap()
     }
 
     pub fn add_mapping(
@@ -200,7 +181,7 @@ pub struct Vcpu {
     id: u8,
     boot_entry_addr: u64,
     boot_receiver: Option<Receiver<u64>>,
-    boot_senders: Option<Vec<Sender<u64>>>,
+    boot_senders: Option<HashMap<u64, Sender<u64>>>,
     fdt_addr: u64,
     mmio_bus: Option<devices::Bus>,
     #[cfg_attr(all(test, target_arch = "aarch64"), allow(unused))]
@@ -219,6 +200,7 @@ pub struct Vcpu {
     response_sender: Sender<VcpuResponse>,
 
     vcpu_list: Arc<VcpuList>,
+    nested_enabled: bool,
 }
 
 impl Vcpu {
@@ -292,6 +274,7 @@ impl Vcpu {
         boot_receiver: Option<Receiver<u64>>,
         exit_evt: EventFd,
         vcpu_list: Arc<VcpuList>,
+        nested_enabled: bool,
     ) -> Result<Self> {
         let (event_sender, event_receiver) = unbounded();
         let (response_sender, response_receiver) = unbounded();
@@ -304,12 +287,13 @@ impl Vcpu {
             fdt_addr: 0,
             mmio_bus: None,
             exit_evt,
-            mpidr: 0,
+            mpidr: id as u64,
             event_receiver,
             event_sender: Some(event_sender),
             response_receiver: Some(response_receiver),
             response_sender,
             vcpu_list,
+            nested_enabled,
         })
     }
 
@@ -328,7 +312,7 @@ impl Vcpu {
         self.mmio_bus = Some(mmio_bus);
     }
 
-    pub fn set_boot_senders(&mut self, boot_senders: Vec<Sender<u64>>) {
+    pub fn set_boot_senders(&mut self, boot_senders: HashMap<u64, Sender<u64>>) {
         self.boot_senders = Some(boot_senders);
     }
 
@@ -336,11 +320,8 @@ impl Vcpu {
     ///
     /// # Arguments
     ///
-    /// * `vm_fd` - The kvm `VmFd` for this microvm.
     /// * `guest_mem` - The guest memory used by this microvm.
-    /// * `kernel_load_addr` - Offset from `guest_mem` at which the kernel is loaded.
     pub fn configure_aarch64(&mut self, guest_mem: &GuestMemoryMmap) -> Result<()> {
-        self.mpidr = self.id as u64;
         self.fdt_addr = arch::aarch64::get_fdt_addr(guest_mem);
 
         Ok(())
@@ -393,13 +374,12 @@ impl Vcpu {
                         "CpuOn: mpidr=0x{:x} entry=0x{:x} context_id={}",
                         mpidr, entry, context_id
                     );
-                    // assuming a flat CPU hierarchy, only the bottom bits of mpidr should be used,
-                    // and cpuid == mpidr
-                    let cpuid: usize = mpidr as usize;
                     if let Some(boot_senders) = &self.boot_senders {
-                        if let Some(sender) = boot_senders.get(cpuid - 1) {
+                        if let Some(sender) = boot_senders.get(&mpidr) {
                             sender.send(entry).unwrap()
                         }
+                    } else {
+                        error!("CpuOn request coming from an unexpected vCPU={}", self.id);
                     }
                     Ok(VcpuEmulation::Handled)
                 }
@@ -418,6 +398,10 @@ impl Vcpu {
                     if let Some(ref mmio_bus) = self.mmio_bus {
                         mmio_bus.write(vcpuid, addr, data);
                     }
+                    Ok(VcpuEmulation::Handled)
+                }
+                VcpuExit::PsciHandled => {
+                    debug!("vCPU {} PSCI", vcpuid);
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::SecureMonitorCall => {
@@ -456,7 +440,8 @@ impl Vcpu {
 
     /// Main loop of the vCPU thread.
     pub fn run(&mut self, init_tls_sender: Sender<bool>) {
-        let mut hvf_vcpu = HvfVcpu::new().expect("Can't create HVF vCPU");
+        let mut hvf_vcpu =
+            HvfVcpu::new(self.mpidr, self.nested_enabled).expect("Can't create HVF vCPU");
         let hvf_vcpuid = hvf_vcpu.id();
 
         init_tls_sender

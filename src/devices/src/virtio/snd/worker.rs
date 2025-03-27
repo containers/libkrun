@@ -23,7 +23,7 @@ use super::{
     BackendType, Direction, Error, VirtioSoundChmapInfo, VirtioSoundJackInfo, Vring,
     VIRTIO_SND_CHMAP_FL, VIRTIO_SND_CHMAP_FR, VIRTIO_SND_CHMAP_MAX_SIZE, VIRTIO_SND_CHMAP_NONE,
 };
-use crate::legacy::GicV3;
+use crate::legacy::IrqChip;
 use crate::virtio::snd::stream::Buffer;
 use crate::virtio::snd::{ControlMessageKind, IOMessage};
 use crate::virtio::DescriptorChain;
@@ -33,7 +33,7 @@ pub struct SndWorker {
     queue_evts: Vec<EventFd>,
     interrupt_status: Arc<AtomicUsize>,
     interrupt_evt: EventFd,
-    intc: Option<GicV3>,
+    intc: Option<IrqChip>,
     irq_line: Option<u32>,
 
     mem: GuestMemoryMmap,
@@ -52,7 +52,7 @@ impl SndWorker {
         queue_evts: Vec<EventFd>,
         interrupt_status: Arc<AtomicUsize>,
         interrupt_evt: EventFd,
-        intc: Option<GicV3>,
+        intc: Option<IrqChip>,
         irq_line: Option<u32>,
         mem: GuestMemoryMmap,
         stop_fd: EventFd,
@@ -249,9 +249,13 @@ impl SndWorker {
                     self.interrupt_status
                         .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
                     if let Some(intc) = &self.intc {
-                        intc.set_irq(self.irq_line.unwrap());
-                    } else if let Err(e) = self.interrupt_evt.write(1) {
-                        error!("Failed to signal used queue: {:?}", e);
+                        if let Err(e) = intc
+                            .lock()
+                            .unwrap()
+                            .set_irq(self.irq_line, Some(&self.interrupt_evt))
+                        {
+                            error!("Failed to signal used queue: {:?}", e);
+                        }
                     }
                 }
             } else {

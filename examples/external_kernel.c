@@ -45,6 +45,7 @@ static void print_help(char *const name)
             "        -d    --data-disk           Path to a data disk in raw format\n"
             "        -h    --help                Show help\n"
             "        -i    --initrd              Path to initramfs\n"
+            "        -n    --nested              Enabled nested virtualization\n"
             "              --net=NET_MODE        Set network mode\n"
             "              --passt-socket=PATH   Connect to passt socket at PATH"
             "\n"
@@ -63,6 +64,7 @@ static const struct option long_options[] = {
     {"kernel-cmdline", required_argument, NULL, 'c'},
     {"data-disk", required_argument, NULL, 'd'},
     {"initrd-path", required_argument, NULL, 'i'},
+    {"nested", no_argument, NULL, 'n'},
     {"help", no_argument, NULL, 'h'},
     {"passt-socket", required_argument, NULL, 'P'},
     {NULL, 0, NULL, 0}};
@@ -77,6 +79,7 @@ struct cmdline
     char const *kernel_path;
     char const *kernel_cmdline;
     char const *initrd_path;
+    bool nested;
 };
 
 bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
@@ -93,12 +96,13 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         .kernel_path = NULL,
         .kernel_cmdline = NULL,
         .initrd_path = NULL,
+        .nested = false,
     };
 
     int option_index = 0;
     int c;
     // the '+' in optstring is a GNU extension that disables permutating argv
-    while ((c = getopt_long(argc, argv, "+hb:c:d:i:", long_options, &option_index)) != -1)
+    while ((c = getopt_long(argc, argv, "+hb:c:d:i:n", long_options, &option_index)) != -1)
     {
         switch (c)
         {
@@ -116,6 +120,9 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
             return true;
         case 'i':
             cmdline->initrd_path = optarg;
+            break;
+        case 'n':
+            cmdline->nested = true;
             break;
         case 'P':
             cmdline->passt_socket_path = optarg;
@@ -304,6 +311,14 @@ int main(int argc, char *const argv[])
     {
         errno = -err;
         perror("Error configuring kernel");
+        return -1;
+    }
+
+    fprintf(stderr, "nested=%d\n", cmdline.nested);
+    if (err = krun_set_nested_virt(ctx_id, cmdline.nested))
+    {
+        errno = -err;
+        perror("Error configuring nested virtualization");
         return -1;
     }
 

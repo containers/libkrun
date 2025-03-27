@@ -146,6 +146,7 @@ impl Vcpus for VcpuList {
         }
 
         match reg {
+            SYSREG_CNTHCTL_EL2 => Some(0),
             SYSREG_ICC_IAR1_EL1 => Some(
                 self.vcpus[vcpuid as usize]
                     .lock()
@@ -206,12 +207,14 @@ impl Vcpus for VcpuList {
 
                 true
             }
-            SYSREG_ICC_EOIR1_EL1
+            SYSREG_CNTHCTL_EL2
+            | SYSREG_ICC_EOIR1_EL1
             | SYSREG_ICC_IGRPEN1_EL1
             | SYSREG_ICC_PMR_EL1
             | SYSREG_ICC_BPR1_EL1
             | SYSREG_ICC_CTLR_EL1
             | SYSREG_ICC_AP1R0_EL1
+            | SYSREG_LORC_EL1
             | SYSREG_OSLAR_EL1
             | SYSREG_OSDLR_EL1 => true,
             _ => false,

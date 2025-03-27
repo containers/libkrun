@@ -57,13 +57,24 @@ arm64_sys_reg!(SYSREG_ICC_PMR_EL1, 3, 0, 0, 4, 6);
 arm64_sys_reg!(SYSREG_ICC_SGI1R_EL1, 3, 0, 5, 12, 11);
 arm64_sys_reg!(SYSREG_ICC_SRE_EL1, 3, 0, 5, 12, 12);
 
+arm64_sys_reg!(SYSREG_CNTVOFF_EL2, 3, 4, 3, 14, 0);
+arm64_sys_reg!(SYSREG_CNTHCTL_EL2, 3, 4, 0, 14, 1);
+arm64_sys_reg!(SYSREG_CNTHP_TVAL_EL2, 3, 4, 0, 14, 2);
+arm64_sys_reg!(SYSREG_CNTHP_CTL_EL2, 3, 4, 1, 14, 2);
+arm64_sys_reg!(SYSREG_CNTHP_CVAL_EL2, 3, 4, 2, 14, 2);
+arm64_sys_reg!(SYSREG_CNTHV_TVAL_EL2, 3, 4, 0, 14, 3);
+arm64_sys_reg!(SYSREG_CNTHV_CTL_EL2, 3, 4, 1, 14, 3);
+arm64_sys_reg!(SYSREG_CNTHV_CVAL_EL2, 3, 4, 2, 14, 3);
+
+arm64_sys_reg!(SYSREG_LORC_EL1, 3, 0, 3, 10, 4);
+
 // ICC_CTLR_EL1 (https://developer.arm.com/documentation/ddi0595/2021-06/AArch64-Registers/ICC-CTLR-EL1--Interrupt-Controller-Control-Register--EL1-)
 pub const ICC_CTLR_EL1_RSS_SHIFT: u32 = 18;
 pub const ICC_CTLR_EL1_A3V_SHIFT: u32 = 15;
 pub const ICC_CTLR_EL1_ID_BITS_SHIFT: u32 = 11;
 pub const ICC_CTLR_EL1_PRI_BITS_SHIFT: u32 = 8;
 
-pub fn icc_reg_name(addr: u32) -> Option<&'static str> {
+pub fn sys_reg_name(addr: u32) -> Option<&'static str> {
     match addr {
         SYSREG_ICC_IAR0_EL1 => Some("SYSREG_ICC_IAR0_EL1"),
         SYSREG_ICC_IAR1_EL1 => Some("SYSREG_ICC_IAR1_EL1"),
@@ -89,6 +100,17 @@ pub fn icc_reg_name(addr: u32) -> Option<&'static str> {
         SYSREG_ICC_PMR_EL1 => Some("SYSREG_ICC_PMR_EL1"),
         SYSREG_ICC_SGI1R_EL1 => Some("SYSREG_ICC_SGI1R_EL1"),
         SYSREG_ICC_SRE_EL1 => Some("SYSREG_ICC_SRE_EL1"),
+
+        SYSREG_CNTVOFF_EL2 => Some("SYSREG_CNTVOFF_EL2"),
+        SYSREG_CNTHCTL_EL2 => Some("SYSREG_CNTHCTL_EL2"),
+        SYSREG_CNTHP_TVAL_EL2 => Some("SYSREG_CNTHP_TVAL_EL2"),
+        SYSREG_CNTHP_CTL_EL2 => Some("SYSREG_CNTHP_CTL_EL2"),
+        SYSREG_CNTHP_CVAL_EL2 => Some("SYSREG_CNTHP_CVAL_EL2"),
+        SYSREG_CNTHV_TVAL_EL2 => Some("SYSREG_CNTHV_TVAL_EL2"),
+        SYSREG_CNTHV_CTL_EL2 => Some("SYSREG_CNTHV_CTL_EL2"),
+        SYSREG_CNTHV_CVAL_EL2 => Some("SYSREG_CNTHV_CVAL_EL2"),
+
+        SYSREG_LORC_EL1 => Some("SYSREG_LORC_EL1"),
         _ => None,
     }
 }

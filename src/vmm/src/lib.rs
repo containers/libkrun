@@ -52,11 +52,14 @@ use crate::terminal::term_set_canonical_mode;
 use crate::vstate::VcpuEvent;
 use crate::vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
 
-use arch::{ArchMemoryInfo, DeviceType, InitrdConfig};
+use arch::{ArchMemoryInfo, InitrdConfig};
 #[cfg(target_os = "macos")]
 use crossbeam_channel::Sender;
+#[cfg(target_arch = "aarch64")]
+use devices::fdt;
+use devices::legacy::IrqChip;
 use devices::virtio::VmmExitObserver;
-use devices::BusDevice;
+use devices::{BusDevice, DeviceType};
 use kernel::cmdline::Cmdline as KernelCmdline;
 use polly::event_manager::{self, EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
@@ -111,6 +114,9 @@ pub enum Error {
     RegisterMMIODevice(device_manager::mmio::Error),
     /// Write to the serial console failed.
     Serial(io::Error),
+    #[cfg(target_arch = "aarch64")]
+    /// Cannot generate or write FDT
+    SetupFDT(devices::fdt::Error),
     /// Cannot create Timer file descriptor.
     TimerFd(io::Error),
     /// Vcpu error.
@@ -149,6 +155,8 @@ impl Display for Error {
             LoadCommandline(e) => write!(f, "Cannot load command line: {e}"),
             RegisterMMIODevice(e) => write!(f, "Cannot add a device to the MMIO Bus. {e}"),
             Serial(e) => write!(f, "Error writing to the serial console: {e:?}"),
+            #[cfg(target_arch = "aarch64")]
+            SetupFDT(e) => write!(f, "Error generating or writting FDT: {e:?}"),
             TimerFd(e) => write!(f, "Error creating timer fd: {e}"),
             Vcpu(e) => write!(f, "Vcpu error: {e}"),
             VcpuEvent(e) => write!(f, "Cannot send event to vCPU. {e:?}"),
@@ -261,6 +269,7 @@ impl Vmm {
     pub fn configure_system(
         &self,
         vcpus: &[Vcpu],
+        _intc: &IrqChip,
         initrd: &Option<InitrdConfig>,
         _smbios_oem_strings: &Option<Vec<String>>,
     ) -> Result<()> {
@@ -283,36 +292,31 @@ impl Vmm {
             .map_err(Error::ConfigureSystem)?;
         }
 
-        #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+        #[cfg(target_arch = "aarch64")]
         {
             let vcpu_mpidr = vcpus.iter().map(|cpu| cpu.get_mpidr()).collect();
-            arch::aarch64::configure_system(
+            fdt::create_fdt(
                 &self.guest_memory,
                 &self.arch_memory_info,
-                self.kernel_cmdline.as_str(),
                 vcpu_mpidr,
+                self.kernel_cmdline.as_str(),
                 self.mmio_device_manager.get_device_info(),
-                self.vm.get_irqchip(),
+                _intc,
                 initrd,
-                _smbios_oem_strings,
             )
-            .map_err(Error::ConfigureSystem)?;
+            .map_err(Error::SetupFDT)?;
+        }
+
+        #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+        {
+            arch::aarch64::configure_system(&self.guest_memory, _smbios_oem_strings)
+                .map_err(Error::ConfigureSystem)?;
         }
 
         #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
         {
-            let vcpu_mpidr = vcpus.iter().map(|cpu| cpu.get_mpidr()).collect();
-            arch::aarch64::configure_system(
-                &self.guest_memory,
-                &self.arch_memory_info,
-                self.kernel_cmdline.as_str(),
-                vcpu_mpidr,
-                self.mmio_device_manager.get_device_info(),
-                self.vm.get_irqchip(),
-                initrd,
-                _smbios_oem_strings,
-            )
-            .map_err(Error::ConfigureSystem)?;
+            arch::aarch64::configure_system(&self.guest_memory, _smbios_oem_strings)
+                .map_err(Error::ConfigureSystem)?;
         }
         Ok(())
     }

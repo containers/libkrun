@@ -73,7 +73,6 @@ dependencies = [
  "libc",
  "smbios",
  "utils",
- "vm-fdt",
  "vm-memory",
 ]
 
@@ -392,7 +391,10 @@ dependencies = [
  "env_logger",
  "hvf",
  "imago",
+ "kvm-bindings",
+ "kvm-ioctls",
  "libc",
+ "libloading",
  "log",
  "lru",
  "nix 0.24.3",
@@ -403,6 +405,7 @@ dependencies = [
  "thiserror",
  "utils",
  "virtio-bindings",
+ "vm-fdt",
  "vm-memory",
  "zerocopy 0.6.6",
  "zerocopy-derive 0.6.6",
@@ -642,6 +645,7 @@ dependencies = [
  "arch",
  "crossbeam-channel",
  "env_logger",
+ "libloading",
  "log",
 ]
 

@@ -10,9 +10,12 @@
 #[macro_use]
 extern crate log;
 
+use std::fmt;
 use std::io;
 
 mod bus;
+#[cfg(target_arch = "aarch64")]
+pub mod fdt;
 pub mod legacy;
 pub mod virtio;
 
@@ -30,4 +33,26 @@ pub enum Error {
     IoError(io::Error),
     NoAvailBuffers,
     SpuriousEvent,
+}
+
+/// Types of devices that can get attached to this platform.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
+pub enum DeviceType {
+    /// Device Type: Virtio.
+    Virtio(u32),
+    /// Device Type: GPIO (PL061).
+    #[cfg(target_arch = "aarch64")]
+    Gpio,
+    /// Device Type: Serial.
+    #[cfg(target_arch = "aarch64")]
+    Serial,
+    /// Device Type: RTC.
+    #[cfg(target_arch = "aarch64")]
+    RTC,
+}
+
+impl fmt::Display for DeviceType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
 }
