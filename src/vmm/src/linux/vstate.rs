@@ -551,7 +551,7 @@ impl Vm {
     }
 
     #[cfg(feature = "amd-sev")]
-    pub fn snp_secure_virt_attest(
+    pub fn snp_secure_virt_measure(
         &self,
         cpuid: CpuId,
         guest_mem: &GuestMemoryMmap,

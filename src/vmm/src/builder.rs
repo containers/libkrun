@@ -861,7 +861,7 @@ pub fn build_microvm(
                     .map_err(VstateError::KvmCpuId)
                     .map_err(StartMicrovmError::SecureVirtAttest)?;
                 vmm.kvm_vm()
-                    .snp_secure_virt_attest(
+                    .snp_secure_virt_measure(
                         cpuid,
                         vmm.guest_memory(),
                         measured_regions,
