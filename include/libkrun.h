@@ -1,5 +1,6 @@
 #include <inttypes.h>
 #include <stdbool.h>
+#include <unistd.h>
 
 /**
  * Sets the log level for the library.
@@ -502,6 +503,38 @@ int32_t krun_get_shutdown_eventfd(uint32_t ctx_id);
  *                console output.
  */
 int32_t krun_set_console_output(uint32_t ctx_id, const char *c_filepath);
+
+/**
+ * Configures uid which is set right before the microVM is started.
+ *
+ * This is useful for example when you want to access host block devices
+ * from the microVM which requires root privileges when opening the device
+ * but you don't want to run the whole microVM as root.
+ *
+ * Arguments:
+ *  "ctx_id"         - the configuration context ID.
+ *  "uid"            - a user id to be set.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_setuid(uint32_t ctx_id, uid_t uid);
+
+/**
+ * Configures gid which is set right before the microVM is started.
+ *
+ * This is useful for example when you want to access host block devices
+ * from the microVM which requires root privileges when opening the device
+ * but you don't want to run the whole microVM as root.
+ *
+ * Arguments:
+ *  "ctx_id"         - the configuration context ID.
+ *  "gid"            - a group id to be set.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_setgid(uint32_t ctx_id, gid_t gid);
 
 /**
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
