@@ -463,7 +463,9 @@ impl Vm {
     #[cfg(feature = "amd-sev")]
     pub fn new(kvm: &Kvm, tee_config: &TeeConfig) -> Result<Self> {
         //create fd for interacting with kvm-vm specific functions
-        let vm_fd = kvm.create_vm().map_err(Error::VmFd)?;
+        let vm_fd = kvm
+            .create_vm_with_type(4 /* KVM_X86_SNP_VM */)
+            .map_err(Error::VmFd)?;
 
         let supported_cpuid = kvm
             .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
