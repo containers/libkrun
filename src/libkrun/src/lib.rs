@@ -156,6 +156,8 @@ struct ContextConfig {
     gpu_shm_size: Option<usize>,
     enable_snd: bool,
     console_output: Option<PathBuf>,
+    vmm_uid: Option<libc::uid_t>,
+    vmm_gid: Option<libc::gid_t>,
 }
 
 impl ContextConfig {
@@ -291,6 +293,14 @@ impl ContextConfig {
 
     fn set_gpu_shm_size(&mut self, shm_size: usize) {
         self.gpu_shm_size = Some(shm_size);
+    }
+
+    fn set_vmm_uid(&mut self, vmm_uid: libc::uid_t) {
+        self.vmm_uid = Some(vmm_uid);
+    }
+
+    fn set_vmm_gid(&mut self, vmm_gid: libc::gid_t) {
+        self.vmm_gid = Some(vmm_gid);
     }
 }
 
@@ -1271,6 +1281,32 @@ unsafe fn load_krunfw_payload(
 }
 
 #[no_mangle]
+pub extern "C" fn krun_setuid(ctx_id: u32, uid: libc::uid_t) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.set_vmm_uid(uid);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn krun_setgid(ctx_id: u32, gid: libc::gid_t) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.set_vmm_gid(gid);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[no_mangle]
 pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "linux")]
     {
@@ -1399,6 +1435,20 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     if let Some(console_output) = ctx_cfg.console_output {
         ctx_cfg.vmr.set_console_output(console_output);
+    }
+
+    if let Some(gid) = ctx_cfg.vmm_gid {
+        if unsafe { libc::setgid(gid) } != 0 {
+            error!("Failed to set gid {}", gid);
+            return -std::io::Error::last_os_error().raw_os_error().unwrap();
+        }
+    }
+
+    if let Some(uid) = ctx_cfg.vmm_uid {
+        if unsafe { libc::setuid(uid) } != 0 {
+            error!("Failed to set uid {}", uid);
+            return -std::io::Error::last_os_error().raw_os_error().unwrap();
+        }
     }
 
     #[cfg(target_os = "macos")]
