@@ -1,6 +1,7 @@
 use std::io::{ErrorKind, Read, Write};
 use std::mem;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
+use std::thread;
 use std::time::Duration;
 
 fn expect_msg(stream: &mut TcpStream, expected: &[u8]) {
@@ -23,6 +24,23 @@ fn set_timeouts(stream: &mut TcpStream) {
     stream
         .set_write_timeout(Some(Duration::from_millis(500)))
         .unwrap();
+}
+
+fn connect(port: u16) -> TcpStream {
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
+    let mut tries = 0;
+    loop {
+        match TcpStream::connect(&addr) {
+            Ok(stream) => return stream,
+            Err(err) => {
+                if tries == 5 {
+                    panic!("Couldn't connect to server after 5 attempts: {err}");
+                }
+                tries += 1;
+                thread::sleep(Duration::from_secs(1));
+            }
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -51,8 +69,7 @@ impl TcpTester {
     }
 
     pub fn run_client(&self) {
-        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), self.port);
-        let mut stream = TcpStream::connect(&addr).unwrap();
+        let mut stream = connect(self.port);
         set_timeouts(&mut stream);
         expect_msg(&mut stream, b"ping!");
         expect_wouldblock(&mut stream);
