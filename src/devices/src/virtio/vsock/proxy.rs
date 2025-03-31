@@ -69,7 +69,9 @@ pub trait Proxy: Send + AsRawFd {
     #[allow(dead_code)]
     fn status(&self) -> ProxyStatus;
     fn connect(&mut self, pkt: &VsockPacket, req: TsiConnectReq) -> ProxyUpdate;
-    fn confirm_connect(&mut self, _pkt: &VsockPacket) {}
+    fn confirm_connect(&mut self, _pkt: &VsockPacket) -> Option<ProxyUpdate> {
+        None
+    }
     fn getpeername(&mut self, pkt: &VsockPacket);
     fn sendmsg(&mut self, pkt: &VsockPacket) -> ProxyUpdate;
     fn sendto_addr(&mut self, req: TsiSendtoAddr) -> ProxyUpdate;
