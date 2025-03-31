@@ -498,7 +498,9 @@ impl VsockMuxer {
         let mut proxy_map = self.proxy_map.write().unwrap();
 
         if let Some(proxy) = proxy_map.get(&id) {
-            proxy.lock().unwrap().confirm_connect(pkt)
+            if let Some(update) = proxy.lock().unwrap().confirm_connect(pkt) {
+                self.process_proxy_update(id, update);
+            }
         } else if let Some(ref mut ipc_map) = &mut self.unix_ipc_port_map {
             if let Some((path, listen)) = ipc_map.get(&pkt.dst_port()) {
                 let mem = self.mem.as_ref().unwrap();

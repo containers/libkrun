@@ -356,7 +356,7 @@ impl Proxy for UnixProxy {
         update
     }
 
-    fn confirm_connect(&mut self, pkt: &VsockPacket) {
+    fn confirm_connect(&mut self, pkt: &VsockPacket) -> Option<ProxyUpdate> {
         debug!(
             "tcp: confirm_connect: local_port={} peer_port={}, src_port={}, dst_port={}",
             pkt.dst_port(),
@@ -377,6 +377,8 @@ impl Proxy for UnixProxy {
             peer_port: pkt.src_port(),
         };
         push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
+
+        None
     }
 
     fn getpeername(&mut self, _pkt: &VsockPacket) {

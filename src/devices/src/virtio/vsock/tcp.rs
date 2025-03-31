@@ -393,7 +393,7 @@ impl Proxy for TcpProxy {
         };
 
         if self.status == ProxyStatus::Connecting {
-            update.polling = Some((self.id, self.fd, EventSet::IN | EventSet::OUT));
+            update.polling = Some((self.id, self.fd, EventSet::OUT));
         } else {
             if self.status == ProxyStatus::Connected {
                 update.polling = Some((self.id, self.fd, EventSet::IN));
@@ -404,7 +404,7 @@ impl Proxy for TcpProxy {
         update
     }
 
-    fn confirm_connect(&mut self, pkt: &VsockPacket) {
+    fn confirm_connect(&mut self, pkt: &VsockPacket) -> Option<ProxyUpdate> {
         debug!(
             "tcp: confirm_connect: local_port={} peer_port={}, src_port={}, dst_port={}",
             pkt.dst_port(),
@@ -425,6 +425,13 @@ impl Proxy for TcpProxy {
             peer_port: pkt.src_port(),
         };
         push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
+
+        // Now that the vsock transport is fully established, start listening
+        // for events in the TCP socket again.
+        Some(ProxyUpdate {
+            polling: Some((self.id, self.fd, EventSet::IN)),
+            ..Default::default()
+        })
     }
 
     fn getpeername(&mut self, pkt: &VsockPacket) {
@@ -751,7 +758,9 @@ impl Proxy for TcpProxy {
                 self.switch_to_connected();
                 self.push_connect_rsp(0);
                 update.signal_queue = true;
-                update.polling = Some((self.id(), self.fd, EventSet::IN));
+                // Stop listening for events in the TCP socket until we receive
+                // OP_REQUEST and the vsock transport is fully established.
+                update.polling = Some((self.id(), self.fd, EventSet::empty()));
             } else {
                 error!("vsock::tcp: EventSet::OUT while not connecting");
             }
