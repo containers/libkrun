@@ -340,7 +340,8 @@ impl TcpProxy {
         push_packet(self.cid, rx, &self.rxq, &self.queue, &self.mem);
     }
 
-    fn switch_to_blocking(&mut self) {
+    fn switch_to_connected(&mut self) {
+        self.status = ProxyStatus::Connected;
         match fcntl(self.fd, FcntlArg::F_GETFL) {
             Ok(flags) => match OFlag::from_bits(flags) {
                 Some(flags) => {
@@ -373,8 +374,7 @@ impl Proxy for TcpProxy {
         ) {
             Ok(()) => {
                 debug!("vsock: connect: Connected");
-                self.switch_to_blocking();
-                self.status = ProxyStatus::ConnectedUnconfirmed;
+                self.switch_to_connected();
                 0
             }
             Err(nix::errno::Errno::EINPROGRESS) => {
@@ -395,7 +395,7 @@ impl Proxy for TcpProxy {
         if self.status == ProxyStatus::Connecting {
             update.polling = Some((self.id, self.fd, EventSet::IN | EventSet::OUT));
         } else {
-            if self.status == ProxyStatus::ConnectedUnconfirmed {
+            if self.status == ProxyStatus::Connected {
                 update.polling = Some((self.id, self.fd, EventSet::IN));
             }
             self.push_connect_rsp(result);
@@ -412,15 +412,6 @@ impl Proxy for TcpProxy {
             self.local_port,
             self.peer_port,
         );
-
-        if self.status != ProxyStatus::ConnectedUnconfirmed {
-            warn!(
-                "tcp: confirm_connect: Expected state to be {:?}, but it is {:?}",
-                ProxyStatus::ConnectedUnconfirmed,
-                self.status
-            );
-        }
-        self.status = ProxyStatus::Connected;
 
         self.peer_buf_alloc = pkt.buf_alloc();
         self.peer_fwd_cnt = Wrapping(pkt.fwd_cnt());
@@ -583,6 +574,8 @@ impl Proxy for TcpProxy {
         self.peer_buf_alloc = pkt.buf_alloc();
         self.peer_fwd_cnt = Wrapping(pkt.fwd_cnt());
 
+        self.status = ProxyStatus::Connected;
+
         ProxyUpdate {
             polling: Some((self.id, self.fd, EventSet::IN)),
             ..Default::default()
@@ -614,8 +607,7 @@ impl Proxy for TcpProxy {
         self.peer_buf_alloc = pkt.buf_alloc();
         self.peer_fwd_cnt = Wrapping(pkt.fwd_cnt());
 
-        self.switch_to_blocking();
-        self.status = ProxyStatus::Connected;
+        self.switch_to_connected();
 
         ProxyUpdate {
             polling: Some((self.id, self.fd, EventSet::IN)),
@@ -756,8 +748,7 @@ impl Proxy for TcpProxy {
         if evset.contains(EventSet::OUT) {
             debug!("process_event: OUT");
             if self.status == ProxyStatus::Connecting {
-                self.switch_to_blocking();
-                self.status = ProxyStatus::ConnectedUnconfirmed;
+                self.switch_to_connected();
                 self.push_connect_rsp(0);
                 update.signal_queue = true;
                 update.polling = Some((self.id(), self.fd, EventSet::IN));
