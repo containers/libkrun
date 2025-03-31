@@ -35,7 +35,7 @@ procfs = { version = "0.12", optional = true }
 rdrand = { version = "^0.8", optional = true }
 serde = { version = "1.0.125", optional = true }
 serde_json = { version = "1.0.64", optional = true }
-sev = { version = "4.0.0", features = ["openssl"], optional = true }
+sev = { version = "6.0.0", features = ["openssl"], optional = true }
 curl = { version = "0.4", optional = true }
 nix = "0.24.1"
 
