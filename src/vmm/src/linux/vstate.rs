@@ -1068,9 +1068,11 @@ impl Vcpu {
         self.fd
             .set_sregs(&state.sregs)
             .map_err(Error::VcpuSetSregs)?;
-        self.fd
-            .set_xsave(&state.xsave)
-            .map_err(Error::VcpuSetXsave)?;
+        unsafe {
+            self.fd
+                .set_xsave(&state.xsave)
+                .map_err(Error::VcpuSetXsave)?;
+        }
         self.fd.set_xcrs(&state.xcrs).map_err(Error::VcpuSetXcrs)?;
         self.fd
             .set_debug_regs(&state.debug_regs)
