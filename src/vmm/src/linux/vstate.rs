@@ -40,13 +40,18 @@ use kvm_bindings::{
     KVM_CLOCK_TSC_STABLE, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
     KVM_MAX_CPUID_ENTRIES,
 };
-use kvm_bindings::{kvm_userspace_memory_region, KVM_API_VERSION};
-use kvm_ioctls::*;
+use kvm_bindings::{
+    kvm_create_guest_memfd, kvm_memory_attributes, kvm_userspace_memory_region,
+    kvm_userspace_memory_region2, KVM_API_VERSION, KVM_MEMORY_ATTRIBUTE_PRIVATE,
+    KVM_MEM_GUEST_MEMFD,
+};
+use kvm_ioctls::{Cap::*, *};
 use utils::eventfd::EventFd;
 use utils::signal::{register_signal_handler, sigrtmin, Killable};
 use utils::sm::StateMachine;
 use vm_memory::{
     Address, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion,
+    GuestRegionMmap,
 };
 
 #[cfg(feature = "amd-sev")]
@@ -61,6 +66,8 @@ pub enum Error {
     #[cfg(target_arch = "x86_64")]
     /// A call to cpuid instruction failed.
     CpuId(cpuid::Error),
+    /// Unable to create a KVM guest_memfd.
+    CreateGuestMemfd(kvm_ioctls::Error),
     #[cfg(target_arch = "x86_64")]
     /// Error configuring the floating point related registers
     FPUConfiguration(arch::x86_64::regs::Error),
@@ -97,6 +104,8 @@ pub enum Error {
     #[cfg(target_arch = "x86_64")]
     /// Error configuring the general purpose registers
     REGSConfiguration(arch::x86_64::regs::Error),
+    /// Cannot set memory region attributes.
+    SetMemoryAttributes(kvm_ioctls::Error),
     /// Cannot set the memory regions.
     SetUserMemoryRegion(kvm_ioctls::Error),
     /// Error creating memory map for SHM region.
@@ -226,6 +235,7 @@ impl Display for Error {
         match self {
             #[cfg(target_arch = "x86_64")]
             CpuId(e) => write!(f, "Cpuid error: {e:?}"),
+            CreateGuestMemfd(e) => write!(f, "Unable to create KVM guest_memfd: {e:?}"),
             GuestMemoryMmap(e) => write!(f, "Guest memory error: {e:?}"),
             #[cfg(target_arch = "x86_64")]
             GuestMSRs(e) => write!(f, "Retrieving supported guest MSRs fails: {e:?}"),
@@ -250,6 +260,7 @@ impl Display for Error {
                 f,
                 "Cannot set the local interruption due to bad configuration: {e:?}"
             ),
+            SetMemoryAttributes(e) => write!(f, "Cannot set memory region attributes: {e}"),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
             ShmMmap(e) => write!(f, "Error creating memory map for SHM region: {e}"),
             #[cfg(feature = "tee")]
@@ -376,7 +387,6 @@ pub struct KvmContext {
 
 impl KvmContext {
     pub fn new() -> Result<Self> {
-        use kvm_ioctls::Cap::*;
         let kvm = Kvm::new().expect("Error creating the Kvm object");
 
         // Check that KVM has the correct version.
@@ -508,10 +518,26 @@ impl Vm {
         if guest_mem.num_regions() > kvm_max_memslots {
             return Err(Error::NotEnoughMemorySlots);
         }
+
         for region in guest_mem.iter() {
-            // It's safe to unwrap because the guest address is valid.
-            let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
-            debug!("Guest memory starts at {:x?}", host_addr);
+            self.memory_region_set(guest_mem, region)?;
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        self.fd
+            .set_tss_address(arch::x86_64::layout::KVM_TSS_ADDRESS as usize)
+            .map_err(Error::VmSetup)?;
+
+        Ok(())
+    }
+
+    fn memory_region_set(
+        &mut self,
+        guest_mem: &GuestMemoryMmap,
+        region: &GuestRegionMmap,
+    ) -> Result<()> {
+        let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
+        if !self.fd.check_extension(GuestMemfd) {
             let memory_region = kvm_userspace_memory_region {
                 slot: self.next_mem_slot,
                 guest_phys_addr: region.start_addr().raw_value(),
@@ -519,6 +545,7 @@ impl Vm {
                 userspace_addr: host_addr as u64,
                 flags: 0,
             };
+
             // Safe because we mapped the memory region, we made sure that the regions
             // are not overlapping.
             unsafe {
@@ -526,13 +553,50 @@ impl Vm {
                     .set_user_memory_region(memory_region)
                     .map_err(Error::SetUserMemoryRegion)?;
             };
-            self.next_mem_slot += 1;
+        } else {
+            // Create a guest_memfd and set the region.
+            let guest_memfd = self
+                .fd
+                .create_guest_memfd(kvm_create_guest_memfd {
+                    size: region.size() as u64,
+                    flags: 0,
+                    reserved: [0; 6],
+                })
+                .map_err(Error::CreateGuestMemfd)?;
+
+            let memory_region = kvm_userspace_memory_region2 {
+                slot: self.next_mem_slot,
+                flags: KVM_MEM_GUEST_MEMFD,
+                guest_phys_addr: region.start_addr().raw_value(),
+                memory_size: region.len(),
+                userspace_addr: host_addr as u64,
+                guest_memfd_offset: 0,
+                guest_memfd: guest_memfd as u32,
+                pad1: 0,
+                pad2: [0; 14],
+            };
+
+            // Safe because we mapped the memory region, we made sure that the regions
+            // are not overlapping.
+            unsafe {
+                self.fd
+                    .set_user_memory_region2(memory_region)
+                    .map_err(Error::SetUserMemoryRegion)?;
+            };
+
+            let attr = kvm_memory_attributes {
+                address: region.start_addr().raw_value(),
+                size: region.len(),
+                attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE as u64,
+                flags: 0,
+            };
+
+            self.fd
+                .set_memory_attributes(attr)
+                .map_err(Error::SetMemoryAttributes)?;
         }
 
-        #[cfg(target_arch = "x86_64")]
-        self.fd
-            .set_tss_address(arch::x86_64::layout::KVM_TSS_ADDRESS as usize)
-            .map_err(Error::VmSetup)?;
+        self.next_mem_slot += 1;
 
         Ok(())
     }
