@@ -750,7 +750,7 @@ checksum = "21350cefefc9715198c3c5319a5eb23ce4cc89b4b567599fb88f0d4a011c1d2d"
 dependencies = [
  "serde",
  "serde_json",
- "sev",
+ "sev 4.0.0",
 ]
 
 [[package]]
@@ -1414,6 +1414,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "sev"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20ac277517d8fffdf3c41096323ed705b3a7c75e397129c072fb448339839d0f"
+dependencies = [
+ "base64",
+ "bincode",
+ "bitfield",
+ "bitflags 1.3.2",
+ "byteorder",
+ "codicon",
+ "dirs",
+ "hex",
+ "iocuddle",
+ "lazy_static",
+ "libc",
+ "openssl",
+ "rdrand",
+ "serde",
+ "serde-big-array",
+ "serde_bytes",
+ "static_assertions",
+ "uuid",
+]
+
+[[package]]
 name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1691,7 +1717,7 @@ dependencies = [
  "rdrand",
  "serde",
  "serde_json",
- "sev",
+ "sev 6.0.0",
  "utils",
  "vm-memory",
  "vmm-sys-util",
