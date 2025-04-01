@@ -71,6 +71,7 @@ dependencies = [
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
+ "linux-loader",
  "smbios",
  "utils",
  "vm-fdt",

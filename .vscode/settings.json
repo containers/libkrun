@@ -1,0 +1,9 @@
+{
+    "clangd.fallbackFlags": [
+        "-I../include"
+    ],
+    "rust-analyzer.cargo.features": [
+        "blk",
+        "net"
+    ]
+}
