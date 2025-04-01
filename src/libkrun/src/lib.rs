@@ -5,6 +5,8 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::env;
+#[cfg(feature = "tee")]
+use std::ffi::c_void;
 use std::ffi::CStr;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
@@ -20,7 +22,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::LazyLock;
 use std::sync::Mutex;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", feature = "tee"))]
 use crossbeam_channel::unbounded;
 #[cfg(feature = "blk")]
 use devices::virtio::block::ImageType;
@@ -53,6 +55,17 @@ use vmm::vmm_config::machine_config::VmConfig;
 #[cfg(feature = "net")]
 use vmm::vmm_config::net::NetworkInterfaceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
+
+#[cfg(feature = "tee")]
+use kvm_bindings::{kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE};
+
+#[cfg(feature = "tee")]
+use vm_memory::{guest_memory::GuestMemory, GuestAddress, GuestMemoryRegion, MemoryRegionAddress};
+
+#[cfg(feature = "tee")]
+use libc::{
+    fallocate, madvise, EFD_SEMAPHORE, FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, MADV_DONTNEED,
+};
 
 // Value returned on success. We use libc's errors otherwise.
 const KRUN_SUCCESS: i32 = 0;
@@ -1486,6 +1499,11 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     #[cfg(target_arch = "x86_64")]
     let (irq_sender, irq_receiver) = crossbeam_channel::unbounded();
+    #[cfg(feature = "tee")]
+    let (pm_sender, pm_receiver) = unbounded();
+    #[cfg(feature = "tee")]
+    let pm_efd =
+        EventFd::new(EFD_SEMAPHORE).expect("unable to create TEE memory properties eventfd");
 
     let _vmm = match vmm::builder::build_microvm(
         &ctx_cfg.vmr,
@@ -1495,6 +1513,13 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         sender,
         #[cfg(target_arch = "x86_64")]
         irq_sender,
+        #[cfg(feature = "tee")]
+        (
+            pm_sender,
+            pm_efd
+                .try_clone()
+                .expect("unable to clone TEE memory properties eventfd"),
+        ),
     ) {
         Ok(vmm) => vmm,
         Err(e) => {
@@ -1503,7 +1528,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         }
     };
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", feature = "tee"))]
     let mapper_vmm = _vmm.clone();
 
     #[cfg(target_arch = "x86_64")]
@@ -1576,6 +1601,93 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             })
             .unwrap();
     }
+    
+    #[cfg(feature = "tee")]
+    let guest_mem = _vmm.lock().unwrap().guest_memory().clone();
+
+    #[cfg(feature = "tee")]
+    std::thread::Builder::new()
+        .name("TEE memory properties worker".into())
+        .spawn(move || loop {
+            match pm_receiver.recv() {
+                Err(e) => error!("Error in pm receiver: {:?}", e),
+                Ok(m) => {
+                    let (guest_memfd, region_start) = mapper_vmm
+                        .lock()
+                        .unwrap()
+                        .kvm_vm()
+                        .guest_memfd_get(m.gpa)
+                        .unwrap_or_else(|| panic!("unable to find KVM guest_memfd for memory region corresponding to GPA 0x{:x}", m.gpa));
+
+                    let attributes: u64 = if m.private {
+                        KVM_MEMORY_ATTRIBUTE_PRIVATE as u64
+                    } else {
+                        0
+                    };
+
+                    let attr = kvm_memory_attributes {
+                        address: m.gpa,
+                        size: m.size,
+                        attributes,
+                        flags: 0,
+                    };
+
+                    mapper_vmm
+                        .lock()
+                        .unwrap()
+                        .kvm_vm()
+                        .fd()
+                        .set_memory_attributes(attr)
+                        .unwrap_or_else(|_| panic!("unable to set memory attributes for memory region corresponding to guest address 0x{:x}", m.gpa));
+
+                    let region = guest_mem.find_region(GuestAddress(m.gpa));
+                    if region.is_none() {
+                        error!("guest memory region corresponding to GPA 0x{:x} not found", m.gpa);
+                        pm_efd.write(1).unwrap();
+                        continue;
+                    }
+
+                    let offset = m.gpa - region_start;
+
+                    if m.private {
+                        let region_addr = MemoryRegionAddress(offset);
+
+                        let host_startaddr = region
+                            .unwrap()
+                            .get_host_address(region_addr)
+                            .expect("host address corresponding to memory region address 0x{:x} not found");
+
+                        let ret = unsafe {
+                            madvise(
+                                host_startaddr as *mut c_void,
+                                m.size.try_into().unwrap(),
+                                MADV_DONTNEED,
+                            )
+                        };
+
+                        if ret < 0 {
+                            error!("unable to advise kernel that memory region corresponding to GPA 0x{:x} will likely not be needed (madvise)", m.gpa);
+                        }
+                    } else {
+                        let ret = unsafe {
+                            fallocate(
+                                guest_memfd,
+                                FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                                offset as i64,
+                                m.size as i64,
+                            )
+                        };
+
+                        if ret < 0 {
+                            error!("unable to allocate space in guest_memfd for shared memory (fallocate)");
+                        }
+                    }
+
+                    pm_efd.write(1).unwrap();
+                }
+            }
+        })
+        .unwrap();
 
     loop {
         match event_manager.run() {

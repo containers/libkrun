@@ -21,6 +21,7 @@ libc = ">=0.2.39"
 linux-loader = { version = "0.13.0", features = ["bzimage", "elf", "pe"] }
 log = "0.4.0"
 vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
+rangemap = "1.5.1"
 
 arch = { path = "../arch" }
 devices = { path = "../devices" }
