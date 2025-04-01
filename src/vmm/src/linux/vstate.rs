@@ -1175,6 +1175,9 @@ impl Vcpu {
     ///
     /// Returns error or enum specifying whether emulation was handled or interrupted.
     fn run_emulation(&mut self) -> Result<VcpuEmulation> {
+        // HACK: wait a bit between KVM_RUNs to work around an SNP issue.
+        thread::sleep(std::time::Duration::from_millis(1));
+
         match self.fd.run() {
             Ok(run) => match run {
                 #[cfg(target_arch = "x86_64")]
