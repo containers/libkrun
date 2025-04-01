@@ -49,6 +49,8 @@ use kvm_bindings::{
     kvm_userspace_memory_region2, KVM_API_VERSION, KVM_MEMORY_ATTRIBUTE_PRIVATE,
     KVM_MEM_GUEST_MEMFD,
 };
+#[cfg(feature = "tee")]
+use kvm_bindings::{kvm_enable_cap, KVM_CAP_EXIT_HYPERCALL};
 use kvm_ioctls::{Cap::*, *};
 use utils::eventfd::EventFd;
 use utils::signal::{register_signal_handler, sigrtmin, Killable};
@@ -82,6 +84,9 @@ pub enum Error {
     GuestMSRs(arch::x86_64::msr::Error),
     /// Hyperthreading flag is not initialized.
     HTNotInitialized,
+    /// Unable to enable KVM hypercall exits.
+    #[cfg(feature = "tee")]
+    HypercallExitEnable(kvm_ioctls::Error),
     /// Cannot configure the IRQ.
     Irq(kvm_ioctls::Error),
     /// The host kernel reports an invalid KVM API version.
@@ -244,6 +249,8 @@ impl Display for Error {
             #[cfg(target_arch = "x86_64")]
             GuestMSRs(e) => write!(f, "Retrieving supported guest MSRs fails: {e:?}"),
             HTNotInitialized => write!(f, "Hyperthreading flag is not initialized"),
+            #[cfg(feature = "tee")]
+            HypercallExitEnable(e) => write!(f, "Unable to enable KVM hypercall exits: {e}"),
             KvmApiVersion(v) => {
                 write!(f, "The host kernel reports an invalid KVM API version: {v}")
             }
@@ -485,6 +492,15 @@ impl Vm {
 
         let supported_msrs =
             arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
+
+        let cap = kvm_enable_cap {
+            cap: KVM_CAP_EXIT_HYPERCALL,
+            flags: 0,
+            args: [1 << 12 /* KVM_HC_MAP_GPA_RANGE */, 0, 0, 0],
+            ..Default::default()
+        };
+
+        vm_fd.enable_cap(&cap).map_err(Error::HypercallExitEnable)?;
 
         let tee = match tee_config.tee {
             Tee::Snp => Some(AmdSnp::new().map_err(Error::SnpSecVirtInit)?),
