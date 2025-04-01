@@ -4,7 +4,11 @@
 //! Enables pre-boot setup, instantiation and booting of a Firecracker VMM.
 
 #[cfg(target_os = "macos")]
-use crossbeam_channel::{unbounded, Sender};
+use crossbeam_channel::unbounded;
+
+#[cfg(any(target_os = "macos", feature = "tee"))]
+use crossbeam_channel::Sender;
+
 use kernel::cmdline::Cmdline;
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
@@ -21,6 +25,8 @@ use super::{Error, Vmm};
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
+#[cfg(feature = "tee")]
+use crate::linux::vstate::MemoryProperties;
 use crate::resources::VmResources;
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
@@ -513,6 +519,7 @@ pub fn build_microvm(
         devices::legacy::IrqWorkerMessage,
         EventFd,
     )>,
+    #[cfg(feature = "tee")] pm_sender: (Sender<MemoryProperties>, EventFd),
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
     let payload = choose_payload(vm_resources)?;
 
@@ -688,6 +695,8 @@ pub fn build_microvm(
             payload_config.entry_addr,
             &pio_device_manager.io_bus,
             &exit_evt,
+            #[cfg(feature = "tee")]
+            pm_sender,
         )
         .map_err(StartMicrovmError::Internal)?;
     }
@@ -1450,6 +1459,7 @@ fn create_vcpus_x86_64(
     entry_addr: GuestAddress,
     io_bus: &devices::Bus,
     exit_evt: &EventFd,
+    #[cfg(feature = "tee")] pm_sender: (Sender<MemoryProperties>, EventFd),
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
     for cpu_index in 0..vcpu_config.vcpu_count {
@@ -1460,6 +1470,8 @@ fn create_vcpus_x86_64(
             vm.supported_msrs().clone(),
             io_bus.clone(),
             exit_evt.try_clone().map_err(Error::EventFd)?,
+            #[cfg(feature = "tee")]
+            (pm_sender.0.clone(), pm_sender.1.try_clone().unwrap()),
         )
         .map_err(Error::Vcpu)?;
 

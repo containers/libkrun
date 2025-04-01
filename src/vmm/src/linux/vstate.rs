@@ -11,7 +11,6 @@ use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::io;
 
-#[cfg(feature = "tee")]
 use std::os::unix::io::RawFd;
 
 use std::result;
@@ -59,6 +58,8 @@ use vm_memory::{
     Address, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion,
     GuestRegionMmap,
 };
+
+use rangemap::RangeMap;
 
 #[cfg(feature = "amd-sev")]
 use sev::launch::snp;
@@ -213,6 +214,9 @@ pub enum Error {
     VcpuTlsNotPresent,
     /// Unexpected KVM_RUN exit reason
     VcpuUnhandledKvmExit,
+    /// Unsupported KVM_EXIT_HYPERCALL.
+    #[cfg(feature = "tee")]
+    VcpuUnsupportedHypercall,
     /// Cannot open the VM file descriptor.
     VmFd(kvm_ioctls::Error),
     #[cfg(target_arch = "x86_64")]
@@ -353,6 +357,8 @@ impl Display for Error {
             VcpuTlsInit => write!(f, "Cannot clean init vcpu TLS"),
             VcpuTlsNotPresent => write!(f, "Vcpu not present in TLS"),
             VcpuUnhandledKvmExit => write!(f, "Unexpected KVM_RUN exit reason"),
+            #[cfg(feature = "tee")]
+            VcpuUnsupportedHypercall => write!(f, "Unsupported KVM_EXIT_HYPERCALL"),
             #[cfg(target_arch = "x86_64")]
             VmGetPit2(e) => write!(f, "Failed to get KVM vm pit state: {e}"),
             #[cfg(target_arch = "x86_64")]
@@ -452,6 +458,8 @@ pub struct Vm {
 
     #[cfg(feature = "amd-sev")]
     pub tee_config: Tee,
+
+    pub guest_memfds: RangeMap<u64, (RawFd, u64)>,
 }
 
 impl Vm {
@@ -476,6 +484,7 @@ impl Vm {
             supported_cpuid,
             #[cfg(target_arch = "x86_64")]
             supported_msrs,
+            guest_memfds: RangeMap::new(),
         })
     }
 
@@ -514,6 +523,7 @@ impl Vm {
             supported_msrs,
             tee,
             tee_config: tee_config.tee,
+            guest_memfds: RangeMap::new(),
         })
     }
 
@@ -551,16 +561,24 @@ impl Vm {
         Ok(())
     }
 
+    pub fn guest_memfd_get(&self, gpa: u64) -> Option<(RawFd, u64)> {
+        self.guest_memfds.get(&gpa).copied()
+    }
+
+    #[allow(unused_mut)]
     fn memory_region_set(
         &mut self,
         guest_mem: &GuestMemoryMmap,
         region: &GuestRegionMmap,
     ) -> Result<()> {
         let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
+        let start = region.start_addr().raw_value();
+        let end = start + region.len();
+
         if !self.fd.check_extension(GuestMemfd) {
             let memory_region = kvm_userspace_memory_region {
                 slot: self.next_mem_slot,
-                guest_phys_addr: region.start_addr().raw_value(),
+                guest_phys_addr: start,
                 memory_size: region.len(),
                 userspace_addr: host_addr as u64,
                 flags: 0,
@@ -587,7 +605,7 @@ impl Vm {
             let memory_region = kvm_userspace_memory_region2 {
                 slot: self.next_mem_slot,
                 flags: KVM_MEM_GUEST_MEMFD,
-                guest_phys_addr: region.start_addr().raw_value(),
+                guest_phys_addr: start,
                 memory_size: region.len(),
                 userspace_addr: host_addr as u64,
                 guest_memfd_offset: 0,
@@ -605,7 +623,7 @@ impl Vm {
             };
 
             let attr = kvm_memory_attributes {
-                address: region.start_addr().raw_value(),
+                address: start,
                 size: region.len(),
                 attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE as u64,
                 flags: 0,
@@ -614,6 +632,8 @@ impl Vm {
             self.fd
                 .set_memory_attributes(attr)
                 .map_err(Error::SetMemoryAttributes)?;
+
+            self.guest_memfds.insert(start..end, (guest_memfd, start));
         }
 
         self.next_mem_slot += 1;
@@ -730,6 +750,13 @@ pub struct VmState {
     ioapic: kvm_irqchip,
 }
 
+#[cfg(feature = "tee")]
+pub struct MemoryProperties {
+    pub gpa: u64,
+    pub size: u64,
+    pub private: bool,
+}
+
 /// Encapsulates configuration parameters for the guest vCPUS.
 #[derive(Debug, Eq, PartialEq)]
 pub struct VcpuConfig {
@@ -771,6 +798,9 @@ pub struct Vcpu {
     response_receiver: Option<Receiver<VcpuResponse>>,
     // The transmitting end of the responses channel owned by the vcpu side.
     response_sender: Sender<VcpuResponse>,
+
+    #[cfg(feature = "tee")]
+    pm_sender: (Sender<MemoryProperties>, EventFd),
 }
 
 impl Vcpu {
@@ -874,6 +904,7 @@ impl Vcpu {
         msr_list: MsrList,
         io_bus: devices::Bus,
         exit_evt: EventFd,
+        #[cfg(feature = "tee")] pm_sender: (Sender<MemoryProperties>, EventFd),
     ) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = unbounded();
@@ -892,6 +923,8 @@ impl Vcpu {
             event_sender: Some(event_sender),
             response_receiver: Some(response_receiver),
             response_sender,
+            #[cfg(feature = "tee")]
+            pm_sender,
         })
     }
 
@@ -1177,6 +1210,26 @@ impl Vcpu {
     fn run_emulation(&mut self) -> Result<VcpuEmulation> {
         match self.fd.run() {
             Ok(run) => match run {
+                #[cfg(feature = "tee")]
+                VcpuExit::Hypercall(hypercall) => {
+                    if hypercall.nr != 12
+                    /* KVM_HC_MAP_GPA_RANGE */
+                    {
+                        return Err(Error::VcpuUnsupportedHypercall);
+                    }
+
+                    let gpa = hypercall.args[0];
+                    let size = hypercall.args[1] * 0x1000; /* TARGET_PAGE_SIZE */
+                    let attributes = hypercall.args[2];
+
+                    let private = !matches!(attributes, 0);
+
+                    let mem_properties = MemoryProperties { gpa, size, private };
+
+                    self.pm_sender.0.send(mem_properties).unwrap();
+                    let _ = self.pm_sender.1.read().unwrap();
+                    Ok(VcpuEmulation::Handled)
+                }
                 #[cfg(target_arch = "x86_64")]
                 VcpuExit::IoIn(addr, data) => {
                     self.io_bus.read(0, u64::from(addr), data);
