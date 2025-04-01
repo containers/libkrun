@@ -45,7 +45,7 @@ use kvm_bindings::{
     KVM_MEM_GUEST_MEMFD,
 };
 #[cfg(feature = "tee")]
-use kvm_bindings::{kvm_enable_cap, KVM_CAP_EXIT_HYPERCALL};
+use kvm_bindings::{kvm_enable_cap, KVM_CAP_EXIT_HYPERCALL, KVM_MEMORY_EXIT_FLAG_PRIVATE};
 use kvm_ioctls::{Cap::*, *};
 use utils::eventfd::EventFd;
 use utils::signal::{register_signal_handler, sigrtmin, Killable};
@@ -1244,6 +1244,17 @@ impl Vcpu {
                 #[cfg(target_arch = "x86_64")]
                 VcpuExit::IoOut(addr, data) => {
                     self.io_bus.write(0, u64::from(addr), data);
+                    Ok(VcpuEmulation::Handled)
+                }
+                #[cfg(feature = "tee")]
+                VcpuExit::MemoryFault { gpa, size, flags } => {
+                    let private = (flags & (KVM_MEMORY_EXIT_FLAG_PRIVATE as u64)) != 0;
+
+                    let mem_properties = MemoryProperties { gpa, size, private };
+
+                    self.pm_sender.0.send(mem_properties).unwrap();
+                    let _ = self.pm_sender.1.read().unwrap();
+
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::MmioRead(addr, data) => {
