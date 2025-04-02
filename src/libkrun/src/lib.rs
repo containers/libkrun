@@ -509,7 +509,7 @@ pub unsafe extern "C" fn krun_add_disk(
             let cfg = ctx_cfg.get_mut();
             let block_device_config = BlockDeviceConfig {
                 block_id: block_id.to_string(),
-                cache_type: CacheType::Writeback,
+                cache_type: CacheType::auto(disk_path),
                 disk_image_path: disk_path.to_string(),
                 disk_image_format: ImageType::Raw,
                 is_disk_read_only: read_only,
@@ -556,7 +556,7 @@ pub unsafe extern "C" fn krun_add_disk2(
             let cfg = ctx_cfg.get_mut();
             let block_device_config = BlockDeviceConfig {
                 block_id: block_id.to_string(),
-                cache_type: CacheType::Writeback,
+                cache_type: CacheType::auto(disk_path),
                 disk_image_path: disk_path.to_string(),
                 disk_image_format: format,
                 is_disk_read_only: read_only,
@@ -583,7 +583,7 @@ pub unsafe extern "C" fn krun_set_root_disk(ctx_id: u32, c_disk_path: *const c_c
             let cfg = ctx_cfg.get_mut();
             let block_device_config = BlockDeviceConfig {
                 block_id: "root".to_string(),
-                cache_type: CacheType::Writeback,
+                cache_type: CacheType::auto(disk_path),
                 disk_image_path: disk_path.to_string(),
                 disk_image_format: ImageType::Raw,
                 is_disk_read_only: false,
@@ -610,7 +610,7 @@ pub unsafe extern "C" fn krun_set_data_disk(ctx_id: u32, c_disk_path: *const c_c
             let cfg = ctx_cfg.get_mut();
             let block_device_config = BlockDeviceConfig {
                 block_id: "data".to_string(),
-                cache_type: CacheType::Writeback,
+                cache_type: CacheType::auto(disk_path),
                 disk_image_path: disk_path.to_string(),
                 disk_image_format: ImageType::Raw,
                 is_disk_read_only: false,
