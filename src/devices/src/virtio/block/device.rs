@@ -51,6 +51,18 @@ pub enum CacheType {
     Writeback,
 }
 
+impl CacheType {
+    /// Picks the appropriate cache type based on disk image or device path.
+    /// Special files like `/dev/rdisk*` on macOS do not support flush/sync.
+    pub fn auto(_path: &str) -> CacheType {
+        #[cfg(target_os = "macos")]
+        if _path.starts_with("/dev/rdisk") {
+            return CacheType::Unsafe;
+        }
+        CacheType::Writeback
+    }
+}
+
 /// Helper object for setting up all `Block` fields derived from its backing file.
 pub(crate) struct DiskProperties {
     cache_type: CacheType,
