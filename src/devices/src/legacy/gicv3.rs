@@ -12,7 +12,7 @@ use utils::eventfd::EventFd;
 
 const IRQ_NUM: u32 = 288;
 const MAXIRQ: u32 = 1020;
-const BITMAP_SZ: usize = (MAXIRQ as usize + 31) / 32;
+const BITMAP_SZ: usize = (MAXIRQ as usize).div_ceil(32);
 
 const GIC_INTERNAL: u32 = 32;
 
