@@ -51,10 +51,10 @@ pub trait Subscriber {
     /// # Arguments
     /// * event - the available `EpollEvent` ready for processing
     /// * event_manager - Reference to the `EventManager` that gives the implementor
-    ///                   the possibility to directly call the required update operations.
-    ///                   The only functions safe to call on this `EventManager` reference
-    ///                   are `register`, `unregister` and `modify` which correspond to
-    ///                   the `libc::epoll_ctl` operations.
+    ///   the possibility to directly call the required update operations.
+    ///   The only functions safe to call on this `EventManager` reference
+    ///   are `register`, `unregister` and `modify` which correspond to
+    ///   the `libc::epoll_ctl` operations.
     fn process(&mut self, event: &EpollEvent, event_manager: &mut EventManager);
 
     /// Returns a list of `EpollEvent` that this subscriber is interested in.
