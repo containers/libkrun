@@ -105,8 +105,7 @@ impl NetBackend for Gvproxy {
     /// (Will mutate and override parts of buf, with a passt header!)
     ///
     /// * `hdr_len` - specifies the size of any existing headers encapsulating the ethernet frame,
-    ///               (such as vnet header), that can be overwritten.
-    ///               must be >= PASST_HEADER_LEN
+    ///   (such as vnet header), that can be overwritten. Must be >= PASST_HEADER_LEN.
     /// * `buf` - the buffer to write to passt, `buf[..hdr_len]` may be overwritten
     ///
     /// If this function returns WriteError::PartialWrite, you have to finish the write using
