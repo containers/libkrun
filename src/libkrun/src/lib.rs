@@ -105,10 +105,7 @@ impl KrunfwBindings {
     }
 
     pub fn new() -> Option<Self> {
-        match Self::load_bindings() {
-            Ok(bindings) => Some(bindings),
-            Err(_) => None,
-        }
+        Self::load_bindings().ok()
     }
 }
 
