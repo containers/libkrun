@@ -797,7 +797,7 @@ static int config_parse_file(char ***argv, char **workdir)
 		if (!parsed_entrypoint && jsoneq(data, &tokens[i], "Entrypoint") == 0 &&
 			(i + 1) < num_tokens) {
 			entrypoint = config_parse_args(data, &tokens[i + 1]);
-			parsed_workdir = 1;
+			parsed_entrypoint = 1;
 		}
 	}
 
