@@ -31,6 +31,10 @@ vmm = { path = "../vmm" }
 [target.'cfg(target_os = "macos")'.dependencies]
 hvf = { path = "../hvf" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+kvm-bindings = { version = ">=0.10", features = ["fam-wrappers"] }
+kvm-ioctls = ">=0.17"
+
 [lib]
 name = "krun"
 crate-type = ["cdylib"]
