@@ -808,6 +808,8 @@ dependencies = [
  "devices",
  "env_logger",
  "hvf",
+ "kvm-bindings",
+ "kvm-ioctls",
  "libc",
  "libloading",
  "log",
