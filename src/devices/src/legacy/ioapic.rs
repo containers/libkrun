@@ -30,6 +30,8 @@ const IOAPIC_VECTOR_MASK: u64 = 0xff;
 
 const IOAPIC_DM_EXTINT: u64 = 0x7;
 
+const IOAPIC_TRIGGER_EDGE: u64 = 0;
+
 /// 63:56 Destination Field (RW)
 /// 55:17 Reserved
 /// 16 Interrupt Mask (RW)
@@ -42,11 +44,10 @@ const IOAPIC_DM_EXTINT: u64 = 0x7;
 /// 7:0 Interrupt Vector (INTVEC) (RW)
 type RedirectionTableEntry = u64;
 
-const IOAPIC_TRIGGER_EDGE: u64 = 0;
-
 #[derive(Debug)]
 pub enum IrqWorkerMessage {
     GsiRoute(Vec<kvm_irq_routing_entry>),
+    IrqLine(u32, bool),
 }
 
 #[derive(Debug, Default)]
@@ -231,5 +232,37 @@ impl IoApic {
         }
 
         self.send_irq_worker_message(IrqWorkerMessage::GsiRoute(self.irq_routes.clone()));
+    }
+
+    fn service(&mut self) {
+        for i in 0..IOAPIC_NUM_PINS {
+            let mask = 1 << i;
+
+            if self.irr & mask > 0 {
+                let mut coalesce = 0;
+
+                let entry = self.ioredtbl[i];
+                let info = self.parse_entry(&entry);
+                if info.masked == 0 {
+                    if info.trig_mode as u64 == IOAPIC_TRIGGER_EDGE {
+                        self.irr &= !mask;
+                    } else {
+                        coalesce = self.ioredtbl[i] & IOAPIC_LVT_REMOTE_IRR;
+                        self.ioredtbl[i] |= IOAPIC_LVT_REMOTE_IRR;
+                    }
+
+                    if coalesce > 0 {
+                        continue;
+                    }
+
+                    if info.trig_mode as u64 == IOAPIC_TRIGGER_EDGE {
+                        self.send_irq_worker_message(IrqWorkerMessage::IrqLine(i as u32, true));
+                        self.send_irq_worker_message(IrqWorkerMessage::IrqLine(i as u32, false));
+                    } else {
+                        self.send_irq_worker_message(IrqWorkerMessage::IrqLine(i as u32, true));
+                    }
+                }
+            }
+        }
     }
 }
