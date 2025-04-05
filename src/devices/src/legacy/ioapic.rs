@@ -7,7 +7,10 @@ use kvm_ioctls::{Error, VmFd};
 use utils::eventfd::EventFd;
 
 use crate::bus::BusDevice;
+use crate::legacy::irqchip::IrqChipT;
+use crate::Error as DeviceError;
 
+const IOAPIC_BASE: u32 = 0xfec0_0000;
 const APIC_DEFAULT_ADDRESS: u32 = 0xfee0_0000;
 const IOAPIC_NUM_PINS: usize = 24;
 
@@ -284,6 +287,36 @@ impl IoApic {
                 }
             }
         }
+    }
+}
+
+impl IrqChipT for IoApic {
+    fn get_mmio_addr(&self) -> u64 {
+        IOAPIC_BASE as u64
+    }
+
+    fn get_mmio_size(&self) -> u64 {
+        0x1000
+    }
+
+    fn set_irq(
+        &self,
+        _irq_line: Option<u32>,
+        interrupt_evt: Option<&EventFd>,
+    ) -> Result<(), DeviceError> {
+        if let Some(interrupt_evt) = interrupt_evt {
+            if let Err(e) = interrupt_evt.write(1) {
+                error!("Failed to signal used queue: {:?}", e);
+                return Err(DeviceError::FailedSignalingUsedQueue(e));
+            }
+        } else {
+            error!("EventFd not set up for irq line");
+            return Err(DeviceError::FailedSignalingUsedQueue(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "EventFd not set up for irq line",
+            )));
+        }
+        Ok(())
     }
 }
 
