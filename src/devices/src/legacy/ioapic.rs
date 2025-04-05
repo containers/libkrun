@@ -45,7 +45,9 @@ type RedirectionTableEntry = u64;
 const IOAPIC_TRIGGER_EDGE: u64 = 0;
 
 #[derive(Debug)]
-pub enum IrqWorkerMessage {}
+pub enum IrqWorkerMessage {
+    GsiRoute(Vec<kvm_irq_routing_entry>),
+}
 
 #[derive(Debug, Default)]
 pub struct IoApicEntryInfo {
@@ -189,5 +191,45 @@ impl IoApic {
                 | ((delivery_mode as u64) << MSI_DATA_DELIVERY_MODE_SHIFT))
                 as u32,
         }
+    }
+
+    fn update_msi_route(&mut self, virq: usize, msg: &MsiMessage) {
+        let kroute = kvm_irq_routing_entry {
+            gsi: virq as u32,
+            type_: KVM_IRQ_ROUTING_MSI,
+            flags: 0,
+            u: kvm_irq_routing_entry__bindgen_ty_1 {
+                msi: kvm_irq_routing_msi {
+                    address_lo: msg.address as u32,
+                    address_hi: (msg.address >> 32) as u32,
+                    data: msg.data as u32,
+                    ..Default::default()
+                },
+            },
+            ..Default::default()
+        };
+
+        for entry in self.irq_routes.iter_mut() {
+            if entry.gsi == kroute.gsi {
+                *entry = kroute;
+            }
+        }
+    }
+
+    fn update_routes(&mut self) {
+        for i in 0..IOAPIC_NUM_PINS {
+            let info = self.parse_entry(&self.ioredtbl[i]);
+
+            if info.masked == 0 {
+                let msg = MsiMessage {
+                    address: info.addr as u64,
+                    data: info.data as u64,
+                };
+
+                self.update_msi_route(i, &msg);
+            }
+        }
+
+        self.send_irq_worker_message(IrqWorkerMessage::GsiRoute(self.irq_routes.clone()));
     }
 }
