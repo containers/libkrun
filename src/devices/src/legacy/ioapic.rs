@@ -114,4 +114,12 @@ impl IoApic {
             self.ioredtbl[index] &= !IOAPIC_LVT_REMOTE_IRR;
         }
     }
+
+    fn send_irq_worker_message(&self, msg: IrqWorkerMessage) {
+        self.irq_sender
+            .send((msg, self.event_fd.try_clone().unwrap()))
+            .unwrap();
+
+        self.event_fd.read().unwrap();
+    }
 }
