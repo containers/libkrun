@@ -120,6 +120,8 @@ pub struct VmResources {
     pub smbios_oem_strings: Option<Vec<String>>,
     /// Whether to enable nested virtualization.
     pub nested_enabled: bool,
+    /// Whether to enable split irqchip
+    pub split_irqchip: bool,
 }
 
 impl VmResources {
@@ -344,6 +346,7 @@ mod tests {
             console_output: None,
             smbios_oem_strings: None,
             nested_enabled: false,
+            split_irqchip: false,
         }
     }
 

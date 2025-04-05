@@ -554,6 +554,18 @@ int32_t krun_setgid(uint32_t ctx_id, gid_t gid);
 int32_t krun_set_nested_virt(uint32_t ctx_id, bool enabled);
 
 /**
+ * Specify whether to split IRQCHIP responsibilities between the host and the guest.
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *  "enable" - whether to enable the split IRQCHIP
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+*/
+int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
+
+/**
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
  * stdin/stdout to manage them on behalf of the process running inside the isolated environment,
  * simulating that the latter has direct control of the terminal.
