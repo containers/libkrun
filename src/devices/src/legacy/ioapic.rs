@@ -6,15 +6,29 @@ use kvm_ioctls::{Error, VmFd};
 
 use utils::eventfd::EventFd;
 
+use crate::bus::BusDevice;
+
 const APIC_DEFAULT_ADDRESS: u32 = 0xfee0_0000;
 const IOAPIC_NUM_PINS: usize = 24;
 
+const IO_REG_SEL: u64 = 0x00;
+const IO_WIN: u64 = 0x10;
+const IO_EOI: u64 = 0x40;
+
+const IO_APIC_ID: u8 = 0x00;
+const IO_APIC_VER: u8 = 0x01;
+const IO_APIC_ARB: u8 = 0x02;
+
 const IOAPIC_LVT_DELIV_MODE_SHIFT: u64 = 8;
 const IOAPIC_LVT_DEST_MODE_SHIFT: u64 = 11;
+const IOAPIC_LVT_DELIV_STATUS_SHIFT: u64 = 12;
 const IOAPIC_LVT_REMOTE_IRR_SHIFT: u64 = 14;
 const IOAPIC_LVT_TRIGGER_MODE_SHIFT: u64 = 15;
 const IOAPIC_LVT_MASKED_SHIFT: u64 = 16;
 const IOAPIC_LVT_DEST_IDX_SHIFT: u64 = 48;
+
+const IOAPIC_VER_ENTRIES_SHIFT: u64 = 16;
+const IOAPIC_ID_SHIFT: u64 = 24;
 
 const MSI_DATA_VECTOR_SHIFT: u64 = 0;
 const MSI_ADDR_DEST_MODE_SHIFT: u64 = 2;
@@ -24,11 +38,17 @@ const MSI_DATA_TRIGGER_SHIFT: u64 = 15;
 
 const IOAPIC_LVT_REMOTE_IRR: u64 = 1 << IOAPIC_LVT_REMOTE_IRR_SHIFT;
 const IOAPIC_LVT_TRIGGER_MODE: u64 = 1 << IOAPIC_LVT_TRIGGER_MODE_SHIFT;
+const IOAPIC_LVT_DELIV_STATUS: u64 = 1 << IOAPIC_LVT_DELIV_STATUS_SHIFT;
+
+const IOAPIC_RO_BITS: u64 = IOAPIC_LVT_REMOTE_IRR | IOAPIC_LVT_DELIV_STATUS;
+const IOAPIC_RW_BITS: u64 = !IOAPIC_RO_BITS;
 
 const IOAPIC_DM_MASK: u64 = 0x7;
+const IOAPIC_ID_MASK: u64 = 0xf;
 const IOAPIC_VECTOR_MASK: u64 = 0xff;
 
 const IOAPIC_DM_EXTINT: u64 = 0x7;
+const IOAPIC_REG_REDTBL_BASE: u64 = 0x10;
 
 const IOAPIC_TRIGGER_EDGE: u64 = 0;
 
@@ -263,6 +283,128 @@ impl IoApic {
                     }
                 }
             }
+        }
+    }
+}
+
+impl BusDevice for IoApic {
+    fn read(&mut self, _vcpuid: u64, offset: u64, data: &mut [u8]) {
+        let val = match offset {
+            IO_REG_SEL => {
+                debug!("ioapic: read: ioregsel");
+                self.ioregsel as u32
+            }
+            IO_WIN => {
+                // the data needs to be 32-bits in size
+                if data.len() != 4 {
+                    error!("ioapic: bad read size {}", data.len());
+                    return;
+                }
+
+                match self.ioregsel {
+                    IO_APIC_ID | IO_APIC_ARB => {
+                        debug!("ioapic: read: IOAPIC ID");
+                        ((self.id as u64) << IOAPIC_ID_SHIFT) as u32
+                    }
+                    IO_APIC_VER => {
+                        debug!("ioapic: read: IOAPIC version");
+                        self.version as u32
+                            | ((IOAPIC_NUM_PINS as u32 - 1) << IOAPIC_VER_ENTRIES_SHIFT)
+                    }
+                    _ => {
+                        let index = (self.ioregsel as u64 - IOAPIC_REG_REDTBL_BASE) >> 1;
+                        debug!("ioapic: read: ioredtbl register {}", index);
+                        let mut val = 0u32;
+
+                        // we can only read from this register in 32-bit chunks.
+                        // Therefore, we need to check if we are reading the
+                        // upper 32 bits or the lower
+                        if index < IOAPIC_NUM_PINS as u64 {
+                            if self.ioregsel & 1 > 0 {
+                                // read upper 32 bits
+                                val = (self.ioredtbl[index as usize] >> 32) as u32;
+                            } else {
+                                // read lower 32 bits
+                                val = (self.ioredtbl[index as usize] & 0xffff_ffffu64) as u32;
+                            }
+                        }
+                        val
+                    }
+                }
+            }
+            _ => unreachable!(),
+        };
+
+        // turn the value into native endian byte order and put that value into `data`
+        let out_arr = val.to_ne_bytes();
+        for i in 0..4 {
+            if i < data.len() {
+                data[i] = out_arr[i];
+            }
+        }
+    }
+
+    fn write(&mut self, _vcpuid: u64, offset: u64, data: &[u8]) {
+        // data needs to be 32-bits in size
+        if data.len() != 4 {
+            error!("ioapic: bad write size {}", data.len());
+            return;
+        }
+
+        // convert data into a u32 int with native endianness
+        let arr = [data[0], data[1], data[2], data[3]];
+        let val = u32::from_ne_bytes(arr);
+        match offset {
+            IO_REG_SEL => {
+                debug!("ioapic: write: ioregsel");
+                self.ioregsel = val as u8
+            }
+            IO_WIN => {
+                match self.ioregsel {
+                    IO_APIC_ID => {
+                        debug!("ioapic: write: IOAPIC ID");
+                        self.id = ((val >> IOAPIC_ID_SHIFT) & (IOAPIC_ID_MASK as u32)) as u8
+                    }
+                    // NOTE: these are read-only registers, so they should never be written to
+                    IO_APIC_VER | IO_APIC_ARB => debug!("ioapic: write: IOAPIC VERSION"),
+                    _ => {
+                        if self.ioregsel < (IO_WIN as u8) {
+                            debug!("invalid write; ignore");
+                            return;
+                        }
+
+                        let index = (self.ioregsel as u64 - IOAPIC_REG_REDTBL_BASE) >> 1;
+                        debug!("ioapic: write: ioredtbl register {}", index);
+                        if index >= IOAPIC_NUM_PINS as u64 {
+                            warn!("ioapic: write: virq out of pin range {}", index);
+                            return;
+                        }
+
+                        let ro_bits = self.ioredtbl[index as usize] & IOAPIC_RO_BITS;
+                        // check if we are writing to the upper 32-bits of the
+                        // register or the lower 32-bits
+                        if self.ioregsel & 1 > 0 {
+                            self.ioredtbl[index as usize] &= 0xffff_ffff;
+                            self.ioredtbl[index as usize] |= (val as u64) << 32;
+                        } else {
+                            self.ioredtbl[index as usize] &= !0xffff_ffff;
+                            self.ioredtbl[index as usize] |= val as u64;
+                        }
+
+                        // restore RO bits
+                        self.ioredtbl[index as usize] &= IOAPIC_RW_BITS;
+                        self.ioredtbl[index as usize] |= ro_bits;
+                        self.irq_eoi[index as usize] = 0;
+
+                        // if the trigger mode is EDGE, clear IRR bit
+                        self.fix_edge_remote_irr(index as usize);
+                        self.update_routes();
+                        self.service();
+                    }
+                }
+            }
+            IO_EOI => todo!(),
+            _ => unreachable!(),
         }
     }
 }
