@@ -32,6 +32,8 @@ use devices::legacy::Serial;
 use devices::legacy::VcpuList;
 #[cfg(target_os = "macos")]
 use devices::legacy::{GicV3, HvfGicV3};
+#[cfg(target_arch = "x86_64")]
+use devices::legacy::{IoApic, IrqChipT};
 use devices::legacy::{IrqChip, IrqChipDevice};
 #[cfg(feature = "net")]
 use devices::virtio::Net;
@@ -664,10 +666,20 @@ pub fn build_microvm(
     // while on aarch64 we need to do it the other way around.
     #[cfg(target_arch = "x86_64")]
     {
-        let kvmioapic = KvmIoapic::new(vm.fd()).map_err(StartMicrovmError::CreateKvmIrqChip)?;
-        intc = Arc::new(Mutex::new(IrqChipDevice::new(Box::new(kvmioapic))));
+        let ioapic: Box<dyn IrqChipT> = if vm_resources.split_irqchip {
+            Box::new(IoApic::new(vm.fd(), irq_sender).map_err(StartMicrovmError::CreateKvmIrqChip)?)
+        } else {
+            Box::new(KvmIoapic::new(vm.fd()).map_err(StartMicrovmError::CreateKvmIrqChip)?)
+        };
+        intc = Arc::new(Mutex::new(IrqChipDevice::new(ioapic)));
 
-        attach_legacy_devices(&vm, &mut pio_device_manager)?;
+        attach_legacy_devices(
+            &vm,
+            vm_resources.split_irqchip,
+            &mut pio_device_manager,
+            &mut mmio_device_manager,
+            Some(intc.clone()),
+        )?;
 
         vcpus = create_vcpus_x86_64(
             &vm,
@@ -1333,12 +1345,22 @@ pub fn setup_serial_device(
 #[cfg(target_arch = "x86_64")]
 fn attach_legacy_devices(
     vm: &Vm,
+    split_irqchip: bool,
     pio_device_manager: &mut PortIODeviceManager,
+    mmio_device_manager: &mut MMIODeviceManager,
+    intc: Option<Arc<Mutex<IrqChipDevice>>>,
 ) -> std::result::Result<(), StartMicrovmError> {
     pio_device_manager
         .register_devices()
         .map_err(Error::LegacyIOBus)
         .map_err(StartMicrovmError::Internal)?;
+
+    if split_irqchip {
+        mmio_device_manager
+            .register_mmio_ioapic(intc)
+            .map_err(Error::RegisterMMIODevice)
+            .map_err(StartMicrovmError::Internal)?;
+    }
 
     macro_rules! register_irqfd_evt {
         ($evt: ident, $index: expr) => {{
