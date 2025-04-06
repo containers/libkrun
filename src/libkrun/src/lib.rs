@@ -1601,7 +1601,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             })
             .unwrap();
     }
-    
+
     #[cfg(feature = "tee")]
     let guest_mem = _vmm.lock().unwrap().guest_memory().clone();
 
