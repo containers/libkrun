@@ -20,7 +20,10 @@ jobs:
         uses: Homebrew/actions/setup-homebrew@master
 
       - name: Install dependencies
-        run: brew tap slp/krunkit && brew install virglrenderer
+        run: brew tap slp/krunkit && brew install virglrenderer clang-format
+
+      - name: Formatting (clang-format)
+        run: find init -iname '*.h' -o -iname '*.c' | xargs clang-format -n -Werror
 
       - name: Formatting (rustfmt)
         run: cargo fmt -- --check

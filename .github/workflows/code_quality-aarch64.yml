@@ -4,7 +4,7 @@ on: [pull_request, create]
 jobs:
   build:
     if: github.event_name == 'pull_request'
-    name: Code Quality (fmt, clippy)
+    name: Code Quality (fmt, clippy, clang-format)
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Code checkout
@@ -16,7 +16,10 @@ jobs:
             components: rustfmt, clippy
 
       - name: Install packages
-        run: sudo apt-get update && sudo apt-get install -y libvirglrenderer-dev libepoxy-dev libdrm-dev libpipewire-0.3-dev
+        run: sudo apt-get update && sudo apt-get install -y libvirglrenderer-dev libepoxy-dev libdrm-dev libpipewire-0.3-dev clang-format
+
+      - name: Formatting (clang-format)
+        run: find init -iname '*.h' -o -iname '*.c' | xargs clang-format -n -Werror
 
       - name: Create a fake init
         run: touch init/init
@@ -26,6 +29,6 @@ jobs:
 
       - name: Clippy (default features)
         run: cargo clippy -- -D warnings
-      
+
       - name: Clippy (net+blk+gpu+snd features)
         run: cargo clippy --features net,blk,gpu,snd -- -D warnings
