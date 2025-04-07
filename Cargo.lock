@@ -802,7 +802,7 @@ checksum = "433bfe06b8c75da9b2e3fbea6e5329ff87748f0b144ef75306e674c3f6f7c13f"
 
 [[package]]
 name = "libkrun"
-version = "1.11.0"
+version = "1.11.1"
 dependencies = [
  "crossbeam-channel",
  "devices",
