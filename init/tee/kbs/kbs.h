@@ -4,8 +4,8 @@
 #define _KBS
 
 #include <curl/curl.h>
-#include <openssl/evp.h>
 #include <openssl/bn.h>
+#include <openssl/evp.h>
 
 #include "../snp_attest.h"
 
@@ -13,19 +13,19 @@
  * Identifiers for all possible TEE architectures.
  */
 enum tee {
-        TEE_SEV,
-        TEE_SGX,
-        TEE_SNP,
-        TEE_TDX,
+    TEE_SEV,
+    TEE_SGX,
+    TEE_SNP,
+    TEE_TDX,
 };
 
 /*
  * The type of KBS operation to be performed.
  */
 enum curl_post_type {
-        KBS_CURL_REQ,
-        KBS_CURL_ATTEST,
-        KBS_CURL_GET_KEY,
+    KBS_CURL_REQ,
+    KBS_CURL_ATTEST,
+    KBS_CURL_GET_KEY,
 };
 
 // kbs_util.c
