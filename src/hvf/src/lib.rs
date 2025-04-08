@@ -210,7 +210,7 @@ pub struct HvfNestedBindings {
     hv_vm_config_get_el2_supported:
         libloading::Symbol<'static, unsafe extern "C" fn(*mut bool) -> hv_return_t>,
     hv_vm_config_set_el2_enabled:
-        libloading::Symbol<'static, unsafe extern "C" fn(hv_vm_config_t, *mut bool) -> hv_return_t>,
+        libloading::Symbol<'static, unsafe extern "C" fn(hv_vm_config_t, bool) -> hv_return_t>,
 }
 
 pub struct HvfVm {}
@@ -248,8 +248,7 @@ impl HvfVm {
                 return Err(Error::NestedCheck);
             }
 
-            let mut el2_enabled = true;
-            let ret = unsafe { (bindings.hv_vm_config_set_el2_enabled)(config, &mut el2_enabled) };
+            let ret = unsafe { (bindings.hv_vm_config_set_el2_enabled)(config, true) };
             if ret != HV_SUCCESS {
                 return Err(Error::EnableEL2);
             }
