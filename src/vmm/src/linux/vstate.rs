@@ -11,7 +11,6 @@ use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::io;
 
-#[cfg(feature = "tee")]
 use std::os::unix::io::RawFd;
 
 use std::result;
@@ -41,15 +40,22 @@ use kvm_bindings::{
     KVM_MAX_CPUID_ENTRIES,
 };
 use kvm_bindings::{
-    kvm_userspace_memory_region, KVM_API_VERSION, KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN,
+    kvm_create_guest_memfd, kvm_memory_attributes, kvm_userspace_memory_region,
+    kvm_userspace_memory_region2, KVM_API_VERSION, KVM_MEMORY_ATTRIBUTE_PRIVATE,
+    KVM_MEM_GUEST_MEMFD, KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN,
 };
-use kvm_ioctls::*;
+#[cfg(feature = "tee")]
+use kvm_bindings::{kvm_enable_cap, KVM_CAP_EXIT_HYPERCALL, KVM_MEMORY_EXIT_FLAG_PRIVATE};
+use kvm_ioctls::{Cap::*, *};
 use utils::eventfd::EventFd;
 use utils::signal::{register_signal_handler, sigrtmin, Killable};
 use utils::sm::StateMachine;
 use vm_memory::{
     Address, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion,
+    GuestRegionMmap,
 };
+
+use rangemap::RangeMap;
 
 #[cfg(feature = "amd-sev")]
 use sev::launch::snp;
@@ -63,6 +69,8 @@ pub enum Error {
     #[cfg(target_arch = "x86_64")]
     /// A call to cpuid instruction failed.
     CpuId(cpuid::Error),
+    /// Unable to create a KVM guest_memfd.
+    CreateGuestMemfd(kvm_ioctls::Error),
     #[cfg(target_arch = "x86_64")]
     /// Error configuring the floating point related registers
     FPUConfiguration(arch::x86_64::regs::Error),
@@ -73,6 +81,9 @@ pub enum Error {
     GuestMSRs(arch::x86_64::msr::Error),
     /// Hyperthreading flag is not initialized.
     HTNotInitialized,
+    /// Unable to enable KVM hypercall exits.
+    #[cfg(feature = "tee")]
+    HypercallExitEnable(kvm_ioctls::Error),
     /// Cannot configure the IRQ.
     Irq(kvm_ioctls::Error),
     /// The host kernel reports an invalid KVM API version.
@@ -99,6 +110,8 @@ pub enum Error {
     #[cfg(target_arch = "x86_64")]
     /// Error configuring the general purpose registers
     REGSConfiguration(arch::x86_64::regs::Error),
+    /// Cannot set memory region attributes.
+    SetMemoryAttributes(kvm_ioctls::Error),
     /// Cannot set the memory regions.
     SetUserMemoryRegion(kvm_ioctls::Error),
     /// Error creating memory map for SHM region.
@@ -197,6 +210,9 @@ pub enum Error {
     VcpuTlsNotPresent,
     /// Unexpected KVM_RUN exit reason
     VcpuUnhandledKvmExit,
+    /// Unsupported KVM_EXIT_HYPERCALL.
+    #[cfg(feature = "tee")]
+    VcpuUnsupportedHypercall,
     /// Cannot open the VM file descriptor.
     VmFd(kvm_ioctls::Error),
     #[cfg(target_arch = "x86_64")]
@@ -228,10 +244,13 @@ impl Display for Error {
         match self {
             #[cfg(target_arch = "x86_64")]
             CpuId(e) => write!(f, "Cpuid error: {e:?}"),
+            CreateGuestMemfd(e) => write!(f, "Unable to create KVM guest_memfd: {e:?}"),
             GuestMemoryMmap(e) => write!(f, "Guest memory error: {e:?}"),
             #[cfg(target_arch = "x86_64")]
             GuestMSRs(e) => write!(f, "Retrieving supported guest MSRs fails: {e:?}"),
             HTNotInitialized => write!(f, "Hyperthreading flag is not initialized"),
+            #[cfg(feature = "tee")]
+            HypercallExitEnable(e) => write!(f, "Unable to enable KVM hypercall exits: {e}"),
             KvmApiVersion(v) => {
                 write!(f, "The host kernel reports an invalid KVM API version: {v}")
             }
@@ -252,6 +271,7 @@ impl Display for Error {
                 f,
                 "Cannot set the local interruption due to bad configuration: {e:?}"
             ),
+            SetMemoryAttributes(e) => write!(f, "Cannot set memory region attributes: {e}"),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
             ShmMmap(e) => write!(f, "Error creating memory map for SHM region: {e}"),
             #[cfg(feature = "tee")]
@@ -333,6 +353,8 @@ impl Display for Error {
             VcpuTlsInit => write!(f, "Cannot clean init vcpu TLS"),
             VcpuTlsNotPresent => write!(f, "Vcpu not present in TLS"),
             VcpuUnhandledKvmExit => write!(f, "Unexpected KVM_RUN exit reason"),
+            #[cfg(feature = "tee")]
+            VcpuUnsupportedHypercall => write!(f, "Unsupported KVM_EXIT_HYPERCALL"),
             #[cfg(target_arch = "x86_64")]
             VmGetPit2(e) => write!(f, "Failed to get KVM vm pit state: {e}"),
             #[cfg(target_arch = "x86_64")]
@@ -378,7 +400,6 @@ pub struct KvmContext {
 
 impl KvmContext {
     pub fn new() -> Result<Self> {
-        use kvm_ioctls::Cap::*;
         let kvm = Kvm::new().expect("Error creating the Kvm object");
 
         // Check that KVM has the correct version.
@@ -433,6 +454,8 @@ pub struct Vm {
 
     #[cfg(feature = "amd-sev")]
     pub tee_config: Tee,
+
+    pub guest_memfds: RangeMap<u64, (RawFd, u64)>,
 }
 
 impl Vm {
@@ -457,13 +480,16 @@ impl Vm {
             supported_cpuid,
             #[cfg(target_arch = "x86_64")]
             supported_msrs,
+            guest_memfds: RangeMap::new(),
         })
     }
 
     #[cfg(feature = "amd-sev")]
     pub fn new(kvm: &Kvm, tee_config: &TeeConfig) -> Result<Self> {
         //create fd for interacting with kvm-vm specific functions
-        let vm_fd = kvm.create_vm().map_err(Error::VmFd)?;
+        let vm_fd = kvm
+            .create_vm_with_type(4 /* KVM_X86_SNP_VM */)
+            .map_err(Error::VmFd)?;
 
         let supported_cpuid = kvm
             .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
@@ -471,6 +497,15 @@ impl Vm {
 
         let supported_msrs =
             arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
+
+        let cap = kvm_enable_cap {
+            cap: KVM_CAP_EXIT_HYPERCALL,
+            flags: 0,
+            args: [1 << 12 /* KVM_HC_MAP_GPA_RANGE */, 0, 0, 0],
+            ..Default::default()
+        };
+
+        vm_fd.enable_cap(&cap).map_err(Error::HypercallExitEnable)?;
 
         let tee = match tee_config.tee {
             Tee::Snp => Some(AmdSnp::new().map_err(Error::SnpSecVirtInit)?),
@@ -484,6 +519,7 @@ impl Vm {
             supported_msrs,
             tee,
             tee_config: tee_config.tee,
+            guest_memfds: RangeMap::new(),
         })
     }
 
@@ -508,17 +544,49 @@ impl Vm {
         if guest_mem.num_regions() > kvm_max_memslots {
             return Err(Error::NotEnoughMemorySlots);
         }
+
         for region in guest_mem.iter() {
-            // It's safe to unwrap because the guest address is valid.
-            let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
-            debug!("Guest memory starts at {:x?}", host_addr);
+            self.memory_region_set(guest_mem, region)?;
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        self.fd
+            .set_tss_address(arch::x86_64::layout::KVM_TSS_ADDRESS as usize)
+            .map_err(Error::VmSetup)?;
+
+        Ok(())
+    }
+
+    pub fn guest_memfd_get(&self, gpa: u64) -> Option<(RawFd, u64)> {
+        self.guest_memfds.get(&gpa).copied()
+    }
+
+    #[allow(unused_mut)]
+    fn memory_region_set(
+        &mut self,
+        guest_mem: &GuestMemoryMmap,
+        region: &GuestRegionMmap,
+    ) -> Result<()> {
+        let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
+        let start = region.start_addr().raw_value();
+        let end = start + region.len();
+
+        let mut use_guest_memfd = false;
+
+        #[cfg(feature = "tee")]
+        if self.fd.check_extension(GuestMemfd) {
+            use_guest_memfd = true;
+        }
+
+        if !use_guest_memfd {
             let memory_region = kvm_userspace_memory_region {
                 slot: self.next_mem_slot,
-                guest_phys_addr: region.start_addr().raw_value(),
+                guest_phys_addr: start,
                 memory_size: region.len(),
                 userspace_addr: host_addr as u64,
                 flags: 0,
             };
+
             // Safe because we mapped the memory region, we made sure that the regions
             // are not overlapping.
             unsafe {
@@ -526,13 +594,52 @@ impl Vm {
                     .set_user_memory_region(memory_region)
                     .map_err(Error::SetUserMemoryRegion)?;
             };
-            self.next_mem_slot += 1;
+        } else {
+            // Create a guest_memfd and set the region.
+            let guest_memfd = self
+                .fd
+                .create_guest_memfd(kvm_create_guest_memfd {
+                    size: region.size() as u64,
+                    flags: 0,
+                    reserved: [0; 6],
+                })
+                .map_err(Error::CreateGuestMemfd)?;
+
+            let memory_region = kvm_userspace_memory_region2 {
+                slot: self.next_mem_slot,
+                flags: KVM_MEM_GUEST_MEMFD,
+                guest_phys_addr: start,
+                memory_size: region.len(),
+                userspace_addr: host_addr as u64,
+                guest_memfd_offset: 0,
+                guest_memfd: guest_memfd as u32,
+                pad1: 0,
+                pad2: [0; 14],
+            };
+
+            // Safe because we mapped the memory region, we made sure that the regions
+            // are not overlapping.
+            unsafe {
+                self.fd
+                    .set_user_memory_region2(memory_region)
+                    .map_err(Error::SetUserMemoryRegion)?;
+            };
+
+            let attr = kvm_memory_attributes {
+                address: start,
+                size: region.len(),
+                attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE as u64,
+                flags: 0,
+            };
+
+            self.fd
+                .set_memory_attributes(attr)
+                .map_err(Error::SetMemoryAttributes)?;
+
+            self.guest_memfds.insert(start..end, (guest_memfd, start));
         }
 
-        #[cfg(target_arch = "x86_64")]
-        self.fd
-            .set_tss_address(arch::x86_64::layout::KVM_TSS_ADDRESS as usize)
-            .map_err(Error::VmSetup)?;
+        self.next_mem_slot += 1;
 
         Ok(())
     }
@@ -551,7 +658,7 @@ impl Vm {
     }
 
     #[cfg(feature = "amd-sev")]
-    pub fn snp_secure_virt_attest(
+    pub fn snp_secure_virt_measure(
         &self,
         cpuid: CpuId,
         guest_mem: &GuestMemoryMmap,
@@ -646,6 +753,13 @@ pub struct VmState {
     ioapic: kvm_irqchip,
 }
 
+#[cfg(feature = "tee")]
+pub struct MemoryProperties {
+    pub gpa: u64,
+    pub size: u64,
+    pub private: bool,
+}
+
 /// Encapsulates configuration parameters for the guest vCPUS.
 #[derive(Debug, Eq, PartialEq)]
 pub struct VcpuConfig {
@@ -687,6 +801,9 @@ pub struct Vcpu {
     response_receiver: Option<Receiver<VcpuResponse>>,
     // The transmitting end of the responses channel owned by the vcpu side.
     response_sender: Sender<VcpuResponse>,
+
+    #[cfg(feature = "tee")]
+    pm_sender: (Sender<MemoryProperties>, EventFd),
 }
 
 impl Vcpu {
@@ -790,6 +907,7 @@ impl Vcpu {
         msr_list: MsrList,
         io_bus: devices::Bus,
         exit_evt: EventFd,
+        #[cfg(feature = "tee")] pm_sender: (Sender<MemoryProperties>, EventFd),
     ) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = unbounded();
@@ -808,6 +926,8 @@ impl Vcpu {
             event_sender: Some(event_sender),
             response_receiver: Some(response_receiver),
             response_sender,
+            #[cfg(feature = "tee")]
+            pm_sender,
         })
     }
 
@@ -1068,9 +1188,11 @@ impl Vcpu {
         self.fd
             .set_sregs(&state.sregs)
             .map_err(Error::VcpuSetSregs)?;
-        self.fd
-            .set_xsave(&state.xsave)
-            .map_err(Error::VcpuSetXsave)?;
+        unsafe {
+            self.fd
+                .set_xsave(&state.xsave)
+                .map_err(Error::VcpuSetXsave)?;
+        }
         self.fd.set_xcrs(&state.xcrs).map_err(Error::VcpuSetXcrs)?;
         self.fd
             .set_debug_regs(&state.debug_regs)
@@ -1089,8 +1211,31 @@ impl Vcpu {
     ///
     /// Returns error or enum specifying whether emulation was handled or interrupted.
     fn run_emulation(&mut self) -> Result<VcpuEmulation> {
+        // HACK: wait a bit between KVM_RUNs to work around an SNP issue.
+        thread::sleep(std::time::Duration::from_millis(1));
+
         match self.fd.run() {
             Ok(run) => match run {
+                #[cfg(feature = "tee")]
+                VcpuExit::Hypercall(hypercall) => {
+                    if hypercall.nr != 12
+                    /* KVM_HC_MAP_GPA_RANGE */
+                    {
+                        return Err(Error::VcpuUnsupportedHypercall);
+                    }
+
+                    let gpa = hypercall.args[0];
+                    let size = hypercall.args[1] * 0x1000; /* TARGET_PAGE_SIZE */
+                    let attributes = hypercall.args[2];
+
+                    let private = !matches!(attributes, 0);
+
+                    let mem_properties = MemoryProperties { gpa, size, private };
+
+                    self.pm_sender.0.send(mem_properties).unwrap();
+                    let _ = self.pm_sender.1.read().unwrap();
+                    Ok(VcpuEmulation::Handled)
+                }
                 #[cfg(target_arch = "x86_64")]
                 VcpuExit::IoIn(addr, data) => {
                     self.io_bus.read(0, u64::from(addr), data);
@@ -1099,6 +1244,17 @@ impl Vcpu {
                 #[cfg(target_arch = "x86_64")]
                 VcpuExit::IoOut(addr, data) => {
                     self.io_bus.write(0, u64::from(addr), data);
+                    Ok(VcpuEmulation::Handled)
+                }
+                #[cfg(feature = "tee")]
+                VcpuExit::MemoryFault { gpa, size, flags } => {
+                    let private = (flags & (KVM_MEMORY_EXIT_FLAG_PRIVATE as u64)) != 0;
+
+                    let mem_properties = MemoryProperties { gpa, size, private };
+
+                    self.pm_sender.0.send(mem_properties).unwrap();
+                    let _ = self.pm_sender.1.read().unwrap();
+
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::MmioRead(addr, data) => {
