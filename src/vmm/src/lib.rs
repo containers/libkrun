@@ -40,6 +40,7 @@ use macos::vstate;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::os::unix::io::AsRawFd;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "linux")]
 use std::time::Duration;
@@ -202,6 +203,7 @@ pub struct Vmm {
     exit_evt: EventFd,
     vm: Vm,
     exit_observers: Vec<Arc<Mutex<dyn VmmExitObserver>>>,
+    exit_code: Arc<AtomicI32>,
 
     // Guest VM devices.
     mmio_device_manager: MMIODeviceManager,
@@ -394,7 +396,10 @@ impl Subscriber for Vmm {
             // If the exit_code can't be found on any vcpu, it means that the exit signal
             // has been issued by the i8042 controller in which case we exit with
             // FC_EXIT_CODE_OK.
-            let exit_code = self
+            //
+            // The exit code set up by the guest takes preference over the one reported
+            // by either a vcpu or the i8042 controller.
+            let vcpu_exit_code = self
                 .vcpus_handles
                 .iter()
                 .find_map(|handle| match handle.response_receiver().try_recv() {
@@ -402,7 +407,15 @@ impl Subscriber for Vmm {
                     _ => None,
                 })
                 .unwrap_or(FC_EXIT_CODE_OK);
-            self.stop(i32::from(exit_code));
+            let vmm_exit_code = self.exit_code.load(Ordering::SeqCst);
+            let exit_code = if vmm_exit_code != i32::MAX {
+                debug!("using vmm exit code: {vmm_exit_code}");
+                vmm_exit_code
+            } else {
+                debug!("using vcpu exit code: {vcpu_exit_code}");
+                vcpu_exit_code as i32
+            };
+            self.stop(exit_code);
         } else {
             error!("Spurious EventManager event for handler: Vmm");
         }
