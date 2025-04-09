@@ -980,6 +980,7 @@ int main(int argc, char **argv)
     struct ifreq ifr;
     int sockfd;
     int status;
+    int saved_errno;
     char localhost[] = "localhost\0";
     char *hostname;
     char *krun_home;
@@ -1067,16 +1068,23 @@ int main(int argc, char **argv)
     int child = fork();
     if (child < 0) {
         perror("fork");
-        exit(-3);
+        set_exit_code(125);
+        exit(125);
     }
     if (child == 0) { // child
         if (setup_redirects() < 0) {
-            exit(-4);
+            exit(125);
         }
         if (execvp(exec_argv[0], exec_argv) < 0) {
+            saved_errno = errno;
             printf("Couldn't execute '%s' inside the vm: %s\n", exec_argv[0],
                    strerror(errno));
-            exit(-3);
+            // Use the same exit code as chroot and podman do.
+            if (saved_errno == ENOENT) {
+                exit(127);
+            } else {
+                exit(126);
+            }
         }
     } else { // parent
         // Wait until the workload's entrypoint has exited, ignoring any other
