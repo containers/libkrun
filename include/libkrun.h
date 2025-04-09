@@ -582,10 +582,19 @@ int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
  * Arguments:
  *  "ctx_id" - the configuration context ID.
  *
- * Returns:
+ * Notes:
  *  This function only returns if an error happens before starting the microVM. Otherwise, the
- *  VMM assumes it has full control of the process, and will call to exit() once the microVM shuts
- *  down.
+ *  VMM assumes it has full control of the process, and will call to exit() with the workload's exit
+ *  code once the microVM shuts down. If an error occurred before running the workload the process 
+ *  will exit() with an error exit code.
+ * 
+ * Error exit codes:
+ *  125     - "init" cannot set up the environment inside the microVM.
+ *  126     - "init" can find the executable to be run inside the microVM but cannot execute it.
+ *  127     - "init" cannot find the executable to be run inside the microVM.
+ *
+ * Returns:
+ *  -EINVAL - The VMM has detected an error in the microVM configuration.
  */
 int32_t krun_start_enter(uint32_t ctx_id);
 
