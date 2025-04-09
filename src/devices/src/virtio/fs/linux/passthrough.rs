@@ -11,12 +11,12 @@ use std::io;
 use std::mem::{self, size_of, MaybeUninit};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use caps::{has_cap, CapSet, Capability};
-use nix::request_code_read;
+use nix::{request_code_none, request_code_read};
 
 use vm_memory::ByteValued;
 
@@ -2107,11 +2107,13 @@ impl FileSystem for PassthroughFs {
         handle: Self::Handle,
         _flags: u32,
         cmd: u32,
-        _arg: u64,
+        arg: u64,
         _in_size: u32,
         out_size: u32,
+        exit_code: &Arc<AtomicI32>,
     ) -> io::Result<Vec<u8>> {
         const VIRTIO_IOC_MAGIC: u8 = b'v';
+
         const VIRTIO_IOC_TYPE_EXPORT_FD: u8 = 1;
         const VIRTIO_IOC_EXPORT_FD_SIZE: usize = 2 * mem::size_of::<u64>();
         const VIRTIO_IOC_EXPORT_FD_REQ: u32 = request_code_read!(
@@ -2119,6 +2121,10 @@ impl FileSystem for PassthroughFs {
             VIRTIO_IOC_TYPE_EXPORT_FD,
             VIRTIO_IOC_EXPORT_FD_SIZE
         ) as u32;
+
+        const VIRTIO_IOC_TYPE_EXIT_CODE: u8 = 2;
+        const VIRTIO_IOC_EXIT_CODE_REQ: u32 =
+            request_code_none!(VIRTIO_IOC_MAGIC, VIRTIO_IOC_TYPE_EXIT_CODE) as u32;
 
         match cmd {
             VIRTIO_IOC_EXPORT_FD_REQ => {
@@ -2149,6 +2155,10 @@ impl FileSystem for PassthroughFs {
                 let mut ret: Vec<_> = self.cfg.export_fsid.to_ne_bytes().into();
                 ret.extend_from_slice(&handle.to_ne_bytes());
                 Ok(ret)
+            }
+            VIRTIO_IOC_EXIT_CODE_REQ => {
+                exit_code.store(arg as i32, Ordering::SeqCst);
+                Ok(Vec::new())
             }
             _ => Err(io::Error::from_raw_os_error(libc::EOPNOTSUPP)),
         }

@@ -2,7 +2,7 @@
 use crossbeam_channel::Sender;
 use std::cmp;
 use std::io::Write;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
@@ -54,6 +54,7 @@ pub struct Fs {
     passthrough_cfg: passthrough::Config,
     worker_thread: Option<JoinHandle<()>>,
     worker_stopfd: EventFd,
+    exit_code: Arc<AtomicI32>,
     #[cfg(target_os = "macos")]
     map_sender: Option<Sender<MemoryMapping>>,
 }
@@ -62,6 +63,7 @@ impl Fs {
     pub(crate) fn with_queues(
         fs_id: String,
         shared_dir: String,
+        exit_code: Arc<AtomicI32>,
         queues: Vec<VirtQueue>,
     ) -> super::Result<Fs> {
         let mut queue_events = Vec::new();
@@ -97,17 +99,18 @@ impl Fs {
             passthrough_cfg: fs_cfg,
             worker_thread: None,
             worker_stopfd: EventFd::new(EFD_NONBLOCK).map_err(FsError::EventFd)?,
+            exit_code,
             #[cfg(target_os = "macos")]
             map_sender: None,
         })
     }
 
-    pub fn new(fs_id: String, shared_dir: String) -> super::Result<Fs> {
+    pub fn new(fs_id: String, shared_dir: String, exit_code: Arc<AtomicI32>) -> super::Result<Fs> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
             .iter()
             .map(|&max_size| VirtQueue::new(max_size))
             .collect();
-        Self::with_queues(fs_id, shared_dir, queues)
+        Self::with_queues(fs_id, shared_dir, exit_code, queues)
     }
 
     pub fn id(&self) -> &str {
@@ -226,6 +229,7 @@ impl VirtioDevice for Fs {
             self.shm_region.clone(),
             self.passthrough_cfg.clone(),
             self.worker_stopfd.try_clone().unwrap(),
+            self.exit_code.clone(),
             #[cfg(target_os = "macos")]
             self.map_sender.clone(),
         );
