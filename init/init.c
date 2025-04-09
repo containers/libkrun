@@ -28,6 +28,8 @@
 #include "tee/snp_attest.h"
 #endif
 
+#define KRUN_EXIT_CODE_IOCTL 0x7602
+
 #define KRUN_MAGIC "KRUN"
 #define KRUN_FOOTER_LEN 12
 #define CMDLINE_SECRET_PATH "/sfs/secrets/coco/cmdline"
@@ -954,10 +956,30 @@ int setup_redirects()
     return 0;
 }
 
+void set_exit_code(int code)
+{
+    int fd;
+    int ret;
+
+    fd = open("/", O_RDONLY);
+    if (fd < 0) {
+        perror("Couldn't open root filesystem to report exit code");
+        return;
+    }
+
+    ret = ioctl(fd, KRUN_EXIT_CODE_IOCTL, code);
+    if (ret < 0) {
+        perror("Error using the ioctl to set the exit code");
+    }
+
+    close(fd);
+}
+
 int main(int argc, char **argv)
 {
     struct ifreq ifr;
     int sockfd;
+    int status;
     char localhost[] = "localhost\0";
     char *hostname;
     char *krun_home;
@@ -1042,12 +1064,12 @@ int main(int argc, char **argv)
 
     // We need to fork ourselves, because pid 1 cannot doesn't receive SIGINT
     // signal
-    int pid = fork();
-    if (pid < 0) {
+    int child = fork();
+    if (child < 0) {
         perror("fork");
         exit(-3);
     }
-    if (pid == 0) { // child
+    if (child == 0) { // child
         if (setup_redirects() < 0) {
             exit(-4);
         }
@@ -1057,11 +1079,19 @@ int main(int argc, char **argv)
             exit(-3);
         }
     } else { // parent
-        // tell the kernel we don't want to be notified on SIGCHLD so it'll reap
-        // our children for us
-        signal(SIGCHLD, SIG_IGN);
-        // wait for children since we can't exit init
-        waitpid(pid, NULL, 0);
+        // Wait until the workload's entrypoint has exited, ignoring any other
+        // children.
+        while (waitpid(-1, &status, 0) != child) {
+            // Not the first child, ignore it.
+        };
+
+        // The workload's entrypoint has exited, record its exit code and exit
+        // ourselves.
+        if (WIFEXITED(status)) {
+            set_exit_code(WEXITSTATUS(status));
+        } else if (WIFSIGNALED(status)) {
+            set_exit_code(WTERMSIG(status) + 128);
+        }
     }
 
     return 0;
