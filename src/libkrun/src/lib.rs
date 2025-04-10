@@ -64,10 +64,12 @@ const KRUN_SUCCESS: i32 = 0;
 const MAX_ARGS: usize = 4096;
 
 // krunfw library name for each context
-#[cfg(all(target_os = "linux", not(feature = "amd-sev")))]
+#[cfg(all(target_os = "linux", not(feature = "tee")))]
 const KRUNFW_NAME: &str = "libkrunfw.so.4";
 #[cfg(all(target_os = "linux", feature = "amd-sev"))]
 const KRUNFW_NAME: &str = "libkrunfw-sev.so.4";
+#[cfg(all(target_os = "linux", feature = "tdx"))]
+const KRUNFW_NAME: &str = "libkrunfw-tdx.so.4";
 #[cfg(all(target_os = "macos", not(feature = "efi")))]
 const KRUNFW_NAME: &str = "libkrunfw.4.dylib";
 
