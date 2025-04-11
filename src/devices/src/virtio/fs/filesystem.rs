@@ -13,6 +13,7 @@ use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
 use std::mem;
+use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -1160,6 +1161,7 @@ pub trait FileSystem {
         arg: u64,
         in_size: u32,
         out_size: u32,
+        exit_code: &Arc<AtomicI32>,
     ) -> io::Result<Vec<u8>> {
         Err(io::Error::from_raw_os_error(bindings::LINUX_ENOSYS))
     }

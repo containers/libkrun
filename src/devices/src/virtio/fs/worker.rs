@@ -4,7 +4,7 @@ use crossbeam_channel::Sender;
 use hvf::MemoryMapping;
 
 use std::os::fd::AsRawFd;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 
@@ -32,6 +32,7 @@ pub struct FsWorker {
     shm_region: Option<VirtioShmRegion>,
     server: Server<PassthroughFs>,
     stop_fd: EventFd,
+    exit_code: Arc<AtomicI32>,
     #[cfg(target_os = "macos")]
     map_sender: Option<Sender<MemoryMapping>>,
 }
@@ -49,6 +50,7 @@ impl FsWorker {
         shm_region: Option<VirtioShmRegion>,
         passthrough_cfg: passthrough::Config,
         stop_fd: EventFd,
+        exit_code: Arc<AtomicI32>,
         #[cfg(target_os = "macos")] map_sender: Option<Sender<MemoryMapping>>,
     ) -> Self {
         Self {
@@ -63,6 +65,7 @@ impl FsWorker {
             shm_region,
             server: Server::new(PassthroughFs::new(passthrough_cfg).unwrap()),
             stop_fd,
+            exit_code,
             #[cfg(target_os = "macos")]
             map_sender,
         }
@@ -170,6 +173,7 @@ impl FsWorker {
                 reader,
                 writer,
                 &self.shm_region,
+                &self.exit_code,
                 #[cfg(target_os = "macos")]
                 &self.map_sender,
             ) {

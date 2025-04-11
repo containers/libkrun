@@ -14,6 +14,7 @@ use std::io::{self, Read};
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
 
 use super::{Error, Vmm};
@@ -754,6 +755,9 @@ pub fn build_microvm(
         )?;
     }
 
+    // We use this atomic to record the exit code set by init/init.c in the VM.
+    let exit_code = Arc::new(AtomicI32::new(i32::MAX));
+
     let mut vmm = Vmm {
         guest_memory,
         arch_memory_info,
@@ -761,6 +765,7 @@ pub fn build_microvm(
         vcpus_handles: Vec::new(),
         exit_evt,
         exit_observers: Vec::new(),
+        exit_code: exit_code.clone(),
         vm,
         mmio_device_manager,
         #[cfg(target_arch = "x86_64")]
@@ -799,6 +804,7 @@ pub fn build_microvm(
             _map_sender.clone(),
         )?;
     }
+
     #[cfg(not(feature = "tee"))]
     attach_fs_devices(
         &mut vmm,
@@ -807,6 +813,7 @@ pub fn build_microvm(
         #[cfg(not(feature = "tee"))]
         export_table,
         intc.clone(),
+        exit_code,
         #[cfg(target_os = "macos")]
         _map_sender,
     )?;
@@ -1575,13 +1582,19 @@ fn attach_fs_devices(
     shm_manager: &mut ShmManager,
     #[cfg(not(feature = "tee"))] export_table: Option<ExportTable>,
     intc: IrqChip,
+    exit_code: Arc<AtomicI32>,
     #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
     for (i, config) in fs_devs.iter().enumerate() {
         let fs = Arc::new(Mutex::new(
-            devices::virtio::Fs::new(config.fs_id.clone(), config.shared_dir.clone()).unwrap(),
+            devices::virtio::Fs::new(
+                config.fs_id.clone(),
+                config.shared_dir.clone(),
+                exit_code.clone(),
+            )
+            .unwrap(),
         ));
 
         let id = format!("{}{}", String::from(fs.lock().unwrap().id()), i);
