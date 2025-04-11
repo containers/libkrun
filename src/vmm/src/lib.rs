@@ -194,6 +194,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Vmm {
     // Guest VM core resources.
     guest_memory: GuestMemoryMmap,
+    guest_memfd_regions: Vec<(vm_memory::GuestAddress, u64, u64)>,
     arch_memory_info: ArchMemoryInfo,
 
     kernel_cmdline: KernelCmdline,
@@ -324,6 +325,14 @@ impl Vmm {
     /// Returns a reference to the inner `GuestMemoryMmap` object if present, or `None` otherwise.
     pub fn guest_memory(&self) -> &GuestMemoryMmap {
         &self.guest_memory
+    }
+
+    pub fn guest_memfd_regions(&self) -> &Vec<(vm_memory::GuestAddress, u64, u64)> {
+        &self.guest_memfd_regions
+    }
+
+    pub fn vm_fd(&self) -> &kvm_ioctls::VmFd {
+       &self.vm.fd() 
     }
 
     /// Injects CTRL+ALT+DEL keystroke combo in the i8042 device.

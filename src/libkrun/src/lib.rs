@@ -18,7 +18,18 @@ use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
 #[cfg(not(feature = "efi"))]
 use std::sync::LazyLock;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryRegion};
+
+use libc::{
+    fallocate,
+    madvise,
+    FALLOC_FL_KEEP_SIZE,
+    FALLOC_FL_PUNCH_HOLE,
+    MADV_DONTNEED,
+    MADV_REMOVE,
+};
 
 #[cfg(target_os = "macos")]
 use crossbeam_channel::unbounded;
@@ -60,10 +71,12 @@ const KRUN_SUCCESS: i32 = 0;
 const MAX_ARGS: usize = 4096;
 
 // krunfw library name for each context
-#[cfg(all(target_os = "linux", not(feature = "amd-sev")))]
+#[cfg(all(target_os = "linux", not(feature = "intel-tdx"), not(feature = "amd-sev")))]
 const KRUNFW_NAME: &str = "libkrunfw.so.4";
 #[cfg(all(target_os = "linux", feature = "amd-sev"))]
 const KRUNFW_NAME: &str = "libkrunfw-sev.so.4";
+#[cfg(all(target_os = "linux", feature = "intel-tdx"))]
+const KRUNFW_NAME: &str = "libkrunfw-tdx.so.4";
 #[cfg(all(target_os = "macos", not(feature = "efi")))]
 const KRUNFW_NAME: &str = "libkrunfw.4.dylib";
 
@@ -1484,6 +1497,9 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "macos")]
     let (sender, receiver) = unbounded();
 
+    #[cfg(feature = "intel-tdx")]
+    let (vmcall_sender, vmcall_receiver) = crossbeam_channel::unbounded();
+
     #[cfg(target_arch = "x86_64")]
     let (irq_sender, irq_receiver) = crossbeam_channel::unbounded();
 
@@ -1493,6 +1509,8 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         ctx_cfg.shutdown_efd,
         #[cfg(target_os = "macos")]
         sender,
+        #[cfg(feature = "intel-tdx")]
+        vmcall_sender,
         #[cfg(target_arch = "x86_64")]
         irq_sender,
     ) {
@@ -1508,6 +1526,9 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     #[cfg(target_arch = "x86_64")]
     let irq_vmm = _vmm.clone();
+
+    #[cfg(feature = "intel-tdx")]
+    let vmm = _vmm.clone();
 
     #[cfg(target_os = "macos")]
     if ctx_cfg.gpu_virgl_flags.is_some() {
@@ -1577,6 +1598,18 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             .unwrap();
     }
 
+    #[cfg(feature = "intel-tdx")]
+    std::thread::Builder::new()
+        .name("vmcall worker".into())
+        .spawn(move || loop {
+            match vmcall_receiver.recv() {
+                Err(e) => error!("Error in receiver: {:?}", e),
+                Ok((gpa, size, private)) => {
+                    let _ = convert_memory(&vmm, gpa, size, private);
+                },
+            }
+        }).unwrap();
+
     loop {
         match event_manager.run() {
             Ok(_) => {}
@@ -1586,4 +1619,105 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             }
         }
     }
+}
+
+fn has_guest_memory(gpa: u64, size: u64, memfd_regions: &Vec<(vm_memory::GuestAddress, u64, u64)>) -> Option<i64> {
+    for (a, s, i) in memfd_regions.iter() {
+        if gpa >= a.0 && gpa + size <= a.0 + *s {
+            return Some(*i as i64);
+        }
+    }
+    None
+}
+
+fn convert_memory(vmm: &Arc<Mutex<vmm::Vmm>>, gpa: u64, size: u64, to_private: bool) -> i32 {
+    let mut ret = -1;
+    let vmm = vmm.as_ref().lock().unwrap();
+    let guest_memfd_regions = vmm.guest_memfd_regions();
+
+    let page_size = 4096;
+
+    // check to make sure the starting address is aligned with the page size
+    // check to make sure the size of the memory block is also aligned with the page size
+    if (gpa % page_size) != 0 || (size % page_size) != 0 {
+        return -1;
+    }
+
+    if size < 1 {
+        return -1;
+    }
+
+    let region = vmm.guest_memory().find_region(GuestAddress(gpa));
+    if let None = region {
+        // ignore converting non-assigned region to shared
+        //
+        // TDX requires vMMIO region to be shared to inject #VE to guest. OVMF issues
+        // conservatively MapGPA(shared) on 32bit PCI MMIO region, and vIO-APIC 0xFEC 4k page. OVMF
+        // assignes 32bit PCI MMIO region to [top of low memory: typically 2GB=0xC0000000,
+        // 0xFC000000)
+        if !to_private {
+            return 0;
+        }
+
+        return -1;
+    }
+    let region = region.unwrap();
+
+    // retrive the memory region associated with the starting address and the size
+    // then check to make sure there is a guest memfd backing
+    let memfd_id = has_guest_memory(gpa, size, guest_memfd_regions);
+    if memfd_id.is_none() {
+        println!("cannot convert non guest_memfd backed memory region");
+        return -1;
+    }
+    let memfd_id = memfd_id.unwrap();
+
+    let attr = kvm_bindings::kvm_memory_attributes {
+       address: gpa,
+       size,
+       attributes: if to_private {
+           kvm_bindings::KVM_MEMORY_ATTRIBUTE_PRIVATE as u64
+       } else {
+           0
+       },
+       flags: 0,
+    };
+
+    vmm.vm_fd().set_memory_attributes(attr).unwrap();
+
+    let offset = gpa - region.start_addr().raw_value();
+    if to_private {
+        // ram_block_discard_range
+       let host_addr = region.get_host_address(vm_memory::MemoryRegionAddress(gpa)).unwrap();
+
+       unsafe {
+           let _ret = madvise(
+               host_addr as *mut libc::c_void,
+               size.try_into().unwrap(),
+               MADV_DONTNEED,
+           );
+
+           if _ret < 0 {
+              error!("error discarding memory range: gpa: 0x{:x} size: 0x{:x} res: {}", gpa, size, std::io::Error::last_os_error());
+              return _ret;
+           }
+       }
+    } else {
+        // ram_block_discard_guest_memfd_range
+        unsafe {
+            let _ret = fallocate(
+                memfd_id as i32,
+                FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                offset as i64,
+                size as i64,
+            );
+
+            if _ret < 0 {
+               error!("error discarding guest memfd memory range: {}", std::io::Error::last_os_error());
+               return _ret;
+            }
+        }
+    }
+
+    0
 }

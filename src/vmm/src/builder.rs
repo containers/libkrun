@@ -8,6 +8,7 @@ use crossbeam_channel::{unbounded, Sender};
 use kernel::cmdline::Cmdline;
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
+use crossbeam_channel::Sender;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::{self, Read};
@@ -509,11 +510,13 @@ pub fn build_microvm(
     event_manager: &mut EventManager,
     _shutdown_efd: Option<EventFd>,
     #[cfg(target_os = "macos")] _map_sender: Sender<MemoryMapping>,
+    #[cfg(feature = "intel-tdx")] vmcall_sender: Sender<(u64, u64, bool)>,
     #[cfg(target_arch = "x86_64")] irq_sender: crossbeam_channel::Sender<(
         devices::legacy::IrqWorkerMessage,
         EventFd,
     )>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
+    let mut guest_memfd_regions: Vec<(vm_memory::GuestAddress, u64, u64)> = vec![];
     let payload = choose_payload(vm_resources)?;
 
     let (guest_memory, arch_memory_info, mut _shm_manager, payload_config) = create_guest_memory(
@@ -546,14 +549,14 @@ pub fn build_microvm(
         let kvm = KvmContext::new()
             .map_err(Error::KvmContext)
             .map_err(StartMicrovmError::Internal)?;
-        let vm = setup_vm(&kvm, &guest_memory, vm_resources.tee_config())?;
+        let vm = setup_vm(&kvm, &guest_memory, vm_resources, &mut guest_memfd_regions, #[cfg(feature = "intel-tdx")] vmcall_sender)?;
         (kvm, vm)
     };
 
     #[cfg(feature = "tee")]
     let tee = vm_resources.tee_config().tee;
 
-    #[cfg(feature = "tee")]
+    #[cfg(feature = "amd-sev")]
     let snp_launcher = match tee {
         Tee::Snp => Some(
             vm.snp_secure_virt_prepare(&guest_memory)
@@ -562,7 +565,16 @@ pub fn build_microvm(
         _ => None,
     };
 
-    #[cfg(feature = "tee")]
+    #[cfg(feature = "intel-tdx")]
+    let _ = match tee {
+        Tee::Tdx => Some(
+            vm.tdx_secure_virt_prepare()
+                .map_err(StartMicrovmError::SecureVirtPrepare)?,
+        ),
+        _ => None,
+    };
+
+    #[cfg(all(feature = "tee", not(feature = "intel-tdx")))]
     let measured_regions = {
         println!("Injecting and measuring memory regions. This may take a while.");
 
@@ -614,15 +626,39 @@ pub fn build_microvm(
         ]
     };
 
+    #[cfg(feature = "intel-tdx")]
+    let measured_regions = {
+        println!("Injecting and measuring memory regions. This may take a while.");
+        let qboot_size = if let Some(qboot_bundle) = &vm_resources.qboot_bundle {
+            qboot_bundle.size
+        } else {
+            return Err(StartMicrovmError::MissingKernelConfig);
+        };
+        let m = vec![
+          MeasuredRegion {
+            guest_addr: 0,
+            host_addr: guest_memory.get_host_address(GuestAddress(0)).unwrap() as u64,
+            size: 0x8000_0000,
+          },
+          MeasuredRegion {
+            guest_addr: arch::BIOS_START,
+            host_addr: guest_memory.get_host_address(GuestAddress(arch::BIOS_START)).unwrap() as u64,
+            size: qboot_size as usize,
+          },
+        ];
+        
+        m
+    };
+
     // On x86_64 always create a serial device,
     // while on aarch64 only create it if 'console=' is specified in the boot args.
-    let serial_device = if cfg!(feature = "efi") {
+    let serial_device = if cfg!(any(feature = "efi", feature = "intel-tdx")) {
         Some(setup_serial_device(
             event_manager,
             None,
-            None,
+            // None,
             // Uncomment this to get EFI output when debugging EDK2.
-            //Some(Box::new(io::stdout())),
+            Some(Box::new(io::stdout())),
         )?)
     } else {
         None
@@ -688,6 +724,8 @@ pub fn build_microvm(
             payload_config.entry_addr,
             &pio_device_manager.io_bus,
             &exit_evt,
+            #[cfg(feature = "intel-tdx")]
+            vm.vmcall_sender.clone(),
         )
         .map_err(StartMicrovmError::Internal)?;
     }
@@ -756,6 +794,7 @@ pub fn build_microvm(
 
     let mut vmm = Vmm {
         guest_memory,
+        guest_memfd_regions,
         arch_memory_info,
         kernel_cmdline,
         vcpus_handles: Vec::new(),
@@ -854,6 +893,7 @@ pub fn build_microvm(
     #[cfg(feature = "tee")]
     {
         match tee {
+            #[cfg(feature = "amd-sev")]
             Tee::Snp => {
                 let cpuid = kvm
                     .fd()
@@ -868,6 +908,15 @@ pub fn build_microvm(
                         snp_launcher.unwrap(),
                     )
                     .map_err(StartMicrovmError::SecureVirtAttest)?;
+            }
+            #[cfg(feature = "intel-tdx")]
+            Tee::Tdx => {
+               vmm.kvm_vm()
+                    .tdx_secure_virt_prepare_memory(&measured_regions)
+                    .map_err(StartMicrovmError::SecureVirtPrepare)?;
+                vmm.kvm_vm()
+                    .tdx_secure_virt_finalize_vm()
+                    .map_err(StartMicrovmError::SecureVirtPrepare)?;
             }
             _ => return Err(StartMicrovmError::InvalidTee),
         }
@@ -1294,12 +1343,15 @@ pub(crate) fn setup_vm(
 pub(crate) fn setup_vm(
     kvm: &KvmContext,
     guest_memory: &GuestMemoryMmap,
-    tee_config: &TeeConfig,
+    resources: &super::resources::VmResources,
+    guest_memfd_regions: &mut Vec<(vm_memory::GuestAddress, u64, u64)>,
+    #[cfg(feature = "intel-tdx")]
+    vmcall_sender: Sender<(u64, u64, bool)>,
 ) -> std::result::Result<Vm, StartMicrovmError> {
-    let mut vm = Vm::new(kvm.fd(), tee_config)
-        .map_err(Error::Vm)
-        .map_err(StartMicrovmError::Internal)?;
-    vm.memory_init(guest_memory, kvm.max_memslots())
+    let mut vm = Vm::new(kvm.fd(), resources.tee_config(), resources.vcpu_config().vcpu_count, #[cfg(feature = "intel-tdx")] vmcall_sender)
+            .map_err(Error::Vm)
+            .map_err(StartMicrovmError::Internal)?;
+    vm.memory_init(guest_memory, kvm.max_memslots(), guest_memfd_regions)
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;
     Ok(vm)
@@ -1448,6 +1500,8 @@ fn create_vcpus_x86_64(
     entry_addr: GuestAddress,
     io_bus: &devices::Bus,
     exit_evt: &EventFd,
+    #[cfg(feature = "intel-tdx")]
+    vmcall_sender: Sender<(u64, u64, bool)>,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
     for cpu_index in 0..vcpu_config.vcpu_count {
@@ -1458,11 +1512,16 @@ fn create_vcpus_x86_64(
             vm.supported_msrs().clone(),
             io_bus.clone(),
             exit_evt.try_clone().map_err(Error::EventFd)?,
+            #[cfg(feature = "intel-tdx")]
+            vmcall_sender.clone(),
         )
         .map_err(Error::Vcpu)?;
 
         vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config)
             .map_err(Error::Vcpu)?;
+
+        #[cfg(feature = "intel-tdx")]
+        vcpu.tdx_secure_virt_init().map_err(Error::Vcpu)?;
 
         vcpus.push(vcpu);
     }

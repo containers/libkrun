@@ -7,6 +7,7 @@ edition = "2021"
 [features]
 tee = []
 amd-sev = [ "tee" ]
+intel-tdx = [ "tee", "tdx" ]
 efi = []
 
 [dependencies]
@@ -18,8 +19,9 @@ smbios = { path = "../smbios" }
 utils = { path = "../utils" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-kvm-bindings = { version = ">=0.8", features = ["fam-wrappers"] }
-kvm-ioctls = ">=0.17"
+kvm-bindings = { path = "../../../kvm-ioctls/kvm-bindings", features = ["fam-wrappers"]}
+kvm-ioctls = { path = "../../../kvm-ioctls/kvm-ioctls"}
+tdx = { path = "../../../tdx", optional = true }
 
 [dev-dependencies]
 utils = { path = "../utils" }

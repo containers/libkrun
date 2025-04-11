@@ -72,6 +72,7 @@ dependencies = [
  "kvm-ioctls",
  "libc",
  "smbios",
+ "tdx",
  "utils",
  "vm-memory",
 ]
@@ -764,17 +765,13 @@ dependencies = [
 [[package]]
 name = "kvm-bindings"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa4933174d0cc4b77b958578cd45784071cc5ae212c2d78fbd755aaaa6dfa71a"
 dependencies = [
  "vmm-sys-util",
 ]
 
 [[package]]
 name = "kvm-ioctls"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "337d1afa126368bbd6a5c328048f71a69a737e9afe7e436b392a8f8d770c9171"
+version = "0.19.1"
 dependencies = [
  "bitflags 2.6.0",
  "kvm-bindings",
@@ -816,6 +813,7 @@ dependencies = [
  "once_cell",
  "polly",
  "utils",
+ "vm-memory",
  "vmm",
 ]
 
@@ -1488,6 +1486,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
+name = "tdx"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.6.0",
+ "kvm-bindings",
+ "kvm-ioctls",
+ "libc",
+ "uuid",
+ "vmm-sys-util",
+]
+
+[[package]]
 name = "termcolor"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1669,6 +1679,7 @@ name = "vmm"
 version = "0.1.0"
 dependencies = [
  "arch",
+ "arch_gen",
  "bzip2",
  "codicon",
  "cpuid",
@@ -1692,6 +1703,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sev",
+ "tdx",
  "utils",
  "vm-memory",
  "vmm-sys-util",

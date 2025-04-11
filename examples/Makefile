@@ -4,6 +4,7 @@ LDFLAGS_x86_64_Linux = -lkrun
 LDFLAGS_aarch64_Linux = -lkrun
 LDFLAGS_arm64_Darwin = -L/opt/homebrew/lib -lkrun
 LDFLAGS_sev = -lkrun-sev
+LDFLAGS_tdx = -L../target/debug -lkrun-tdx
 LDFLAGS_efi = -L/opt/homebrew/lib -lkrun-efi
 CFLAGS = -O2 -g -I../include
 ROOTFS_DISTRO := fedora
@@ -13,6 +14,9 @@ ROOTFS_DIR = rootfs_$(ROOTFS_DISTRO)
 
 EXAMPLES := chroot_vm external_kernel
 ifeq ($(SEV),1)
+    EXAMPLES := launch-tee
+endif
+ifeq ($(TDX),1)
     EXAMPLES := launch-tee
 endif
 ifeq ($(EFI),1)
@@ -28,7 +32,12 @@ ifeq ($(OS),Darwin)
 endif
 
 launch-tee: launch-tee.c
+ifeq ($(SEV),1)
 	gcc -o $@ $< $(CFLAGS) $(LDFLAGS_sev)
+endif
+ifeq ($(TDX),1)
+	gcc -o $@ $< $(CFLAGS) $(LDFLAGS_tdx)
+endif
 
 boot_efi: boot_efi.c
 	gcc -o $@ $< $(CFLAGS) $(LDFLAGS_efi)
