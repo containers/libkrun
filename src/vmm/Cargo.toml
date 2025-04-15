@@ -7,6 +7,7 @@ edition = "2021"
 [features]
 tee = []
 amd-sev = [ "blk", "tee", "codicon", "kbs-types", "procfs", "rdrand", "serde", "serde_json", "sev", "curl" ]
+intel-tdx = [ "blk", "tee", "kbs-types", "serde", "serde_json", "curl", "tdx" ]
 net = []
 blk = []
 efi = [ "blk", "net" ]
@@ -23,6 +24,7 @@ log = "0.4.0"
 vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
 
 arch = { path = "../arch" }
+arch_gen = { path = "../arch_gen" }
 devices = { path = "../devices" }
 kernel = { path = "../kernel" }
 utils = { path = "../utils"}
@@ -45,8 +47,9 @@ cpuid = { path = "../cpuid" }
 zstd = "0.13"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-kvm-bindings = { version = ">=0.10", features = ["fam-wrappers"] }
-kvm-ioctls = ">=0.17"
+tdx = { git = "https://github.com/jakecorrenti/tdx.git", branch = "libkrun-modifications", optional = true }
+kvm-bindings = { git = "https://github.com/jakecorrenti/kvm-bindings.git", branch = "tdx", features = ["fam-wrappers"]}
+kvm-ioctls = { git = "https://github.com/jakecorrenti/kvm-ioctls.git", branch = "tdx"}
 
 [target.'cfg(target_os = "macos")'.dependencies]
 hvf = { path = "../hvf" }

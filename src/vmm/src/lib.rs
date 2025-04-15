@@ -190,10 +190,26 @@ pub trait VmmEventsObserver {
 /// Shorthand result type for internal VMM commands.
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[cfg(feature = "intel-tdx")]
+pub struct GuestMemfdProperties {
+    pub gpa: vm_memory::GuestAddress,
+    pub size: u64,
+    pub memfd_id: u64,
+}
+
+#[cfg(feature = "intel-tdx")]
+pub struct MemoryConversionProperties {
+    pub gpa: u64,
+    pub size: u64,
+    pub to_private: bool,
+}
+
 /// Contains the state and associated methods required for the Firecracker VMM.
 pub struct Vmm {
     // Guest VM core resources.
     guest_memory: GuestMemoryMmap,
+    #[cfg(feature = "intel-tdx")]
+    guest_memfd_regions: Vec<GuestMemfdProperties>,
     arch_memory_info: ArchMemoryInfo,
 
     kernel_cmdline: KernelCmdline,
@@ -324,6 +340,15 @@ impl Vmm {
     /// Returns a reference to the inner `GuestMemoryMmap` object if present, or `None` otherwise.
     pub fn guest_memory(&self) -> &GuestMemoryMmap {
         &self.guest_memory
+    }
+
+    #[cfg(feature = "intel-tdx")]
+    pub fn guest_memfd_regions(&self) -> &Vec<GuestMemfdProperties> {
+        &self.guest_memfd_regions
+    }
+
+    pub fn vm_fd(&self) -> &kvm_ioctls::VmFd {
+        &self.vm.fd()
     }
 
     /// Injects CTRL+ALT+DEL keystroke combo in the i8042 device.

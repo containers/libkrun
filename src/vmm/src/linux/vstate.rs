@@ -25,6 +25,9 @@ use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 #[cfg(feature = "amd-sev")]
 use super::tee::amdsnp::{AmdSnp, Error as SnpError};
 
+#[cfg(feature = "intel-tdx")]
+use super::tee::inteltdx::{Error as TdxError, IntelTdx};
+
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
 
@@ -41,7 +44,9 @@ use kvm_bindings::{
     KVM_MAX_CPUID_ENTRIES,
 };
 use kvm_bindings::{
-    kvm_userspace_memory_region, KVM_API_VERSION, KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN,
+    kvm_create_guest_memfd, kvm_memory_attributes, kvm_userspace_memory_region,
+    kvm_userspace_memory_region2, KVM_API_VERSION, KVM_MEMORY_ATTRIBUTE_PRIVATE,
+    KVM_MEM_GUEST_MEMFD, KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN,
 };
 use kvm_ioctls::*;
 use utils::eventfd::EventFd;
@@ -54,8 +59,30 @@ use vm_memory::{
 #[cfg(feature = "amd-sev")]
 use sev::launch::snp;
 
+#[cfg(feature = "intel-tdx")]
+use crate::{GuestMemfdProperties, MemoryConversionProperties};
+
 /// Signal number (SIGRTMIN) used to kick Vcpus.
 pub(crate) const VCPU_RTSIG_OFFSET: i32 = 0;
+
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_MAP_GPA: u64 = 0x10001;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_GET_QUOTE: u64 = 0x10002;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_REPORT_FATAL_ERROR: u64 = 0x10003;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_SETUP_EVENT_NOTIFY_INTERRUPT: u64 = 0x10004;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_SUCCESS: u64 = 0x0000000000000000;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_RETRY: u64 = 0x0000000000000001;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_INVALID_OPERAND: u64 = 0x8000000000000000;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_GPA_INUSE: u64 = 0x8000000000000001;
+#[cfg(feature = "intel-tdx")]
+const TDG_VP_VMCALL_ALIGN_ERROR: u64 = 0x8000000000000002;
 
 /// Errors associated with the wrappers over KVM ioctls.
 #[derive(Debug)]
@@ -63,6 +90,9 @@ pub enum Error {
     #[cfg(target_arch = "x86_64")]
     /// A call to cpuid instruction failed.
     CpuId(cpuid::Error),
+    #[cfg(feature = "intel-tdx")]
+    /// Cannot create guest memfd
+    CreateGuestMemfd(kvm_ioctls::Error),
     #[cfg(target_arch = "x86_64")]
     /// Error configuring the floating point related registers
     FPUConfiguration(arch::x86_64::regs::Error),
@@ -101,6 +131,12 @@ pub enum Error {
     REGSConfiguration(arch::x86_64::regs::Error),
     /// Cannot set the memory regions.
     SetUserMemoryRegion(kvm_ioctls::Error),
+    #[cfg(feature = "intel-tdx")]
+    /// Cannot set the memory regions.
+    SetUserMemoryRegion2(kvm_ioctls::Error),
+    #[cfg(feature = "intel-tdx")]
+    /// Cannot set the memory attributes
+    SetMemoryAttributes(kvm_ioctls::Error),
     /// Error creating memory map for SHM region.
     ShmMmap(io::Error),
     #[cfg(feature = "amd-sev")]
@@ -112,6 +148,18 @@ pub enum Error {
     #[cfg(feature = "amd-sev")]
     /// Error attesting the Secure VM (SNP).
     SnpSecVirtAttest(SnpError),
+    #[cfg(feature = "intel-tdx")]
+    /// Error initializing the Trust Domain Extensions Backend (TDX)
+    TdxSecVirtInit(TdxError),
+    #[cfg(feature = "intel-tdx")]
+    /// Error preparing the VM for Trust Domain Extensions (TDX)
+    TdxSecVirtPrepare(TdxError),
+    #[cfg(feature = "intel-tdx")]
+    /// Error initializing vCPU for Trust Domain Extensions (TDX)
+    TdxSecVirtInitVcpu,
+    #[cfg(feature = "intel-tdx")]
+    /// Error handling vmcall for Trust Domain Extensions (TDX)
+    TdxHandleVmcall,
     #[cfg(feature = "tee")]
     /// The TEE specified is not supported.
     InvalidTee,
@@ -228,6 +276,8 @@ impl Display for Error {
         match self {
             #[cfg(target_arch = "x86_64")]
             CpuId(e) => write!(f, "Cpuid error: {e:?}"),
+            #[cfg(feature = "intel-tdx")]
+            CreateGuestMemfd(e) => write!(f, "Failed to create guest memfd: {e:?}",),
             GuestMemoryMmap(e) => write!(f, "Guest memory error: {e:?}"),
             #[cfg(target_arch = "x86_64")]
             GuestMSRs(e) => write!(f, "Retrieving supported guest MSRs fails: {e:?}"),
@@ -254,22 +304,43 @@ impl Display for Error {
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
             ShmMmap(e) => write!(f, "Error creating memory map for SHM region: {e}"),
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "intel-tdx")]
+            SetUserMemoryRegion2(e) => write!(f, "Cannot set the memory regions: {e:?}",),
+            #[cfg(feature = "intel-tdx")]
+            SetMemoryAttributes(e) => write!(f, "Cannot set the memory attributes: {e:?}",),
+            #[cfg(feature = "amd-sev")]
             SnpSecVirtInit(e) => write!(
                 f,
                 "Error initializing the Secure Virtualization Backend (SEV): {e:?}"
             ),
 
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SnpSecVirtPrepare(e) => write!(
                 f,
                 "Error preparing the VM for Secure Virtualization (SNP): {e:?}"
             ),
 
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SnpSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SNP): {e:?}"),
 
             SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {e}"),
+            #[cfg(feature = "intel-tdx")]
+            TdxSecVirtInit(e) => write!(
+                f,
+                "Error initializing the Trust Domain Extensions Backend (TDX): {e:?}"
+            ),
+            #[cfg(feature = "intel-tdx")]
+            TdxSecVirtPrepare(e) => write!(
+                f,
+                "Error preparing the VM for Trust Domain Extensions (TDX): {e:?}"
+            ),
+            #[cfg(feature = "intel-tdx")]
+            TdxSecVirtInitVcpu => write!(
+                f,
+                "Error initializing vCPU for Trust Domain Extensions (TDX)"
+            ),
+            #[cfg(feature = "intel-tdx")]
+            TdxHandleVmcall => write!(f, "Error handling vmcall for Trust Domain Extensions (TDX)"),
             #[cfg(feature = "tee")]
             MissingTeeConfig => write!(f, "Missing TEE configuration"),
             #[cfg(target_arch = "x86_64")]
@@ -431,8 +502,14 @@ pub struct Vm {
     #[cfg(feature = "amd-sev")]
     tee: Option<AmdSnp>,
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "intel-tdx")]
+    tdx: Option<IntelTdx>,
+
+    #[cfg(feature = "tee")]
     pub tee_config: Tee,
+
+    #[cfg(feature = "intel-tdx")]
+    pub vmcall_sender: crossbeam_channel::Sender<(MemoryConversionProperties, EventFd)>,
 }
 
 impl Vm {
@@ -487,6 +564,37 @@ impl Vm {
         })
     }
 
+    #[cfg(feature = "intel-tdx")]
+    pub fn new(
+        kvm: &Kvm,
+        tee_config: &TeeConfig,
+        vcpu_count: u8,
+        vmcall_sender: crossbeam_channel::Sender<(MemoryConversionProperties, EventFd)>,
+    ) -> Result<Self> {
+        // create fd for interacting with kvm-vm specific functions
+        let vm_fd = kvm
+            .create_vm_with_type(tdx::launch::KVM_X86_TDX_VM)
+            .map_err(Error::VmFd)?;
+
+        let supported_cpuid = kvm
+            .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
+            .map_err(Error::VmFd)?;
+
+        let supported_msrs =
+            arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
+
+        let tdx = IntelTdx::new(&vm_fd, vcpu_count).map_err(Error::TdxSecVirtInit)?;
+        Ok(Vm {
+            fd: vm_fd,
+            next_mem_slot: 0,
+            supported_cpuid,
+            supported_msrs,
+            tdx: Some(tdx),
+            tee_config: tee_config.tee,
+            vmcall_sender,
+        })
+    }
+
     /// Returns a ref to the supported `CpuId` for this Vm.
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     pub fn supported_cpuid(&self) -> &CpuId {
@@ -504,6 +612,7 @@ impl Vm {
         &mut self,
         guest_mem: &GuestMemoryMmap,
         kvm_max_memslots: usize,
+        #[cfg(feature = "intel-tdx")] guest_memfd_regions: &mut Vec<GuestMemfdProperties>,
     ) -> Result<()> {
         if guest_mem.num_regions() > kvm_max_memslots {
             return Err(Error::NotEnoughMemorySlots);
@@ -512,20 +621,74 @@ impl Vm {
             // It's safe to unwrap because the guest address is valid.
             let host_addr = guest_mem.get_host_address(region.start_addr()).unwrap();
             debug!("Guest memory starts at {:x?}", host_addr);
-            let memory_region = kvm_userspace_memory_region {
-                slot: self.next_mem_slot,
-                guest_phys_addr: region.start_addr().raw_value(),
-                memory_size: region.len(),
-                userspace_addr: host_addr as u64,
-                flags: 0,
-            };
-            // Safe because we mapped the memory region, we made sure that the regions
-            // are not overlapping.
-            unsafe {
+
+            #[cfg(feature = "intel-tdx")]
+            {
+                let gmem = kvm_create_guest_memfd {
+                    size: region.len(),
+                    flags: 0,
+                    reserved: [0; 6],
+                };
+                let gmem = self
+                    .fd
+                    .create_guest_memfd(gmem)
+                    .map_err(Error::CreateGuestMemfd)?;
+
+                let memory_region = kvm_userspace_memory_region2 {
+                    slot: self.next_mem_slot,
+                    flags: KVM_MEM_GUEST_MEMFD,
+                    guest_phys_addr: region.start_addr().raw_value(),
+                    memory_size: region.len(),
+                    userspace_addr: host_addr as u64,
+                    guest_memfd_offset: 0,
+                    guest_memfd: gmem as u32,
+                    pad1: 0,
+                    pad2: [0; 14],
+                };
+
+                // Safe because we mapped the memory region, we made sure that the regions
+                // are not overlapping.
+                unsafe {
+                    self.fd
+                        .set_user_memory_region2(memory_region)
+                        .map_err(Error::SetUserMemoryRegion2)?;
+                }
+
+                let attr = kvm_memory_attributes {
+                    address: region.start_addr().raw_value(),
+                    size: region.len() as u64,
+                    attributes: KVM_MEMORY_ATTRIBUTE_PRIVATE as u64,
+                    flags: 0,
+                };
+
                 self.fd
-                    .set_user_memory_region(memory_region)
-                    .map_err(Error::SetUserMemoryRegion)?;
-            };
+                    .set_memory_attributes(attr)
+                    .map_err(Error::SetMemoryAttributes)?;
+
+                guest_memfd_regions.push(GuestMemfdProperties {
+                    gpa: region.start_addr(),
+                    size: region.len(),
+                    memfd_id: gmem as u64,
+                });
+            }
+
+            #[cfg(not(feature = "intel-tdx"))]
+            {
+                let memory_region = kvm_userspace_memory_region {
+                    slot: self.next_mem_slot,
+                    guest_phys_addr: region.start_addr().raw_value(),
+                    memory_size: region.len(),
+                    userspace_addr: host_addr as u64,
+                    flags: 0,
+                };
+                // Safe because we mapped the memory region, we made sure that the regions
+                // are not overlapping.
+                unsafe {
+                    self.fd
+                        .set_user_memory_region(memory_region)
+                        .map_err(Error::SetUserMemoryRegion)?;
+                };
+            }
             self.next_mem_slot += 1;
         }
 
@@ -535,6 +698,37 @@ impl Vm {
             .map_err(Error::VmSetup)?;
 
         Ok(())
+    }
+
+    #[cfg(feature = "intel-tdx")]
+    pub fn tdx_secure_virt_prepare(&self) -> Result<()> {
+        match &self.tdx {
+            Some(t) => t
+                .vm_prepare(&self.fd, self.supported_cpuid.clone())
+                .map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
+    }
+
+    #[cfg(feature = "intel-tdx")]
+    pub fn tdx_secure_virt_prepare_memory(
+        &self,
+        regions: &Vec<crate::vstate::MeasuredRegion>,
+    ) -> Result<()> {
+        match &self.tdx {
+            Some(t) => t
+                .configure_td_memory(&self.fd, &regions)
+                .map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
+    }
+
+    #[cfg(feature = "intel-tdx")]
+    pub fn tdx_secure_virt_finalize_vm(&self) -> Result<()> {
+        match &self.tdx {
+            Some(t) => t.finalize_vm(&self.fd).map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
     }
 
     #[cfg(feature = "amd-sev")]
@@ -687,6 +881,12 @@ pub struct Vcpu {
     response_receiver: Option<Receiver<VcpuResponse>>,
     // The transmitting end of the responses channel owned by the vcpu side.
     response_sender: Sender<VcpuResponse>,
+
+    #[cfg(feature = "intel-tdx")]
+    vmcall_sender: Sender<(MemoryConversionProperties, EventFd)>,
+
+    #[cfg(feature = "intel-tdx")]
+    memory_evt: EventFd,
 }
 
 impl Vcpu {
@@ -790,6 +990,8 @@ impl Vcpu {
         msr_list: MsrList,
         io_bus: devices::Bus,
         exit_evt: EventFd,
+        #[cfg(feature = "intel-tdx")] vmcall_sender: Sender<(MemoryConversionProperties, EventFd)>,
+        #[cfg(feature = "intel-tdx")] memory_evt: EventFd,
     ) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = unbounded();
@@ -808,6 +1010,10 @@ impl Vcpu {
             event_sender: Some(event_sender),
             response_receiver: Some(response_receiver),
             response_sender,
+            #[cfg(feature = "intel-tdx")]
+            vmcall_sender,
+            #[cfg(feature = "intel-tdx")]
+            memory_evt,
         })
     }
 
@@ -892,12 +1098,15 @@ impl Vcpu {
             .set_cpuid2(&self.cpuid)
             .map_err(Error::VcpuSetCpuid)?;
 
-        arch::x86_64::msr::setup_msrs(&self.fd).map_err(Error::MSRSConfiguration)?;
-        arch::x86_64::regs::setup_regs(&self.fd, kernel_start_addr.raw_value(), self.id)
-            .map_err(Error::REGSConfiguration)?;
-        arch::x86_64::regs::setup_fpu(&self.fd).map_err(Error::FPUConfiguration)?;
-        arch::x86_64::regs::setup_sregs(guest_mem, &self.fd, self.id)
-            .map_err(Error::SREGSConfiguration)?;
+        #[cfg(not(feature = "intel-tdx"))]
+        {
+            arch::x86_64::msr::setup_msrs(&self.fd).map_err(Error::MSRSConfiguration)?;
+            arch::x86_64::regs::setup_regs(&self.fd, kernel_start_addr.raw_value(), self.id)
+                .map_err(Error::REGSConfiguration)?;
+            arch::x86_64::regs::setup_fpu(&self.fd).map_err(Error::FPUConfiguration)?;
+            arch::x86_64::regs::setup_sregs(guest_mem, &self.fd, self.id)
+                .map_err(Error::SREGSConfiguration)?;
+        }
         arch::x86_64::interrupts::set_lint(&self.fd).map_err(Error::LocalIntConfiguration)?;
         Ok(())
     }
@@ -1139,6 +1348,100 @@ impl Vcpu {
                     }
                     Ok(VcpuEmulation::Stopped)
                 }
+                VcpuExit::MemoryFault { flags, gpa, size } => {
+                    #[cfg(feature = "intel-tdx")]
+                    if flags & !kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64 != 0 {
+                        println!("KVM_EXIT_MEMORY_FAULT: Unknown flag {}", flags);
+                        Err(Error::VcpuUnhandledKvmExit)
+                    } else {
+                        let attr = (flags & kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64);
+
+                        if let Err(e) = self.vmcall_sender.send((
+                            MemoryConversionProperties {
+                                gpa,
+                                size,
+                                to_private: attr > 0,
+                            },
+                            self.memory_evt.try_clone().unwrap(),
+                        )) {
+                            println!(
+                                "KVM_EXIT_MEMORY_FAULT: unable to convert memory: Exit {:#?}",
+                                e
+                            );
+                            return Err(Error::VcpuUnhandledKvmExit);
+                        }
+                        if let Err(e) = self.memory_evt.read() {
+                            println!(
+                                "KVM_EXIT_MEMORY_FAULT: unable to convert memory: Exit {:#?}",
+                                e
+                            );
+                            return Err(Error::VcpuUnhandledKvmExit);
+                        }
+                        Ok(VcpuEmulation::Handled)
+                    }
+
+                    #[cfg(not(feature = "intel-tdx"))]
+                    {
+                        error!("Received KVM_EXIT_MEMORY_FAULT: flags=0x{:x}, gpa=0x{:x}, size=0x{:x})", flags, gpa, size);
+                        Err(Error::VcpuUnhandledKvmExit)
+                    }
+                }
+                #[cfg(feature = "intel-tdx")]
+                VcpuExit::Tdx => {
+                    let kvm_run = self.fd.get_kvm_run();
+                    let tdx = unsafe { &mut kvm_run.__bindgen_anon_1.tdx };
+
+                    const KVM_EXIT_TDX_VMCALL: u32 = 1;
+
+                    // check if the exit type is KVM_EXIT_TDX_VMCALL
+                    if tdx.type_ != KVM_EXIT_TDX_VMCALL {
+                        error!("unknown tdx exit type 0x{:x}", tdx.type_);
+                        return Err(Error::VcpuUnhandledKvmExit);
+                    }
+
+                    // handle the vmcall
+                    let mut vmcall = unsafe { tdx.u.vmcall };
+                    unsafe {
+                        vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_INVALID_OPERAND;
+
+                        if vmcall.__bindgen_anon_2.type_ != 0 {
+                            error!(
+                                "unknown TDG.VP.VMCALL type 0x{:x} subfunction 0x{:x}",
+                                vmcall.__bindgen_anon_2.type_, vmcall.__bindgen_anon_3.subfunction
+                            );
+                            return Err(Error::VcpuUnhandledKvmExit);
+                        }
+
+                        match vmcall.__bindgen_anon_3.subfunction {
+                            TDG_VP_VMCALL_MAP_GPA => {
+                                let ret = self.tdx_handle_map_gpa(&mut vmcall);
+                                if ret < 0 {
+                                    return Err(Error::VcpuUnhandledKvmExit);
+                                }
+                                return Ok(VcpuEmulation::Handled);
+                            }
+                            TDG_VP_VMCALL_GET_QUOTE => {
+                                return Ok(VcpuEmulation::Handled);
+                            }
+                            TDG_VP_VMCALL_REPORT_FATAL_ERROR => {
+                                Self::tdx_handle_report_fatal_error(&mut vmcall)?;
+                                return Err(Error::VcpuUnhandledKvmExit);
+                            }
+                            TDG_VP_VMCALL_SETUP_EVENT_NOTIFY_INTERRUPT => {
+                                Self::tdx_handle_setup_event_notify_interrupt(&mut vmcall);
+                                return Ok(VcpuEmulation::Handled);
+                            }
+                            _ => {
+                                error!(
+                                    "unknown TDG.VP.VMCALL type 0x{:x} subfunction 0x{:x}",
+                                    vmcall.__bindgen_anon_2.type_,
+                                    vmcall.__bindgen_anon_3.subfunction
+                                );
+                                return Err(Error::VcpuUnhandledKvmExit);
+                            }
+                        }
+                    }
+                }
                 r => {
                     // TODO: Are we sure we want to finish running a vcpu upon
                     // receiving a vm exit that is not necessarily an error?
@@ -1163,6 +1466,144 @@ impl Vcpu {
                 }
             }
         }
+    }
+
+    #[cfg(feature = "intel-tdx")]
+    unsafe fn tdx_handle_map_gpa(
+        &self,
+        vmcall: &mut kvm_bindings::kvm_tdx_exit__bindgen_ty_1_kvm_tdx_vmcall,
+    ) -> i32 {
+        const TDX_MAP_GPA_MAX_LEN: u64 = (64 * 1024 * 1024);
+        let phys_bits = unsafe { std::arch::x86_64::__cpuid(0x8000_0008).eax } & 0xff;
+        let mut retry = false;
+        let mut size = vmcall.in_r13;
+        let mut ret = 0;
+
+        let shared_bit = if phys_bits > 48 { 1 << 51 } else { 1 << 47 };
+        let gpa = vmcall.in_r12 & !shared_bit;
+
+        let private: bool = if vmcall.in_r12 & shared_bit > 0 {
+            false
+        } else {
+            true
+        };
+
+        vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_INVALID_OPERAND;
+
+        if (gpa % 4096) != 0 || (size % 4096) != 0 {
+            vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_ALIGN_ERROR;
+            return 0;
+        }
+
+        // overflow case
+        if (gpa + size < gpa) {
+            return 0;
+        }
+
+        if gpa >= (1 << phys_bits) || gpa + size >= (1 << phys_bits) {
+            return 0;
+        }
+
+        if size > TDX_MAP_GPA_MAX_LEN {
+            retry = true;
+            size = TDX_MAP_GPA_MAX_LEN;
+        }
+
+        if (size > 0) {
+            // convert memory
+            if let Err(e) = self.vmcall_sender.send((
+                MemoryConversionProperties {
+                    gpa,
+                    size,
+                    to_private: private,
+                },
+                self.memory_evt.try_clone().unwrap(),
+            )) {
+                ret = -1;
+            }
+            if let Err(e) = self.memory_evt.read() {
+                ret = -1;
+            }
+        }
+
+        if ret == 0 {
+            if retry {
+                vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_RETRY;
+                vmcall.out_r11 = gpa + size;
+                if !private {
+                    vmcall.out_r11 |= shared_bit;
+                }
+            } else {
+                vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_SUCCESS;
+            }
+        }
+
+        0
+    }
+
+    #[cfg(feature = "intel-tdx")]
+    unsafe fn tdx_handle_setup_event_notify_interrupt(
+        vmcall: &mut kvm_bindings::kvm_tdx_exit__bindgen_ty_1_kvm_tdx_vmcall,
+    ) {
+        let vector = vmcall.in_r12;
+
+        if 32 <= vector && vector >= 255 {
+            // normally this is where we would update the runtime state
+            // with the vector and the apic_id of the cpu
+            vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_SUCCESS;
+        } else {
+            vmcall.__bindgen_anon_4.status_code = TDG_VP_VMCALL_INVALID_OPERAND;
+        }
+    }
+
+    #[cfg(feature = "intel-tdx")]
+    unsafe fn tdx_handle_report_fatal_error(
+        vmcall: &mut kvm_bindings::kvm_tdx_exit__bindgen_ty_1_kvm_tdx_vmcall,
+    ) -> Result<()> {
+        const GUEST_PANIC_INFO_TDX_MESSAGE_MAX: usize = 64;
+        let error_code = vmcall.in_r12;
+        let mut gpa: u64 = 0;
+
+        if (error_code & 0xffff) > 0 {
+            error!(
+                "TDX: REPORT_FATAL_ERROR: invalid error code: 0x{:x}",
+                error_code
+            );
+            return Err(Error::TdxHandleVmcall);
+        }
+
+        let mut message = [char::default(); GUEST_PANIC_INFO_TDX_MESSAGE_MAX + 1];
+
+        // optional message
+        if vmcall.in_r14 > 0 {
+            message[1] = char::from_u32(u64::to_le(vmcall.in_r14) as u32).unwrap();
+            message[2] = char::from_u32(u64::to_le(vmcall.in_r15) as u32).unwrap();
+            message[3] = char::from_u32(u64::to_le(vmcall.in_rbx) as u32).unwrap();
+            message[4] = char::from_u32(u64::to_le(vmcall.in_rdi) as u32).unwrap();
+            message[5] = char::from_u32(u64::to_le(vmcall.in_rsi) as u32).unwrap();
+            message[6] = char::from_u32(u64::to_le(vmcall.in_r8) as u32).unwrap();
+            message[7] = char::from_u32(u64::to_le(vmcall.in_r9) as u32).unwrap();
+            message[8] = char::from_u32(u64::to_le(vmcall.in_rdx) as u32).unwrap();
+            message[GUEST_PANIC_INFO_TDX_MESSAGE_MAX] = '\0';
+        }
+
+        const TDX_REPORT_FATAL_ERROR_GPA_VALID: u64 = 1 << 63;
+        if (error_code & TDX_REPORT_FATAL_ERROR_GPA_VALID) > 0 {
+            gpa = vmcall.in_r13;
+        }
+
+        let message = {
+            let mut s = String::new();
+            message.iter_mut().for_each(|c| s.push(*c));
+            s
+        };
+
+        error!(
+            "TDX: REPORT_FATAL_ERROR: message: {} error_code: {} gpa: 0x{:x}",
+            message, error_code, gpa
+        );
+
+        Ok(())
     }
 
     /// Main loop of the vCPU thread.
@@ -1279,6 +1720,11 @@ impl Vcpu {
         barrier.wait();
 
         StateMachine::finish()
+    }
+
+    #[cfg(feature = "intel-tdx")]
+    pub fn tdx_secure_virt_init(&self) -> Result<()> {
+        tdx::launch::TdxVcpu::init(&self.fd, 0).or_else(|_| return Err(Error::TdxSecVirtInitVcpu))
     }
 
     #[cfg(test)]
