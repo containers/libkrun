@@ -23,3 +23,4 @@ pub mod sized_vec;
 pub mod sm;
 pub mod syscall;
 pub mod time;
+pub mod worker_message;

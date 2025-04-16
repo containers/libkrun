@@ -22,7 +22,6 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::LazyLock;
 use std::sync::Mutex;
 
-#[cfg(any(target_os = "macos", feature = "tee"))]
 use crossbeam_channel::unbounded;
 #[cfg(feature = "blk")]
 use devices::virtio::block::ImageType;
@@ -1510,13 +1509,13 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "macos")]
     let (sender, receiver) = unbounded();
 
-    #[cfg(target_arch = "x86_64")]
-    let (irq_sender, irq_receiver) = crossbeam_channel::unbounded();
     #[cfg(feature = "tee")]
     let (pm_sender, pm_receiver) = unbounded();
     #[cfg(feature = "tee")]
     let pm_efd =
         EventFd::new(EFD_SEMAPHORE).expect("unable to create TEE memory properties eventfd");
+    #[cfg(target_arch = "x86_64")]
+    let (sender, receiver) = unbounded();
 
     let _vmm = match vmm::builder::build_microvm(
         &ctx_cfg.vmr,
@@ -1524,8 +1523,6 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         ctx_cfg.shutdown_efd,
         #[cfg(target_os = "macos")]
         sender,
-        #[cfg(target_arch = "x86_64")]
-        irq_sender,
         #[cfg(feature = "tee")]
         (
             pm_sender,
@@ -1533,6 +1530,8 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
                 .try_clone()
                 .expect("unable to clone TEE memory properties eventfd"),
         ),
+        #[cfg(target_arch = "x86_64")]
+        sender,
     ) {
         Ok(vmm) => vmm,
         Err(e) => {
@@ -1543,9 +1542,6 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     #[cfg(any(target_os = "macos", feature = "tee"))]
     let mapper_vmm = _vmm.clone();
-
-    #[cfg(target_arch = "x86_64")]
-    let irq_vmm = _vmm.clone();
 
     #[cfg(target_os = "macos")]
     if ctx_cfg.gpu_virgl_flags.is_some() {
@@ -1569,50 +1565,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     #[cfg(target_arch = "x86_64")]
     if ctx_cfg.vmr.split_irqchip {
-        std::thread::Builder::new()
-            .name("irq worker".into())
-            .spawn(move || loop {
-                match irq_receiver.recv() {
-                    Err(e) => error!("Error in receiver: {:?}", e),
-                    Ok((message, evt_fd)) => match message {
-                        devices::legacy::IrqWorkerMessage::GsiRoute(entries) => {
-                            let mut irq_routing = utils::sized_vec::vec_with_array_field::<
-                                kvm_bindings::kvm_irq_routing,
-                                kvm_bindings::kvm_irq_routing_entry,
-                            >(entries.len());
-                            irq_routing[0].nr = entries.len() as u32;
-                            irq_routing[0].flags = 0;
-
-                            unsafe {
-                                let entries_slice: &mut [kvm_bindings::kvm_irq_routing_entry] =
-                                    irq_routing[0].entries.as_mut_slice(entries.len());
-                                entries_slice.copy_from_slice(&entries);
-                            }
-
-                            irq_vmm
-                                .lock()
-                                .unwrap()
-                                .kvm_vm()
-                                .fd()
-                                .set_gsi_routing(&irq_routing[0])
-                                .unwrap();
-
-                            evt_fd.write(1).unwrap();
-                        }
-                        devices::legacy::IrqWorkerMessage::IrqLine(irq, active) => {
-                            irq_vmm
-                                .lock()
-                                .unwrap()
-                                .kvm_vm()
-                                .fd()
-                                .set_irq_line(irq, active)
-                                .unwrap();
-                            evt_fd.write(1).unwrap();
-                        }
-                    },
-                }
-            })
-            .unwrap();
+        vmm::worker::start_worker_thread(_vmm.clone(), receiver.clone()).unwrap();
     }
 
     #[cfg(feature = "tee")]

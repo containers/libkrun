@@ -31,6 +31,7 @@ use crate::linux::vstate;
 #[cfg(target_os = "macos")]
 mod macos;
 mod terminal;
+pub mod worker;
 
 #[cfg(target_os = "macos")]
 pub use hvf::MemoryMapping;

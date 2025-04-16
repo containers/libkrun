@@ -5,6 +5,7 @@ use kvm_bindings::{
 use kvm_ioctls::{Error, VmFd};
 
 use utils::eventfd::EventFd;
+use utils::worker_message::WorkerMessage;
 
 use crate::bus::BusDevice;
 use crate::legacy::irqchip::IrqChipT;
@@ -67,12 +68,6 @@ const IOAPIC_TRIGGER_EDGE: u64 = 0;
 /// 7:0 Interrupt Vector (INTVEC) (RW)
 type RedirectionTableEntry = u64;
 
-#[derive(Debug)]
-pub enum IrqWorkerMessage {
-    GsiRoute(Vec<kvm_irq_routing_entry>),
-    IrqLine(u32, bool),
-}
-
 #[derive(Debug, Default)]
 pub struct IoApicEntryInfo {
     masked: u8,
@@ -101,14 +96,14 @@ pub struct IoApic {
     version: u8,
     irq_eoi: [i32; IOAPIC_NUM_PINS],
     irq_routes: Vec<kvm_irq_routing_entry>,
-    irq_sender: crossbeam_channel::Sender<(IrqWorkerMessage, EventFd)>,
+    irq_sender: crossbeam_channel::Sender<(WorkerMessage, EventFd)>,
     event_fd: EventFd,
 }
 
 impl IoApic {
     pub fn new(
         vm: &VmFd,
-        _irq_sender: crossbeam_channel::Sender<(IrqWorkerMessage, EventFd)>,
+        _irq_sender: crossbeam_channel::Sender<(WorkerMessage, EventFd)>,
     ) -> Result<Self, Error> {
         let mut cap = kvm_enable_cap {
             cap: KVM_CAP_SPLIT_IRQCHIP,
@@ -180,7 +175,7 @@ impl IoApic {
         }
     }
 
-    fn send_irq_worker_message(&self, msg: IrqWorkerMessage) {
+    fn send_irq_worker_message(&self, msg: WorkerMessage) {
         self.irq_sender
             .send((msg, self.event_fd.try_clone().unwrap()))
             .unwrap();
@@ -254,7 +249,7 @@ impl IoApic {
             }
         }
 
-        self.send_irq_worker_message(IrqWorkerMessage::GsiRoute(self.irq_routes.clone()));
+        self.send_irq_worker_message(WorkerMessage::GsiRoute(self.irq_routes.clone()));
     }
 
     fn service(&mut self) {
@@ -279,10 +274,10 @@ impl IoApic {
                     }
 
                     if info.trig_mode as u64 == IOAPIC_TRIGGER_EDGE {
-                        self.send_irq_worker_message(IrqWorkerMessage::IrqLine(i as u32, true));
-                        self.send_irq_worker_message(IrqWorkerMessage::IrqLine(i as u32, false));
+                        self.send_irq_worker_message(WorkerMessage::IrqLine(i as u32, true));
+                        self.send_irq_worker_message(WorkerMessage::IrqLine(i as u32, false));
                     } else {
-                        self.send_irq_worker_message(IrqWorkerMessage::IrqLine(i as u32, true));
+                        self.send_irq_worker_message(WorkerMessage::IrqLine(i as u32, true));
                     }
                 }
             }
