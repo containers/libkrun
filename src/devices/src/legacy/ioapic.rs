@@ -1,3 +1,4 @@
+use crossbeam_channel::unbounded;
 use kvm_bindings::{
     kvm_enable_cap, kvm_irq_routing, kvm_irq_routing_entry, kvm_irq_routing_entry__bindgen_ty_1,
     kvm_irq_routing_msi, KVM_CAP_SPLIT_IRQCHIP, KVM_IRQ_ROUTING_MSI,
@@ -96,14 +97,13 @@ pub struct IoApic {
     version: u8,
     irq_eoi: [i32; IOAPIC_NUM_PINS],
     irq_routes: Vec<kvm_irq_routing_entry>,
-    irq_sender: crossbeam_channel::Sender<(WorkerMessage, EventFd)>,
-    event_fd: EventFd,
+    irq_sender: crossbeam_channel::Sender<WorkerMessage>,
 }
 
 impl IoApic {
     pub fn new(
         vm: &VmFd,
-        _irq_sender: crossbeam_channel::Sender<(WorkerMessage, EventFd)>,
+        _irq_sender: crossbeam_channel::Sender<WorkerMessage>,
     ) -> Result<Self, Error> {
         let mut cap = kvm_enable_cap {
             cap: KVM_CAP_SPLIT_IRQCHIP,
@@ -121,7 +121,6 @@ impl IoApic {
             irq_eoi: [0; IOAPIC_NUM_PINS],
             irq_routes: Vec::with_capacity(IOAPIC_NUM_PINS),
             irq_sender: _irq_sender,
-            event_fd: EventFd::new(libc::EFD_SEMAPHORE).unwrap(),
         };
 
         (0..IOAPIC_NUM_PINS).for_each(|i| ioapic.add_msi_route(i));
@@ -173,14 +172,6 @@ impl IoApic {
         if self.ioredtbl[index] & IOAPIC_LVT_TRIGGER_MODE == IOAPIC_TRIGGER_EDGE {
             self.ioredtbl[index] &= !IOAPIC_LVT_REMOTE_IRR;
         }
-    }
-
-    fn send_irq_worker_message(&self, msg: WorkerMessage) {
-        self.irq_sender
-            .send((msg, self.event_fd.try_clone().unwrap()))
-            .unwrap();
-
-        self.event_fd.read().unwrap();
     }
 
     fn parse_entry(&self, entry: &RedirectionTableEntry) -> IoApicEntryInfo {
@@ -249,7 +240,16 @@ impl IoApic {
             }
         }
 
-        self.send_irq_worker_message(WorkerMessage::GsiRoute(self.irq_routes.clone()));
+        let (response_sender, response_receiver) = unbounded();
+        self.irq_sender
+            .send(WorkerMessage::GsiRoute(
+                response_sender.clone(),
+                self.irq_routes.clone(),
+            ))
+            .unwrap();
+        if !response_receiver.recv().unwrap() {
+            error!("unable to set GSI Routes for IO APIC");
+        }
     }
 
     fn service(&mut self) {
@@ -273,11 +273,49 @@ impl IoApic {
                         continue;
                     }
 
+                    let (response_sender, response_receiver) = unbounded();
                     if info.trig_mode as u64 == IOAPIC_TRIGGER_EDGE {
-                        self.send_irq_worker_message(WorkerMessage::IrqLine(i as u32, true));
-                        self.send_irq_worker_message(WorkerMessage::IrqLine(i as u32, false));
+                        self.irq_sender
+                            .send(WorkerMessage::IrqLine(
+                                response_sender.clone(),
+                                i as u32,
+                                true,
+                            ))
+                            .unwrap();
+                        if !response_receiver.recv().unwrap() {
+                            error!(
+                                "unable to set IRQ LINE for IRQ {} with active set to {}",
+                                i, true
+                            );
+                        }
+
+                        self.irq_sender
+                            .send(WorkerMessage::IrqLine(
+                                response_sender.clone(),
+                                i as u32,
+                                false,
+                            ))
+                            .unwrap();
+                        if !response_receiver.recv().unwrap() {
+                            error!(
+                                "unable to set IRQ LINE for IRQ {} with active set to {}",
+                                i, false
+                            );
+                        }
                     } else {
-                        self.send_irq_worker_message(WorkerMessage::IrqLine(i as u32, true));
+                        self.irq_sender
+                            .send(WorkerMessage::IrqLine(
+                                response_sender.clone(),
+                                i as u32,
+                                true,
+                            ))
+                            .unwrap();
+                        if !response_receiver.recv().unwrap() {
+                            error!(
+                                "unable to set IRQ LINE for IRQ {} with active set to {}",
+                                i, true
+                            );
+                        }
                     }
                 }
             }

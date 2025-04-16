@@ -512,8 +512,7 @@ pub fn build_microvm(
     event_manager: &mut EventManager,
     _shutdown_efd: Option<EventFd>,
     #[cfg(feature = "tee")] pm_sender: (Sender<MemoryProperties>, EventFd),
-    #[cfg(target_os = "macos")] _sender: Sender<WorkerMessage>,
-    #[cfg(target_arch = "x86_64")] _sender: Sender<(WorkerMessage, EventFd)>,
+    _sender: Sender<WorkerMessage>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
     let payload = choose_payload(vm_resources)?;
 
