@@ -16,6 +16,7 @@ pub mod macos;
 pub use macos::epoll;
 #[cfg(target_os = "macos")]
 pub use macos::eventfd;
+pub mod pollable_channel;
 pub mod rand;
 #[cfg(target_os = "linux")]
 pub mod signal;
