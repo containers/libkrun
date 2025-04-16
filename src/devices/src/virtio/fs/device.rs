@@ -6,9 +6,9 @@ use std::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
-#[cfg(target_os = "macos")]
-use hvf::MemoryMapping;
 use utils::eventfd::{EventFd, EFD_NONBLOCK};
+#[cfg(target_os = "macos")]
+use utils::worker_message::WorkerMessage;
 use virtio_bindings::{virtio_config::VIRTIO_F_VERSION_1, virtio_ring::VIRTIO_RING_F_EVENT_IDX};
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
@@ -56,7 +56,7 @@ pub struct Fs {
     worker_stopfd: EventFd,
     exit_code: Arc<AtomicI32>,
     #[cfg(target_os = "macos")]
-    map_sender: Option<Sender<MemoryMapping>>,
+    map_sender: Option<Sender<WorkerMessage>>,
 }
 
 impl Fs {
@@ -135,7 +135,7 @@ impl Fs {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn set_map_sender(&mut self, map_sender: Sender<MemoryMapping>) {
+    pub fn set_map_sender(&mut self, map_sender: Sender<WorkerMessage>) {
         self.map_sender = Some(map_sender);
     }
 }

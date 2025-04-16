@@ -5,7 +5,7 @@
 #[cfg(target_os = "macos")]
 use crossbeam_channel::Sender;
 #[cfg(target_os = "macos")]
-use hvf::MemoryMapping;
+use utils::worker_message::WorkerMessage;
 
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
@@ -85,7 +85,7 @@ impl<F: FileSystem + Sync> Server<F> {
         w: Writer,
         shm_region: &Option<VirtioShmRegion>,
         exit_code: &Arc<AtomicI32>,
-        #[cfg(target_os = "macos")] map_sender: &Option<Sender<MemoryMapping>>,
+        #[cfg(target_os = "macos")] map_sender: &Option<Sender<WorkerMessage>>,
     ) -> Result<usize> {
         let in_header: InHeader = r.read_obj().map_err(Error::DecodeMessage)?;
 
@@ -1341,7 +1341,7 @@ impl<F: FileSystem + Sync> Server<F> {
         w: Writer,
         host_shm_base: u64,
         shm_size: u64,
-        #[cfg(target_os = "macos")] map_sender: &Option<Sender<MemoryMapping>>,
+        #[cfg(target_os = "macos")] map_sender: &Option<Sender<WorkerMessage>>,
     ) -> Result<usize> {
         let SetupmappingIn {
             fh,
@@ -1376,7 +1376,7 @@ impl<F: FileSystem + Sync> Server<F> {
         w: Writer,
         host_shm_base: u64,
         shm_size: u64,
-        #[cfg(target_os = "macos")] map_sender: &Option<Sender<MemoryMapping>>,
+        #[cfg(target_os = "macos")] map_sender: &Option<Sender<WorkerMessage>>,
     ) -> Result<usize> {
         let RemovemappingIn { count } = r.read_obj().map_err(Error::DecodeMessage)?;
 

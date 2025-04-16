@@ -42,8 +42,6 @@ use devices::legacy::{IrqChip, IrqChipDevice};
 #[cfg(feature = "net")]
 use devices::virtio::Net;
 use devices::virtio::{port_io, MmioTransport, PortDescription, Vsock};
-#[cfg(target_os = "macos")]
-use hvf::MemoryMapping;
 
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
@@ -513,8 +511,8 @@ pub fn build_microvm(
     vm_resources: &super::resources::VmResources,
     event_manager: &mut EventManager,
     _shutdown_efd: Option<EventFd>,
-    #[cfg(target_os = "macos")] _map_sender: Sender<MemoryMapping>,
     #[cfg(feature = "tee")] pm_sender: (Sender<MemoryProperties>, EventFd),
+    #[cfg(target_os = "macos")] _sender: Sender<WorkerMessage>,
     #[cfg(target_arch = "x86_64")] _sender: Sender<(WorkerMessage, EventFd)>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
     let payload = choose_payload(vm_resources)?;
@@ -805,7 +803,7 @@ pub fn build_microvm(
             intc.clone(),
             virgl_flags,
             #[cfg(target_os = "macos")]
-            _map_sender.clone(),
+            _sender.clone(),
         )?;
     }
 
@@ -819,7 +817,7 @@ pub fn build_microvm(
         intc.clone(),
         exit_code,
         #[cfg(target_os = "macos")]
-        _map_sender,
+        _sender,
     )?;
     #[cfg(feature = "blk")]
     attach_block_devices(&mut vmm, &vm_resources.block, intc.clone())?;
@@ -1590,7 +1588,7 @@ fn attach_fs_devices(
     #[cfg(not(feature = "tee"))] export_table: Option<ExportTable>,
     intc: IrqChip,
     exit_code: Arc<AtomicI32>,
-    #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
+    #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
@@ -1871,7 +1869,7 @@ fn attach_gpu_device(
     #[cfg(not(feature = "tee"))] mut export_table: Option<ExportTable>,
     intc: IrqChip,
     virgl_flags: u32,
-    #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
+    #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 

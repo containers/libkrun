@@ -1,7 +1,7 @@
 #[cfg(target_os = "macos")]
 use crossbeam_channel::Sender;
 #[cfg(target_os = "macos")]
-use hvf::MemoryMapping;
+use utils::worker_message::WorkerMessage;
 
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
@@ -34,7 +34,7 @@ pub struct FsWorker {
     stop_fd: EventFd,
     exit_code: Arc<AtomicI32>,
     #[cfg(target_os = "macos")]
-    map_sender: Option<Sender<MemoryMapping>>,
+    map_sender: Option<Sender<WorkerMessage>>,
 }
 
 impl FsWorker {
@@ -51,7 +51,7 @@ impl FsWorker {
         passthrough_cfg: passthrough::Config,
         stop_fd: EventFd,
         exit_code: Arc<AtomicI32>,
-        #[cfg(target_os = "macos")] map_sender: Option<Sender<MemoryMapping>>,
+        #[cfg(target_os = "macos")] map_sender: Option<Sender<WorkerMessage>>,
     ) -> Self {
         Self {
             queues,

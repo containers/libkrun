@@ -30,8 +30,6 @@ use devices::virtio::net::device::VirtioNetBackend;
 #[cfg(feature = "blk")]
 use devices::virtio::CacheType;
 use env_logger::Env;
-#[cfg(target_os = "macos")]
-use hvf::MemoryMapping;
 #[cfg(not(feature = "efi"))]
 use libc::size_t;
 use libc::{c_char, c_int};
@@ -1506,23 +1504,17 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         }
     }
 
-    #[cfg(target_os = "macos")]
-    let (sender, receiver) = unbounded();
-
     #[cfg(feature = "tee")]
     let (pm_sender, pm_receiver) = unbounded();
     #[cfg(feature = "tee")]
     let pm_efd =
         EventFd::new(EFD_SEMAPHORE).expect("unable to create TEE memory properties eventfd");
-    #[cfg(target_arch = "x86_64")]
     let (sender, receiver) = unbounded();
 
     let _vmm = match vmm::builder::build_microvm(
         &ctx_cfg.vmr,
         &mut event_manager,
         ctx_cfg.shutdown_efd,
-        #[cfg(target_os = "macos")]
-        sender,
         #[cfg(feature = "tee")]
         (
             pm_sender,
@@ -1530,7 +1522,6 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
                 .try_clone()
                 .expect("unable to clone TEE memory properties eventfd"),
         ),
-        #[cfg(target_arch = "x86_64")]
         sender,
     ) {
         Ok(vmm) => vmm,
@@ -1540,27 +1531,12 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         }
     };
 
-    #[cfg(any(target_os = "macos", feature = "tee"))]
+    #[cfg(feature = "tee")]
     let mapper_vmm = _vmm.clone();
 
     #[cfg(target_os = "macos")]
     if ctx_cfg.gpu_virgl_flags.is_some() {
-        std::thread::Builder::new()
-            .name("mapping worker".into())
-            .spawn(move || loop {
-                match receiver.recv() {
-                    Err(e) => error!("Error in receiver: {:?}", e),
-                    Ok(m) => match m {
-                        MemoryMapping::AddMapping(s, h, g, l) => {
-                            mapper_vmm.lock().unwrap().add_mapping(s, h, g, l)
-                        }
-                        MemoryMapping::RemoveMapping(s, g, l) => {
-                            mapper_vmm.lock().unwrap().remove_mapping(s, g, l)
-                        }
-                    },
-                }
-            })
-            .unwrap();
+        vmm::worker::start_worker_thread(_vmm.clone(), receiver).unwrap();
     }
 
     #[cfg(target_arch = "x86_64")]
