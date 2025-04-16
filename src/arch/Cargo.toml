@@ -18,8 +18,8 @@ smbios = { path = "../smbios" }
 utils = { path = "../utils" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-kvm-bindings = { version = ">=0.8", features = ["fam-wrappers"] }
-kvm-ioctls = ">=0.17"
+kvm-bindings = { version = ">=0.11", features = ["fam-wrappers"] }
+kvm-ioctls = ">=0.21"
 
 [dev-dependencies]
 utils = { path = "../utils" }
