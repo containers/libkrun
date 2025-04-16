@@ -542,7 +542,7 @@ pub const VIRTIO_GPU_FORMAT_R8G8B8X8_UNORM: u32 = 134;
 /// A virtio gpu command and associated metadata specific to each command.
 #[derive(Copy, Clone)]
 pub enum GpuCommand {
-    GetDisplayInfo(virtio_gpu_ctrl_hdr),
+    GetDisplayInfo,
     ResourceCreate2d(virtio_gpu_resource_create_2d),
     ResourceUnref(virtio_gpu_resource_unref),
     SetScanout(virtio_gpu_set_scanout),
@@ -591,7 +591,7 @@ impl fmt::Debug for GpuCommand {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::GpuCommand::*;
         match self {
-            GetDisplayInfo(_info) => f.debug_struct("GetDisplayInfo").finish(),
+            GetDisplayInfo => f.debug_struct("GetDisplayInfo").finish(),
             ResourceCreate2d(_info) => f.debug_struct("ResourceCreate2d").finish(),
             ResourceUnref(_info) => f.debug_struct("ResourceUnref").finish(),
             SetScanout(_info) => f.debug_struct("SetScanout").finish(),
@@ -628,7 +628,7 @@ impl GpuCommand {
         use self::GpuCommand::*;
         let hdr = cmd.read_obj::<virtio_gpu_ctrl_hdr>()?;
         let cmd = match hdr.type_ {
-            VIRTIO_GPU_CMD_GET_DISPLAY_INFO => GetDisplayInfo(cmd.read_obj()?),
+            VIRTIO_GPU_CMD_GET_DISPLAY_INFO => GetDisplayInfo,
             VIRTIO_GPU_CMD_RESOURCE_CREATE_2D => ResourceCreate2d(cmd.read_obj()?),
             VIRTIO_GPU_CMD_RESOURCE_UNREF => ResourceUnref(cmd.read_obj()?),
             VIRTIO_GPU_CMD_SET_SCANOUT => SetScanout(cmd.read_obj()?),
