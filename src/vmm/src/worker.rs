@@ -8,6 +8,7 @@ use crossbeam_channel::Receiver;
 
 pub fn start_worker_thread(
     vmm: Arc<Mutex<super::Vmm>>,
+    #[cfg(target_os = "macos")] receiver: Receiver<WorkerMessage>,
     #[cfg(not(target_os = "macos"))] receiver: Receiver<(WorkerMessage, EventFd)>,
 ) -> io::Result<()> {
     std::thread::Builder::new()
@@ -15,6 +16,8 @@ pub fn start_worker_thread(
         .spawn(move || loop {
             match receiver.recv() {
                 Err(e) => error!("error receiving message from vmm worker thread: {:?}", e),
+                #[cfg(target_os = "macos")]
+                Ok(message) => vmm.lock().unwrap().match_worker_message(message),
                 #[cfg(target_os = "linux")]
                 Ok((message, evt_fd)) => vmm.lock().unwrap().match_worker_message(message, evt_fd),
             }
@@ -29,6 +32,10 @@ impl super::Vmm {
         #[cfg(target_os = "linux")] evt_fd: EventFd,
     ) {
         match msg {
+            #[cfg(target_os = "macos")]
+            WorkerMessage::GpuAddMapping(s, h, g, l) => self.add_mapping(s, h, g, l),
+            #[cfg(target_os = "macos")]
+            WorkerMessage::GpuRemoveMapping(s, g, l) => self.remove_mapping(s, g, l),
             #[cfg(target_arch = "x86_64")]
             WorkerMessage::GsiRoute(entries) => {
                 let mut irq_routing = utils::sized_vec::vec_with_array_field::<

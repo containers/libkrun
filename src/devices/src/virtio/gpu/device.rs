@@ -18,7 +18,7 @@ use super::worker::Worker;
 use crate::legacy::IrqChip;
 use crate::Error as DeviceError;
 #[cfg(target_os = "macos")]
-use hvf::MemoryMapping;
+use utils::worker_message::WorkerMessage;
 
 // Control queue.
 pub(crate) const CTL_INDEX: usize = 0;
@@ -49,7 +49,7 @@ pub struct Gpu {
     pub(crate) sender: Option<Sender<u64>>,
     virgl_flags: u32,
     #[cfg(target_os = "macos")]
-    map_sender: Sender<MemoryMapping>,
+    map_sender: Sender<WorkerMessage>,
     export_table: Option<ExportTable>,
 }
 
@@ -57,7 +57,7 @@ impl Gpu {
     pub(crate) fn with_queues(
         queues: Vec<VirtQueue>,
         virgl_flags: u32,
-        #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
+        #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
     ) -> super::Result<Gpu> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
@@ -92,7 +92,7 @@ impl Gpu {
 
     pub fn new(
         virgl_flags: u32,
-        #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
+        #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
     ) -> super::Result<Gpu> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
             .iter()

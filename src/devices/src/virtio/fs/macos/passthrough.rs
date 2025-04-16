@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use crossbeam_channel::{unbounded, Sender};
-use hvf::MemoryMapping;
+use utils::worker_message::WorkerMessage;
 
 use crate::virtio::fs::filesystem::SecContext;
 
@@ -1994,7 +1994,7 @@ impl FileSystem for PassthroughFs {
         moffset: u64,
         guest_shm_base: u64,
         shm_size: u64,
-        map_sender: &Option<Sender<MemoryMapping>>,
+        map_sender: &Option<Sender<WorkerMessage>>,
     ) -> io::Result<()> {
         if map_sender.is_none() {
             return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
@@ -2043,7 +2043,7 @@ impl FileSystem for PassthroughFs {
         let sender = map_sender.as_ref().unwrap();
         let (reply_sender, reply_receiver) = unbounded();
         sender
-            .send(MemoryMapping::AddMapping(
+            .send(WorkerMessage::GpuAddMapping(
                 reply_sender,
                 host_addr as u64,
                 guest_addr,
@@ -2070,7 +2070,7 @@ impl FileSystem for PassthroughFs {
         requests: Vec<fuse::RemovemappingOne>,
         guest_shm_base: u64,
         shm_size: u64,
-        map_sender: &Option<Sender<MemoryMapping>>,
+        map_sender: &Option<Sender<WorkerMessage>>,
     ) -> io::Result<()> {
         if map_sender.is_none() {
             return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
@@ -2093,7 +2093,7 @@ impl FileSystem for PassthroughFs {
             let sender = map_sender.as_ref().unwrap();
             let (reply_sender, reply_receiver) = unbounded();
             sender
-                .send(MemoryMapping::RemoveMapping(
+                .send(WorkerMessage::GpuRemoveMapping(
                     reply_sender,
                     guest_addr,
                     req.len,

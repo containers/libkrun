@@ -24,7 +24,6 @@ use std::time::Duration;
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 use arch::aarch64::sysreg::{sys_reg_name, SYSREG_MASK};
-use crossbeam_channel::Sender;
 use log::debug;
 
 extern "C" {
@@ -147,12 +146,6 @@ impl Display for Error {
             VmCreate => write!(f, "Error creating HVF VM instance"),
         }
     }
-}
-
-/// Messages for requesting memory maps/unmaps.
-pub enum MemoryMapping {
-    AddMapping(Sender<bool>, u64, u64, u64),
-    RemoveMapping(Sender<bool>, u64, u64),
 }
 
 pub enum InterruptType {

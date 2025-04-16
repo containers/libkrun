@@ -34,8 +34,6 @@ mod terminal;
 pub mod worker;
 
 #[cfg(target_os = "macos")]
-pub use hvf::MemoryMapping;
-#[cfg(target_os = "macos")]
 use macos::vstate;
 
 use std::fmt::{Display, Formatter};

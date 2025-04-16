@@ -6,13 +6,13 @@ use std::{result, thread};
 use crossbeam_channel::Receiver;
 #[cfg(target_os = "macos")]
 use crossbeam_channel::Sender;
-#[cfg(target_os = "macos")]
-use hvf::MemoryMapping;
 use rutabaga_gfx::{
     ResourceCreate3D, ResourceCreateBlob, RutabagaFence, Transfer3D,
     RUTABAGA_PIPE_BIND_RENDER_TARGET, RUTABAGA_PIPE_TEXTURE_2D,
 };
 use utils::eventfd::EventFd;
+#[cfg(target_os = "macos")]
+use utils::worker_message::WorkerMessage;
 use vm_memory::{GuestAddress, GuestMemoryMmap};
 
 use super::super::descriptor_utils::{Reader, Writer};
@@ -39,7 +39,7 @@ pub struct Worker {
     shm_region: VirtioShmRegion,
     virgl_flags: u32,
     #[cfg(target_os = "macos")]
-    map_sender: Sender<MemoryMapping>,
+    map_sender: Sender<WorkerMessage>,
     export_table: Option<ExportTable>,
 }
 
@@ -55,7 +55,7 @@ impl Worker {
         irq_line: Option<u32>,
         shm_region: VirtioShmRegion,
         virgl_flags: u32,
-        #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
+        #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
         export_table: Option<ExportTable>,
     ) -> Self {
         Self {
