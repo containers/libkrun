@@ -5,10 +5,7 @@
 
 #[cfg(target_os = "macos")]
 use crossbeam_channel::unbounded;
-
-#[cfg(any(target_os = "macos", feature = "tee"))]
 use crossbeam_channel::Sender;
-
 use kernel::cmdline::Cmdline;
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
@@ -82,6 +79,7 @@ use linux_loader::loader::{self, KernelLoader};
 use nix::unistd::isatty;
 use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
+use utils::worker_message::WorkerMessage;
 #[cfg(all(target_arch = "x86_64", not(feature = "efi"), not(feature = "tee")))]
 use vm_memory::mmap::MmapRegion;
 #[cfg(not(feature = "tee"))]
@@ -516,11 +514,8 @@ pub fn build_microvm(
     event_manager: &mut EventManager,
     _shutdown_efd: Option<EventFd>,
     #[cfg(target_os = "macos")] _map_sender: Sender<MemoryMapping>,
-    #[cfg(target_arch = "x86_64")] irq_sender: crossbeam_channel::Sender<(
-        devices::legacy::IrqWorkerMessage,
-        EventFd,
-    )>,
     #[cfg(feature = "tee")] pm_sender: (Sender<MemoryProperties>, EventFd),
+    #[cfg(target_arch = "x86_64")] _sender: Sender<(WorkerMessage, EventFd)>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
     let payload = choose_payload(vm_resources)?;
 
@@ -675,7 +670,7 @@ pub fn build_microvm(
     #[cfg(target_arch = "x86_64")]
     {
         let ioapic: Box<dyn IrqChipT> = if vm_resources.split_irqchip {
-            Box::new(IoApic::new(vm.fd(), irq_sender).map_err(StartMicrovmError::CreateKvmIrqChip)?)
+            Box::new(IoApic::new(vm.fd(), _sender).map_err(StartMicrovmError::CreateKvmIrqChip)?)
         } else {
             Box::new(KvmIoapic::new(vm.fd()).map_err(StartMicrovmError::CreateKvmIrqChip)?)
         };
