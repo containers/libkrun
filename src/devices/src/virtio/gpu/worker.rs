@@ -128,7 +128,7 @@ impl Worker {
         virtio_gpu.force_ctx_0();
 
         match cmd {
-            GpuCommand::GetDisplayInfo(_) => {
+            GpuCommand::GetDisplayInfo => {
                 panic!("virtio_gpu: GpuCommand::GetDisplayInfo unimplemented");
             }
             GpuCommand::ResourceCreate2d(info) => {
