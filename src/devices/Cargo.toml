@@ -13,6 +13,7 @@ efi = ["blk", "net"]
 gpu = ["rutabaga_gfx", "thiserror", "zerocopy", "zerocopy-derive"]
 snd = ["pw", "thiserror"]
 virgl_resource_map2 = []
+nitro = []
 
 [dependencies]
 bitflags = "1.2.0"
