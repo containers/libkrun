@@ -55,7 +55,7 @@ use crate::terminal::term_set_raw_mode;
 #[cfg(feature = "blk")]
 use crate::vmm_config::block::BlockBuilder;
 use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
-#[cfg(not(feature = "tee"))]
+#[cfg(not(any(feature = "tee", feature = "nitro")))]
 use crate::vmm_config::fs::FsDeviceConfig;
 #[cfg(target_os = "linux")]
 use crate::vstate::KvmContext;
@@ -64,7 +64,7 @@ use crate::vstate::MeasuredRegion;
 use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
 use arch::{ArchMemoryInfo, InitrdConfig};
 use device_manager::shm::ShmManager;
-#[cfg(not(feature = "tee"))]
+#[cfg(not(any(feature = "tee", feature = "nitro")))]
 use devices::virtio::{fs::ExportTable, VirtioShmRegion};
 use flate2::read::GzDecoder;
 #[cfg(feature = "tee")]
@@ -78,12 +78,14 @@ use utils::eventfd::EventFd;
 use utils::worker_message::WorkerMessage;
 #[cfg(all(target_arch = "x86_64", not(feature = "efi"), not(feature = "tee")))]
 use vm_memory::mmap::MmapRegion;
-#[cfg(not(feature = "tee"))]
+#[cfg(not(any(feature = "tee", feature = "nitro")))]
 use vm_memory::Address;
 use vm_memory::Bytes;
+#[cfg(not(feature = "nitro"))]
+use vm_memory::GuestMemory;
 #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
 use vm_memory::GuestRegionMmap;
-use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap};
+use vm_memory::{GuestAddress, GuestMemoryMmap};
 
 #[cfg(feature = "efi")]
 static EDK2_BINARY: &[u8] = include_bytes!("../../../edk2/KRUN_EFI.silent.fd");
@@ -784,7 +786,7 @@ pub fn build_microvm(
         vm_resources.console_output.clone(),
     )?;
 
-    #[cfg(not(feature = "tee"))]
+    #[cfg(not(any(feature = "tee", feature = "nitro")))]
     let export_table: Option<ExportTable> = if cfg!(feature = "gpu") {
         Some(Default::default())
     } else {
@@ -805,8 +807,7 @@ pub fn build_microvm(
             _sender.clone(),
         )?;
     }
-
-    #[cfg(not(feature = "tee"))]
+    #[cfg(not(any(feature = "tee", feature = "nitro")))]
     attach_fs_devices(
         &mut vmm,
         &vm_resources.fs,
@@ -1579,7 +1580,7 @@ fn attach_mmio_device(
     Ok(())
 }
 
-#[cfg(not(feature = "tee"))]
+#[cfg(not(any(feature = "tee", feature = "nitro")))]
 fn attach_fs_devices(
     vmm: &mut Vmm,
     fs_devs: &[FsDeviceConfig],
