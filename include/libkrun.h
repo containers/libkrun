@@ -623,6 +623,19 @@ int32_t krun_check_nested_virt(void);
 */
 int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
 
+#define KRUN_NITRO_IMG_TYPE_EIF 1
+/**
+ * Configure a Nitro Enclaves image.
+ *
+ * Arguments:
+ *  "ctx_id"     - the configuration context ID.
+ *  "image_path" - a null-terminated string representing the path of the image
+ *                 in the host.
+ *  "image_type" - the type of enclave image being provided.
+ */
+int32_t krun_nitro_set_image(uint32_t ctx_id, const char *image_path,
+                             uint32_t image_type);
+
 /**
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
  * stdin/stdout to manage them on behalf of the process running inside the isolated environment,
