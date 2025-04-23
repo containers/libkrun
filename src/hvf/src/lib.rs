@@ -9,6 +9,9 @@
 #[allow(deref_nullptr)]
 pub mod bindings;
 
+#[macro_use]
+extern crate log;
+
 use bindings::*;
 
 #[cfg(target_arch = "aarch64")]
@@ -206,11 +209,27 @@ pub fn vcpu_set_vtimer_mask(vcpuid: u64, masked: bool) -> Result<(), Error> {
     }
 }
 
-pub struct HvfNestedBindings {
-    hv_vm_config_get_el2_supported:
-        libloading::Symbol<'static, unsafe extern "C" fn(*mut bool) -> hv_return_t>,
-    hv_vm_config_set_el2_enabled:
-        libloading::Symbol<'static, unsafe extern "C" fn(hv_vm_config_t, bool) -> hv_return_t>,
+/// Checks if Nested Virtualization is supported on the current system. Only
+/// M3 or newer chips on macOS 15+ will satisfy the requirements.
+pub fn check_nested_virt() -> Result<bool, Error> {
+    type GetEL2Supported =
+        libloading::Symbol<'static, unsafe extern "C" fn(*mut bool) -> hv_return_t>;
+
+    let get_el2_supported: Result<GetEL2Supported, libloading::Error> =
+        unsafe { HVF.get(b"hv_vm_config_get_el2_supported") };
+    if get_el2_supported.is_err() {
+        info!("cannot find hv_vm_config_get_el2_supported symbol");
+        return Ok(false);
+    }
+
+    let mut el2_supported: bool = false;
+    let ret = unsafe { (get_el2_supported.unwrap())(&mut el2_supported) };
+    if ret != HV_SUCCESS {
+        error!("hv_vm_config_get_el2_supported failed: {:?}", ret);
+        return Err(Error::NestedCheck);
+    }
+
+    Ok(el2_supported)
 }
 
 pub struct HvfVm {}
@@ -225,30 +244,16 @@ static HVF: LazyLock<libloading::Library> = LazyLock::new(|| unsafe {
 impl HvfVm {
     pub fn new(nested_enabled: bool) -> Result<Self, Error> {
         let config = unsafe { hv_vm_config_create() };
-
         if nested_enabled {
-            let bindings = unsafe {
-                HvfNestedBindings {
-                    hv_vm_config_get_el2_supported: HVF
-                        .get(b"hv_vm_config_get_el2_supported")
-                        .map_err(Error::FindSymbol)?,
-                    hv_vm_config_set_el2_enabled: HVF
-                        .get(b"hv_vm_config_set_el2_enabled")
-                        .map_err(Error::FindSymbol)?,
-                }
+            let set_el2_enabled: libloading::Symbol<
+                'static,
+                unsafe extern "C" fn(hv_vm_config_t, bool) -> hv_return_t,
+            > = unsafe {
+                HVF.get(b"hv_vm_config_set_el2_enabled")
+                    .map_err(Error::FindSymbol)?
             };
 
-            let mut el2_supported: bool = false;
-            let ret = unsafe { (bindings.hv_vm_config_get_el2_supported)(&mut el2_supported) };
-            if ret != HV_SUCCESS {
-                return Err(Error::NestedCheck);
-            }
-
-            if !el2_supported {
-                return Err(Error::NestedCheck);
-            }
-
-            let ret = unsafe { (bindings.hv_vm_config_set_el2_enabled)(config, true) };
+            let ret = unsafe { (set_el2_enabled)(config, true) };
             if ret != HV_SUCCESS {
                 return Err(Error::EnableEL2);
             }
