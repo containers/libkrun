@@ -1077,6 +1077,19 @@ pub unsafe extern "C" fn krun_set_nested_virt(ctx_id: u32, enabled: bool) -> i32
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+pub unsafe extern "C" fn krun_check_nested_virt() -> i32 {
+    #[cfg(target_os = "macos")]
+    match hvf::check_nested_virt() {
+        Ok(supp) => supp as i32,
+        Err(_) => -libc::EINVAL,
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    -libc::EOPNOTSUPP
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
 pub extern "C" fn krun_split_irqchip(ctx_id: u32, enable: bool) -> i32 {
     if enable && !cfg!(target_arch = "x86_64") {
         return -libc::EINVAL;

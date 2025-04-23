@@ -561,6 +561,19 @@ int32_t krun_setgid(uint32_t ctx_id, gid_t gid);
 int32_t krun_set_nested_virt(uint32_t ctx_id, bool enabled);
 
 /**
+ * Check the system if Nested Virtualization is supported
+ *
+ * Notes:
+ *  This feature is only supported on macOS.
+ *
+ * Returns:
+ *  - 1 : Success and Nested Virtualization is supported
+ *  - 0 : Success and Nested Virtualization is not supported
+ *  - <0: Failure
+ */
+int32_t krun_check_nested_virt(void);
+
+/**
  * Specify whether to split IRQCHIP responsibilities between the host and the guest.
  *
  * Arguments:
