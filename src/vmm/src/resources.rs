@@ -82,6 +82,8 @@ impl Default for TeeConfig {
 pub enum DisplayBackendConfig {
     #[default]
     Noop,
+    #[cfg(feature = "gtk_display")]
+    Gtk,
 }
 
 /// A data structure that encapsulates the device configurations

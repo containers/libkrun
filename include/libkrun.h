@@ -362,6 +362,18 @@ int32_t krun_set_gpu_options2(uint32_t ctx_id,
 int32_t krun_set_display(uint32_t ctx_id, uint32_t display_id, uint32_t width, uint32_t height);
 
 /**
+ * Enable the Gtk display backend. This allows you to attach virtual displays to the GPU
+ * for graphical output.
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_display_backend_gtk(uint32_t ctx_id);
+
+/**
  * Enables or disables a virtio-snd device.
  *
  * Arguments:
