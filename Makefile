@@ -30,6 +30,9 @@ endif
 ifeq ($(GPU),1)
     FEATURE_FLAGS += --features gpu
 endif
+ifeq ($(GTK_DISPLAY),1)
+    FEATURE_FLAGS += --features gtk_display
+endif
 ifeq ($(VIRGL_RESOURCE_MAP2),1)
 	FEATURE_FLAGS += --features virgl_resource_map2
 endif

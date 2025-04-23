@@ -991,6 +991,29 @@ pub unsafe extern "C" fn krun_set_gpu_options2(
     KRUN_SUCCESS
 }
 
+#[cfg(not(feature = "gtk_display"))]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_display_backend_gtk(_ctx_id: u32) -> i32 {
+    -libc::ENOTSUP
+}
+
+#[cfg(feature = "gtk_display")]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_display_backend_gtk(ctx_id: u32) -> i32 {
+    #[cfg(feature = "gpu")]
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.display_backend = DisplayBackendConfig::Gtk;
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
 #[cfg(feature = "gpu")]
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]

@@ -23,8 +23,10 @@ use super::{Error, Vmm};
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
-use crate::resources::VmResources;
+use crate::resources::{DisplayBackendConfig, VmResources};
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
+#[cfg(feature = "gtk_display")]
+use devices::display::DisplayBackendGtk;
 #[cfg(feature = "gpu")]
 use devices::display::{DisplayBackend, DisplayBackendNoop};
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
@@ -1868,6 +1870,10 @@ fn attach_rng_device(
 fn create_display_backend(vm_resources: &VmResources) -> Box<dyn DisplayBackend> {
     match vm_resources.display_backend {
         DisplayBackendConfig::Noop => Box::new(DisplayBackendNoop),
+        #[cfg(feature = "gtk_display")]
+        DisplayBackendConfig::Gtk => {
+            Box::new(DisplayBackendGtk::new(vm_resources.displays.clone()))
+        }
     }
 }
 
