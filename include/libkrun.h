@@ -341,6 +341,26 @@ int32_t krun_set_gpu_options2(uint32_t ctx_id,
                               uint32_t virgl_flags,
                               uint64_t shm_size);
 
+/* Maximum number of displays. Same as VIRTIO_GPU_MAX_SCANOUTS defined in the virtio-gpu spec */
+#define KRUN_MAX_DISPLAYS 16
+
+/**
+ * Configure and enable a display output for the VM.
+ *
+ * Some display backend must be set using krun_set_display_backend_*, and the GPU
+ * device must be enabled.
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "display_id"  - the ID of the display (range: 0 to KRUN_MAX_DISPLAYS - 1)
+ *  "width"       - the width of the window/display
+ *  "height"      - the height of the window/display
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_display(uint32_t ctx_id, uint32_t display_id, uint32_t width, uint32_t height);
+
 /**
  * Enables or disables a virtio-snd device.
  *
