@@ -15,6 +15,7 @@ use super::defs;
 use super::defs::uapi;
 use super::defs::uapi::virtio_gpu_config;
 use super::worker::Worker;
+use crate::display::DisplayBackend;
 use crate::legacy::IrqChip;
 use crate::Error as DeviceError;
 #[cfg(target_os = "macos")]
@@ -51,13 +52,16 @@ pub struct Gpu {
     #[cfg(target_os = "macos")]
     map_sender: Sender<WorkerMessage>,
     export_table: Option<ExportTable>,
+    num_scanouts: u32,
+    display_handle: Option<Box<dyn DisplayBackend>>,
 }
 
 impl Gpu {
     pub(crate) fn with_queues(
         queues: Vec<VirtQueue>,
         virgl_flags: u32,
-        #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
+        display_handle: Box<dyn DisplayBackend>,
+        #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
     ) -> super::Result<Gpu> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
@@ -87,12 +91,15 @@ impl Gpu {
             #[cfg(target_os = "macos")]
             map_sender,
             export_table: None,
+            num_scanouts: display_handle.num_displays(),
+            display_handle: Some(display_handle),
         })
     }
 
     pub fn new(
         virgl_flags: u32,
-        #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
+        display_backend: Box<dyn DisplayBackend>,
+        #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
     ) -> super::Result<Gpu> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
             .iter()
@@ -101,6 +108,7 @@ impl Gpu {
         Self::with_queues(
             queues,
             virgl_flags,
+            display_backend,
             #[cfg(target_os = "macos")]
             map_sender,
         )
@@ -237,7 +245,7 @@ impl VirtioDevice for Gpu {
         let config = virtio_gpu_config {
             events_read: 0,
             events_clear: 0,
-            num_scanouts: 0,
+            num_scanouts: self.num_scanouts,
             num_capsets: 5,
         };
 
@@ -294,6 +302,7 @@ impl VirtioDevice for Gpu {
             #[cfg(target_os = "macos")]
             self.map_sender.clone(),
             self.export_table.take(),
+            self.display_handle.take(),
         );
         worker.run();
 

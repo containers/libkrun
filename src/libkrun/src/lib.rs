@@ -21,6 +21,8 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 
 use crossbeam_channel::unbounded;
+#[cfg(feature = "gpu")]
+use devices::display::DisplayInfo;
 #[cfg(feature = "blk")]
 use devices::virtio::block::ImageType;
 #[cfg(feature = "net")]
@@ -34,6 +36,8 @@ use libc::{c_char, c_int};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
 use utils::eventfd::EventFd;
+#[cfg(feature = "gpu")]
+use vmm::resources::DisplayBackendConfig;
 use vmm::resources::VmResources;
 #[cfg(feature = "blk")]
 use vmm::vmm_config::block::BlockDeviceConfig;
@@ -985,6 +989,44 @@ pub unsafe extern "C" fn krun_set_gpu_options2(
     }
 
     KRUN_SUCCESS
+}
+
+#[cfg(feature = "gpu")]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_display(
+    ctx_id: u32,
+    display_id: u32,
+    width: u32,
+    height: u32,
+) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            if cfg.vmr.display_backend == DisplayBackendConfig::Noop {
+                return -libc::ENOTSUP;
+            }
+            let Some(display_entry) = cfg.vmr.displays.get_mut(display_id as usize) else {
+                return -libc::EINVAL;
+            };
+            *display_entry = Some(DisplayInfo::new(width, height));
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[cfg(not(feature = "gpu"))]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_display(
+    _ctx_id: u32,
+    _display_id: u32,
+    _width: u32,
+    _height: u32,
+) -> i32 {
+    -libc::ENOTSUP
 }
 
 #[allow(clippy::missing_safety_doc)]
