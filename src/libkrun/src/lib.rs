@@ -8,11 +8,10 @@ use std::env;
 use std::ffi::CStr;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
-#[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
 use std::fs::File;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
-use std::os::fd::RawFd;
+use std::os::fd::{FromRawFd, RawFd};
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -27,7 +26,7 @@ use devices::virtio::block::ImageType;
 use devices::virtio::net::device::VirtioNetBackend;
 #[cfg(feature = "blk")]
 use devices::virtio::CacheType;
-use env_logger::Env;
+use env_logger::{Env, Target};
 #[cfg(not(feature = "efi"))]
 use libc::size_t;
 use libc::{c_char, c_int};
@@ -301,17 +300,71 @@ impl ContextConfig {
 static CTX_MAP: Lazy<Mutex<HashMap<u32, ContextConfig>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static CTX_IDS: AtomicI32 = AtomicI32::new(0);
 
-#[no_mangle]
-pub extern "C" fn krun_set_log_level(level: u32) -> i32 {
-    let log_level = match level {
+fn log_level_to_filter_str(level: u32) -> &'static str {
+    match level {
         0 => "off",
         1 => "error",
         2 => "warn",
         3 => "info",
         4 => "debug",
         _ => "trace",
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn krun_set_log_level(level: u32) -> i32 {
+    let filter = log_level_to_filter_str(level);
+    env_logger::Builder::from_env(Env::default().default_filter_or(filter)).init();
+    KRUN_SUCCESS
+}
+
+mod log_defs {
+    pub const KRUN_LOG_STYLE_AUTO: u32 = 0;
+    pub const KRUN_LOG_STYLE_ALWAYS: u32 = 1;
+    pub const KRUN_LOG_STYLE_NEVER: u32 = 2;
+    pub const KRUN_LOG_OPTION_NO_ENV: u32 = 1;
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_init_log(target: RawFd, level: u32, style: u32, options: u32) -> i32 {
+    let target = match target {
+        ..-1 => return -libc::EINVAL,
+        -1 => Target::default(),
+        0 /* stdin */ => return -libc::EINVAL,
+        1 /* stdout */ => Target::Stdout,
+        2 /* stderr */ => Target::Stderr,
+        fd => Target::Pipe(Box::new(File::from_raw_fd(fd))),
     };
-    env_logger::Builder::from_env(Env::default().default_filter_or(log_level)).init();
+
+    let filter = log_level_to_filter_str(level);
+
+    let write_style = match style {
+        log_defs::KRUN_LOG_STYLE_AUTO => "auto",
+        log_defs::KRUN_LOG_STYLE_ALWAYS => "always",
+        log_defs::KRUN_LOG_STYLE_NEVER => "never",
+        _ => return -libc::EINVAL,
+    };
+
+    let use_env = match options {
+        0 => true,
+        log_defs::KRUN_LOG_OPTION_NO_ENV => false,
+        _ => return -libc::EINVAL,
+    };
+
+    let mut builder = if use_env {
+        env_logger::Builder::from_env(
+            Env::new()
+                .default_filter_or(filter)
+                .default_write_style_or(write_style),
+        )
+    } else {
+        let mut builder = env_logger::Builder::new();
+        builder.parse_filters(filter).parse_write_style(write_style);
+        builder
+    };
+    builder.target(target).init();
+
     KRUN_SUCCESS
 }
 
