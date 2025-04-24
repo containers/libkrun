@@ -50,6 +50,9 @@ use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::net::NetworkInterfaceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
+#[cfg(feature = "nitro")]
+use nitro::NitroEnclave;
+
 // Value returned on success. We use libc's errors otherwise.
 const KRUN_SUCCESS: i32 = 0;
 // Maximum number of arguments/environment variables we allow
@@ -301,6 +304,41 @@ impl ContextConfig {
     #[cfg(feature = "nitro")]
     fn set_nitro_image(&mut self, image_path: PathBuf) {
         self.nitro_image_path = Some(image_path);
+    }
+}
+
+#[cfg(feature = "nitro")]
+impl TryFrom<ContextConfig> for NitroEnclave {
+    type Error = i32;
+
+    fn try_from(ctx: ContextConfig) -> Result<Self, Self::Error> {
+        let vm_config = ctx.vmr.vm_config();
+
+        let Some(mem_size_mib) = vm_config.mem_size_mib else {
+            error!("memory size not configured");
+            return Err(-libc::EINVAL);
+        };
+
+        let Some(vcpus) = vm_config.vcpu_count else {
+            error!("vCPU count not configured");
+            return Err(-libc::EINVAL);
+        };
+
+        let Some(image_path) = ctx.nitro_image_path else {
+            error!("nitro image not configured");
+            return Err(-libc::EINVAL);
+        };
+
+        let Ok(image) = File::open(&image_path) else {
+            error!("unable to open {}", image_path.display());
+            return Err(-libc::EINVAL);
+        };
+
+        Ok(Self {
+            image,
+            mem_size_mib,
+            vcpus,
+        })
     }
 }
 
@@ -1432,6 +1470,7 @@ pub unsafe extern "C" fn krun_nitro_set_image(ctx_id: u32, c_image_filepath: *co
 }
 
 #[no_mangle]
+#[allow(unreachable_code)]
 pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "linux")]
     {
@@ -1441,6 +1480,9 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         };
         unsafe { libc::prctl(libc::PR_SET_NAME, prname.as_ptr()) };
     }
+
+    #[cfg(feature = "nitro")]
+    return krun_start_enter_nitro(ctx_id);
 
     let mut event_manager = match EventManager::new() {
         Ok(em) => em,
@@ -1613,4 +1655,19 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             }
         }
     }
+}
+
+#[cfg(feature = "nitro")]
+#[no_mangle]
+fn krun_start_enter_nitro(ctx_id: u32) -> i32 {
+    let ctx_cfg = match CTX_MAP.lock().unwrap().remove(&ctx_id) {
+        Some(ctx_cfg) => ctx_cfg,
+        None => return -libc::ENOENT,
+    };
+
+    let Ok(_enclave) = NitroEnclave::try_from(ctx_cfg) else {
+        return -libc::EINVAL;
+    };
+
+    KRUN_SUCCESS
 }
