@@ -14,7 +14,7 @@ efi = [ "blk", "net" ]
 gpu = []
 snd = []
 virgl_resource_map2 = []
-nitro = []
+nitro = [ "dep:nitro" ]
 
 [dependencies]
 crossbeam-channel = ">=0.5.15"
@@ -35,6 +35,7 @@ hvf = { path = "../hvf" }
 [target.'cfg(target_os = "linux")'.dependencies]
 kvm-bindings = { version = ">=0.11", features = ["fam-wrappers"] }
 kvm-ioctls = ">=0.21"
+nitro = { path = "../nitro", optional = true }
 vm-memory = ">=0.13"
 
 [lib]
