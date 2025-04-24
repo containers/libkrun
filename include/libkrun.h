@@ -26,6 +26,45 @@ extern "C" {
  */
 int32_t krun_set_log_level(uint32_t level);
 
+
+#define KRUN_LOG_TARGET_DEFAULT -1
+
+#define KRUN_LOG_LEVEL_OFF "off"
+#define KRUN_LOG_LEVEL_ERROR "error"
+#define KRUN_LOG_LEVEL_WARN "warn"
+#define KRUN_LOG_LEVEL_INFO "info"
+#define KRUN_LOG_LEVEL_DEBUG "debug"
+#define KRUN_LOG_LEVEL_TRACE "trace"
+
+#define KRUN_LOG_STYLE_AUTO 0
+#define KRUN_LOG_STYLE_ALWAYS 1
+#define KRUN_LOG_STYLE_NEVER 2
+
+#define KRUN_LOG_OPTION_NO_ENV 1
+
+/**
+ * Initializes logging for the library.
+ *
+ * Arguments:
+ *  "target_fd" - File descriptor to write log to. Note that using a file descriptor pointing to a regular file on
+ *                filesystem might slow down the VM.
+ *                Use KRUN_LOG_TARGET_DEFAULT to use the default target for log output (stderr).
+ *
+ *  "level"     - Specify the verbosity of logging.
+ *                One of KRUN_LOG_LEVEL_{OFF, ERROR, WARN, INFO, DEBUG, TRACE}
+ *                NOTE: other null-terminated strings are also accepted but not part of libkrun's public stable API
+ *
+ *  "style"     - Enable/disable usage of terminal escape sequences (to display colors)
+ *                One of: KRUN_LOG_STYLE_{AUTO, ALWAYS, NEVER}.
+ *
+ *  "options"   - Bitmask of logging options, use 0 for default options.
+ *                KRUN_LOG_OPTION_NO_ENV to disallow environment variables to override these settings.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_init_log(int target_fd, const char *level, uint32_t style, uint32_t options);
+
 /**
  * Creates a configuration context.
  *
