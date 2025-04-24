@@ -990,6 +990,11 @@ pub unsafe extern "C" fn krun_add_vsock_port2(
     c_filepath: *const c_char,
     listen: bool,
 ) -> i32 {
+    #[cfg(feature = "nitro")]
+    if listen {
+        return -libc::EINVAL;
+    }
+
     let filepath = match CStr::from_ptr(c_filepath).to_str() {
         Ok(f) => PathBuf::from(f.to_string()),
         Err(_) => return -libc::EINVAL,
