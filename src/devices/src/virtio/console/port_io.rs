@@ -118,7 +118,7 @@ impl PortOutput for PortOutputFd {
             VolatileMemoryError::IOError(e) => e,
             e => {
                 log::error!("Unsuported error from write_volatile: {e:?}");
-                io::Error::new(ErrorKind::Other, e)
+                io::Error::other(e)
             }
         })
     }
@@ -173,9 +173,7 @@ impl PortOutputLog {
 
 impl PortOutput for PortOutputLog {
     fn write_volatile(&mut self, buf: &VolatileSlice) -> Result<usize, io::Error> {
-        self.buf
-            .write_volatile(buf)
-            .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+        self.buf.write_volatile(buf).map_err(io::Error::other)?;
 
         let mut start = 0;
         for (i, ch) in self.buf.iter().cloned().enumerate() {
