@@ -1160,7 +1160,7 @@ fn map_kernel(ctx_id: u32, kernel_path: &PathBuf) -> i32 {
             0_i64,
         )
     };
-    if kernel_host_addr == libc::MAP_FAILED {
+    if std::ptr::eq(kernel_host_addr, libc::MAP_FAILED) {
         error!("Can't load kernel into process map");
         return -libc::EINVAL;
     }

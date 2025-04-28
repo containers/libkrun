@@ -2030,7 +2030,7 @@ impl FileSystem for PassthroughFs {
                     0,
                 )
             };
-            if ret == libc::MAP_FAILED {
+            if std::ptr::eq(ret, libc::MAP_FAILED) {
                 return Err(io::Error::last_os_error());
             }
 
@@ -2062,7 +2062,7 @@ impl FileSystem for PassthroughFs {
                 foffset as libc::off_t,
             )
         };
-        if ret == libc::MAP_FAILED {
+        if std::ptr::eq(ret, libc::MAP_FAILED) {
             return Err(io::Error::last_os_error());
         }
 
@@ -2092,7 +2092,7 @@ impl FileSystem for PassthroughFs {
                     0_i64,
                 )
             };
-            if ret == libc::MAP_FAILED {
+            if std::ptr::eq(ret, libc::MAP_FAILED) {
                 return Err(io::Error::last_os_error());
             }
         }
