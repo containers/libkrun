@@ -217,8 +217,8 @@ int main(int argc, char *const argv[])
         return 0;
     }
 
-    // Set the log level to "off".
-    err = krun_set_log_level(0);
+    // Set the log level to "warn".
+    err = krun_set_log_level(2);
     if (err) {
         errno = -err;
         perror("Error configuring log level");
