@@ -6,6 +6,7 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,6 +35,8 @@ static void print_help(char *const name)
         "Usage: %s [OPTIONS] NEWROOT COMMAND [COMMAND_ARGS...]\n"
         "OPTIONS: \n"
         "        -h    --help                Show help\n"
+        "              --log=PATH            Write libkrun log to file or named pipe at PATH\n"
+        "              --color-log=PATH      Write libkrun log to file or named pipe at PATH, use color\n"
         "              --net=NET_MODE        Set network mode\n"
         "              --passt-socket=PATH   Instead of starting passt, connect to passt socket at PATH"
         "NET_MODE can be either TSI (default) or PASST\n"
@@ -47,6 +50,8 @@ static void print_help(char *const name)
 
 static const struct option long_options[] = {
     { "help", no_argument, NULL, 'h' },
+    { "log", required_argument, NULL, 'L' },
+    { "color-log", required_argument, NULL, 'C' },
     { "net_mode", required_argument, NULL, 'N' },
     { "passt-socket", required_argument, NULL, 'P' },
     { NULL, 0, NULL, 0 }
@@ -54,11 +59,26 @@ static const struct option long_options[] = {
 
 struct cmdline {
     bool show_help;
+    int log_target;
+    uint32_t log_style;
     enum net_mode net_mode;
     char const *passt_socket_path;
     char const *new_root;
     char *const *guest_argv;
 };
+
+bool cmdline_set_log_target(struct cmdline *cmdline, const char *arg) {
+    int fd = open(arg, O_WRONLY);
+    if (fd < 0) {
+        perror(arg);
+        return false;
+    }
+    if (cmdline->log_target > 0) {
+        close(cmdline->log_target);
+    }
+    cmdline->log_target = fd;
+    return true;
+}
 
 bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
 {
@@ -71,6 +91,8 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         .passt_socket_path = NULL,
         .new_root = NULL,
         .guest_argv = NULL,
+        .log_target = KRUN_LOG_TARGET_DEFAULT,
+        .log_style = KRUN_LOG_STYLE_AUTO
     };
 
     int option_index = 0;
@@ -81,6 +103,14 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         case 'h':
             cmdline->show_help = true;
             return true;
+        case 'C':
+            cmdline->log_style = KRUN_LOG_STYLE_ALWAYS;
+            /* fall through */
+        case 'L':
+            if (!cmdline_set_log_target(cmdline, optarg)) {
+                return false;
+            }
+            break;
         case 'N':
             if (strcasecmp("TSI", optarg) == 0) {
                 cmdline->net_mode = NET_MODE_TSI;
@@ -218,7 +248,7 @@ int main(int argc, char *const argv[])
     }
 
     // Set the log level to "warn".
-    err = krun_set_log_level(2);
+    err = krun_init_log(cmdline.log_target, KRUN_LOG_LEVEL_WARN, cmdline.log_style, 0);
     if (err) {
         errno = -err;
         perror("Error configuring log level");
