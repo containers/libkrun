@@ -23,8 +23,6 @@ use super::{Error, Vmm};
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
-#[cfg(feature = "tee")]
-use crate::linux::vstate::MemoryProperties;
 use crate::resources::VmResources;
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
@@ -511,7 +509,6 @@ pub fn build_microvm(
     vm_resources: &super::resources::VmResources,
     event_manager: &mut EventManager,
     _shutdown_efd: Option<EventFd>,
-    #[cfg(feature = "tee")] pm_sender: (Sender<MemoryProperties>, EventFd),
     _sender: Sender<WorkerMessage>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
     let payload = choose_payload(vm_resources)?;
@@ -667,7 +664,10 @@ pub fn build_microvm(
     #[cfg(target_arch = "x86_64")]
     {
         let ioapic: Box<dyn IrqChipT> = if vm_resources.split_irqchip {
-            Box::new(IoApic::new(vm.fd(), _sender).map_err(StartMicrovmError::CreateKvmIrqChip)?)
+            Box::new(
+                IoApic::new(vm.fd(), _sender.clone())
+                    .map_err(StartMicrovmError::CreateKvmIrqChip)?,
+            )
         } else {
             Box::new(KvmIoapic::new(vm.fd()).map_err(StartMicrovmError::CreateKvmIrqChip)?)
         };
@@ -689,7 +689,7 @@ pub fn build_microvm(
             &pio_device_manager.io_bus,
             &exit_evt,
             #[cfg(feature = "tee")]
-            pm_sender,
+            _sender,
         )
         .map_err(StartMicrovmError::Internal)?;
     }
@@ -1456,7 +1456,7 @@ fn create_vcpus_x86_64(
     entry_addr: GuestAddress,
     io_bus: &devices::Bus,
     exit_evt: &EventFd,
-    #[cfg(feature = "tee")] pm_sender: (Sender<MemoryProperties>, EventFd),
+    #[cfg(feature = "tee")] pm_sender: Sender<WorkerMessage>,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
     for cpu_index in 0..vcpu_config.vcpu_count {
@@ -1468,7 +1468,7 @@ fn create_vcpus_x86_64(
             io_bus.clone(),
             exit_evt.try_clone().map_err(Error::EventFd)?,
             #[cfg(feature = "tee")]
-            (pm_sender.0.clone(), pm_sender.1.try_clone().unwrap()),
+            pm_sender.clone(),
         )
         .map_err(Error::Vcpu)?;
 
