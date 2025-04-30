@@ -5,6 +5,7 @@ LDFLAGS_aarch64_Linux = -lkrun
 LDFLAGS_arm64_Darwin = -L/opt/homebrew/lib -lkrun
 LDFLAGS_sev = -lkrun-sev
 LDFLAGS_efi = -L/opt/homebrew/lib -lkrun-efi
+LDFLAGS_nitro = -lkrun-nitro
 CFLAGS = -O2 -g -I../include
 ROOTFS_DISTRO := fedora
 ROOTFS_DIR = rootfs_$(ROOTFS_DISTRO)
@@ -42,6 +43,9 @@ ifeq ($(OS),Darwin)
 	codesign --entitlements chroot_vm.entitlements --force -s - $@
 endif
 
+nitro: nitro.c
+	gcc -o $@ $< $(CFLAGS) $(LDFLAGS_nitro)
+
 # Build the rootfs to be used with chroot_vm.
 rootfs:
 	mkdir -p $(ROOTFS_DIR)
@@ -50,4 +54,4 @@ rootfs:
 	podman rm libkrun_chroot_vm
 
 clean:
-	rm -rf chroot_vm $(ROOTFS_DIR) launch-tee boot_efi external_kernel
+	rm -rf chroot_vm $(ROOTFS_DIR) launch-tee boot_efi external_kernel nitro
