@@ -406,7 +406,6 @@ dependencies = [
  "bitflags 1.3.2",
  "caps",
  "crossbeam-channel",
- "env_logger",
  "hvf",
  "imago",
  "kvm-bindings",
@@ -674,7 +673,6 @@ version = "0.1.0"
 dependencies = [
  "arch",
  "crossbeam-channel",
- "env_logger",
  "libloading",
  "log",
 ]
@@ -1712,7 +1710,6 @@ version = "0.1.0"
 dependencies = [
  "bitflags 1.3.2",
  "crossbeam-channel",
- "env_logger",
  "kvm-bindings",
  "libc",
  "log",
@@ -1777,7 +1774,6 @@ dependencies = [
  "crossbeam-channel",
  "curl",
  "devices",
- "env_logger",
  "flate2",
  "hvf",
  "kbs-types",
