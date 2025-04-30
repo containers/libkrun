@@ -50,6 +50,8 @@ use kvm_ioctls::{Cap::*, *};
 use utils::eventfd::EventFd;
 use utils::signal::{register_signal_handler, sigrtmin, Killable};
 use utils::sm::StateMachine;
+#[cfg(feature = "tee")]
+use utils::worker_message::{MemoryProperties, WorkerMessage};
 use vm_memory::{
     Address, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion,
     GuestRegionMmap,
@@ -746,13 +748,6 @@ pub struct VmState {
     ioapic: kvm_irqchip,
 }
 
-#[cfg(feature = "tee")]
-pub struct MemoryProperties {
-    pub gpa: u64,
-    pub size: u64,
-    pub private: bool,
-}
-
 /// Encapsulates configuration parameters for the guest vCPUS.
 #[derive(Debug, Eq, PartialEq)]
 pub struct VcpuConfig {
@@ -796,7 +791,7 @@ pub struct Vcpu {
     response_sender: Sender<VcpuResponse>,
 
     #[cfg(feature = "tee")]
-    pm_sender: (Sender<MemoryProperties>, EventFd),
+    pm_sender: Sender<WorkerMessage>,
 }
 
 impl Vcpu {
@@ -900,7 +895,7 @@ impl Vcpu {
         msr_list: MsrList,
         io_bus: devices::Bus,
         exit_evt: EventFd,
-        #[cfg(feature = "tee")] pm_sender: (Sender<MemoryProperties>, EventFd),
+        #[cfg(feature = "tee")] pm_sender: Sender<WorkerMessage>,
     ) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = unbounded();
@@ -1222,8 +1217,17 @@ impl Vcpu {
 
                     let mem_properties = MemoryProperties { gpa, size, private };
 
-                    self.pm_sender.0.send(mem_properties).unwrap();
-                    let _ = self.pm_sender.1.read().unwrap();
+                    let (response_sender, response_receiver) = unbounded();
+                    self.pm_sender
+                        .send(WorkerMessage::ConvertMemory(
+                            response_sender.clone(),
+                            mem_properties,
+                        ))
+                        .unwrap();
+                    if !response_receiver.recv().unwrap() {
+                        error!("Unable to convert memory with properties: gpa: 0x{:x} size: 0x{:x} to_private: {}", gpa, size, private);
+                        return Err(Error::VcpuUnhandledKvmExit);
+                    }
                     Ok(VcpuEmulation::Handled)
                 }
                 #[cfg(target_arch = "x86_64")]
@@ -1242,8 +1246,17 @@ impl Vcpu {
 
                     let mem_properties = MemoryProperties { gpa, size, private };
 
-                    self.pm_sender.0.send(mem_properties).unwrap();
-                    let _ = self.pm_sender.1.read().unwrap();
+                    let (response_sender, response_receiver) = unbounded();
+                    self.pm_sender
+                        .send(WorkerMessage::ConvertMemory(
+                            response_sender.clone(),
+                            mem_properties,
+                        ))
+                        .unwrap();
+                    if !response_receiver.recv().unwrap() {
+                        error!("Unable to convert memory with properties: gpa: 0x{:x} size: 0x{:x} to_private: {}", gpa, size, private);
+                        return Err(Error::VcpuUnhandledKvmExit);
+                    }
 
                     Ok(VcpuEmulation::Handled)
                 }
