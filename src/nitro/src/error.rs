@@ -22,6 +22,7 @@ pub enum NitroError {
     VsockCreate,
     VsockSetTimeout,
     VsockConnect,
+    IpcWrite(io::Error),
 }
 
 impl fmt::Display for NitroError {
@@ -60,6 +61,9 @@ impl fmt::Display for NitroError {
                 "unable to set poll timeout for enclave vsock".to_string()
             }
             NitroError::VsockConnect => "unable to connect to enclave vsock".to_string(),
+            NitroError::IpcWrite(e) => {
+                format!("unable to write enclave vsock data to UNIX IPC socket: {e}")
+            }
         };
 
         write!(f, "{}", msg)
