@@ -12,6 +12,8 @@ use std::fs::File;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::os::fd::{FromRawFd, RawFd};
+#[cfg(feature = "nitro")]
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -334,10 +336,31 @@ impl TryFrom<ContextConfig> for NitroEnclave {
             return Err(-libc::EINVAL);
         };
 
+        let Some(port_map) = ctx.unix_ipc_port_map else {
+            error!("enclave vsock not configured");
+            return Err(-libc::EINVAL);
+        };
+
+        if port_map.len() > 1 {
+            error!("too many nitro vsocks detected (max 1)");
+            return Err(-libc::EINVAL);
+        }
+
+        let ipc_stream = {
+            let mut vec = Vec::from_iter(port_map.values());
+            let Some((path, _)) = vec.pop() else {
+                error!("enclave vsock path not found");
+                return Err(-libc::EINVAL);
+            };
+
+            UnixStream::connect(path).unwrap()
+        };
+
         Ok(Self {
             image,
             mem_size_mib,
             vcpus,
+            ipc_stream,
         })
     }
 }

@@ -18,7 +18,10 @@ use nix::{
 use std::{
     fs::File,
     io::{Read, Write},
-    os::fd::{AsRawFd, RawFd},
+    os::{
+        fd::{AsRawFd, RawFd},
+        unix::net::UnixStream,
+    },
 };
 use vsock::{VsockAddr, VsockListener};
 
@@ -43,6 +46,8 @@ pub struct NitroEnclave {
     pub mem_size_mib: usize,
     /// Number of vCPUs.
     pub vcpus: u8,
+    /// Path of vsock for initial enclave communication.
+    pub ipc_stream: UnixStream,
 }
 
 impl NitroEnclave {
@@ -74,7 +79,42 @@ impl NitroEnclave {
 
         enclave_check(listener, poll_timeout.into(), cid)?;
 
-        listen(VMADDR_CID_HYPERVISOR, cid + CID_TO_CONSOLE_PORT_OFFSET)?;
+        self.listen(VMADDR_CID_HYPERVISOR, cid + CID_TO_CONSOLE_PORT_OFFSET)?;
+
+        Ok(())
+    }
+
+    fn listen(&mut self, cid: u32, port: u32) -> Result<()> {
+        let socket_fd = socket(
+            AddressFamily::Vsock,
+            SockType::Stream,
+            SockFlag::empty(),
+            None,
+        )
+        .map_err(|_| NitroError::VsockCreate)?;
+
+        let sockaddr = NixVsockAddr::new(cid, port);
+
+        vsock_timeout(socket_fd)?;
+
+        connect(socket_fd, &sockaddr).map_err(|_| NitroError::VsockConnect)?;
+
+        let mut buf = [0u8; 512];
+        loop {
+            // Read debug output from vsock.
+            if let Ok(sz) = read(socket_fd, &mut buf) {
+                // If there is enclave debug output read, write it to the IPC socket.
+                if sz > 0 {
+                    self.ipc_stream
+                        .write_all(&buf[..sz])
+                        .map_err(NitroError::IpcWrite)?;
+
+                    continue;
+                }
+            }
+
+            break;
+        }
 
         Ok(())
     }
@@ -105,39 +145,6 @@ fn enclave_check(listener: VsockListener, poll_timeout_ms: libc::c_int, cid: u32
 
     if stream.1.cid() != cid {
         return Err(NitroError::HeartbeatCidMismatch);
-    }
-
-    Ok(())
-}
-
-fn listen(cid: u32, port: u32) -> Result<()> {
-    let socket_fd = socket(
-        AddressFamily::Vsock,
-        SockType::Stream,
-        SockFlag::empty(),
-        None,
-    )
-    .map_err(|_| NitroError::VsockCreate)?;
-
-    let sockaddr = NixVsockAddr::new(cid, port);
-
-    vsock_timeout(socket_fd)?;
-
-    connect(socket_fd, &sockaddr).map_err(|_| NitroError::VsockConnect)?;
-
-    let mut buf = [0u8; 512];
-    loop {
-        // Read debug output from vsock.
-        let ret = read(socket_fd, &mut buf);
-        let Ok(sz) = ret else {
-            break;
-        };
-        if sz != 0 {
-            let msg = String::from_utf8(buf[..sz].to_vec()).unwrap();
-            print!("{}", msg);
-        } else {
-            break;
-        }
     }
 
     Ok(())
