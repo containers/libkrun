@@ -38,7 +38,6 @@ const SO_VM_SOCKETS_CONNECT_TIMEOUT: i32 = 6;
 const HEART_BEAT: u8 = 0xb7;
 
 /// Nitro Enclave data.
-#[derive(Debug)]
 pub struct NitroEnclave {
     /// Enclave image.
     pub image: File,
@@ -48,6 +47,8 @@ pub struct NitroEnclave {
     pub vcpus: u8,
     /// Path of vsock for initial enclave communication.
     pub ipc_stream: UnixStream,
+    /// Enclave start flags.
+    pub start_flags: StartFlags,
 }
 
 impl NitroEnclave {
@@ -68,7 +69,7 @@ impl NitroEnclave {
         let listener = VsockListener::bind(&sockaddr).map_err(NitroError::HeartbeatBind)?;
 
         let cid = launcher
-            .start(StartFlags::DEBUG, None)
+            .start(self.start_flags, None)
             .map_err(NitroError::VmStart)?;
 
         // Safe to unwrap.
