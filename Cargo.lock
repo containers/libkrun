@@ -940,6 +940,7 @@ dependencies = [
  "libloading",
  "log",
  "nitro",
+ "nitro-enclaves",
  "once_cell",
  "polly",
  "utils",

@@ -154,6 +154,13 @@ int main(int argc, char *const argv[])
 
     }
 
+    // Configure the nitro enclave to run in debug mode.
+    if (err = krun_nitro_set_start_flags(ctx_id, KRUN_NITRO_START_FLAG_DEBUG)) {
+        errno = -err;
+        perror("Error configuring nitro enclave start flags");
+        return -1;
+    }
+
     // Create and initialize UNIX IPC socket for reading enclave output.
     sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sock_fd < 0) {

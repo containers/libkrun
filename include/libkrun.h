@@ -636,6 +636,16 @@ int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
 int32_t krun_nitro_set_image(uint32_t ctx_id, const char *image_path,
                              uint32_t image_type);
 
+#define KRUN_NITRO_START_FLAG_DEBUG (1 << 0)
+/**
+ * Configure a Nitro Enclave's start flags.
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *  "start_flags" - Start flags.
+ */
+int32_t krun_nitro_set_start_flags(uint32_t ctx_id, uint64_t start_flags);
+
 /**
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
  * stdin/stdout to manage them on behalf of the process running inside the isolated environment,

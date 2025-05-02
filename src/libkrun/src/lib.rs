@@ -55,6 +55,9 @@ use vmm::vmm_config::vsock::VsockDeviceConfig;
 #[cfg(feature = "nitro")]
 use nitro::NitroEnclave;
 
+#[cfg(feature = "nitro")]
+use nitro_enclaves::launch::StartFlags;
+
 // Value returned on success. We use libc's errors otherwise.
 const KRUN_SUCCESS: i32 = 0;
 // Maximum number of arguments/environment variables we allow
@@ -158,6 +161,8 @@ struct ContextConfig {
     vmm_gid: Option<libc::gid_t>,
     #[cfg(feature = "nitro")]
     nitro_image_path: Option<PathBuf>,
+    #[cfg(feature = "nitro")]
+    nitro_start_flags: StartFlags,
 }
 
 impl ContextConfig {
@@ -307,6 +312,11 @@ impl ContextConfig {
     fn set_nitro_image(&mut self, image_path: PathBuf) {
         self.nitro_image_path = Some(image_path);
     }
+
+    #[cfg(feature = "nitro")]
+    fn set_nitro_start_flags(&mut self, start_flags: StartFlags) {
+        self.nitro_start_flags = start_flags;
+    }
 }
 
 #[cfg(feature = "nitro")]
@@ -361,6 +371,7 @@ impl TryFrom<ContextConfig> for NitroEnclave {
             mem_size_mib,
             vcpus,
             ipc_stream,
+            start_flags: ctx.nitro_start_flags,
         })
     }
 }
@@ -1485,6 +1496,30 @@ pub unsafe extern "C" fn krun_nitro_set_image(ctx_id: u32, c_image_filepath: *co
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             cfg.set_nitro_image(filepath);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[cfg(feature = "nitro")]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_nitro_set_start_flags(ctx_id: u32, start_flags: u64) -> i32 {
+    let mut flags = StartFlags::empty();
+
+    // Only debug mode is supported at the moment. To avoid doing conversion and
+    // checking if the "start_flags" argument is valid, set the flags to debug mode
+    // if the "start_flags" argument is greater than zero.
+    if start_flags > 0 {
+        flags |= StartFlags::DEBUG;
+    }
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.set_nitro_start_flags(flags);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
