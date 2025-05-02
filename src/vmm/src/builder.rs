@@ -28,8 +28,14 @@ use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
 #[cfg(feature = "tee")]
 use crate::linux::vstate::MemoryProperties;
+#[cfg(feature = "gpu")]
+use crate::resources::DisplayBackendConfig;
 use crate::resources::VmResources;
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
+#[cfg(feature = "gtk_display")]
+use devices::display::DisplayBackendGtk;
+#[cfg(feature = "gpu")]
+use devices::display::{DisplayBackend, DisplayBackendNoop};
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 use devices::legacy::KvmGicV3;
 #[cfg(target_arch = "x86_64")]
@@ -801,6 +807,8 @@ pub fn build_microvm(
 
     #[cfg(feature = "gpu")]
     if let Some(virgl_flags) = vm_resources.gpu_virgl_flags {
+        let display_backend = create_display_backend(vm_resources);
+
         attach_gpu_device(
             &mut vmm,
             event_manager,
@@ -809,6 +817,7 @@ pub fn build_microvm(
             export_table.clone(),
             intc.clone(),
             virgl_flags,
+            display_backend,
             #[cfg(target_os = "macos")]
             _map_sender.clone(),
         )?;
@@ -1867,8 +1876,19 @@ fn attach_rng_device(
 
     Ok(())
 }
+#[cfg(feature = "gpu")]
+fn create_display_backend(vm_resources: &VmResources) -> Box<dyn DisplayBackend> {
+    match vm_resources.display_backend {
+        DisplayBackendConfig::Noop => Box::new(DisplayBackendNoop),
+        #[cfg(feature = "gtk_display")]
+        DisplayBackendConfig::Gtk => {
+            Box::new(DisplayBackendGtk::new(vm_resources.displays.clone()))
+        }
+    }
+}
 
 #[cfg(feature = "gpu")]
+#[allow(clippy::too_many_arguments)]
 fn attach_gpu_device(
     vmm: &mut Vmm,
     event_manager: &mut EventManager,
@@ -1876,6 +1896,7 @@ fn attach_gpu_device(
     #[cfg(not(feature = "tee"))] mut export_table: Option<ExportTable>,
     intc: IrqChip,
     virgl_flags: u32,
+    display_backend: Box<dyn DisplayBackend>,
     #[cfg(target_os = "macos")] map_sender: Sender<MemoryMapping>,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
@@ -1883,6 +1904,7 @@ fn attach_gpu_device(
     let gpu = Arc::new(Mutex::new(
         devices::virtio::Gpu::new(
             virgl_flags,
+            display_backend,
             #[cfg(target_os = "macos")]
             map_sender,
         )

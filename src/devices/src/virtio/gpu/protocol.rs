@@ -14,6 +14,7 @@ use std::mem::{size_of, size_of_val};
 use std::str::from_utf8;
 use std::{fmt, io};
 
+use crate::display::DisplayBackendError;
 use rutabaga_gfx::RutabagaError;
 use thiserror::Error;
 use vm_memory::ByteValued;
@@ -271,12 +272,12 @@ pub struct virtio_gpu_display_one {
 unsafe impl ByteValued for virtio_gpu_display_one {}
 
 /* VIRTIO_GPU_RESP_OK_DISPLAY_INFO */
-pub const VIRTIO_GPU_MAX_SCANOUTS: usize = 16;
+pub const VIRTIO_GPU_MAX_SCANOUTS: u32 = 16;
 #[derive(Copy, Clone, Debug, Default, FromBytes, AsBytes)]
 #[repr(C)]
 pub struct virtio_gpu_resp_display_info {
     pub hdr: virtio_gpu_ctrl_hdr,
-    pub pmodes: [virtio_gpu_display_one; VIRTIO_GPU_MAX_SCANOUTS],
+    pub pmodes: [virtio_gpu_display_one; VIRTIO_GPU_MAX_SCANOUTS as usize],
 }
 unsafe impl ByteValued for virtio_gpu_resp_display_info {}
 
@@ -542,7 +543,7 @@ pub const VIRTIO_GPU_FORMAT_R8G8B8X8_UNORM: u32 = 134;
 /// A virtio gpu command and associated metadata specific to each command.
 #[derive(Copy, Clone)]
 pub enum GpuCommand {
-    GetDisplayInfo(virtio_gpu_ctrl_hdr),
+    GetDisplayInfo,
     ResourceCreate2d(virtio_gpu_resource_create_2d),
     ResourceUnref(virtio_gpu_resource_unref),
     SetScanout(virtio_gpu_set_scanout),
@@ -591,7 +592,7 @@ impl fmt::Debug for GpuCommand {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::GpuCommand::*;
         match self {
-            GetDisplayInfo(_info) => f.debug_struct("GetDisplayInfo").finish(),
+            GetDisplayInfo => f.debug_struct("GetDisplayInfo").finish(),
             ResourceCreate2d(_info) => f.debug_struct("ResourceCreate2d").finish(),
             ResourceUnref(_info) => f.debug_struct("ResourceUnref").finish(),
             SetScanout(_info) => f.debug_struct("SetScanout").finish(),
@@ -628,7 +629,7 @@ impl GpuCommand {
         use self::GpuCommand::*;
         let hdr = cmd.read_obj::<virtio_gpu_ctrl_hdr>()?;
         let cmd = match hdr.type_ {
-            VIRTIO_GPU_CMD_GET_DISPLAY_INFO => GetDisplayInfo(cmd.read_obj()?),
+            VIRTIO_GPU_CMD_GET_DISPLAY_INFO => GetDisplayInfo,
             VIRTIO_GPU_CMD_RESOURCE_CREATE_2D => ResourceCreate2d(cmd.read_obj()?),
             VIRTIO_GPU_CMD_RESOURCE_UNREF => ResourceUnref(cmd.read_obj()?),
             VIRTIO_GPU_CMD_SET_SCANOUT => SetScanout(cmd.read_obj()?),
@@ -704,6 +705,15 @@ impl From<RutabagaError> for GpuResponse {
         GpuResponse::ErrRutabaga(e)
     }
 }
+impl From<DisplayBackendError> for GpuResponse {
+    fn from(err: DisplayBackendError) -> GpuResponse {
+        match err {
+            DisplayBackendError::InvalidScanoutId => GpuResponse::ErrInvalidScanoutId,
+            DisplayBackendError::InternalIOError(_) => GpuResponse::ErrUnspec,
+            DisplayBackendError::InvalidParameter => GpuResponse::ErrInvalidParameter,
+        }
+    }
+}
 
 impl Display for GpuResponse {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -758,7 +768,7 @@ impl GpuResponse {
         };
         let len = match *self {
             GpuResponse::OkDisplayInfo(ref info) => {
-                if info.len() > VIRTIO_GPU_MAX_SCANOUTS {
+                if info.len() > VIRTIO_GPU_MAX_SCANOUTS as usize {
                     return Err(GpuResponseEncodeError::TooManyDisplays(info.len()));
                 }
                 let mut disp_info = virtio_gpu_resp_display_info {

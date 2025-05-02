@@ -37,7 +37,9 @@ static void print_help(char *const name)
         "              --net=NET_MODE        Set network mode\n"
         "              --passt-socket=PATH   Instead of starting passt, connect to passt socket at PATH"
         "NET_MODE can be either TSI (default) or PASST\n"
+        "              --display=DISPLAY     Add a display to the vm (can be specified multiple times)\n"
         "\n"
+        "DISPLAY:      string in the form 'display_id:width:height' (e.g. '0:1920:1080')\n"
         "NEWROOT:      the root directory of the vm\n"
         "COMMAND:      the command you want to execute in the vm\n"
         "COMMAND_ARGS: arguments of COMMAND\n",
@@ -49,7 +51,14 @@ static const struct option long_options[] = {
     { "help", no_argument, NULL, 'h' },
     { "net_mode", required_argument, NULL, 'N' },
     { "passt-socket", required_argument, NULL, 'P' },
+    { "display", required_argument, NULL, 'D' },
     { NULL, 0, NULL, 0 }
+};
+
+struct display {
+    bool enabled;
+    uint32_t width;
+    uint32_t height;
 };
 
 struct cmdline {
@@ -58,7 +67,30 @@ struct cmdline {
     char const *passt_socket_path;
     char const *new_root;
     char *const *guest_argv;
+    bool enable_display_backend;
+    struct display displays[KRUN_MAX_DISPLAYS];
 };
+
+bool add_display(struct cmdline *cmdline, const char *arg) {
+    uint32_t index, width, height;
+
+    if (sscanf(arg, "%u:%u:%u", &index, &width, &height) != 3) {
+        fprintf(stderr, "Invalid value for --display\n", index);
+        return false;
+    }
+
+    if (index >= KRUN_MAX_DISPLAYS) {
+        fprintf(stderr, "Invalid display id: %u\n", index);
+        return false;
+    }
+
+    cmdline->enable_display_backend = true;
+    cmdline->displays[index].enabled = true;
+    cmdline->displays[index].width = width;
+    cmdline->displays[index].height = height;
+
+    return true;
+}
 
 bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
 {
@@ -71,6 +103,8 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         .passt_socket_path = NULL,
         .new_root = NULL,
         .guest_argv = NULL,
+        .enable_display_backend = false,
+        .displays = { 0 },
     };
 
     int option_index = 0;
@@ -93,6 +127,11 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
             break;
         case 'P':
             cmdline->passt_socket_path = optarg;
+            break;
+        case 'D':
+            if (!add_display(cmdline, optarg)) {
+                return false;
+            }
             break;
         case '?':
             return false;
@@ -257,6 +296,22 @@ int main(int argc, char *const argv[])
         errno = -err;
         perror("Error configuring gpu");
         return -1;
+    }
+
+    if (cmdline.enable_display_backend && (err = krun_set_display_backend_gtk(ctx_id))) {
+        errno = -err;
+        perror("Error enabling gtk display");
+        return -1;
+    }
+
+    for (int i = 0; i < KRUN_MAX_DISPLAYS; ++i) {
+        if (cmdline.displays[i].enabled) {
+            if (err = krun_set_display(ctx_id, i, cmdline.displays[i].width, cmdline.displays[i].height)) {
+                errno = -err;
+                perror("Error adding a display");
+                return -1;
+            }
+        }
     }
 
     // Map port 18000 in the host to 8000 in the guest (if networking uses TSI)
