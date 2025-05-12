@@ -192,7 +192,7 @@ impl<F: FileSystem + Sync> Server<F> {
 
         r.read_exact(&mut buf).map_err(Error::DecodeMessage)?;
 
-        let name = bytes_to_cstr(buf.as_ref())?;
+        let name = filename_from_bytes(buf.as_ref())?;
 
         match self
             .fs
@@ -310,9 +310,11 @@ impl<F: FileSystem + Sync> Server<F> {
 
         match self.fs.symlink(
             Context::from(in_header),
+            // Target of the symlink can be a path - it can contain '/'
             bytes_to_cstr(linkname)?,
             in_header.nodeid.into(),
-            bytes_to_cstr(name)?,
+            // The symlink cannot contain '/'
+            filename_from_bytes(name)?,
             extensions,
         ) {
             Ok(entry) => {
@@ -346,7 +348,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.mknod(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(name)?,
+            filename_from_bytes(name)?,
             mode,
             rdev,
             umask,
@@ -381,7 +383,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.mkdir(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(name)?,
+            filename_from_bytes(name)?,
             mode,
             umask,
             extensions,
@@ -406,7 +408,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.unlink(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(&name)?,
+            filename_from_bytes(&name)?,
         ) {
             Ok(()) => reply_ok(None::<u8>, None, in_header.unique, w),
             Err(e) => reply_error(e, in_header.unique, w),
@@ -424,7 +426,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.rmdir(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(&name)?,
+            filename_from_bytes(&name)?,
         ) {
             Ok(()) => reply_ok(None::<u8>, None, in_header.unique, w),
             Err(e) => reply_error(e, in_header.unique, w),
@@ -460,9 +462,9 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.rename(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(oldname)?,
+            filename_from_bytes(oldname)?,
             newdir.into(),
-            bytes_to_cstr(newname)?,
+            filename_from_bytes(newname)?,
             flags,
         ) {
             Ok(()) => reply_ok(None::<u8>, None, in_header.unique, w),
@@ -500,7 +502,7 @@ impl<F: FileSystem + Sync> Server<F> {
             Context::from(in_header),
             oldnodeid.into(),
             in_header.nodeid.into(),
-            bytes_to_cstr(&name)?,
+            filename_from_bytes(&name)?,
         ) {
             Ok(entry) => {
                 let out = EntryOut::from(entry);
@@ -755,7 +757,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.getxattr(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(&name)?,
+            filename_from_bytes(&name)?,
             size,
         ) {
             Ok(GetxattrReply::Value(val)) => reply_ok(None::<u8>, Some(&val), in_header.unique, w),
@@ -1115,7 +1117,7 @@ impl<F: FileSystem + Sync> Server<F> {
         match self.fs.create(
             Context::from(in_header),
             in_header.nodeid.into(),
-            bytes_to_cstr(name)?,
+            filename_from_bytes(name)?,
             mode,
             flags,
             umask,
@@ -1473,6 +1475,14 @@ fn bytes_to_cstr(buf: &[u8]) -> Result<&CStr> {
     // Convert to a `CStr` first so that we can drop the '\0' byte at the end
     // and make sure there are no interior '\0' bytes.
     CStr::from_bytes_with_nul(buf).map_err(Error::InvalidCString)
+}
+
+fn filename_from_bytes(buf: &[u8]) -> Result<&CStr> {
+    let cstr = bytes_to_cstr(buf)?;
+    if cstr.to_bytes().contains(&b'/') {
+        return Err(Error::InvalidFilename);
+    }
+    Ok(cstr)
 }
 
 fn add_dirent(
