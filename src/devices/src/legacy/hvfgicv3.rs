@@ -135,10 +135,9 @@ impl IrqChipT for HvfGicV3 {
         if let Some(irq_line) = irq_line {
             let ret = unsafe { (self.bindings.hv_gic_set_spi)(irq_line, true) };
             if ret != HV_SUCCESS {
-                Err(DeviceError::FailedSignalingUsedQueue(io::Error::new(
-                    io::ErrorKind::Other,
-                    "HVF returned error when setting SPI",
-                )))
+                Err(DeviceError::FailedSignalingUsedQueue(
+                    std::io::Error::other("HVF returned error when setting SPI"),
+                ))
             } else {
                 Ok(())
             }

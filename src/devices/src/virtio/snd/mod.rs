@@ -1,6 +1,5 @@
 use std::{
     io::Error as IoError,
-    io::ErrorKind,
     sync::{atomic::AtomicUsize, Arc, Mutex},
 };
 
@@ -144,7 +143,7 @@ pub enum Error {
 
 impl From<Error> for IoError {
     fn from(e: Error) -> Self {
-        Self::new(ErrorKind::Other, e)
+        Self::other(e)
     }
 }
 
