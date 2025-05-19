@@ -10,6 +10,7 @@ use libc::{c_int, c_void, siginfo_t};
 use std::cell::Cell;
 use std::fmt::{Display, Formatter};
 use std::io;
+use std::ops::Range;
 
 use std::os::unix::io::RawFd;
 
@@ -56,8 +57,6 @@ use vm_memory::{
     Address, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion,
     GuestRegionMmap,
 };
-
-use rangemap::RangeMap;
 
 #[cfg(feature = "amd-sev")]
 use sev::launch::snp;
@@ -457,7 +456,7 @@ pub struct Vm {
     #[cfg(feature = "amd-sev")]
     pub tee_config: Tee,
 
-    pub guest_memfds: RangeMap<u64, (RawFd, u64)>,
+    pub guest_memfds: Vec<(Range<u64>, RawFd)>,
 }
 
 impl Vm {
@@ -482,7 +481,7 @@ impl Vm {
             supported_cpuid,
             #[cfg(target_arch = "x86_64")]
             supported_msrs,
-            guest_memfds: RangeMap::new(),
+            guest_memfds: Vec::new(),
         })
     }
 
@@ -521,7 +520,7 @@ impl Vm {
             supported_msrs,
             tee,
             tee_config: tee_config.tee,
-            guest_memfds: RangeMap::new(),
+            guest_memfds: Vec::new(),
         })
     }
 
@@ -560,7 +559,12 @@ impl Vm {
     }
 
     pub fn guest_memfd_get(&self, gpa: u64) -> Option<(RawFd, u64)> {
-        self.guest_memfds.get(&gpa).copied()
+        for (range, rawfd) in self.guest_memfds.iter() {
+            if range.contains(&gpa) {
+                return Some((*rawfd, range.start));
+            }
+        }
+        None
     }
 
     #[allow(unused_mut)]
@@ -631,7 +635,7 @@ impl Vm {
                 .set_memory_attributes(attr)
                 .map_err(Error::SetMemoryAttributes)?;
 
-            self.guest_memfds.insert(start..end, (guest_memfd, start));
+            self.guest_memfds.push((Range { start, end }, guest_memfd));
         }
 
         self.next_mem_slot += 1;
