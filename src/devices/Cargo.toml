@@ -12,6 +12,7 @@ blk = []
 efi = ["blk", "net"]
 gpu = ["rutabaga_gfx", "thiserror", "zerocopy", "zerocopy-derive"]
 snd = ["pw", "thiserror"]
+gtk_display = ["gpu", "gtk4"]
 virgl_resource_map2 = []
 
 [dependencies]
@@ -29,6 +30,7 @@ virtio-bindings = "0.2.0"
 vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
 zerocopy = { version = "0.6.3", optional = true }
 zerocopy-derive = { version = "0.6.3", optional = true }
+gtk4 = { version = "0.9.6", features = ["v4_14"], optional = true }
 
 arch = { path = "../arch" }
 utils = { path = "../utils" }
