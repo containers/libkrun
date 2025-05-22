@@ -196,10 +196,7 @@ impl VirtioDevice for Rng {
     }
 
     fn is_activated(&self) -> bool {
-        match self.device_state {
-            DeviceState::Inactive => false,
-            DeviceState::Activated(_) => true,
-        }
+        self.device_state.is_activated()
     }
 
     fn reset(&mut self) -> bool {
