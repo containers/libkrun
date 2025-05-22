@@ -3,7 +3,6 @@ use std::env;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[cfg(target_os = "macos")]
@@ -25,7 +24,6 @@ use rutabaga_gfx::{
     RUTABAGA_CHANNEL_TYPE_PW, RUTABAGA_CHANNEL_TYPE_X11, RUTABAGA_MAP_ACCESS_MASK,
     RUTABAGA_MAP_ACCESS_READ, RUTABAGA_MAP_ACCESS_RW, RUTABAGA_MAP_ACCESS_WRITE,
 };
-use utils::eventfd::EventFd;
 #[cfg(target_os = "macos")]
 use utils::worker_message::WorkerMessage;
 use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, VolatileSlice};
@@ -38,10 +36,9 @@ use super::protocol::{
 };
 
 use super::{GpuError, Result};
-use crate::legacy::IrqChip;
 use crate::virtio::fs::ExportTable;
 use crate::virtio::gpu::protocol::VIRTIO_GPU_FLAG_INFO_RING_IDX;
-use crate::virtio::{VirtioShmRegion, VIRTIO_MMIO_INT_VRING};
+use crate::virtio::{InterruptTransport, VirtioShmRegion};
 
 fn sglist_to_rutabaga_iovecs(
     vecs: &[(GuestAddress, usize)],
@@ -115,10 +112,7 @@ impl VirtioGpu {
         mem: GuestMemoryMmap,
         queue_ctl: Arc<Mutex<VirtQueue>>,
         fence_state: Arc<Mutex<FenceState>>,
-        interrupt_status: Arc<AtomicUsize>,
-        interrupt_evt: EventFd,
-        intc: Option<IrqChip>,
-        irq_line: Option<u32>,
+        interrupt: InterruptTransport,
     ) -> RutabagaFenceHandler {
         RutabagaFenceHandler::new(move |completed_fence: RutabagaFence| {
             debug!(
@@ -155,13 +149,7 @@ impl VirtioGpu {
                         error!("failed to add used elements to the queue: {e:?}");
                     }
 
-                    interrupt_status.fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-                    if let Some(intc) = &intc {
-                        if let Err(e) = intc.lock().unwrap().set_irq(irq_line, Some(&interrupt_evt))
-                        {
-                            error!("Failed to signal used queue: {e:?}");
-                        }
-                    }
+                    interrupt.signal_used_queue();
                 } else {
                     i += 1;
                 }
@@ -177,10 +165,7 @@ impl VirtioGpu {
     pub fn new(
         mem: GuestMemoryMmap,
         queue_ctl: Arc<Mutex<VirtQueue>>,
-        interrupt_status: Arc<AtomicUsize>,
-        interrupt_evt: EventFd,
-        intc: Option<IrqChip>,
-        irq_line: Option<u32>,
+        interrupt: InterruptTransport,
         virgl_flags: u32,
         #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
         export_table: Option<ExportTable>,
@@ -240,15 +225,8 @@ impl VirtioGpu {
         };
 
         let fence_state = Arc::new(Mutex::new(Default::default()));
-        let fence = Self::create_fence_handler(
-            mem,
-            queue_ctl.clone(),
-            fence_state.clone(),
-            interrupt_status,
-            interrupt_evt,
-            intc,
-            irq_line,
-        );
+        let fence =
+            Self::create_fence_handler(mem, queue_ctl.clone(), fence_state.clone(), interrupt);
         let rutabaga = builder
             .build(fence, None)
             .expect("Rutabaga initialization failed!");

@@ -2,7 +2,7 @@
 use crossbeam_channel::Sender;
 use std::cmp;
 use std::io::Write;
-use std::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
@@ -19,7 +19,7 @@ use super::passthrough;
 use super::worker::FsWorker;
 use super::ExportTable;
 use super::{defs, defs::uapi};
-use crate::legacy::IrqChip;
+use crate::virtio::InterruptTransport;
 
 #[derive(Copy, Clone)]
 #[repr(C, packed)]
@@ -44,10 +44,6 @@ pub struct Fs {
     queue_events: Vec<EventFd>,
     avail_features: u64,
     acked_features: u64,
-    interrupt_status: Arc<AtomicUsize>,
-    interrupt_evt: EventFd,
-    intc: Option<IrqChip>,
-    irq_line: Option<u32>,
     device_state: DeviceState,
     config: VirtioFsConfig,
     shm_region: Option<VirtioShmRegion>,
@@ -89,10 +85,6 @@ impl Fs {
             queue_events,
             avail_features,
             acked_features: 0,
-            interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(FsError::EventFd)?,
-            intc: None,
-            irq_line: None,
             device_state: DeviceState::Inactive,
             config,
             shm_region: None,
@@ -115,10 +107,6 @@ impl Fs {
 
     pub fn id(&self) -> &str {
         defs::FS_DEV_ID
-    }
-
-    pub fn set_intc(&mut self, intc: IrqChip) {
-        self.intc = Some(intc);
     }
 
     pub fn set_shm_region(&mut self, shm_region: VirtioShmRegion) {
@@ -169,19 +157,6 @@ impl VirtioDevice for Fs {
         &self.queue_events
     }
 
-    fn interrupt_evt(&self) -> &EventFd {
-        &self.interrupt_evt
-    }
-
-    fn interrupt_status(&self) -> Arc<AtomicUsize> {
-        self.interrupt_status.clone()
-    }
-
-    fn set_irq_line(&mut self, irq: u32) {
-        debug!("SET_IRQ_LINE (FS)={irq}");
-        self.irq_line = Some(irq);
-    }
-
     fn read_config(&self, offset: u64, mut data: &mut [u8]) {
         let config_slice = self.config.as_slice();
         let config_len = config_slice.len() as u64;
@@ -204,7 +179,7 @@ impl VirtioDevice for Fs {
         );
     }
 
-    fn activate(&mut self, mem: GuestMemoryMmap) -> ActivateResult {
+    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult {
         if self.worker_thread.is_some() {
             panic!("virtio_fs: worker thread already exists");
         }
@@ -221,10 +196,7 @@ impl VirtioDevice for Fs {
         let worker = FsWorker::new(
             self.queues.clone(),
             queue_evts,
-            self.interrupt_status.clone(),
-            self.interrupt_evt.try_clone().unwrap(),
-            self.intc.clone(),
-            self.irq_line,
+            interrupt.clone(),
             mem.clone(),
             self.shm_region.clone(),
             self.passthrough_cfg.clone(),
@@ -235,7 +207,7 @@ impl VirtioDevice for Fs {
         );
         self.worker_thread = Some(worker.run());
 
-        self.device_state = DeviceState::Activated(mem);
+        self.device_state = DeviceState::Activated(mem, interrupt);
         Ok(())
     }
 

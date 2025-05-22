@@ -4,7 +4,7 @@ use crossbeam_channel::Sender;
 use utils::worker_message::WorkerMessage;
 
 use std::os::fd::AsRawFd;
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
 use std::thread;
 
@@ -12,22 +12,17 @@ use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 use vm_memory::GuestMemoryMmap;
 
-use super::super::{FsError, Queue, VIRTIO_MMIO_INT_VRING};
+use super::super::{FsError, Queue};
 use super::defs::{HPQ_INDEX, REQ_INDEX};
 use super::descriptor_utils::{Reader, Writer};
 use super::passthrough::{self, PassthroughFs};
 use super::server::Server;
-use crate::legacy::IrqChip;
-use crate::virtio::VirtioShmRegion;
+use crate::virtio::{InterruptTransport, VirtioShmRegion};
 
 pub struct FsWorker {
     queues: Vec<Queue>,
     queue_evts: Vec<EventFd>,
-    interrupt_status: Arc<AtomicUsize>,
-    interrupt_evt: EventFd,
-    intc: Option<IrqChip>,
-    irq_line: Option<u32>,
-
+    interrupt: InterruptTransport,
     mem: GuestMemoryMmap,
     shm_region: Option<VirtioShmRegion>,
     server: Server<PassthroughFs>,
@@ -42,10 +37,7 @@ impl FsWorker {
     pub fn new(
         queues: Vec<Queue>,
         queue_evts: Vec<EventFd>,
-        interrupt_status: Arc<AtomicUsize>,
-        interrupt_evt: EventFd,
-        intc: Option<IrqChip>,
-        irq_line: Option<u32>,
+        interrupt: InterruptTransport,
         mem: GuestMemoryMmap,
         shm_region: Option<VirtioShmRegion>,
         passthrough_cfg: passthrough::Config,
@@ -56,11 +48,7 @@ impl FsWorker {
         Self {
             queues,
             queue_evts,
-            interrupt_status,
-            interrupt_evt,
-            intc,
-            irq_line,
-
+            interrupt,
             mem,
             shm_region,
             server: Server::new(PassthroughFs::new(passthrough_cfg).unwrap()),
@@ -183,17 +171,7 @@ impl FsWorker {
             }
 
             if queue.needs_notification(&self.mem).unwrap() {
-                self.interrupt_status
-                    .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-                if let Some(intc) = &self.intc {
-                    if let Err(e) = intc
-                        .lock()
-                        .unwrap()
-                        .set_irq(self.irq_line, Some(&self.interrupt_evt))
-                    {
-                        error!("Failed to signal used queue: {e:?}");
-                    }
-                }
+                self.interrupt.signal_used_queue();
             }
         }
     }

@@ -19,9 +19,7 @@ impl Rng {
         if let Err(e) = self.queue_events[REQ_INDEX].read() {
             error!("Failed to read request queue event: {e:?}");
         } else if self.process_req() {
-            if let Err(e) = self.signal_used_queue() {
-                warn!("Failed to signal queue: {e:?}");
-            }
+            self.device_state.signal_used_queue();
         }
     }
 
