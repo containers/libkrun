@@ -3,7 +3,6 @@ use std::io::Write;
 use std::iter::zip;
 use std::mem::{size_of, size_of_val};
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
 use libc::TIOCGWINSZ;
@@ -15,17 +14,15 @@ use super::super::{
     ActivateError, ActivateResult, ConsoleError, DeviceState, Queue as VirtQueue, VirtioDevice,
 };
 use super::{defs, defs::control_event, defs::uapi};
-use crate::legacy::IrqChip;
 use crate::virtio::console::console_control::{
     ConsoleControl, VirtioConsoleControl, VirtioConsoleResize,
 };
 use crate::virtio::console::defs::QUEUE_SIZE;
-use crate::virtio::console::irq_signaler::IRQSignaler;
 use crate::virtio::console::port::Port;
 use crate::virtio::console::port_queue_mapping::{
     num_queues, port_id_to_queue_idx, QueueDirection,
 };
-use crate::virtio::{PortDescription, VmmExitObserver};
+use crate::virtio::{InterruptTransport, PortDescription, VmmExitObserver};
 
 pub(crate) const CONTROL_RXQ_INDEX: usize = 2;
 pub(crate) const CONTROL_TXQ_INDEX: usize = 3;
@@ -82,7 +79,6 @@ impl VirtioConsoleConfig {
 
 pub struct Console {
     pub(crate) device_state: DeviceState,
-    pub(crate) irq: IRQSignaler,
     pub(crate) control: Arc<ConsoleControl>,
     pub(crate) ports: Vec<Port>,
 
@@ -122,7 +118,6 @@ impl Console {
             .collect();
 
         Ok(Console {
-            irq: IRQSignaler::new(),
             control: ConsoleControl::new(),
             ports,
             queues,
@@ -142,10 +137,6 @@ impl Console {
         defs::CONSOLE_DEV_ID
     }
 
-    pub fn set_intc(&mut self, intc: IrqChip) {
-        self.irq.set_intc(intc)
-    }
-
     pub fn get_sigwinch_fd(&self) -> RawFd {
         self.sigwinch_evt.as_raw_fd()
     }
@@ -159,7 +150,7 @@ impl Console {
 
     pub(crate) fn process_control_rx(&mut self) -> bool {
         log::trace!("process_control_rx");
-        let DeviceState::Activated(ref mem) = self.device_state else {
+        let DeviceState::Activated(ref mem, _) = self.device_state else {
             unreachable!()
         };
         let mut raise_irq = false;
@@ -193,7 +184,7 @@ impl Console {
 
     pub(crate) fn process_control_tx(&mut self) -> bool {
         log::trace!("process_control_tx");
-        let DeviceState::Activated(ref mem) = self.device_state else {
+        let DeviceState::Activated(ref mem, ref interrupt) = self.device_state else {
             unreachable!()
         };
 
@@ -286,7 +277,7 @@ impl Console {
                 mem.clone(),
                 self.queues[port_id_to_queue_idx(QueueDirection::Rx, port_id)].clone(),
                 self.queues[port_id_to_queue_idx(QueueDirection::Tx, port_id)].clone(),
-                self.irq.clone(),
+                interrupt.clone(),
                 self.control.clone(),
             );
         }
@@ -324,18 +315,6 @@ impl VirtioDevice for Console {
         &self.queue_events
     }
 
-    fn interrupt_evt(&self) -> &EventFd {
-        self.irq.interrupt_evt()
-    }
-
-    fn interrupt_status(&self) -> Arc<AtomicUsize> {
-        self.irq.interrupt_status()
-    }
-
-    fn set_irq_line(&mut self, irq: u32) {
-        self.irq.set_irq_line(irq)
-    }
-
     fn read_config(&self, offset: u64, mut data: &mut [u8]) {
         let config_slice = self.config.as_slice();
         let config_len = config_slice.len() as u64;
@@ -358,13 +337,12 @@ impl VirtioDevice for Console {
         );
     }
 
-    fn activate(&mut self, mem: GuestMemoryMmap) -> ActivateResult {
+    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult {
         if self.activate_evt.write(1).is_err() {
             error!("Cannot write to activate_evt");
             return Err(ActivateError::BadActivate);
         }
-
-        self.device_state = DeviceState::Activated(mem);
+        self.device_state = DeviceState::Activated(mem, interrupt);
 
         Ok(())
     }

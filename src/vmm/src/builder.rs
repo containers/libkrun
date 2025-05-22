@@ -1603,8 +1603,6 @@ fn attach_fs_devices(
 
         let id = format!("{}{}", String::from(fs.lock().unwrap().id()), i);
 
-        fs.lock().unwrap().set_intc(intc.clone());
-
         if let Some(shm_region) = shm_manager.fs_region(i) {
             fs.lock().unwrap().set_shm_region(VirtioShmRegion {
                 host_addr: vmm
@@ -1628,7 +1626,7 @@ fn attach_fs_devices(
         attach_mmio_device(
             vmm,
             id,
-            MmioTransport::new(vmm.guest_memory().clone(), fs.clone()),
+            MmioTransport::new(vmm.guest_memory().clone(), intc.clone(), fs.clone()),
         )
         .map_err(RegisterFsDevice)?;
     }
@@ -1712,8 +1710,6 @@ fn attach_console_devices(
 
     vmm.exit_observers.push(console.clone());
 
-    console.lock().unwrap().set_intc(intc);
-
     event_manager
         .add_subscriber(console.clone())
         .map_err(RegisterEvent)?;
@@ -1726,7 +1722,7 @@ fn attach_console_devices(
     attach_mmio_device(
         vmm,
         "hvc0".to_string(),
-        MmioTransport::new(vmm.guest_memory().clone(), console),
+        MmioTransport::new(vmm.guest_memory().clone(), intc.clone(), console),
     )
     .map_err(RegisterFsDevice)?;
 
@@ -1742,12 +1738,10 @@ fn attach_net_devices<'a>(
     for net_device in net_devices {
         let id = net_device.lock().unwrap().id().to_string();
 
-        net_device.lock().unwrap().set_intc(intc.clone());
-
         attach_mmio_device(
             vmm,
             id,
-            MmioTransport::new(vmm.guest_memory.clone(), net_device.clone()),
+            MmioTransport::new(vmm.guest_memory.clone(), intc.clone(), net_device.clone()),
         )
         .map_err(StartMicrovmError::RegisterNetDevice)?;
     }
@@ -1768,13 +1762,11 @@ fn attach_unixsock_vsock_device(
 
     let id = String::from(unix_vsock.lock().unwrap().id());
 
-    unix_vsock.lock().unwrap().set_intc(intc);
-
     // The device mutex mustn't be locked here otherwise it will deadlock.
     attach_mmio_device(
         vmm,
         id,
-        MmioTransport::new(vmm.guest_memory().clone(), unix_vsock.clone()),
+        MmioTransport::new(vmm.guest_memory().clone(), intc.clone(), unix_vsock.clone()),
     )
     .map_err(RegisterVsockDevice)?;
 
@@ -1797,13 +1789,11 @@ fn attach_balloon_device(
 
     let id = String::from(balloon.lock().unwrap().id());
 
-    balloon.lock().unwrap().set_intc(intc);
-
     // The device mutex mustn't be locked here otherwise it will deadlock.
     attach_mmio_device(
         vmm,
         id,
-        MmioTransport::new(vmm.guest_memory().clone(), balloon),
+        MmioTransport::new(vmm.guest_memory().clone(), intc.clone(), balloon),
     )
     .map_err(RegisterBalloonDevice)?;
 
@@ -1821,13 +1811,11 @@ fn attach_block_devices(
     for block in block_devs.list.iter() {
         let id = String::from(block.lock().unwrap().id());
 
-        block.lock().unwrap().set_intc(intc.clone());
-
         // The device mutex mustn't be locked here otherwise it will deadlock.
         attach_mmio_device(
             vmm,
             id,
-            MmioTransport::new(vmm.guest_memory().clone(), block.clone()),
+            MmioTransport::new(vmm.guest_memory().clone(), intc.clone(), block.clone()),
         )
         .map_err(RegisterBlockDevice)?;
     }
@@ -1851,11 +1839,13 @@ fn attach_rng_device(
 
     let id = String::from(rng.lock().unwrap().id());
 
-    rng.lock().unwrap().set_intc(intc);
-
     // The device mutex mustn't be locked here otherwise it will deadlock.
-    attach_mmio_device(vmm, id, MmioTransport::new(vmm.guest_memory().clone(), rng))
-        .map_err(RegisterRngDevice)?;
+    attach_mmio_device(
+        vmm,
+        id,
+        MmioTransport::new(vmm.guest_memory().clone(), intc.clone(), rng),
+    )
+    .map_err(RegisterRngDevice)?;
 
     Ok(())
 }
@@ -1887,8 +1877,6 @@ fn attach_gpu_device(
 
     let id = String::from(gpu.lock().unwrap().id());
 
-    gpu.lock().unwrap().set_intc(intc);
-
     if let Some(shm_region) = shm_manager.gpu_region() {
         gpu.lock().unwrap().set_shm_region(VirtioShmRegion {
             host_addr: vmm
@@ -1906,8 +1894,12 @@ fn attach_gpu_device(
     }
 
     // The device mutex mustn't be locked here otherwise it will deadlock.
-    attach_mmio_device(vmm, id, MmioTransport::new(vmm.guest_memory().clone(), gpu))
-        .map_err(RegisterGpuDevice)?;
+    attach_mmio_device(
+        vmm,
+        id,
+        MmioTransport::new(vmm.guest_memory().clone(), intc.clone(), gpu),
+    )
+    .map_err(RegisterGpuDevice)?;
 
     Ok(())
 }
@@ -1919,11 +1911,13 @@ fn attach_snd_device(vmm: &mut Vmm, intc: IrqChip) -> std::result::Result<(), St
     let snd = Arc::new(Mutex::new(devices::virtio::Snd::new().unwrap()));
     let id = String::from(snd.lock().unwrap().id());
 
-    snd.lock().unwrap().set_intc(intc);
-
     // The device mutex mustn't be locked here otherwise it will deadlock.
-    attach_mmio_device(vmm, id, MmioTransport::new(vmm.guest_memory().clone(), snd))
-        .map_err(RegisterSndDevice)?;
+    attach_mmio_device(
+        vmm,
+        id,
+        MmioTransport::new(vmm.guest_memory().clone(), intc, snd),
+    )
+    .map_err(RegisterSndDevice)?;
 
     Ok(())
 }

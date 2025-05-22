@@ -1,6 +1,6 @@
 use std::{
     io::Error as IoError,
-    sync::{atomic::AtomicUsize, Arc, Mutex},
+    sync::{Arc, Mutex},
 };
 
 mod audio_backends;
@@ -11,7 +11,6 @@ mod virtio_sound;
 mod worker;
 
 use thiserror::Error as ThisError;
-use utils::eventfd::EventFd;
 use vm_memory::{ByteValued, Bytes, GuestAddress, GuestMemoryMmap};
 
 pub use self::defs::uapi::VIRTIO_ID_SND as TYPE_SND;
@@ -19,14 +18,8 @@ pub use self::device::Snd;
 pub use stream::Stream;
 use virtio_sound::*;
 
-use super::{Descriptor, Queue};
-use crate::{
-    legacy::IrqChip,
-    virtio::{
-        snd::virtio_sound::{VirtioSoundHeader, VirtioSoundPcmStatus},
-        VIRTIO_MMIO_INT_VRING,
-    },
-};
+use super::{Descriptor, InterruptTransport, Queue};
+use crate::virtio::snd::virtio_sound::{VirtioSoundHeader, VirtioSoundPcmStatus};
 
 mod defs {
     use super::virtio_sound::*;
@@ -179,27 +172,14 @@ impl std::error::Error for InvalidControlMessage {}
 pub struct Vring {
     mem: GuestMemoryMmap,
     queue: Queue,
-    interrupt_evt: EventFd,
-    interrupt_status: Arc<AtomicUsize>,
-    intc: Option<IrqChip>,
-    irq_line: Option<u32>,
+    interrupt: InterruptTransport,
 }
 
 impl Vring {
     pub fn signal_used_queue(&self) {
         debug!("snd: raising IRQ");
-        self.interrupt_status.fetch_or(
-            VIRTIO_MMIO_INT_VRING as usize,
-            std::sync::atomic::Ordering::SeqCst,
-        );
-        if let Some(intc) = &self.intc {
-            if let Err(e) = intc
-                .lock()
-                .unwrap()
-                .set_irq(self.irq_line, Some(&self.interrupt_evt))
-            {
-                warn!("Failed to signal queue: {e:?}");
-            }
+        if let Err(e) = self.interrupt.try_signal_used_queue() {
+            warn!("Failed to signal queue: {e:?}");
         }
     }
 }
