@@ -19,6 +19,12 @@ pub enum DeviceState {
     Activated(GuestMemoryMmap),
 }
 
+impl DeviceState {
+    pub fn is_activated(&self) -> bool {
+        matches!(self, DeviceState::Activated(..))
+    }
+}
+
 #[derive(Clone)]
 pub struct VirtioShmRegion {
     pub host_addr: u64,
