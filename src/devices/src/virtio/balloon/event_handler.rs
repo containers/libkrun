@@ -75,9 +75,7 @@ impl Balloon {
         if let Err(e) = self.queue_events[FRQ_INDEX].read() {
             error!("Failed to read balloon free-page reporting queue event: {e:?}");
         } else if self.process_frq() {
-            if let Err(e) = self.signal_used_queue() {
-                warn!("Failed to signal queue: {e:?}");
-            }
+            self.device_state.signal_used_queue();
         }
     }
 

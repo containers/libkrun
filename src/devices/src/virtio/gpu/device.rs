@@ -1,6 +1,4 @@
 use std::io::Write;
-use std::result;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::{unbounded, Sender};
@@ -9,14 +7,13 @@ use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::super::{
     fs::ExportTable, ActivateError, ActivateResult, DeviceState, GpuError, Queue as VirtQueue,
-    VirtioDevice, VirtioShmRegion, VIRTIO_MMIO_INT_VRING,
+    VirtioDevice, VirtioShmRegion,
 };
 use super::defs;
 use super::defs::uapi;
 use super::defs::uapi::virtio_gpu_config;
 use super::worker::Worker;
-use crate::legacy::IrqChip;
-use crate::Error as DeviceError;
+use crate::virtio::InterruptTransport;
 #[cfg(target_os = "macos")]
 use utils::worker_message::WorkerMessage;
 
@@ -39,13 +36,9 @@ pub struct Gpu {
     pub(crate) queue_events: Vec<EventFd>,
     pub(crate) avail_features: u64,
     pub(crate) acked_features: u64,
-    pub(crate) interrupt_status: Arc<AtomicUsize>,
-    pub(crate) interrupt_evt: EventFd,
     pub(crate) activate_evt: EventFd,
     pub(crate) device_state: DeviceState,
     shm_region: Option<VirtioShmRegion>,
-    intc: Option<IrqChip>,
-    irq_line: Option<u32>,
     pub(crate) sender: Option<Sender<u64>>,
     virgl_flags: u32,
     #[cfg(target_os = "macos")]
@@ -75,13 +68,9 @@ impl Gpu {
             queue_events,
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
-            interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(GpuError::EventFd)?,
             activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(GpuError::EventFd)?,
             device_state: DeviceState::Inactive,
             shm_region: None,
-            intc: None,
-            irq_line: None,
             sender: None,
             virgl_flags,
             #[cfg(target_os = "macos")]
@@ -110,10 +99,6 @@ impl Gpu {
         defs::GPU_DEV_ID
     }
 
-    pub fn set_intc(&mut self, intc: IrqChip) {
-        self.intc = Some(intc);
-    }
-
     pub fn set_shm_region(&mut self, shm_region: VirtioShmRegion) {
         debug!("virtio_gpu: set_shm_region");
         self.shm_region = Some(shm_region);
@@ -121,18 +106,6 @@ impl Gpu {
 
     pub fn set_export_table(&mut self, export_table: ExportTable) {
         self.export_table = Some(export_table);
-    }
-
-    pub fn signal_used_queue(&self) -> result::Result<(), DeviceError> {
-        debug!("gpu: raising IRQ");
-        self.interrupt_status
-            .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-        if let Some(intc) = &self.intc {
-            intc.lock()
-                .unwrap()
-                .set_irq(self.irq_line, Some(&self.interrupt_evt))?;
-        }
-        Ok(())
     }
 
     /*
@@ -220,19 +193,6 @@ impl VirtioDevice for Gpu {
         &self.queue_events
     }
 
-    fn interrupt_evt(&self) -> &EventFd {
-        &self.interrupt_evt
-    }
-
-    fn interrupt_status(&self) -> Arc<AtomicUsize> {
-        self.interrupt_status.clone()
-    }
-
-    fn set_irq_line(&mut self, irq: u32) {
-        debug!("SET_IRQ_LINE (GPU)={irq}");
-        self.irq_line = Some(irq);
-    }
-
     fn read_config(&self, offset: u64, mut data: &mut [u8]) {
         let config = virtio_gpu_config {
             events_read: 0,
@@ -262,7 +222,7 @@ impl VirtioDevice for Gpu {
         );
     }
 
-    fn activate(&mut self, mem: GuestMemoryMmap) -> ActivateResult {
+    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult {
         if self.queues.len() != defs::NUM_QUEUES {
             error!(
                 "Cannot perform activate. Expected {} queue(s), got {}",
@@ -285,10 +245,7 @@ impl VirtioDevice for Gpu {
             receiver,
             mem.clone(),
             self.queue_ctl.clone(),
-            self.interrupt_status.clone(),
-            self.interrupt_evt.try_clone().unwrap(),
-            self.intc.clone(),
-            self.irq_line,
+            interrupt.clone(),
             shm_region,
             self.virgl_flags,
             #[cfg(target_os = "macos")]
@@ -304,7 +261,7 @@ impl VirtioDevice for Gpu {
             return Err(ActivateError::BadActivate);
         }
 
-        self.device_state = DeviceState::Activated(mem);
+        self.device_state = DeviceState::Activated(mem, interrupt);
 
         Ok(())
     }

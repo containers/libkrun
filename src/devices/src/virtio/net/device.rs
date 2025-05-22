@@ -4,11 +4,12 @@
 // Portions Copyright 2017 The Chromium OS Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
-use crate::legacy::IrqChip;
 use crate::virtio::net::{Error, Result};
 use crate::virtio::net::{QUEUE_SIZES, RX_INDEX, TX_INDEX};
 use crate::virtio::queue::Error as QueueError;
-use crate::virtio::{ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_NET};
+use crate::virtio::{
+    ActivateResult, DeviceState, InterruptTransport, Queue, VirtioDevice, TYPE_NET,
+};
 use crate::Error as DeviceError;
 
 use super::backend::{ReadError, WriteError};
@@ -18,8 +19,6 @@ use std::cmp;
 use std::io::Write;
 use std::os::fd::RawFd;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
 use utils::eventfd::{EventFd, EFD_NONBLOCK};
 use virtio_bindings::virtio_net::VIRTIO_NET_F_MAC;
 use virtio_bindings::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
@@ -78,13 +77,7 @@ pub struct Net {
     queues: Vec<Queue>,
     queue_evts: Vec<EventFd>,
 
-    interrupt_status: Arc<AtomicUsize>,
-    interrupt_evt: EventFd,
-
     pub(crate) device_state: DeviceState,
-
-    intc: Option<IrqChip>,
-    irq_line: Option<u32>,
 
     config: VirtioNetConfig,
 }
@@ -124,15 +117,7 @@ impl Net {
 
             queues,
             queue_evts,
-
-            interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(EFD_NONBLOCK).map_err(Error::EventFd)?,
-
             device_state: DeviceState::Inactive,
-
-            intc: None,
-            irq_line: None,
-
             config,
         })
     }
@@ -140,10 +125,6 @@ impl Net {
     /// Provides the ID of this net device.
     pub fn id(&self) -> &str {
         &self.id
-    }
-
-    pub fn set_intc(&mut self, intc: IrqChip) {
-        self.intc = Some(intc);
     }
 }
 
@@ -176,19 +157,6 @@ impl VirtioDevice for Net {
         &self.queue_evts
     }
 
-    fn interrupt_evt(&self) -> &EventFd {
-        &self.interrupt_evt
-    }
-
-    fn interrupt_status(&self) -> Arc<AtomicUsize> {
-        self.interrupt_status.clone()
-    }
-
-    fn set_irq_line(&mut self, irq: u32) {
-        debug!("SET_IRQ_LINE (NET)={irq}");
-        self.irq_line = Some(irq);
-    }
-
     fn read_config(&self, offset: u64, mut data: &mut [u8]) {
         let config_slice = self.config.as_slice();
         let config_len = config_slice.len() as u64;
@@ -211,7 +179,7 @@ impl VirtioDevice for Net {
         );
     }
 
-    fn activate(&mut self, mem: GuestMemoryMmap) -> ActivateResult {
+    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult {
         let event_idx: bool = (self.acked_features & (1 << VIRTIO_RING_F_EVENT_IDX)) != 0;
         self.queues[RX_INDEX].set_event_idx(event_idx);
         self.queues[TX_INDEX].set_event_idx(event_idx);
@@ -224,16 +192,13 @@ impl VirtioDevice for Net {
         let worker = NetWorker::new(
             self.queues.clone(),
             queue_evts,
-            self.interrupt_status.clone(),
-            self.interrupt_evt.try_clone().unwrap(),
-            self.intc.clone(),
-            self.irq_line,
+            interrupt.clone(),
             mem.clone(),
             self.cfg_backend.clone(),
         );
         worker.run();
 
-        self.device_state = DeviceState::Activated(mem);
+        self.device_state = DeviceState::Activated(mem, interrupt);
         Ok(())
     }
 

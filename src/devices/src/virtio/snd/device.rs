@@ -1,6 +1,4 @@
 use std::io::Write;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use utils::eventfd::EventFd;
@@ -12,8 +10,7 @@ use super::virtio_sound::VirtioSoundConfig;
 use super::worker::SndWorker;
 use super::{defs, defs::uapi, defs::QUEUE_INDEXES, Error};
 
-use crate::legacy::IrqChip;
-use crate::virtio::DeviceState;
+use crate::virtio::{DeviceState, InterruptTransport};
 
 // Supported features.
 pub(crate) const AVAIL_FEATURES: u64 = 1 << uapi::VIRTIO_F_VERSION_1 as u64;
@@ -27,12 +24,8 @@ pub struct Snd {
     pub(crate) queue_events: Vec<EventFd>,
     pub(crate) avail_features: u64,
     pub(crate) acked_features: u64,
-    pub(crate) interrupt_status: Arc<AtomicUsize>,
-    pub(crate) interrupt_evt: EventFd,
     pub(crate) activate_evt: EventFd,
     pub(crate) device_state: DeviceState,
-    intc: Option<IrqChip>,
-    irq_line: Option<u32>,
     worker_thread: Option<JoinHandle<()>>,
     worker_stopfd: EventFd,
 }
@@ -50,14 +43,9 @@ impl Snd {
             queue_events,
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
-            interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
-                .map_err(Error::EventFdCreate)?,
             activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
                 .map_err(Error::EventFdCreate)?,
             device_state: DeviceState::Inactive,
-            intc: None,
-            irq_line: None,
             worker_thread: None,
             worker_stopfd: EventFd::new(utils::eventfd::EFD_NONBLOCK)
                 .map_err(Error::EventFdCreate)?,
@@ -74,10 +62,6 @@ impl Snd {
 
     pub fn id(&self) -> &str {
         defs::SND_DEV_ID
-    }
-
-    pub fn set_intc(&mut self, intc: IrqChip) {
-        self.intc = Some(intc);
     }
 }
 
@@ -110,19 +94,6 @@ impl VirtioDevice for Snd {
         &self.queue_events
     }
 
-    fn interrupt_evt(&self) -> &EventFd {
-        &self.interrupt_evt
-    }
-
-    fn interrupt_status(&self) -> Arc<AtomicUsize> {
-        self.interrupt_status.clone()
-    }
-
-    fn set_irq_line(&mut self, irq: u32) {
-        debug!("SET_IRQ_LINE (SND)={irq}");
-        self.irq_line = Some(irq);
-    }
-
     fn read_config(&self, offset: u64, mut data: &mut [u8]) {
         let config = VirtioSoundConfig {
             jacks: 0.into(),
@@ -151,7 +122,7 @@ impl VirtioDevice for Snd {
         );
     }
 
-    fn activate(&mut self, mem: GuestMemoryMmap) -> ActivateResult {
+    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult {
         if self.worker_thread.is_some() {
             panic!("virtio_snd: worker thread already exists");
         }
@@ -178,10 +149,7 @@ impl VirtioDevice for Snd {
         let worker = SndWorker::new(
             self.queues.clone(),
             queue_evts,
-            self.interrupt_status.clone(),
-            self.interrupt_evt.try_clone().unwrap(),
-            self.intc.clone(),
-            self.irq_line,
+            interrupt.clone(),
             mem.clone(),
             self.worker_stopfd.try_clone().unwrap(),
         );
@@ -192,7 +160,7 @@ impl VirtioDevice for Snd {
             return Err(ActivateError::BadActivate);
         }
 
-        self.device_state = DeviceState::Activated(mem);
+        self.device_state = DeviceState::Activated(mem, interrupt);
 
         Ok(())
     }

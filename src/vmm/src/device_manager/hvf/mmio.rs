@@ -112,7 +112,7 @@ impl MMIODeviceManager {
             mmio_device.register_queue_evt(queue_evt, i as u32);
         }
 
-        mmio_device.locked_device().set_irq_line(self.irq);
+        mmio_device.set_irq_line(self.irq);
 
         self.bus
             .insert(Arc::new(Mutex::new(mmio_device)), self.mmio_base, MMIO_LEN)
@@ -326,7 +326,8 @@ mod tests {
     use super::super::super::builder;
     use super::*;
     use arch;
-    use devices::virtio::{ActivateResult, Queue, VirtioDevice};
+    use devices::legacy::DummyIrqChip;
+    use devices::virtio::{ActivateResult, InterruptTransport, Queue, VirtioDevice};
     use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
     use utils::errno;
@@ -345,7 +346,8 @@ mod tests {
             type_id: u32,
             device_id: &str,
         ) -> Result<u64> {
-            let mmio_device = devices::virtio::MmioTransport::new(guest_mem, device);
+            let mmio_device =
+                devices::virtio::MmioTransport::new(guest_mem, DummyIrqChip::new().into(), device);
             let (mmio_base, _irq) =
                 self.register_mmio_device(vm, mmio_device, type_id, device_id.to_string())?;
             #[cfg(target_arch = "x86_64")]
@@ -403,14 +405,6 @@ mod tests {
             &self.queue_evts
         }
 
-        fn interrupt_evt(&self) -> &EventFd {
-            &self.interrupt_evt
-        }
-
-        fn interrupt_status(&self) -> Arc<AtomicUsize> {
-            Arc::new(AtomicUsize::new(0))
-        }
-
         fn ack_features_by_page(&mut self, page: u32, value: u32) {
             let _ = page;
             let _ = value;
@@ -426,7 +420,11 @@ mod tests {
             let _ = data;
         }
 
-        fn activate(&mut self, _: GuestMemoryMmap) -> ActivateResult {
+        fn activate(
+            &mut self,
+            mem: GuestMemoryMmap,
+            _interrupt: InterruptTransport,
+        ) -> ActivateResult {
             Ok(())
         }
 

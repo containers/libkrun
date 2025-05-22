@@ -144,7 +144,7 @@ impl Subscriber for Vsock {
             }
             if raise_irq {
                 debug!("raising IRQ");
-                self.signal_used_queue().unwrap_or_default();
+                self.device_state.signal_used_queue();
             }
         } else {
             warn!("Vsock: The device is not yet activated. Spurious event received: {source:?}");
