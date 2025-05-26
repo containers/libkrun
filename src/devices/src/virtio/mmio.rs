@@ -55,6 +55,7 @@ pub struct MmioTransport {
 }
 
 struct InterruptTransportInner {
+    log_target: String,
     status: AtomicUsize,
     event: EventFd,
     intc: IrqChip,
@@ -65,8 +66,9 @@ struct InterruptTransportInner {
 pub struct InterruptTransport(Arc<InterruptTransportInner>);
 
 impl InterruptTransport {
-    pub fn new(intc: IrqChip) -> Self {
+    pub fn new(intc: IrqChip, log_target: String) -> Self {
         Self(Arc::new(InterruptTransportInner {
+            log_target,
             status: AtomicUsize::new(0),
             event: EventFd::new(0).unwrap(), // TODO propage the error
             intc,
@@ -91,6 +93,7 @@ impl InterruptTransport {
     }
 
     fn set_irq_line(&mut self, irq_line: u32) {
+        debug!(target: &self.0.log_target, "set_irq_line: {irq_line}");
         match Arc::get_mut(&mut self.0) {
             None => {
                 error!("Cannot change irq_line of activated device");
@@ -111,22 +114,24 @@ impl InterruptTransport {
     }
 
     pub fn try_signal_used_queue(&self) -> Result<(), crate::Error> {
+        debug!(target: &self.0.log_target, "interrupt: signal_used_queue");
         self.try_signal(VIRTIO_MMIO_INT_VRING)
     }
 
     pub fn try_signal_config_change(&self) -> Result<(), crate::Error> {
+        debug!(target: &self.0.log_target, "interrupt: signal_config_change");
         self.try_signal(VIRTIO_MMIO_INT_CONFIG)
     }
 
     pub fn signal_used_queue(&self) {
         if let Err(e) = self.try_signal_used_queue() {
-            warn!("Failed to signal used queue: {e:?}");
+            warn!(target: &self.0.log_target, "Failed to signal used queue: {e:?}");
         }
     }
 
     pub fn signal_config_change(&self) {
         if let Err(e) = self.try_signal_config_change() {
-            warn!("Failed to signal config change: {e:?}");
+            warn!(target: &self.0.log_target, "Failed to signal config change: {e:?}");
         }
     }
 }
@@ -138,7 +143,19 @@ impl MmioTransport {
         intc: IrqChip,
         device: Arc<Mutex<dyn VirtioDevice>>,
     ) -> MmioTransport {
+        let debug_log_target = format!(
+            "{}[{}]",
+            module_path!(),
+            device
+                .try_lock()
+                .expect(
+                    "Mutex of VirtioDevice should not be locked when calling MmioTransport::new"
+                )
+                .device_name()
+        );
+
         MmioTransport {
+            interrupt: InterruptTransport::new(intc, debug_log_target),
             device,
             features_select: 0,
             acked_features_select: 0,
@@ -146,7 +163,6 @@ impl MmioTransport {
             device_status: device_status::INIT,
             config_generation: 0,
             mem,
-            interrupt: InterruptTransport::new(intc),
             queue_evts: HashMap::new(),
             shm_region_select: 0,
         }
@@ -479,6 +495,10 @@ pub(crate) mod tests {
     impl VirtioDevice for DummyDevice {
         fn device_type(&self) -> u32 {
             123
+        }
+
+        fn device_name(&self) -> &str {
+            "dummy"
         }
 
         fn read_config(&self, offset: u64, data: &mut [u8]) {

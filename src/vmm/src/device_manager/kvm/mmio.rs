@@ -373,6 +373,10 @@ mod tests {
             0
         }
 
+        fn device_name(&self) -> &str {
+            "dummy"
+        }
+
         fn queues(&self) -> &[Queue] {
             &self.queues
         }

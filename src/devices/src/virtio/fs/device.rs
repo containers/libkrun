@@ -145,6 +145,10 @@ impl VirtioDevice for Fs {
         uapi::VIRTIO_ID_FS
     }
 
+    fn device_name(&self) -> &str {
+        "fs"
+    }
+
     fn queues(&self) -> &[VirtQueue] {
         &self.queues
     }

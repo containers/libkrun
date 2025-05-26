@@ -145,6 +145,10 @@ impl VirtioDevice for Net {
         TYPE_NET
     }
 
+    fn device_name(&self) -> &str {
+        "net"
+    }
+
     fn queues(&self) -> &[Queue] {
         &self.queues
     }
