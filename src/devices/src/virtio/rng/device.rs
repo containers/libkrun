@@ -108,6 +108,10 @@ impl VirtioDevice for Rng {
         uapi::VIRTIO_ID_RNG
     }
 
+    fn device_name(&self) -> &str {
+        "rng"
+    }
+
     fn queues(&self) -> &[VirtQueue] {
         &self.queues
     }

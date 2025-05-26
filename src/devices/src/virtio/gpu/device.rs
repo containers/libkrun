@@ -181,6 +181,10 @@ impl VirtioDevice for Gpu {
         uapi::VIRTIO_ID_GPU
     }
 
+    fn device_name(&self) -> &str {
+        "gpu"
+    }
+
     fn queues(&self) -> &[VirtQueue] {
         &self.queues
     }

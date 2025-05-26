@@ -45,7 +45,7 @@ pub struct VirtioShmRegion {
 ///
 /// The lifecycle of a virtio device is to be moved to a virtio transport, which will then query the
 /// device. The virtio devices needs to create queues, events and event fds for interrupts and expose
-/// them to the transport via get_queues/get_queue_events/get_interrupt/get_interrupt_status fns.
+/// them to the transport via get_queues/get_queue_events
 pub trait VirtioDevice: AsAny + Send {
     /// Get the available features offered by device.
     fn avail_features(&self) -> u64;
@@ -60,6 +60,9 @@ pub trait VirtioDevice: AsAny + Send {
 
     /// The virtio device type.
     fn device_type(&self) -> u32;
+
+    /// Device name used for logging information about the device at the transport layer
+    fn device_name(&self) -> &str;
 
     /// Returns the device queues.
     fn queues(&self) -> &[Queue];

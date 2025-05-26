@@ -82,6 +82,10 @@ impl VirtioDevice for Snd {
         uapi::VIRTIO_ID_SND
     }
 
+    fn device_name(&self) -> &str {
+        "snd"
+    }
+
     fn queues(&self) -> &[VirtQueue] {
         &self.queues
     }

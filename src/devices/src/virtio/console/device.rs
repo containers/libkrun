@@ -303,6 +303,10 @@ impl VirtioDevice for Console {
         uapi::VIRTIO_ID_CONSOLE
     }
 
+    fn device_name(&self) -> &str {
+        "console"
+    }
+
     fn queues(&self) -> &[VirtQueue] {
         &self.queues
     }
