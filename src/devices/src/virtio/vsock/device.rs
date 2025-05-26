@@ -209,6 +209,10 @@ impl VirtioDevice for Vsock {
         uapi::VIRTIO_ID_VSOCK
     }
 
+    fn device_name(&self) -> &str {
+        "vsock"
+    }
+
     fn queues(&self) -> &[VirtQueue] {
         &self.queues
     }

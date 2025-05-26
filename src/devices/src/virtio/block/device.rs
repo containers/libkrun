@@ -292,6 +292,10 @@ impl VirtioDevice for Block {
         TYPE_BLOCK
     }
 
+    fn device_name(&self) -> &str {
+        "block"
+    }
+
     fn queues(&self) -> &[Queue] {
         &self.queues
     }
