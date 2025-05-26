@@ -142,6 +142,10 @@ impl VirtioDevice for Balloon {
         uapi::VIRTIO_ID_BALLOON
     }
 
+    fn device_name(&self) -> &str {
+        "balloon"
+    }
+
     fn queues(&self) -> &[VirtQueue] {
         &self.queues
     }
