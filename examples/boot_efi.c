@@ -90,7 +90,7 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
     return false;
 }
 
-int connect_to_passt(char *socket_path)
+int connect_to_passt(char const *socket_path)
 {
     struct sockaddr_un addr;
     int socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
