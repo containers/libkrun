@@ -119,7 +119,7 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
     return false;
 }
 
-int connect_to_passt()
+int connect_to_passt(char const *socket_path)
 {
     struct sockaddr_un addr;
     int socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -130,7 +130,7 @@ int connect_to_passt()
 
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, "/tmp/passt_1.socket", sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
 
     if (connect(socket_fd, (const struct sockaddr *) &addr, sizeof(addr)) < 0) {
         perror("Failed to bind passt socket");
