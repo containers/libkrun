@@ -7,6 +7,7 @@ edition = "2021"
 [features]
 tee = []
 amd-sev = ["blk", "tee"]
+tdx = ["blk", "tee"]
 net = []
 blk = []
 efi = ["blk", "net"]

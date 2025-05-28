@@ -1,8 +1,11 @@
 use crossbeam_channel::unbounded;
+#[cfg(not(feature = "tdx"))]
+use kvm_bindings::{kvm_enable_cap, KVM_CAP_SPLIT_IRQCHIP};
 use kvm_bindings::{
-    kvm_enable_cap, kvm_irq_routing_entry, kvm_irq_routing_entry__bindgen_ty_1,
-    kvm_irq_routing_msi, KvmIrqRouting, KVM_CAP_SPLIT_IRQCHIP, KVM_IRQ_ROUTING_MSI,
+    kvm_irq_routing_entry, kvm_irq_routing_entry__bindgen_ty_1, kvm_irq_routing_msi, KvmIrqRouting,
+    KVM_IRQ_ROUTING_MSI,
 };
+
 use kvm_ioctls::{Error, VmFd};
 
 use utils::eventfd::EventFd;
@@ -105,12 +108,15 @@ impl IoApic {
         vm: &VmFd,
         _irq_sender: crossbeam_channel::Sender<WorkerMessage>,
     ) -> Result<Self, Error> {
-        let mut cap = kvm_enable_cap {
-            cap: KVM_CAP_SPLIT_IRQCHIP,
-            ..Default::default()
-        };
-        cap.args[0] = 24;
-        vm.enable_cap(&cap)?;
+        #[cfg(not(feature = "tdx"))]
+        {
+            let mut cap = kvm_enable_cap {
+                cap: KVM_CAP_SPLIT_IRQCHIP,
+                ..Default::default()
+            };
+            cap.args[0] = 24;
+            vm.enable_cap(&cap)?;
+        }
 
         let mut ioapic = Self {
             id: 0,
