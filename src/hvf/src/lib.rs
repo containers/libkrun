@@ -88,6 +88,8 @@ const CNTHCTL_EL0PCTEN: u64 = 1 << 0;
 // Trap accesses to both virtual and physical counter registers.
 const CNTHCTL_EL2_BITS: u64 = CNTHCTL_EL0VCTEN | CNTHCTL_EL0PCTEN;
 
+const AA64PFR0_EL1_EL2EN: u64 = 1 << 8;
+const AA64PFR0_EL1_GIC3EN: u64 = 1 << 24;
 const AA64PFR1_EL1_SMEMASK: u64 = 3 << 24;
 
 const EC_WFX_TRAP: u64 = 0x1;
@@ -396,6 +398,29 @@ impl HvfVcpu<'_> {
                     self.vcpuid,
                     hv_sys_reg_t_HV_SYS_REG_CNTHCTL_EL2,
                     CNTHCTL_EL2_BITS,
+                )
+            };
+            if ret != HV_SUCCESS {
+                return Err(Error::VcpuInitialRegisters);
+            }
+
+            // Enable EL2 and GICv3 in ID_AA64PFR0_EL1
+            let val: u64 = 0;
+            let ret = unsafe {
+                hv_vcpu_get_sys_reg(
+                    self.vcpuid,
+                    hv_sys_reg_t_HV_SYS_REG_ID_AA64PFR0_EL1,
+                    &val as *const _ as *mut _,
+                )
+            };
+            if ret != HV_SUCCESS {
+                return Err(Error::VcpuInitialRegisters);
+            }
+            let ret = unsafe {
+                hv_vcpu_set_sys_reg(
+                    self.vcpuid,
+                    hv_sys_reg_t_HV_SYS_REG_ID_AA64PFR0_EL1,
+                    val | AA64PFR0_EL1_EL2EN | AA64PFR0_EL1_GIC3EN,
                 )
             };
             if ret != HV_SUCCESS {
