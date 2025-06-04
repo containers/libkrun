@@ -27,9 +27,6 @@ ifeq ($(SEV),1)
     INIT_SRC += $(SNP_INIT_SRC)
 	BUILD_INIT = 0
 endif
-ifeq ($(GPU),1)
-    FEATURE_FLAGS += --features gpu
-endif
 ifeq ($(VIRGL_RESOURCE_MAP2),1)
 	FEATURE_FLAGS += --features virgl_resource_map2
 endif
@@ -39,13 +36,16 @@ endif
 ifeq ($(NET),1)
     FEATURE_FLAGS += --features net
 endif
+ifeq ($(EFI),1)
+    VARIANT = -efi
+    FEATURE_FLAGS := --features efi # EFI Implies blk and net
+    BUILD_INIT = 0
+endif
+ifeq ($(GPU),1)
+    FEATURE_FLAGS += --features gpu
+endif
 ifeq ($(SND),1)
     FEATURE_FLAGS += --features snd
-endif
-ifeq ($(EFI),1)
-	VARIANT = -efi
-	FEATURE_FLAGS := --features efi,gpu
-	BUILD_INIT = 0
 endif
 
 ifeq ($(TIMESYNC),1)
