@@ -15,7 +15,6 @@ use std::os::linux::fs::MetadataExt;
 use std::os::macos::fs::MetadataExt;
 use std::path::PathBuf;
 use std::result;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
@@ -35,8 +34,7 @@ use super::{
     Error, QUEUE_SIZES, SECTOR_SHIFT, SECTOR_SIZE,
 };
 
-use crate::legacy::IrqChip;
-use crate::virtio::{block::ImageType, ActivateError};
+use crate::virtio::{block::ImageType, ActivateError, InterruptTransport};
 
 /// Configuration options for disk caching.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -191,18 +189,12 @@ pub struct Block {
 
     // Transport related fields.
     pub(crate) queues: Vec<Queue>,
-    pub(crate) interrupt_status: Arc<AtomicUsize>,
-    pub(crate) interrupt_evt: EventFd,
     pub(crate) queue_evts: [EventFd; 1],
     pub(crate) device_state: DeviceState,
 
     // Implementation specific fields.
     pub(crate) id: String,
     pub(crate) partuuid: Option<String>,
-
-    // Interrupt specific fields.
-    intc: Option<IrqChip>,
-    irq_line: Option<u32>,
 }
 
 impl Block {
@@ -271,20 +263,12 @@ impl Block {
             disk_image_id,
             avail_features,
             acked_features: 0u64,
-            interrupt_status: Arc::new(AtomicUsize::new(0)),
-            interrupt_evt: EventFd::new(EFD_NONBLOCK)?,
             queue_evts,
             queues,
             device_state: DeviceState::Inactive,
-            intc: None,
-            irq_line: None,
             worker_thread: None,
             worker_stopfd: EventFd::new(EFD_NONBLOCK)?,
         })
-    }
-
-    pub fn set_intc(&mut self, intc: IrqChip) {
-        self.intc = Some(intc);
     }
 
     /// Provides the ID of this block device.
@@ -308,6 +292,10 @@ impl VirtioDevice for Block {
         TYPE_BLOCK
     }
 
+    fn device_name(&self) -> &str {
+        "block"
+    }
+
     fn queues(&self) -> &[Queue] {
         &self.queues
     }
@@ -318,20 +306,6 @@ impl VirtioDevice for Block {
 
     fn queue_events(&self) -> &[EventFd] {
         &self.queue_evts
-    }
-
-    fn interrupt_evt(&self) -> &EventFd {
-        &self.interrupt_evt
-    }
-
-    /// Returns the current device interrupt status.
-    fn interrupt_status(&self) -> Arc<AtomicUsize> {
-        self.interrupt_status.clone()
-    }
-
-    fn set_irq_line(&mut self, irq: u32) {
-        debug!("SET_IRQ_LINE (BLOCK)={}", irq);
-        self.irq_line = Some(irq);
     }
 
     fn avail_features(&self) -> u64 {
@@ -365,13 +339,10 @@ impl VirtioDevice for Block {
     }
 
     fn is_activated(&self) -> bool {
-        match self.device_state {
-            DeviceState::Inactive => false,
-            DeviceState::Activated(_) => true,
-        }
+        self.device_state.is_activated()
     }
 
-    fn activate(&mut self, mem: GuestMemoryMmap) -> ActivateResult {
+    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult {
         if self.worker_thread.is_some() {
             panic!("virtio_blk: worker thread already exists");
         }
@@ -392,17 +363,14 @@ impl VirtioDevice for Block {
         let worker = BlockWorker::new(
             self.queues[0].clone(),
             self.queue_evts[0].try_clone().unwrap(),
-            self.interrupt_status.clone(),
-            self.interrupt_evt.try_clone().unwrap(),
-            self.intc.clone(),
-            self.irq_line,
+            interrupt.clone(),
             mem.clone(),
             disk,
             self.worker_stopfd.try_clone().unwrap(),
         );
         self.worker_thread = Some(worker.run());
 
-        self.device_state = DeviceState::Activated(mem);
+        self.device_state = DeviceState::Activated(mem, interrupt);
         Ok(())
     }
 

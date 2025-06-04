@@ -109,7 +109,7 @@ impl MMIODeviceManager {
     pub fn register_mmio_device(
         &mut self,
         vm: &VmFd,
-        mmio_device: devices::virtio::MmioTransport,
+        mut mmio_device: devices::virtio::MmioTransport,
         type_id: u32,
         device_id: String,
     ) -> Result<(u64, u32)> {
@@ -131,10 +131,10 @@ impl MMIODeviceManager {
                 .map_err(Error::RegisterIoEvent)?;
         }
 
-        vm.register_irqfd(mmio_device.locked_device().interrupt_evt(), self.irq)
+        vm.register_irqfd(mmio_device.interrupt_evt(), self.irq)
             .map_err(Error::RegisterIrqFd)?;
 
-        mmio_device.locked_device().set_irq_line(self.irq);
+        mmio_device.set_irq_line(self.irq);
 
         self.bus
             .insert(Arc::new(Mutex::new(mmio_device)), self.mmio_base, MMIO_LEN)
@@ -300,11 +300,12 @@ mod tests {
     use super::super::super::super::builder;
     use super::*;
     use arch;
+    use devices::legacy::DummyIrqChip;
+    use devices::virtio::InterruptTransport;
     use devices::{
         legacy::KvmIoapic,
         virtio::{ActivateResult, Queue, VirtioDevice},
     };
-    use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
     use utils::errno;
     use utils::eventfd::EventFd;
@@ -322,7 +323,8 @@ mod tests {
             type_id: u32,
             device_id: &str,
         ) -> Result<u64> {
-            let mmio_device = devices::virtio::MmioTransport::new(guest_mem, device);
+            let mmio_device =
+                devices::virtio::MmioTransport::new(guest_mem, DummyIrqChip::new().into(), device);
             let (mmio_base, _irq) =
                 self.register_mmio_device(vm, mmio_device, type_id, device_id.to_string())?;
             #[cfg(target_arch = "x86_64")]
@@ -368,6 +370,10 @@ mod tests {
             0
         }
 
+        fn device_name(&self) -> &str {
+            "dummy"
+        }
+
         fn queues(&self) -> &[Queue] {
             &self.queues
         }
@@ -379,16 +385,6 @@ mod tests {
         fn queue_events(&self) -> &[EventFd] {
             &self.queue_evts
         }
-
-        fn interrupt_evt(&self) -> &EventFd {
-            &self.interrupt_evt
-        }
-
-        fn interrupt_status(&self) -> Arc<AtomicUsize> {
-            Arc::new(AtomicUsize::new(0))
-        }
-
-        fn set_irq_line(&mut self, _irq: u32) {}
 
         fn ack_features_by_page(&mut self, page: u32, value: u32) {
             let _ = page;
@@ -405,7 +401,11 @@ mod tests {
             let _ = data;
         }
 
-        fn activate(&mut self, _: GuestMemoryMmap) -> ActivateResult {
+        fn activate(
+            &mut self,
+            mem: GuestMemoryMmap,
+            interrupt: InterruptTransport,
+        ) -> ActivateResult {
             Ok(())
         }
 
