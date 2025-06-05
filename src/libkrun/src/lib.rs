@@ -48,6 +48,7 @@ use vmm::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
 use vmm::vmm_config::machine_config::VmConfig;
 #[cfg(feature = "net")]
 use vmm::vmm_config::net::NetworkInterfaceConfig;
+use vmm::vmm_config::rootfs::RootfsConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
 // Value returned on success. We use libc's errors otherwise.
@@ -151,6 +152,8 @@ struct ContextConfig {
     console_output: Option<PathBuf>,
     vmm_uid: Option<libc::uid_t>,
     vmm_gid: Option<libc::gid_t>,
+    // Custom rootfs kernel arguments
+    rootfs_config: Option<RootfsConfig>,
 }
 
 impl ContextConfig {
@@ -247,6 +250,43 @@ impl ContextConfig {
 
     fn set_net_mac(&mut self, mac: [u8; 6]) {
         self.mac = Some(mac);
+    }
+
+    fn set_rootfs_config(&mut self, config: RootfsConfig) {
+        self.rootfs_config = Some(config);
+    }
+
+    fn get_rootfs_config(&self) -> Option<&RootfsConfig> {
+        self.rootfs_config.as_ref()
+    }
+
+    fn get_effective_kernel_cmdline(&self) -> String {
+        if let Some(rootfs_config) = self.get_rootfs_config() {
+            // Replace rootfs-related parameters in DEFAULT_KERNEL_CMDLINE with custom ones
+            // DEFAULT_KERNEL_CMDLINE contains: "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 rootfstype=virtiofs rw quiet no-kvmapf"
+            // We need to replace "rootfstype=virtiofs rw" with the custom args
+            let parts: Vec<&str> = DEFAULT_KERNEL_CMDLINE.split_whitespace().collect();
+            let mut filtered_parts = Vec::new();
+
+            for part in parts {
+                // Skip existing rootfs-related parameters that we want to override
+                if !part.starts_with("rootfstype=")
+                    && !part.starts_with("root=")
+                    && !part.starts_with("rootflags=")
+                    && part != "ro"
+                    && part != "rw"
+                {
+                    filtered_parts.push(part);
+                }
+            }
+
+            // Add custom rootfs arguments
+            let rootfs_args = rootfs_config.to_kernel_args();
+            filtered_parts.push(&rootfs_args);
+            filtered_parts.join(" ")
+        } else {
+            DEFAULT_KERNEL_CMDLINE.to_string()
+        }
     }
 
     fn set_port_map(&mut self, new_port_map: HashMap<u16, u16>) -> Result<(), ()> {
@@ -947,6 +987,73 @@ pub unsafe extern "C" fn krun_set_env(ctx_id: u32, c_envp: *const *const c_char)
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+pub unsafe extern "C" fn krun_set_rootfs_kernel_args(
+    ctx_id: u32,
+    c_device: *const c_char,
+    c_fs_type: *const c_char,
+    c_mount_flags: *const c_char,
+    read_only: bool,
+) -> i32 {
+    let mut config = RootfsConfig::new();
+
+    // Set device if provided
+    if !c_device.is_null() {
+        let device = match CStr::from_ptr(c_device).to_str() {
+            Ok(s) => s,
+            Err(_) => return -libc::EINVAL,
+        };
+        if !device.is_empty() {
+            config = match config.with_device(device) {
+                Ok(cfg) => cfg,
+                Err(_) => return -libc::EINVAL,
+            };
+        }
+    }
+
+    // Set filesystem type if provided
+    if !c_fs_type.is_null() {
+        let fs_type = match CStr::from_ptr(c_fs_type).to_str() {
+            Ok(s) => s,
+            Err(_) => return -libc::EINVAL,
+        };
+        if !fs_type.is_empty() {
+            config = match config.with_fs_type(fs_type) {
+                Ok(cfg) => cfg,
+                Err(_) => return -libc::EINVAL,
+            };
+        }
+    }
+
+    // Set mount flags if provided
+    if !c_mount_flags.is_null() {
+        let mount_flags = match CStr::from_ptr(c_mount_flags).to_str() {
+            Ok(s) => s,
+            Err(_) => return -libc::EINVAL,
+        };
+        if !mount_flags.is_empty() {
+            config = match config.with_mount_flags(mount_flags) {
+                Ok(cfg) => cfg,
+                Err(_) => return -libc::EINVAL,
+            };
+        }
+    }
+
+    // Set read-only flag
+    config = config.with_read_only(read_only);
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.set_rootfs_config(config);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
 #[cfg(feature = "tee")]
 pub unsafe extern "C" fn krun_set_tee_config_file(ctx_id: u32, c_filepath: *const c_char) -> i32 {
     let filepath = match CStr::from_ptr(c_filepath).to_str() {
@@ -1464,7 +1571,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     let boot_source = BootSourceConfig {
         kernel_cmdline_prolog: Some(format!(
             "{} init={} {} {} {} {}",
-            DEFAULT_KERNEL_CMDLINE,
+            ctx_cfg.get_effective_kernel_cmdline(),
             INIT_PATH,
             ctx_cfg.get_exec_path(),
             ctx_cfg.get_workdir(),
