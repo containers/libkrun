@@ -144,6 +144,7 @@ struct ContextConfig {
     #[cfg(feature = "tee")]
     tee_config_file: Option<PathBuf>,
     unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
+    unix_tunnel_map: Option<HashMap<String, (String, bool)>>,
     shutdown_efd: Option<EventFd>,
     gpu_virgl_flags: Option<u32>,
     gpu_shm_size: Option<usize>,
@@ -277,6 +278,42 @@ impl ContextConfig {
             let mut map: HashMap<u32, (PathBuf, bool)> = HashMap::new();
             map.insert(port, (filepath, listen));
             self.unix_ipc_port_map = Some(map);
+        }
+    }
+
+    fn add_unix_tunnel(&mut self, guest_path: String, host_path: String, listen: bool) {
+        if let Some(ref mut map) = &mut self.unix_tunnel_map {
+            map.insert(guest_path, (host_path, listen));
+        } else {
+            let mut map: HashMap<String, (String, bool)> = HashMap::new();
+            map.insert(guest_path, (host_path, listen));
+            self.unix_tunnel_map = Some(map);
+        }
+    }
+
+    fn get_unix_tunnels(&self) -> String {
+        match &self.unix_tunnel_map {
+            Some(tunnels) => {
+                let tunnel_configs: Vec<String> = tunnels
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (guest_path, (_, listen)))| {
+                        let vsock_port = 2000 + index as u32;
+                        format!(
+                            "{}:{}:{}",
+                            guest_path,
+                            vsock_port,
+                            if *listen { "connect" } else { "listen" }
+                        )
+                    })
+                    .collect();
+                if tunnel_configs.is_empty() {
+                    "".to_string()
+                } else {
+                    format!("KRUN_TUNNELS={}", tunnel_configs.join(","))
+                }
+            }
+            None => "".to_string(),
         }
     }
 
@@ -1463,12 +1500,13 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     let boot_source = BootSourceConfig {
         kernel_cmdline_prolog: Some(format!(
-            "{} init={} {} {} {} {}",
+            "{} init={} {} {} {} {} {}",
             DEFAULT_KERNEL_CMDLINE,
             INIT_PATH,
             ctx_cfg.get_exec_path(),
             ctx_cfg.get_workdir(),
             ctx_cfg.get_rlimits(),
+            ctx_cfg.get_unix_tunnels(),
             ctx_cfg.get_env(),
         )),
         kernel_cmdline_epilog: Some(format!(" -- {}", ctx_cfg.get_args())),
@@ -1581,4 +1619,60 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             }
         }
     }
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_vsock_unix_tunnel(
+    ctx_id: u32,
+    c_guest_filepath: *const c_char,
+    c_host_filepath: *const c_char,
+    listen: bool,
+) -> i32 {
+    let guest_filepath = match CStr::from_ptr(c_guest_filepath).to_str() {
+        Ok(f) => f.to_string(),
+        Err(_) => return -libc::EINVAL,
+    };
+
+    let host_filepath = match CStr::from_ptr(c_host_filepath).to_str() {
+        Ok(f) => f.to_string(),
+        Err(_) => return -libc::EINVAL,
+    };
+
+    // Validate that host path exists for connect mode, or parent directory exists for listen mode
+    let host_path = PathBuf::from(&host_filepath);
+    if listen {
+        // For listen mode, check that the parent directory exists and the socket doesn't already exist
+        if let Some(parent) = host_path.parent() {
+            if !parent.exists() {
+                return -libc::ENOENT;
+            }
+        }
+        match host_path.try_exists() {
+            Ok(true) => return -libc::EEXIST,
+            Err(_) => return -libc::EINVAL,
+            _ => {}
+        }
+    } else {
+        // For connect mode, check that the host socket exists
+        match host_path.try_exists() {
+            Ok(false) => return -libc::ENOENT,
+            Err(_) => return -libc::EINVAL,
+            _ => {}
+        }
+    }
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            // Use the vsock infrastructure to handle the host-side proxy
+            // The guest will connect to this port via vsock
+            let vsock_port = 2000 + cfg.unix_tunnel_map.as_ref().map_or(0, |m| m.len() as u32);
+            cfg.add_vsock_port(vsock_port, host_path, listen);
+            cfg.add_unix_tunnel(guest_filepath, host_filepath, listen);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
 }
