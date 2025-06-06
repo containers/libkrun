@@ -531,7 +531,9 @@ pub fn build_microvm(
     } else if let Some(cmdline) = &vm_resources.boot_config.kernel_cmdline_prolog {
         kernel_cmdline.insert_str(cmdline).unwrap();
     } else {
-        kernel_cmdline.insert_str(DEFAULT_KERNEL_CMDLINE).unwrap();
+        kernel_cmdline
+            .insert_str(format!("{DEFAULT_KERNEL_CMDLINE} rw"))
+            .unwrap();
     }
 
     #[cfg(not(feature = "tee"))]

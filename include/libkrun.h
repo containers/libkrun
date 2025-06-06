@@ -475,6 +475,19 @@ int32_t krun_set_kernel(uint32_t ctx_id,
                         const char *cmdline);
 
 /**
+ * Sets the read-only flag for the kernel boot arguments. This results in the root
+ * filesystem being mounted read-only.
+ * Arguments:
+ *  "ctx_id"        - the configuration context ID.
+ *  "read_only"     - true when the root filesystem should be mounted read-only.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+*/
+int32_t krun_set_rootfs_read_only(uint32_t ctx_id,
+                                  bool read_only);
+
+/**
  * Sets environment variables to be configured in the context of the executable.
  *
  * Arguments:
