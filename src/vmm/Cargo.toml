@@ -51,4 +51,4 @@ kvm-ioctls = ">=0.21"
 hvf = { path = "../hvf" }
 
 [dev-dependencies]
-vmm-sys-util = "0.12.1"
+vmm-sys-util = ">=0.14"
