@@ -5,6 +5,10 @@
 #![allow(dead_code)]
 #![allow(non_camel_case_types)]
 
+use super::super::descriptor_utils::{Reader, Writer};
+#[cfg(feature = "gpu")]
+use krun_display::DisplayBackendError;
+use rutabaga_gfx::RutabagaError;
 use std::cmp::min;
 use std::convert::From;
 use std::fmt::Display;
@@ -13,13 +17,9 @@ use std::marker::PhantomData;
 use std::mem::{size_of, size_of_val};
 use std::str::from_utf8;
 use std::{fmt, io};
-
-use rutabaga_gfx::RutabagaError;
 use thiserror::Error;
 use vm_memory::ByteValued;
 use zerocopy::{AsBytes, FromBytes};
-
-use super::super::descriptor_utils::{Reader, Writer};
 
 pub const VIRTIO_GPU_UNDEFINED: u32 = 0x0;
 
@@ -271,12 +271,12 @@ pub struct virtio_gpu_display_one {
 unsafe impl ByteValued for virtio_gpu_display_one {}
 
 /* VIRTIO_GPU_RESP_OK_DISPLAY_INFO */
-pub const VIRTIO_GPU_MAX_SCANOUTS: usize = 16;
+pub const VIRTIO_GPU_MAX_SCANOUTS: u32 = 16;
 #[derive(Copy, Clone, Debug, Default, FromBytes, AsBytes)]
 #[repr(C)]
 pub struct virtio_gpu_resp_display_info {
     pub hdr: virtio_gpu_ctrl_hdr,
-    pub pmodes: [virtio_gpu_display_one; VIRTIO_GPU_MAX_SCANOUTS],
+    pub pmodes: [virtio_gpu_display_one; VIRTIO_GPU_MAX_SCANOUTS as usize],
 }
 unsafe impl ByteValued for virtio_gpu_resp_display_info {}
 
@@ -704,6 +704,24 @@ impl From<RutabagaError> for GpuResponse {
         GpuResponse::ErrRutabaga(e)
     }
 }
+impl From<DisplayBackendError> for GpuResponse {
+    fn from(err: DisplayBackendError) -> GpuResponse {
+        match err {
+            DisplayBackendError::InternalError => {
+                error!("Unknown internal error occurred in display implementation");
+                GpuResponse::ErrUnspec
+            }
+            DisplayBackendError::MethodNotSupported => {
+                // This is likely an implementation error in the GPU device - using a display method
+                // that has not been negotiated using the feature flags.
+                error!("Display does not support used method for scanout");
+                GpuResponse::ErrUnspec
+            }
+            DisplayBackendError::InvalidScanoutId => GpuResponse::ErrInvalidScanoutId,
+            DisplayBackendError::InvalidParam => GpuResponse::ErrInvalidParameter,
+        }
+    }
+}
 
 impl Display for GpuResponse {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -758,7 +776,7 @@ impl GpuResponse {
         };
         let len = match *self {
             GpuResponse::OkDisplayInfo(ref info) => {
-                if info.len() > VIRTIO_GPU_MAX_SCANOUTS {
+                if info.len() > VIRTIO_GPU_MAX_SCANOUTS as usize {
                     return Err(GpuResponseEncodeError::TooManyDisplays(info.len()));
                 }
                 let mut disp_info = virtio_gpu_resp_display_info {
