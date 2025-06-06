@@ -1,4 +1,5 @@
 mod device;
+pub mod display;
 mod event_handler;
 mod protocol;
 mod virtio_gpu;

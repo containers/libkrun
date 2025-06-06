@@ -12,9 +12,6 @@ use std::path::PathBuf;
 #[cfg(feature = "tee")]
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "tee")]
-use kbs_types::Tee;
-
 #[cfg(feature = "blk")]
 use crate::vmm_config::block::{BlockBuilder, BlockConfigError, BlockDeviceConfig};
 use crate::vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
@@ -29,6 +26,13 @@ use crate::vmm_config::machine_config::{VmConfig, VmConfigError};
 use crate::vmm_config::net::{NetBuilder, NetworkInterfaceConfig, NetworkInterfaceError};
 use crate::vmm_config::vsock::*;
 use crate::vstate::VcpuConfig;
+
+#[cfg(feature = "gpu")]
+use devices::virtio::display::DisplayInfo;
+#[cfg(feature = "tee")]
+use kbs_types::Tee;
+#[cfg(feature = "gpu")]
+use krun_display::DisplayBackend;
 
 type Result<E> = std::result::Result<(), E>;
 
@@ -111,6 +115,10 @@ pub struct VmResources {
     /// Flags for the virtio-gpu device.
     pub gpu_virgl_flags: Option<u32>,
     pub gpu_shm_size: Option<usize>,
+    #[cfg(feature = "gpu")]
+    pub display_backend: Option<DisplayBackend<'static>>,
+    #[cfg(feature = "gpu")]
+    pub displays: Vec<DisplayInfo>,
     #[cfg(feature = "snd")]
     /// Enable the virtio-snd device.
     pub snd_device: bool,
@@ -314,6 +322,8 @@ impl VmResources {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "gpu")]
+    use crate::resources::DisplayBackendConfig;
     use crate::resources::VmResources;
     use crate::vmm_config::boot_source::BootSourceConfig;
     use crate::vmm_config::machine_config::{CpuFeaturesTemplate, VmConfig, VmConfigError};
@@ -340,6 +350,10 @@ mod tests {
             net_builder: Default::default(),
             gpu_virgl_flags: None,
             gpu_shm_size: None,
+            #[cfg(feature = "gpu")]
+            display_backend: DisplayBackendConfig::Noop,
+            #[cfg(feature = "gpu")]
+            displays: Vec::new(),
             #[cfg(feature = "snd")]
             enable_snd: False,
             console_output: None,

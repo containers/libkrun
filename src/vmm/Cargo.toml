@@ -11,7 +11,7 @@ tdx = [ "blk", "tee", "kbs-types", "serde", "serde_json", "curl", "dep:tdx" ]
 net = []
 blk = []
 efi = [ "blk", "net" ]
-gpu = []
+gpu = ["krun_display"]
 snd = []
 nitro = []
 
@@ -23,12 +23,13 @@ linux-loader = { version = "0.13.0", features = ["bzimage", "elf", "pe"] }
 log = "0.4.0"
 vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
 vmm-sys-util = ">=0.14"
+krun_display = { path = "../krun_display", optional = true, features = ["bindgen_clang_runtime"] }
 
 arch = { path = "../arch" }
 arch_gen = { path = "../arch_gen" }
 devices = { path = "../devices" }
 kernel = { path = "../kernel" }
-utils = { path = "../utils"}
+utils = { path = "../utils" }
 polly = { path = "../polly" }
 
 # Dependencies for amd-sev
