@@ -47,6 +47,11 @@ endif
 ifeq ($(SND),1)
     FEATURE_FLAGS += --features snd
 endif
+ifeq ($(NITRO),1)
+	VARIANT = -nitro
+	FEATURE_FLAGS := --features nitro
+	BUILD_INIT = 0
+endif
 
 ifeq ($(TIMESYNC),1)
     INIT_DEFS += -D__TIMESYNC__
@@ -89,6 +94,9 @@ endif
 $(LIBRARY_RELEASE_$(OS)): $(INIT_BINARY)
 	cargo build --release $(FEATURE_FLAGS)
 ifeq ($(SEV),1)
+	mv target/release/libkrun.so target/release/$(KRUN_BASE_$(OS))
+endif
+ifeq ($(NITRO),1)
 	mv target/release/libkrun.so target/release/$(KRUN_BASE_$(OS))
 endif
 ifeq ($(OS),Darwin)

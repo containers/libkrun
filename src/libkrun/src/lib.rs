@@ -12,6 +12,8 @@ use std::fs::File;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::os::fd::{FromRawFd, RawFd};
+#[cfg(feature = "nitro")]
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -49,6 +51,12 @@ use vmm::vmm_config::machine_config::VmConfig;
 #[cfg(feature = "net")]
 use vmm::vmm_config::net::NetworkInterfaceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
+
+#[cfg(feature = "nitro")]
+use nitro::NitroEnclave;
+
+#[cfg(feature = "nitro")]
+use nitro_enclaves::launch::StartFlags;
 
 // Value returned on success. We use libc's errors otherwise.
 const KRUN_SUCCESS: i32 = 0;
@@ -151,6 +159,10 @@ struct ContextConfig {
     console_output: Option<PathBuf>,
     vmm_uid: Option<libc::uid_t>,
     vmm_gid: Option<libc::gid_t>,
+    #[cfg(feature = "nitro")]
+    nitro_image_path: Option<PathBuf>,
+    #[cfg(feature = "nitro")]
+    nitro_start_flags: StartFlags,
 }
 
 impl ContextConfig {
@@ -294,6 +306,73 @@ impl ContextConfig {
 
     fn set_vmm_gid(&mut self, vmm_gid: libc::gid_t) {
         self.vmm_gid = Some(vmm_gid);
+    }
+
+    #[cfg(feature = "nitro")]
+    fn set_nitro_image(&mut self, image_path: PathBuf) {
+        self.nitro_image_path = Some(image_path);
+    }
+
+    #[cfg(feature = "nitro")]
+    fn set_nitro_start_flags(&mut self, start_flags: StartFlags) {
+        self.nitro_start_flags = start_flags;
+    }
+}
+
+#[cfg(feature = "nitro")]
+impl TryFrom<ContextConfig> for NitroEnclave {
+    type Error = i32;
+
+    fn try_from(ctx: ContextConfig) -> Result<Self, Self::Error> {
+        let vm_config = ctx.vmr.vm_config();
+
+        let Some(mem_size_mib) = vm_config.mem_size_mib else {
+            error!("memory size not configured");
+            return Err(-libc::EINVAL);
+        };
+
+        let Some(vcpus) = vm_config.vcpu_count else {
+            error!("vCPU count not configured");
+            return Err(-libc::EINVAL);
+        };
+
+        let Some(image_path) = ctx.nitro_image_path else {
+            error!("nitro image not configured");
+            return Err(-libc::EINVAL);
+        };
+
+        let Ok(image) = File::open(&image_path) else {
+            error!("unable to open {}", image_path.display());
+            return Err(-libc::EINVAL);
+        };
+
+        let Some(port_map) = ctx.unix_ipc_port_map else {
+            error!("enclave vsock not configured");
+            return Err(-libc::EINVAL);
+        };
+
+        if port_map.len() > 1 {
+            error!("too many nitro vsocks detected (max 1)");
+            return Err(-libc::EINVAL);
+        }
+
+        let ipc_stream = {
+            let mut vec = Vec::from_iter(port_map.values());
+            let Some((path, _)) = vec.pop() else {
+                error!("enclave vsock path not found");
+                return Err(-libc::EINVAL);
+            };
+
+            UnixStream::connect(path).unwrap()
+        };
+
+        Ok(Self {
+            image,
+            mem_size_mib,
+            vcpus,
+            ipc_stream,
+            start_flags: ctx.nitro_start_flags,
+        })
     }
 }
 
@@ -983,6 +1062,11 @@ pub unsafe extern "C" fn krun_add_vsock_port2(
     c_filepath: *const c_char,
     listen: bool,
 ) -> i32 {
+    #[cfg(feature = "nitro")]
+    if listen {
+        return -libc::EINVAL;
+    }
+
     let filepath = match CStr::from_ptr(c_filepath).to_str() {
         Ok(f) => PathBuf::from(f.to_string()),
         Err(_) => return -libc::EINVAL,
@@ -1399,7 +1483,52 @@ pub extern "C" fn krun_setgid(ctx_id: u32, gid: libc::gid_t) -> i32 {
     KRUN_SUCCESS
 }
 
+#[cfg(feature = "nitro")]
+#[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+pub unsafe extern "C" fn krun_nitro_set_image(ctx_id: u32, c_image_filepath: *const c_char) -> i32 {
+    let filepath = match CStr::from_ptr(c_image_filepath).to_str() {
+        Ok(f) => PathBuf::from(f.to_string()),
+        Err(_) => return -libc::EINVAL,
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.set_nitro_image(filepath);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[cfg(feature = "nitro")]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_nitro_set_start_flags(ctx_id: u32, start_flags: u64) -> i32 {
+    let mut flags = StartFlags::empty();
+
+    // Only debug mode is supported at the moment. To avoid doing conversion and
+    // checking if the "start_flags" argument is valid, set the flags to debug mode
+    // if the "start_flags" argument is greater than zero.
+    if start_flags > 0 {
+        flags |= StartFlags::DEBUG;
+    }
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.set_nitro_start_flags(flags);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[no_mangle]
+#[allow(unreachable_code)]
 pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "linux")]
     {
@@ -1409,6 +1538,9 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         };
         unsafe { libc::prctl(libc::PR_SET_NAME, prname.as_ptr()) };
     }
+
+    #[cfg(feature = "nitro")]
+    return krun_start_enter_nitro(ctx_id);
 
     let mut event_manager = match EventManager::new() {
         Ok(em) => em,
@@ -1581,4 +1713,24 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             }
         }
     }
+}
+
+#[cfg(feature = "nitro")]
+#[no_mangle]
+fn krun_start_enter_nitro(ctx_id: u32) -> i32 {
+    let ctx_cfg = match CTX_MAP.lock().unwrap().remove(&ctx_id) {
+        Some(ctx_cfg) => ctx_cfg,
+        None => return -libc::ENOENT,
+    };
+
+    let Ok(mut enclave) = NitroEnclave::try_from(ctx_cfg) else {
+        return -libc::EINVAL;
+    };
+
+    if let Err(e) = enclave.run() {
+        error!("Error running nitro enclave: {e}");
+        return -libc::EINVAL;
+    }
+
+    KRUN_SUCCESS
 }
