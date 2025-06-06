@@ -44,21 +44,11 @@ impl super::Vmm {
             WorkerMessage::GpuRemoveMapping(s, g, l) => self.remove_mapping(s, g, l),
             #[cfg(target_arch = "x86_64")]
             WorkerMessage::GsiRoute(sender, entries) => {
-                let mut irq_routing = utils::sized_vec::vec_with_array_field::<
-                    kvm_bindings::kvm_irq_routing,
-                    kvm_bindings::kvm_irq_routing_entry,
-                >(entries.len());
-                irq_routing[0].nr = entries.len() as u32;
-                irq_routing[0].flags = 0;
-
-                unsafe {
-                    let entries_slice: &mut [kvm_bindings::kvm_irq_routing_entry] =
-                        irq_routing[0].entries.as_mut_slice(entries.len());
-                    entries_slice.copy_from_slice(&entries);
-                }
-
+                let mut routing = kvm_bindings::KvmIrqRouting::new(entries.len()).unwrap();
+                let routing_entries = routing.as_mut_slice();
+                routing_entries.copy_from_slice(&entries);
                 sender
-                    .send(self.vm.fd().set_gsi_routing(&irq_routing[0]).is_ok())
+                    .send(self.vm.fd().set_gsi_routing(&routing).is_ok())
                     .unwrap();
             }
             #[cfg(target_arch = "x86_64")]
