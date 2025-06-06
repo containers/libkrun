@@ -489,6 +489,27 @@ int32_t krun_set_kernel(uint32_t ctx_id,
 int32_t krun_set_env(uint32_t ctx_id, const char *const envp[]);
 
 /**
+ * Sets the kernel boot arguments for the root filesystem.
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "device"      - the device on which the root filesystem should be found. If NULL, it will default
+ *                  to "/dev/vda1".
+ *  "fs_type"     - the type of the filesystem on the "device" device. If NULL, it will default to
+ *                  "virtiofs".
+ *  "mount_flags" - additional mount flags to be used when mounting the root filesystem.
+ *  "read_only"   - when "true", mount the root filesystem read-only, otherwise mount rw.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_rootfs_kernel_args(uint32_t ctx_id, 
+                                    const char *device, 
+                                    const char *fs_type, 
+                                    const char *mount_flags,
+                                    bool read_only);
+
+/**
  * Sets the file path to the TEE configuration file. Only available in libkrun-sev.
  *
  * Arguments:

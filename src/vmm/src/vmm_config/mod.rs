@@ -11,6 +11,9 @@ pub mod boot_source;
 /// Wrapper for configuring an external kernel to be loaded in the microVM.
 pub mod external_kernel;
 
+/// Wrapper for configuring the root filesystem kernel arguments.
+pub mod rootfs;
+
 /// Wrapper for configuring the Fs devices attached to the microVM.
 #[cfg(not(feature = "tee"))]
 pub mod fs;
