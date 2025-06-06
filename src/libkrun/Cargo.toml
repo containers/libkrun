@@ -7,11 +7,11 @@ build = "build.rs"
 
 [features]
 tee = []
-amd-sev = [ "blk", "tee" ]
+amd-sev = ["blk", "tee"]
 net = []
 blk = []
-efi = [ "blk", "net" ]
-gpu = []
+efi = ["blk", "net"]
+gpu = ["krun_display"]
 snd = []
 virgl_resource_map2 = []
 nitro = [ "dep:nitro", "dep:nitro-enclaves" ]
@@ -23,6 +23,7 @@ libc = ">=0.2.39"
 libloading = "0.8"
 log = "0.4.0"
 once_cell = "1.4.1"
+krun_display = { path = "../krun_display", optional = true }
 
 devices = { path = "../devices" }
 polly = { path = "../polly" }
