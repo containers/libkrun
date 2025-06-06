@@ -1,7 +1,7 @@
 use crossbeam_channel::unbounded;
 use kvm_bindings::{
-    kvm_enable_cap, kvm_irq_routing, kvm_irq_routing_entry, kvm_irq_routing_entry__bindgen_ty_1,
-    kvm_irq_routing_msi, KVM_CAP_SPLIT_IRQCHIP, KVM_IRQ_ROUTING_MSI,
+    kvm_enable_cap, kvm_irq_routing_entry, kvm_irq_routing_entry__bindgen_ty_1,
+    kvm_irq_routing_msi, KvmIrqRouting, KVM_CAP_SPLIT_IRQCHIP, KVM_IRQ_ROUTING_MSI,
 };
 use kvm_ioctls::{Error, VmFd};
 
@@ -125,20 +125,10 @@ impl IoApic {
 
         (0..IOAPIC_NUM_PINS).for_each(|i| ioapic.add_msi_route(i));
 
-        let mut irq_routing = utils::sized_vec::vec_with_array_field::<
-            kvm_irq_routing,
-            kvm_irq_routing_entry,
-        >(ioapic.irq_routes.len());
-        irq_routing[0].nr = ioapic.irq_routes.len() as u32;
-        irq_routing[0].flags = 0;
-
-        unsafe {
-            let entries_slice: &mut [kvm_irq_routing_entry] =
-                irq_routing[0].entries.as_mut_slice(ioapic.irq_routes.len());
-            entries_slice.copy_from_slice(ioapic.irq_routes.as_slice());
-        }
-
-        vm.set_gsi_routing(&irq_routing[0])?;
+        let mut routing = KvmIrqRouting::new(ioapic.irq_routes.len()).unwrap();
+        let routing_entires = routing.as_mut_slice();
+        routing_entires.copy_from_slice(ioapic.irq_routes.as_slice());
+        vm.set_gsi_routing(&routing)?;
 
         Ok(ioapic)
     }
