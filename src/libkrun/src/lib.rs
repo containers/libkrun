@@ -130,6 +130,7 @@ struct ContextConfig {
     vmr: VmResources,
     workdir: Option<String>,
     exec_path: Option<String>,
+    rootfs_read_only: bool,
     env: Option<String>,
     args: Option<String>,
     rlimits: Option<String>,
@@ -173,6 +174,17 @@ impl ContextConfig {
         match &self.exec_path {
             Some(exec_path) => format!("KRUN_INIT={exec_path}"),
             None => "".to_string(),
+        }
+    }
+
+    fn set_rootfs_read_only(&mut self, read_only: bool) {
+        self.rootfs_read_only = read_only;
+    }
+
+    fn get_rootfs_read_write(&self) -> String {
+        match &self.rootfs_read_only {
+            true => "ro".to_string(),
+            false => "rw".to_string(),
         }
     }
 
@@ -918,6 +930,21 @@ pub unsafe extern "C" fn krun_set_exec(
 #[allow(clippy::format_collect)]
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+pub unsafe extern "C" fn krun_set_rootfs_read_only(ctx_id: u32, read_only: bool) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.set_rootfs_read_only(read_only);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::format_collect)]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
 pub unsafe extern "C" fn krun_set_env(ctx_id: u32, c_envp: *const *const c_char) -> i32 {
     let env = if !c_envp.is_null() {
         let envp_array: &[*const c_char] = slice::from_raw_parts(c_envp, MAX_ARGS);
@@ -1463,8 +1490,9 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     let boot_source = BootSourceConfig {
         kernel_cmdline_prolog: Some(format!(
-            "{} init={} {} {} {} {}",
+            "{} {} init={} {} {} {} {}",
             DEFAULT_KERNEL_CMDLINE,
+            ctx_cfg.get_rootfs_read_write(),
             INIT_PATH,
             ctx_cfg.get_exec_path(),
             ctx_cfg.get_workdir(),
