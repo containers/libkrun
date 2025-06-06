@@ -19,10 +19,13 @@ use super::protocol::{
     virtio_gpu_ctrl_hdr, virtio_gpu_mem_entry, GpuCommand, GpuResponse, VirtioGpuResult,
 };
 use super::virtio_gpu::VirtioGpu;
+use crate::virtio::display::DisplayInfo;
 use crate::virtio::fs::ExportTable;
 use crate::virtio::gpu::protocol::{VIRTIO_GPU_FLAG_FENCE, VIRTIO_GPU_FLAG_INFO_RING_IDX};
 use crate::virtio::gpu::virtio_gpu::VirtioGpuRing;
 use crate::virtio::{InterruptTransport, VirtioShmRegion};
+use krun_display::DisplayBackend;
+use krun_display::Rect;
 
 pub struct Worker {
     receiver: Receiver<u64>,
@@ -34,6 +37,8 @@ pub struct Worker {
     #[cfg(target_os = "macos")]
     map_sender: Sender<WorkerMessage>,
     export_table: Option<ExportTable>,
+    displays: Box<[DisplayInfo]>,
+    display_backend: DisplayBackend<'static>,
 }
 
 impl Worker {
@@ -47,6 +52,8 @@ impl Worker {
         virgl_flags: u32,
         #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
         export_table: Option<ExportTable>,
+        displays: Box<[DisplayInfo]>,
+        display_backend: DisplayBackend<'static>,
     ) -> Self {
         Self {
             receiver,
@@ -58,6 +65,8 @@ impl Worker {
             #[cfg(target_os = "macos")]
             map_sender,
             export_table,
+            displays,
+            display_backend,
         }
     }
 
@@ -77,6 +86,8 @@ impl Worker {
             #[cfg(target_os = "macos")]
             self.map_sender.clone(),
             self.export_table.take(),
+            self.displays.clone(),
+            self.display_backend,
         );
 
         loop {
@@ -100,9 +111,7 @@ impl Worker {
         virtio_gpu.force_ctx_0();
 
         match cmd {
-            GpuCommand::GetDisplayInfo => {
-                panic!("virtio_gpu: GpuCommand::GetDisplayInfo unimplemented");
-            }
+            GpuCommand::GetDisplayInfo => virtio_gpu.display_info(),
             GpuCommand::ResourceCreate2d(info) => {
                 let resource_id = info.resource_id;
 
@@ -122,10 +131,21 @@ impl Worker {
                 virtio_gpu.resource_create_3d(resource_id, resource_create_3d)
             }
             GpuCommand::ResourceUnref(info) => virtio_gpu.unref_resource(info.resource_id),
-            GpuCommand::SetScanout(_info) => {
-                panic!("virtio_gpu: GpuCommand::SetScanout unimplemented");
+            GpuCommand::SetScanout(info) => virtio_gpu.set_scanout(
+                info.scanout_id,
+                info.resource_id,
+                info.r.width,
+                info.r.height,
+            ),
+            GpuCommand::ResourceFlush(info) => {
+                let rect = Rect {
+                    x: info.r.x,
+                    y: info.r.y,
+                    width: info.r.width,
+                    height: info.r.height,
+                };
+                virtio_gpu.flush_resource(info.resource_id, rect)
             }
-            GpuCommand::ResourceFlush(info) => virtio_gpu.flush_resource(info.resource_id),
             GpuCommand::TransferToHost2d(info) => {
                 let resource_id = info.resource_id;
                 let transfer = Transfer3D::new_2d(info.r.x, info.r.y, info.r.width, info.r.height);

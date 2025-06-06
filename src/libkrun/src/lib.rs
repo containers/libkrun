@@ -5,9 +5,9 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::env;
-use std::ffi::CStr;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
+use std::ffi::{c_void, CStr};
 use std::fs::File;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
@@ -22,11 +22,15 @@ use std::sync::Mutex;
 use crossbeam_channel::unbounded;
 #[cfg(feature = "blk")]
 use devices::virtio::block::ImageType;
+#[cfg(feature = "gpu")]
+use devices::virtio::gpu::display::DisplayInfo;
 #[cfg(feature = "net")]
 use devices::virtio::net::device::VirtioNetBackend;
 #[cfg(feature = "blk")]
 use devices::virtio::CacheType;
 use env_logger::{Env, Target};
+#[cfg(feature = "gpu")]
+use krun_display::DisplayBackend;
 use libc::c_char;
 #[cfg(feature = "net")]
 use libc::c_int;
@@ -55,6 +59,8 @@ use vmm::vmm_config::vsock::VsockDeviceConfig;
 #[cfg(feature = "nitro")]
 use nitro::enclaves::NitroEnclave;
 
+#[cfg(feature = "gpu")]
+use devices::virtio::display::MAX_DISPLAYS;
 #[cfg(feature = "nitro")]
 use nitro_enclaves::launch::StartFlags;
 
@@ -1274,6 +1280,75 @@ pub unsafe extern "C" fn krun_set_gpu_options2(
     }
 
     KRUN_SUCCESS
+}
+
+#[cfg(not(feature = "gpu"))]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub extern "C" fn krun_set_display_backend(
+    _ctx_id: u32,
+    _features: u32,
+    _vtable: *const c_void,
+    _vtable_size: usize,
+) -> i32 {
+    -libc::ENOTSUP
+}
+
+#[cfg(feature = "gpu")]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub extern "C" fn krun_set_display_backend(
+    ctx_id: u32,
+    vtable: *const c_void,
+    vtable_size: usize,
+) -> i32 {
+    if vtable_size < size_of::<DisplayBackend>() {
+        return -libc::EINVAL;
+    }
+
+    // SAFETY: We have checked the vtable size is fine, otherwise we have to trust the user. Just
+    // to be extra careful, this uses read_unaligned, but we could probably get away with ptr::read.
+    let display_backend: DisplayBackend =
+        unsafe { std::ptr::read_unaligned(vtable as *const DisplayBackend) };
+
+    if !display_backend.verify() {
+        return -libc::EINVAL;
+    }
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.display_backend = Some(display_backend);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[cfg(feature = "gpu")]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_display(ctx_id: u32, width: u32, height: u32) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            if cfg.vmr.displays.len() >= MAX_DISPLAYS {
+                return -libc::ENOMEM;
+            }
+
+            cfg.vmr.displays.push(DisplayInfo::new(width, height));
+            (cfg.vmr.displays.len() - 1) as i32
+        }
+        Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
+#[cfg(not(feature = "gpu"))]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_display(_ctx_id: u32, _width: u32, _height: u32) -> i32 {
+    -libc::ENOTSUP
 }
 
 #[allow(clippy::missing_safety_doc)]
