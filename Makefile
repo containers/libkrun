@@ -93,7 +93,7 @@ ifeq ($(SEV),1)
 endif
 ifeq ($(OS),Darwin)
 ifeq ($(EFI),1)
-	install_name_tool -id libkrun-efi.dylib target/release/libkrun.dylib
+	install_name_tool -id $(PREFIX)/$(LIBDIR_$(OS))/$(KRUN_SONAME_$(OS)) target/release/libkrun.dylib
 endif
 	mv target/release/libkrun.dylib target/release/$(KRUN_BASE_$(OS))
 endif
