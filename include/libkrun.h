@@ -527,6 +527,24 @@ int32_t krun_add_vsock_port2(uint32_t ctx_id,
                              uint32_t port,
                              const char *c_filepath,
                              bool listen);
+
+/**
+ * Adds a Unix socket tunnel between host and guest that creates Unix socket tunnels over vsock.
+ *
+ * Arguments:
+ *  "ctx_id"          - the configuration context ID.
+ *  "c_guest_filepath"- a null-terminated string representing the path of the UNIX socket in the guest.
+ *  "c_host_filepath" - a null-terminated string representing the path of the UNIX socket in the host.
+ *  "listen"          - true if guest should listen on the socket, false if guest should connect
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_vsock_unix_tunnel(uint32_t ctx_id,
+                                   const char *c_guest_filepath,
+                                   const char *c_host_filepath,
+                                   bool listen);
+
 /**
  * Returns the eventfd file descriptor to signal the guest to shut down orderly. This must be
  * called before starting the microVM with "krun_start_event". Only available in libkrun-efi.
