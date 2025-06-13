@@ -1,0 +1,8 @@
+{
+    "workload_id": "tdxtest",
+    "cpus": 1,
+    "ram_mib": 2048,
+    "tee": "tdx",
+    "tee_data": "{\"vendor_chain\": \"\", \"attestation_server_pubkey\": \"\"}",    
+    "attestation_url": ""
+}

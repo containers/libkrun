@@ -25,6 +25,9 @@ use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 #[cfg(feature = "amd-sev")]
 use super::tee::amdsnp::{AmdSnp, Error as SnpError};
 
+#[cfg(feature = "tdx")]
+use super::tee::inteltdx::{Error as TdxError, IntelTdx};
+
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
 
@@ -126,6 +129,12 @@ pub enum Error {
     #[cfg(feature = "amd-sev")]
     /// Error attesting the Secure VM (SNP).
     SnpSecVirtAttest(SnpError),
+    #[cfg(feature = "tdx")]
+    /// Error preparing the VM for Trust Domain Extensions (TDX)
+    TdxSecVirtPrepare(TdxError),
+    #[cfg(feature = "tdx")]
+    /// Error initializing vCPU for Trust Domain Extensions (TDX)
+    TdxSecVirtInitVcpu,
     #[cfg(feature = "tee")]
     /// The TEE specified is not supported.
     InvalidTee,
@@ -236,6 +245,10 @@ pub enum Error {
     VmSetIrqChip(kvm_ioctls::Error),
     /// Cannot configure the microvm.
     VmSetup(kvm_ioctls::Error),
+    /// Failed to enable split IRQCHIP in vm
+    VmSplitIrqchip(kvm_ioctls::Error),
+    /// Failed to set vm APIC bus clock rate (in nanoseconds)
+    VmApicBusClockRate(kvm_ioctls::Error),
 }
 
 impl Display for Error {
@@ -262,6 +275,11 @@ impl Display for Error {
             VmFd(e) => write!(f, "Cannot open the VM file descriptor: {e}"),
             VcpuFd(e) => write!(f, "Cannot open the VCPU file descriptor: {e}"),
             VmSetup(e) => write!(f, "Cannot configure the microvm: {e}"),
+            VmSplitIrqchip(e) => write!(f, "Failed to enable split IRQCHIP: {e}"),
+            VmApicBusClockRate(e) => write!(
+                f,
+                "Failed to set vm APIC bus clock rate (in nanoseconds): {e}"
+            ),
             VcpuRun(e) => write!(f, "Cannot run the VCPUs: {e}"),
             NotEnoughMemorySlots => write!(
                 f,
@@ -275,22 +293,32 @@ impl Display for Error {
             SetMemoryAttributes(e) => write!(f, "Cannot set memory region attributes: {e}"),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e}"),
             ShmMmap(e) => write!(f, "Error creating memory map for SHM region: {e}"),
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SnpSecVirtInit(e) => write!(
                 f,
                 "Error initializing the Secure Virtualization Backend (SEV): {e:?}"
             ),
 
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SnpSecVirtPrepare(e) => write!(
                 f,
                 "Error preparing the VM for Secure Virtualization (SNP): {e:?}"
             ),
 
-            #[cfg(feature = "tee")]
+            #[cfg(feature = "amd-sev")]
             SnpSecVirtAttest(e) => write!(f, "Error attesting the Secure VM (SNP): {e:?}"),
 
             SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {e}"),
+            #[cfg(feature = "tdx")]
+            TdxSecVirtPrepare(e) => write!(
+                f,
+                "Error preparing the VM for Trust Domain Extensions (TDX): {e:?}"
+            ),
+            #[cfg(feature = "tdx")]
+            TdxSecVirtInitVcpu => write!(
+                f,
+                "Error initializing vCPU for Trust Domain Extensions (TDX)"
+            ),
             #[cfg(feature = "tee")]
             MissingTeeConfig => write!(f, "Missing TEE configuration"),
             #[cfg(target_arch = "x86_64")]
@@ -453,7 +481,10 @@ pub struct Vm {
     #[cfg(feature = "amd-sev")]
     tee: Option<AmdSnp>,
 
-    #[cfg(feature = "amd-sev")]
+    #[cfg(feature = "tdx")]
+    tdx: Option<IntelTdx>,
+
+    #[cfg(feature = "tee")]
     pub tee_config: Tee,
 
     pub guest_memfds: Vec<(Range<u64>, RawFd)>,
@@ -519,6 +550,51 @@ impl Vm {
             supported_cpuid,
             supported_msrs,
             tee,
+            tee_config: tee_config.tee,
+            guest_memfds: Vec::new(),
+        })
+    }
+
+    #[cfg(feature = "tdx")]
+    pub fn new(
+        kvm: &Kvm,
+        tee_config: &TeeConfig,
+        _sender: crossbeam_channel::Sender<WorkerMessage>,
+    ) -> Result<Self> {
+        // create fd for interacting with kvm-vm specific functions
+        let vm_fd = kvm
+            .create_vm_with_type(tdx::launch::KVM_X86_TDX_VM)
+            .map_err(Error::VmFd)?;
+
+        let supported_cpuid = kvm
+            .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
+            .map_err(Error::VmFd)?;
+
+        let supported_msrs =
+            arch::x86_64::msr::supported_guest_msrs(kvm).map_err(Error::GuestMSRs)?;
+
+        let mut cap = kvm_enable_cap {
+            cap: KVM_CAP_EXIT_HYPERCALL,
+            flags: 0,
+            args: [1 << 12 /* KVM_HC_MAP_GPA_RANGE */, 0, 0, 0],
+            ..Default::default()
+        };
+        vm_fd.enable_cap(&cap).map_err(Error::HypercallExitEnable)?;
+
+        cap.cap = kvm_bindings::KVM_CAP_SPLIT_IRQCHIP;
+        cap.args[0] = 24;
+        vm_fd.enable_cap(&cap).map_err(Error::VmSplitIrqchip)?;
+
+        cap.cap = 237; // KVM_CAP_X86_APIC_BUS_CYCLES_NS
+        cap.args[0] = 40;
+        vm_fd.enable_cap(&cap).map_err(Error::VmApicBusClockRate)?;
+
+        Ok(Vm {
+            fd: vm_fd,
+            next_mem_slot: 0,
+            supported_cpuid,
+            supported_msrs,
+            tdx: Some(IntelTdx::new()),
             tee_config: tee_config.tee,
             guest_memfds: Vec::new(),
         })
@@ -641,6 +717,49 @@ impl Vm {
         self.next_mem_slot += 1;
 
         Ok(())
+    }
+
+    #[cfg(feature = "tdx")]
+    pub fn tdx_secure_virt_prepare(&self) -> Result<tdx::launch::Launcher> {
+        match &self.tdx {
+            Some(t) => t
+                .vm_prepare(&self.fd, self.supported_cpuid.clone())
+                .map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
+    }
+
+    #[cfg(feature = "tdx")]
+    pub fn tdx_secure_virt_init_vcpus(&self, launcher: &mut tdx::launch::Launcher) -> Result<()> {
+        match &self.tdx {
+            Some(_) => {
+                launcher.init_vcpus(0).unwrap();
+                Ok(())
+            }
+            None => Err(Error::InvalidTee),
+        }
+    }
+
+    #[cfg(feature = "tdx")]
+    pub fn tdx_secure_virt_prepare_memory(
+        &self,
+        launcher: &mut tdx::launch::Launcher,
+        regions: &Vec<crate::vstate::MeasuredRegion>,
+    ) -> Result<()> {
+        match &self.tdx {
+            Some(t) => t
+                .configure_td_memory(launcher, regions)
+                .map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
+    }
+
+    #[cfg(feature = "tdx")]
+    pub fn tdx_secure_virt_finalize_vm(&self, launcher: tdx::launch::Launcher) -> Result<()> {
+        match &self.tdx {
+            Some(t) => t.finalize_vm(launcher).map_err(Error::TdxSecVirtPrepare),
+            None => Err(Error::InvalidTee),
+        }
     }
 
     #[cfg(feature = "amd-sev")]
@@ -1004,13 +1123,16 @@ impl Vcpu {
             .set_cpuid2(&self.cpuid)
             .map_err(Error::VcpuSetCpuid)?;
 
-        arch::x86_64::msr::setup_msrs(&self.fd).map_err(Error::MSRSConfiguration)?;
-        arch::x86_64::regs::setup_regs(&self.fd, kernel_start_addr.raw_value(), self.id)
-            .map_err(Error::REGSConfiguration)?;
-        arch::x86_64::regs::setup_fpu(&self.fd).map_err(Error::FPUConfiguration)?;
-        arch::x86_64::regs::setup_sregs(guest_mem, &self.fd, self.id)
-            .map_err(Error::SREGSConfiguration)?;
-        arch::x86_64::interrupts::set_lint(&self.fd).map_err(Error::LocalIntConfiguration)?;
+        #[cfg(not(feature = "tdx"))]
+        {
+            arch::x86_64::msr::setup_msrs(&self.fd).map_err(Error::MSRSConfiguration)?;
+            arch::x86_64::regs::setup_regs(&self.fd, kernel_start_addr.raw_value(), self.id)
+                .map_err(Error::REGSConfiguration)?;
+            arch::x86_64::regs::setup_fpu(&self.fd).map_err(Error::FPUConfiguration)?;
+            arch::x86_64::regs::setup_sregs(guest_mem, &self.fd, self.id)
+                .map_err(Error::SREGSConfiguration)?;
+            arch::x86_64::interrupts::set_lint(&self.fd).map_err(Error::LocalIntConfiguration)?;
+        }
         Ok(())
     }
 
@@ -1246,23 +1368,25 @@ impl Vcpu {
                 }
                 #[cfg(feature = "tee")]
                 VcpuExit::MemoryFault { gpa, size, flags } => {
-                    let private = (flags & (KVM_MEMORY_EXIT_FLAG_PRIVATE as u64)) != 0;
-
-                    let mem_properties = MemoryProperties { gpa, size, private };
-
-                    let (response_sender, response_receiver) = unbounded();
-                    self.pm_sender
-                        .send(WorkerMessage::ConvertMemory(
-                            response_sender.clone(),
-                            mem_properties,
-                        ))
-                        .unwrap();
-                    if !response_receiver.recv().unwrap() {
-                        error!("Unable to convert memory with properties: gpa: 0x{:x} size: 0x{:x} to_private: {}", gpa, size, private);
-                        return Err(Error::VcpuUnhandledKvmExit);
+                    if flags & !kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64 != 0 {
+                        println!("KVM_EXIT_MEMORY_FAULT: Unknown flag {}", flags);
+                        Err(Error::VcpuUnhandledKvmExit)
+                    } else {
+                        let private = (flags & (KVM_MEMORY_EXIT_FLAG_PRIVATE as u64)) != 0;
+                        let mem_properties = MemoryProperties { gpa, size, private };
+                        let (response_sender, response_receiver) = unbounded();
+                        self.pm_sender
+                            .send(WorkerMessage::ConvertMemory(
+                                response_sender.clone(),
+                                mem_properties,
+                            ))
+                            .unwrap();
+                        if !response_receiver.recv().unwrap() {
+                            error!("Unable to convert memory with properties: gpa: 0x{:x} size: 0x{:x} to_private: {}", gpa, size, private);
+                            return Err(Error::VcpuUnhandledKvmExit);
+                        }
+                        Ok(VcpuEmulation::Handled)
                     }
-
-                    Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::MmioRead(addr, data) => {
                     if let Some(ref mmio_bus) = self.mmio_bus {
@@ -1442,6 +1566,12 @@ impl Vcpu {
         barrier.wait();
 
         StateMachine::finish()
+    }
+
+    #[cfg(feature = "tdx")]
+    pub fn tdx_secure_virt_prepare(&self, launcher: &mut tdx::launch::Launcher) {
+        use std::os::fd::AsRawFd;
+        launcher.add_vcpu_fd(self.fd.as_raw_fd());
     }
 
     #[cfg(test)]
