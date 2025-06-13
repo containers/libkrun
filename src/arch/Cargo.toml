@@ -12,6 +12,7 @@ efi = []
 [dependencies]
 libc = ">=0.2.39"
 vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
+vmm-sys-util = ">= 0.14"
 
 arch_gen = { path = "../arch_gen" }
 smbios = { path = "../smbios" }

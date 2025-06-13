@@ -14,6 +14,7 @@ use nix::sys::memfd::MemFdCreateFlag;
 use nix::unistd::ftruncate;
 use nix::unistd::sysconf;
 use nix::unistd::SysconfVar;
+use vmm_sys_util::align_upwards;
 
 use crate::rutabaga_os::descriptor::AsRawDescriptor;
 use crate::rutabaga_os::descriptor::IntoRawDescriptor;
@@ -72,8 +73,7 @@ impl IntoRawDescriptor for SharedMemory {
 pub fn round_up_to_page_size(v: u64) -> RutabagaResult<u64> {
     let page_size_opt = sysconf(SysconfVar::PAGE_SIZE)?;
     if let Some(page_size) = page_size_opt {
-        let page_mask = (page_size - 1) as u64;
-        let aligned_size = (v + page_mask) & !page_mask;
+        let aligned_size = align_upwards!(v, page_size as u64);
         Ok(aligned_size)
     } else {
         Err(RutabagaError::SpecViolation("no page size"))

@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
-use arch::{round_up, ArchMemoryInfo};
+use arch::ArchMemoryInfo;
 use vm_memory::GuestAddress;
+use vmm_sys_util::align_upwards;
 
 #[derive(Debug)]
 pub enum Error {
@@ -57,7 +58,7 @@ impl ShmManager {
     }
 
     fn create_region(&mut self, size: usize) -> Result<ShmRegion, Error> {
-        let size = round_up(size, self.page_size);
+        let size = align_upwards!(size, self.page_size);
 
         let region = ShmRegion {
             guest_addr: GuestAddress(self.next_guest_addr),

@@ -17,8 +17,9 @@ pub use self::macos::*;
 
 use std::fmt::Debug;
 
-use crate::{round_up, ArchMemoryInfo};
+use crate::ArchMemoryInfo;
 use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMmap};
+use vmm_sys_util::align_upwards;
 
 #[cfg(feature = "efi")]
 use smbios;
@@ -44,7 +45,7 @@ pub fn arch_memory_regions(
     initrd_size: u64,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
-    let dram_size = round_up(size, page_size);
+    let dram_size = align_upwards!(size, page_size);
     let ram_last_addr = layout::DRAM_MEM_START + (dram_size as u64);
     let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
 
@@ -97,8 +98,9 @@ pub fn get_kernel_start() -> u64 {
 
 /// Returns the memory address where the initrd could be loaded.
 pub fn initrd_load_addr(guest_mem: &GuestMemoryMmap, initrd_size: usize) -> super::Result<u64> {
-    let round_to_pagesize = |size| (size + (super::PAGE_SIZE - 1)) & !(super::PAGE_SIZE - 1);
-    match GuestAddress(get_fdt_addr(guest_mem)).checked_sub(round_to_pagesize(initrd_size) as u64) {
+    match GuestAddress(get_fdt_addr(guest_mem))
+        .checked_sub(align_upwards!(initrd_size, super::PAGE_SIZE) as u64)
+    {
         Some(offset) => {
             if guest_mem.address_in_range(offset) {
                 Ok(offset.raw_value())

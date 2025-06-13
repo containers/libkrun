@@ -48,12 +48,3 @@ pub struct InitrdConfig {
 
 /// Default (smallest) memory page size for the supported architectures.
 pub const PAGE_SIZE: usize = 4096;
-
-pub fn round_up(size: usize, align: usize) -> usize {
-    let page_mask = align - 1;
-    (size + page_mask) & !page_mask
-}
-pub fn round_down(size: usize, align: usize) -> usize {
-    let page_mask = !(align - 1);
-    size & page_mask
-}
