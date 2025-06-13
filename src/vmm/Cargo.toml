@@ -21,6 +21,7 @@ libc = ">=0.2.39"
 linux-loader = { version = "0.13.0", features = ["bzimage", "elf", "pe"] }
 log = "0.4.0"
 vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
+vmm-sys-util = ">=0.14"
 
 arch = { path = "../arch" }
 devices = { path = "../devices" }
@@ -50,6 +51,3 @@ kvm-ioctls = ">=0.21"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 hvf = { path = "../hvf" }
-
-[dev-dependencies]
-vmm-sys-util = ">=0.14"
