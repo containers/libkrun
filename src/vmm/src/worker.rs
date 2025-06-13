@@ -15,7 +15,9 @@ use libc::{fallocate, madvise, FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, MADV_D
 #[cfg(feature = "tee")]
 use std::ffi::c_void;
 #[cfg(feature = "tee")]
-use vm_memory::{guest_memory::GuestMemory, GuestAddress, GuestMemoryRegion, MemoryRegionAddress};
+use vm_memory::{
+    guest_memory::GuestMemory, Address, GuestAddress, GuestMemoryRegion, MemoryRegionAddress,
+};
 
 pub fn start_worker_thread(
     vmm: Arc<Mutex<super::Vmm>>,
@@ -67,15 +69,15 @@ impl super::Vmm {
 
     #[cfg(feature = "tee")]
     fn convert_memory(&self, sender: Sender<bool>, properties: MemoryProperties) {
-        let (guest_memfd, region_start) = self
-            .kvm_vm()
-            .guest_memfd_get(properties.gpa)
-            .unwrap_or_else(|| {
-                panic!(
-                    "unable to find KVM guest_memfd for memory region corresponding to GPA 0x{:x}",
-                    properties.gpa
-                )
-            });
+        let Some((guest_memfd, region_start)) = self.kvm_vm().guest_memfd_get(properties.gpa)
+        else {
+            error!(
+                "unable to find KVM guest_memfd for memory region corresponding to GPA 0x{:x}",
+                properties.gpa
+            );
+            sender.send(false).unwrap();
+            return;
+        };
 
         let attributes: u64 = if properties.private {
             KVM_MEMORY_ATTRIBUTE_PRIVATE as u64
@@ -90,10 +92,11 @@ impl super::Vmm {
             flags: 0,
         };
 
-        self.kvm_vm()
-            .fd()
-            .set_memory_attributes(attr)
-            .unwrap_or_else(|_| panic!("unable to set memory attributes for memory region corresponding to guest address 0x{:x}", properties.gpa));
+        if self.kvm_vm().fd().set_memory_attributes(attr).is_err() {
+            error!("unable to set memory attributes for memory region corresponding to guest address 0x{:x}", properties.gpa);
+            sender.send(false).unwrap();
+            return;
+        }
 
         let region = self
             .guest_memory()
@@ -112,10 +115,14 @@ impl super::Vmm {
         if properties.private {
             let region_addr = MemoryRegionAddress(offset);
 
-            let host_startaddr = region
-                .unwrap()
-                .get_host_address(region_addr)
-                .expect("host address corresponding to memory region address 0x{:x} not found");
+            let Ok(host_startaddr) = region.unwrap().get_host_address(region_addr) else {
+                error!(
+                    "host address corresponding to memory region address 0x{:x} not found",
+                    region_addr.raw_value()
+                );
+                sender.send(false).unwrap();
+                return;
+            };
 
             let ret = unsafe {
                 madvise(
