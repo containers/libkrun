@@ -17,12 +17,13 @@ pub mod msr;
 /// Logic for configuring x86_64 registers.
 pub mod regs;
 
-use crate::{round_up, ArchMemoryInfo, InitrdConfig};
+use crate::{ArchMemoryInfo, InitrdConfig};
 use arch_gen::x86::bootparam::{boot_params, E820_RAM};
 use vm_memory::Bytes;
 use vm_memory::{
     Address, ByteValued, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion,
 };
+use vmm_sys_util::align_upwards;
 
 // This is a workaround to the Rust enforcement specifying that any implementation of a foreign
 // trait (in this case `ByteValued`) where:
@@ -73,7 +74,7 @@ pub fn arch_memory_regions(
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
 
-    let size = round_up(size, page_size);
+    let size = align_upwards!(size, page_size);
 
     // It's safe to cast MMIO_MEM_START to usize because it fits in a u32 variable
     // (It points to an address in the 32 bit space).
@@ -155,7 +156,7 @@ pub fn arch_memory_regions(
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
 
-    let size = round_up(size, page_size);
+    let size = align_upwards!(size, page_size);
     if let Some(kernel_load_addr) = kernel_load_addr {
         if size < (kernel_load_addr + kernel_size as u64) as usize {
             panic!("Kernel doesn't fit in RAM");
