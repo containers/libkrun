@@ -1554,6 +1554,7 @@ dependencies = [
  "pkg-config",
  "remain",
  "thiserror 1.0.69",
+ "vmm-sys-util",
  "winapi",
  "zerocopy 0.6.6",
 ]
