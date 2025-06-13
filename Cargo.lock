@@ -124,6 +124,7 @@ dependencies = [
  "smbios",
  "utils",
  "vm-memory",
+ "vmm-sys-util",
 ]
 
 [[package]]
