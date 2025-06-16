@@ -3,6 +3,9 @@ name = "nitro"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+nitro = []
+
 [dependencies]
 libc = "0.2.171"
 nix = { version = "0.26.0", features = ["ioctl", "poll"] }

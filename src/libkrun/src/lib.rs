@@ -53,7 +53,7 @@ use vmm::vmm_config::net::NetworkInterfaceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
 #[cfg(feature = "nitro")]
-use nitro::NitroEnclave;
+use nitro::enclaves::NitroEnclave;
 
 #[cfg(feature = "nitro")]
 use nitro_enclaves::launch::StartFlags;
