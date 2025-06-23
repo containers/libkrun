@@ -1,7 +1,7 @@
 LIBRARY_HEADER = include/libkrun.h
 
 ABI_VERSION=1
-FULL_VERSION=1.13.0
+FULL_VERSION=1.14.0
 
 INIT_SRC = init/init.c
 KBS_INIT_SRC =	init/tee/kbs/kbs.h		\
