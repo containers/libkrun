@@ -12,4 +12,4 @@ vmm-sys-util = ">= 0.14"
 crossbeam-channel = ">=0.5.15"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-kvm-bindings = { version = ">=0.10", features = ["fam-wrappers"] }
+kvm-bindings = { version = ">=0.11", features = ["fam-wrappers"] }
