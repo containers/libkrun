@@ -337,6 +337,12 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
+    if (err = krun_set_serial_console(ctx_id, false, false)) {
+        errno = -err;
+        perror("Error setting serial console properties");
+        return -1;
+    }
+
     // Start and enter the microVM. Unless there is some error while creating the microVM
     // this function never returns.
     if (err = krun_start_enter(ctx_id)) {

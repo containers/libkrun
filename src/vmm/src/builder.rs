@@ -613,15 +613,16 @@ pub fn build_microvm(
         ]
     };
 
-    // On x86_64 always create a serial device,
-    // while on aarch64 only create it if 'console=' is specified in the boot args.
-    let serial_device = if cfg!(feature = "efi") {
+    let (serial_enabled, has_debug_output) = vm_resources.serial_console_enabled;
+    let serial_device = if serial_enabled || cfg!(feature = "efi") {
         Some(setup_serial_device(
             event_manager,
             None,
-            None,
-            // Uncomment this to get EFI output when debugging EDK2.
-            //Some(Box::new(io::stdout())),
+            if has_debug_output {
+                Some(Box::new(io::stdout()))
+            } else {
+                None
+            },
         )?)
     } else {
         None
