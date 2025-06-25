@@ -122,6 +122,8 @@ pub struct VmResources {
     pub nested_enabled: bool,
     /// Whether to enable split irqchip
     pub split_irqchip: bool,
+    /// Whether to enable the serial console and to enable debug output
+    pub serial_console_enabled: (bool, bool),
 }
 
 impl VmResources {
@@ -347,6 +349,7 @@ mod tests {
             smbios_oem_strings: None,
             nested_enabled: false,
             split_irqchip: false,
+            serial_console_enabled: (false, false),
         }
     }
 
