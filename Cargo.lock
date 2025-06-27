@@ -468,6 +468,7 @@ dependencies = [
  "crossbeam-channel",
  "hvf",
  "imago",
+ "krun_display",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
@@ -889,6 +890,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "krun_display"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.9.1",
+ "log",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "kvm-bindings"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -935,6 +945,7 @@ dependencies = [
  "devices",
  "env_logger",
  "hvf",
+ "krun_display",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
@@ -1954,6 +1965,7 @@ dependencies = [
  "hvf",
  "kbs-types",
  "kernel",
+ "krun_display",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
