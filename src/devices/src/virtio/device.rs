@@ -5,9 +5,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
-use std::sync::{atomic::AtomicUsize, Arc};
-
-use super::{ActivateResult, Queue};
+use super::{ActivateResult, InterruptTransport, Queue};
 use crate::virtio::AsAny;
 use utils::eventfd::EventFd;
 use vm_memory::GuestMemoryMmap;
@@ -16,7 +14,24 @@ use vm_memory::GuestMemoryMmap;
 /// and memory attached to it.
 pub enum DeviceState {
     Inactive,
-    Activated(GuestMemoryMmap),
+    Activated(GuestMemoryMmap, InterruptTransport),
+}
+
+impl DeviceState {
+    pub fn signal_used_queue(&self) {
+        match self {
+            Self::Inactive => {
+                warn!("DeviceState::signal_used_queue() called, but device is not activated")
+            }
+            Self::Activated(_, ref interrupt) => interrupt.signal_used_queue(),
+        }
+    }
+}
+
+impl DeviceState {
+    pub fn is_activated(&self) -> bool {
+        matches!(self, DeviceState::Activated(..))
+    }
 }
 
 #[derive(Clone)]
@@ -30,7 +45,7 @@ pub struct VirtioShmRegion {
 ///
 /// The lifecycle of a virtio device is to be moved to a virtio transport, which will then query the
 /// device. The virtio devices needs to create queues, events and event fds for interrupts and expose
-/// them to the transport via get_queues/get_queue_events/get_interrupt/get_interrupt_status fns.
+/// them to the transport via get_queues/get_queue_events
 pub trait VirtioDevice: AsAny + Send {
     /// Get the available features offered by device.
     fn avail_features(&self) -> u64;
@@ -46,6 +61,9 @@ pub trait VirtioDevice: AsAny + Send {
     /// The virtio device type.
     fn device_type(&self) -> u32;
 
+    /// Device name used for logging information about the device at the transport layer
+    fn device_name(&self) -> &str;
+
     /// Returns the device queues.
     fn queues(&self) -> &[Queue];
 
@@ -54,15 +72,6 @@ pub trait VirtioDevice: AsAny + Send {
 
     /// Returns the device queues event fds.
     fn queue_events(&self) -> &[EventFd];
-
-    /// Returns the device interrupt eventfd.
-    fn interrupt_evt(&self) -> &EventFd;
-
-    /// Returns the current device interrupt status.
-    fn interrupt_status(&self) -> Arc<AtomicUsize>;
-
-    /// Sets the irq line assigned to this device
-    fn set_irq_line(&mut self, irq: u32);
 
     /// The set of feature bits shifted by `page * 32`.
     fn avail_features_by_page(&self, page: u32) -> u32 {
@@ -108,7 +117,7 @@ pub trait VirtioDevice: AsAny + Send {
     fn write_config(&mut self, offset: u64, data: &[u8]);
 
     /// Performs the formal activation for a device, which can be verified also with `is_activated`.
-    fn activate(&mut self, mem: GuestMemoryMmap) -> ActivateResult;
+    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult;
 
     /// Checks if the resources of this device are activated.
     fn is_activated(&self) -> bool;

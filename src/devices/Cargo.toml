@@ -14,6 +14,7 @@ gpu = ["rutabaga_gfx", "thiserror", "zerocopy", "zerocopy-derive"]
 snd = ["pw", "thiserror"]
 virgl_resource_map2 = []
 nitro = []
+test_utils = []
 
 [dependencies]
 bitflags = "1.2.0"
