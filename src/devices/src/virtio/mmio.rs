@@ -6,6 +6,8 @@
 // found in the THIRD-PARTY file.
 
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
+use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -24,6 +26,21 @@ const MMIO_MAGIC_VALUE: u32 = 0x7472_6976;
 
 //current version specified by the mmio standard (legacy devices used 1 here)
 const MMIO_VERSION: u32 = 2;
+
+#[derive(Debug)]
+pub enum CreateMmioTransportError {
+    CreateInterruptEventFd(io::Error),
+}
+
+impl Display for CreateMmioTransportError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            CreateMmioTransportError::CreateInterruptEventFd(err) => {
+                write!(f, "failed to create interrupt eventfd: {err}")
+            }
+        }
+    }
+}
 
 /// Implements the
 /// [MMIO](http://docs.oasis-open.org/virtio/virtio/v1.0/cs04/virtio-v1.0-cs04.html#x1-1090002)
@@ -66,14 +83,14 @@ struct InterruptTransportInner {
 pub struct InterruptTransport(Arc<InterruptTransportInner>);
 
 impl InterruptTransport {
-    pub fn new(intc: IrqChip, log_target: String) -> Self {
-        Self(Arc::new(InterruptTransportInner {
+    pub fn new(intc: IrqChip, log_target: String) -> Result<Self, CreateMmioTransportError> {
+        Ok(Self(Arc::new(InterruptTransportInner {
             log_target,
             status: AtomicUsize::new(0),
-            event: EventFd::new(0).unwrap(), // TODO propage the error
+            event: EventFd::new(0).map_err(CreateMmioTransportError::CreateInterruptEventFd)?,
             intc,
             irq_line: None,
-        }))
+        })))
     }
 
     pub fn status(&self) -> &AtomicUsize {
@@ -142,7 +159,7 @@ impl MmioTransport {
         mem: GuestMemoryMmap,
         intc: IrqChip,
         device: Arc<Mutex<dyn VirtioDevice>>,
-    ) -> MmioTransport {
+    ) -> Result<MmioTransport, CreateMmioTransportError> {
         let debug_log_target = format!(
             "{}[{}]",
             module_path!(),
@@ -154,8 +171,8 @@ impl MmioTransport {
                 .device_name()
         );
 
-        MmioTransport {
-            interrupt: InterruptTransport::new(intc, debug_log_target),
+        Ok(MmioTransport {
+            interrupt: InterruptTransport::new(intc, debug_log_target)?,
             device,
             features_select: 0,
             acked_features_select: 0,
@@ -165,7 +182,7 @@ impl MmioTransport {
             mem,
             queue_evts: HashMap::new(),
             shm_region_select: 0,
-        }
+        })
     }
 
     /// Set the irq line for the device.
@@ -559,7 +576,8 @@ pub(crate) mod tests {
     fn test_new() {
         let m = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x1000)]).unwrap();
         let dummy = DummyDevice::new();
-        let mut d = MmioTransport::new(m, DummyIrqChip::new().into(), Arc::new(Mutex::new(dummy)));
+        let mut d =
+            MmioTransport::new(m, DummyIrqChip::new().into(), Arc::new(Mutex::new(dummy))).unwrap();
 
         // We just make sure here that the implementation of a mmio device behaves as we expect,
         // given a known virtio device implementation (the dummy device).
@@ -588,7 +606,8 @@ pub(crate) mod tests {
             m,
             DummyIrqChip::new().into(),
             Arc::new(Mutex::new(DummyDevice::new())),
-        );
+        )
+        .unwrap();
 
         let mut buf = vec![0xff, 0, 0xfe, 0];
         let buf_copy = buf.to_vec();
@@ -667,7 +686,7 @@ pub(crate) mod tests {
     fn test_bus_device_write() {
         let m = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x1000)]).unwrap();
         let dummy_dev = Arc::new(Mutex::new(DummyDevice::new()));
-        let mut d = MmioTransport::new(m, DummyIrqChip::new().into(), dummy_dev.clone());
+        let mut d = MmioTransport::new(m, DummyIrqChip::new().into(), dummy_dev.clone()).unwrap();
         let mut buf = vec![0; 5];
         write_le_u32(&mut buf[..4], 1);
 
@@ -828,7 +847,8 @@ pub(crate) mod tests {
             m,
             DummyIrqChip::new().into(),
             Arc::new(Mutex::new(DummyDevice::new())),
-        );
+        )
+        .unwrap();
 
         assert!(!d.locked_device().is_activated());
         assert_eq!(d.device_status, device_status::INIT);
@@ -940,7 +960,8 @@ pub(crate) mod tests {
             m,
             DummyIrqChip::new().into(),
             Arc::new(Mutex::new(DummyDevice::new())),
-        );
+        )
+        .unwrap();
         let mut buf = [0; 4];
 
         assert!(!d.locked_device().is_activated());
