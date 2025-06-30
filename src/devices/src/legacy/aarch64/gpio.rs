@@ -102,7 +102,7 @@ impl Gpio {
     }
 
     pub fn set_irq_line(&mut self, irq: u32) {
-        debug!("SET_IRQ_LINE (GPIO)={}", irq);
+        debug!("SET_IRQ_LINE (GPIO)={irq}");
         self.irq_line = Some(irq);
     }
 
@@ -223,7 +223,7 @@ impl BusDevice for Gpio {
         if data.len() <= 4 {
             let value = read_le_u32(data);
             if let Err(e) = self.handle_write(offset, value) {
-                warn!("Failed to write to GPIO PL061 device: {}", e);
+                warn!("Failed to write to GPIO PL061 device: {e}");
             }
         } else {
             warn!(
@@ -245,7 +245,7 @@ impl Subscriber for Gpio {
                 // Send a key press event.
                 self.trigger_restart_key(true);
             }
-            _ => warn!("Unexpected gpio event received: {:?}", source),
+            _ => warn!("Unexpected gpio event received: {source:?}"),
         }
     }
 

@@ -147,7 +147,7 @@ impl Balloon {
 
             have_used = true;
             if let Err(e) = self.queues[FRQ_INDEX].add_used(mem, index, 0) {
-                error!("failed to add used elements to the queue: {:?}", e);
+                error!("failed to add used elements to the queue: {e:?}");
             }
         }
 
@@ -193,7 +193,7 @@ impl VirtioDevice for Balloon {
     }
 
     fn set_irq_line(&mut self, irq: u32) {
-        debug!("SET_IRQ_LINE (BALLOON)={}", irq);
+        debug!("SET_IRQ_LINE (BALLOON)={irq}");
         self.irq_line = Some(irq);
     }
 

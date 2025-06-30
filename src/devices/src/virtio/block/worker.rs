@@ -129,16 +129,14 @@ impl BlockWorker {
                             }
                             _ => {
                                 log::warn!(
-                                    "Received unknown event: {:?} from fd: {:?}",
-                                    event_set,
-                                    source
+                                    "Received unknown event: {event_set:?} from fd: {source:?}"
                                 );
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    debug!("failed to consume muxer epoll event: {}", e);
+                    debug!("failed to consume muxer epoll event: {e}");
                 }
             }
         }
@@ -146,7 +144,7 @@ impl BlockWorker {
 
     fn process_queue_event(&mut self) {
         if let Err(e) = self.queue_evt.read() {
-            error!("Failed to get queue event: {:?}", e);
+            error!("Failed to get queue event: {e:?}");
         } else {
             self.process_virtio_queues();
         }
@@ -171,21 +169,21 @@ impl BlockWorker {
             let mut reader = match Reader::new(mem, head.clone()) {
                 Ok(r) => r,
                 Err(e) => {
-                    error!("invalid descriptor chain: {:?}", e);
+                    error!("invalid descriptor chain: {e:?}");
                     continue;
                 }
             };
             let mut writer = match Writer::new(mem, head.clone()) {
                 Ok(r) => r,
                 Err(e) => {
-                    error!("invalid descriptor chain: {:?}", e);
+                    error!("invalid descriptor chain: {e:?}");
                     continue;
                 }
             };
             let request_header: RequestHeader = match reader.read_obj() {
                 Ok(h) => h,
                 Err(e) => {
-                    error!("invalid request header: {:?}", e);
+                    error!("invalid request header: {e:?}");
                     continue;
                 }
             };
@@ -194,22 +192,22 @@ impl BlockWorker {
                 match self.process_request(request_header, &mut reader, &mut writer) {
                     Ok(l) => (VIRTIO_BLK_S_OK.try_into().unwrap(), l),
                     Err(e) => {
-                        error!("error processing request: {:?}", e);
+                        error!("error processing request: {e:?}");
                         (VIRTIO_BLK_S_IOERR.try_into().unwrap(), 0)
                     }
                 };
 
             if let Err(e) = writer.write_obj(status) {
-                error!("Failed to write virtio block status: {:?}", e)
+                error!("Failed to write virtio block status: {e:?}")
             }
 
             if let Err(e) = self.queue.add_used(mem, head.index, len as u32) {
-                error!("failed to add used elements to the queue: {:?}", e);
+                error!("failed to add used elements to the queue: {e:?}");
             }
 
             if self.queue.needs_notification(mem).unwrap() {
                 if let Err(e) = self.signal_used_queue() {
-                    error!("error signalling queue: {:?}", e);
+                    error!("error signalling queue: {e:?}");
                 }
             }
         }

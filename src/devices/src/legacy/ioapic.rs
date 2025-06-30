@@ -329,7 +329,7 @@ impl IrqChipT for IoApic {
     ) -> Result<(), DeviceError> {
         if let Some(interrupt_evt) = interrupt_evt {
             if let Err(e) = interrupt_evt.write(1) {
-                error!("Failed to signal used queue: {:?}", e);
+                error!("Failed to signal used queue: {e:?}");
                 return Err(DeviceError::FailedSignalingUsedQueue(e));
             }
         } else {
@@ -369,7 +369,7 @@ impl BusDevice for IoApic {
                     }
                     _ => {
                         let index = (self.ioregsel as u64 - IOAPIC_REG_REDTBL_BASE) >> 1;
-                        debug!("ioapic: read: ioredtbl register {}", index);
+                        debug!("ioapic: read: ioredtbl register {index}");
                         let mut val = 0u32;
 
                         // we can only read from this register in 32-bit chunks.
@@ -430,9 +430,9 @@ impl BusDevice for IoApic {
                         }
 
                         let index = (self.ioregsel as u64 - IOAPIC_REG_REDTBL_BASE) >> 1;
-                        debug!("ioapic: write: ioredtbl register {}", index);
+                        debug!("ioapic: write: ioredtbl register {index}");
                         if index >= IOAPIC_NUM_PINS as u64 {
-                            warn!("ioapic: write: virq out of pin range {}", index);
+                            warn!("ioapic: write: virq out of pin range {index}");
                             return;
                         }
 

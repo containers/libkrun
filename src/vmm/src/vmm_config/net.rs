@@ -30,7 +30,7 @@ impl fmt::Display for NetworkInterfaceError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::NetworkInterfaceError::*;
         match *self {
-            CreateNetworkDevice(ref e) => write!(f, "Could not create Network Device: {:?}", e),
+            CreateNetworkDevice(ref e) => write!(f, "Could not create Network Device: {e:?}"),
             DeviceIdNotFound => write!(f, "Invalid interface ID - not found."),
         }
     }

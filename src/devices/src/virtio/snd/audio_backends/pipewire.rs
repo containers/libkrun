@@ -150,7 +150,7 @@ impl AudioBackend for PwBackend {
     }
 
     fn read(&self, stream_id: u32) -> Result<()> {
-        log::trace!("PipewireBackend read stream_id {}", stream_id);
+        log::trace!("PipewireBackend read stream_id {stream_id}");
         if !matches!(
             self.stream_params.read().unwrap()[stream_id as usize].state,
             PCMState::Start | PCMState::Prepare
@@ -168,7 +168,7 @@ impl AudioBackend for PwBackend {
         let mut stream_params = stream_clone.write().unwrap();
         if let Some(st) = stream_params.get_mut(stream_id as usize) {
             if let Err(err) = st.state.set_parameters() {
-                log::error!("Stream {} set_parameters {}", stream_id, err);
+                log::error!("Stream {stream_id} set_parameters {err}");
                 return Err(Error::Stream(err));
             } else if !st.supports_format(request.format) || !st.supports_rate(request.rate) {
                 return Err(Error::UnexpectedAudioBackendConfiguration);
@@ -198,7 +198,7 @@ impl AudioBackend for PwBackend {
             .state
             .prepare();
         if let Err(err) = prepare_result {
-            log::error!("Stream {} prepare {}", stream_id, err);
+            log::error!("Stream {stream_id} prepare {err}");
             return Err(Error::Stream(err));
         } else {
             let mut stream_hash = self.stream_hash.write().unwrap();
@@ -211,7 +211,7 @@ impl AudioBackend for PwBackend {
             if let Some(stream) = stream_hash.remove(&stream_id) {
                 stream_listener.remove(&stream_id);
                 if let Err(err) = stream.disconnect() {
-                    log::error!("Stream {} disconnect {}", stream_id, err);
+                    log::error!("Stream {stream_id} disconnect {err}");
                     return Err(Error::Stream(StreamError::CouldNotDisconnectStream));
                 }
             }
@@ -349,7 +349,7 @@ impl AudioBackend for PwBackend {
             let listener_stream = stream
                 .add_local_listener()
                 .state_changed(|_, _, old, new| {
-                    debug!("State changed: {:?} -> {:?}", old, new);
+                    debug!("State changed: {old:?} -> {new:?}");
                 })
                 .param_changed(move |stream, _data, id, param| {
                     let Some(_param) = param else {
@@ -505,7 +505,7 @@ impl AudioBackend for PwBackend {
             .state
             .release();
         if let Err(err) = release_result {
-            log::error!("Stream {} release {}", stream_id, err);
+            log::error!("Stream {stream_id} release {err}");
             return Err(Error::Stream(err));
         }
         let lock_guard = self.thread_loop.lock();
@@ -535,7 +535,7 @@ impl AudioBackend for PwBackend {
             .start();
         if let Err(err) = start_result {
             // log the error and continue
-            log::error!("Stream {} start {}", stream_id, err);
+            log::error!("Stream {stream_id} start {err}");
             return Err(Error::Stream(err));
         }
         let lock_guard = self.thread_loop.lock();
@@ -559,7 +559,7 @@ impl AudioBackend for PwBackend {
             .state
             .stop();
         if let Err(err) = stop_result {
-            log::error!("Stream {} stop {}", stream_id, err);
+            log::error!("Stream {stream_id} stop {err}");
             return Err(Error::Stream(err));
         }
         let lock_guard = self.thread_loop.lock();

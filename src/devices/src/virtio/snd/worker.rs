@@ -174,25 +174,23 @@ impl SndWorker {
                             }
                             _ => {
                                 log::warn!(
-                                    "Received unknown event: {:?} from fd: {:?}",
-                                    event_set,
-                                    source
+                                    "Received unknown event: {event_set:?} from fd: {source:?}"
                                 );
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    debug!("failed to consume muxer epoll event: {}", e);
+                    debug!("failed to consume muxer epoll event: {e}");
                 }
             }
         }
     }
 
     fn handle_event(&mut self, queue_index: usize) {
-        debug!("Fs: queue event: {}", queue_index);
+        debug!("Fs: queue event: {queue_index}");
         if let Err(e) = self.queue_evts[queue_index].read() {
-            error!("Failed to get queue event: {:?}", e);
+            error!("Failed to get queue event: {e:?}");
         }
 
         let vring_lock = &self.vrings[queue_index];
@@ -254,7 +252,7 @@ impl SndWorker {
                             .unwrap()
                             .set_irq(self.irq_line, Some(&self.interrupt_evt))
                         {
-                            error!("Failed to signal used queue: {:?}", e);
+                            error!("Failed to signal used queue: {e:?}");
                         }
                     }
                 }
@@ -446,7 +444,7 @@ impl SndWorker {
                             resp.code = VIRTIO_SND_S_NOT_SUPP.into()
                         }
                         _ => {
-                            log::error!("{}", err);
+                            log::error!("{err}");
                             resp.code = VIRTIO_SND_S_IO_ERR.into()
                         }
                     }
@@ -486,7 +484,7 @@ impl SndWorker {
                             resp.code = VIRTIO_SND_S_BAD_MSG.into()
                         }
                         _ => {
-                            log::error!("{}", err);
+                            log::error!("{err}");
                             resp.code = VIRTIO_SND_S_IO_ERR.into()
                         }
                     }
@@ -544,7 +542,7 @@ impl SndWorker {
             .queue
             .add_used(&self.mem, head.index, used_len)
         {
-            error!("Error adding used descriptors to the queue: {}", err);
+            error!("Error adding used descriptors to the queue: {err}");
         }
 
         Ok(())

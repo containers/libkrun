@@ -167,7 +167,7 @@ impl Vsock {
                     }
                 }
                 Err(e) => {
-                    warn!("vsock: RX queue error: {:?}", e);
+                    warn!("vsock: RX queue error: {e:?}");
                     0
                 }
             };
@@ -175,7 +175,7 @@ impl Vsock {
             debug!("vsock: process_rx: something to queue");
             have_used = true;
             if let Err(e) = queue_rx.add_used(mem, head.index, used_len) {
-                error!("failed to add used elements to the queue: {:?}", e);
+                error!("failed to add used elements to the queue: {e:?}");
             }
         }
 
@@ -199,10 +199,10 @@ impl Vsock {
             let pkt = match VsockPacket::from_tx_virtq_head(&head) {
                 Ok(pkt) => pkt,
                 Err(e) => {
-                    error!("vsock: error reading TX packet: {:?}", e);
+                    error!("vsock: error reading TX packet: {e:?}");
                     have_used = true;
                     if let Err(e) = queue_tx.add_used(mem, head.index, 0) {
-                        error!("failed to add used elements to the queue: {:?}", e);
+                        error!("failed to add used elements to the queue: {e:?}");
                     }
                     continue;
                 }
@@ -224,7 +224,7 @@ impl Vsock {
 
             have_used = true;
             if let Err(e) = queue_tx.add_used(mem, head.index, 0) {
-                error!("failed to add used elements to the queue: {:?}", e);
+                error!("failed to add used elements to the queue: {e:?}");
             }
         }
 
@@ -270,7 +270,7 @@ impl VirtioDevice for Vsock {
     }
 
     fn set_irq_line(&mut self, irq: u32) {
-        debug!("SET_IRQ_LINE (VSOCK)={}", irq);
+        debug!("SET_IRQ_LINE (VSOCK)={irq}");
         self.irq_line = Some(irq);
     }
 

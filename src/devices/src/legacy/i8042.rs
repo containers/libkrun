@@ -211,7 +211,7 @@ impl BusDevice for I8042Device {
                 // port 0x60.
                 if (self.status & SB_OUT_DATA_AVAIL) != 0 {
                     if let Err(Error::KbdInterruptFailure(err)) = self.trigger_kbd_interrupt() {
-                        warn!("Failed to trigger i8042 kbd interrupt {:?}", err);
+                        warn!("Failed to trigger i8042 kbd interrupt {err:?}");
                     }
                 }
             }
@@ -231,7 +231,7 @@ impl BusDevice for I8042Device {
                 // our exit event fd. Meaning Firecracker will be exiting as soon as the VMM
                 // thread wakes up to handle this event.
                 if let Err(e) = self.reset_evt.write(1) {
-                    error!("Failed to trigger i8042 reset event: {:?}", e);
+                    error!("Failed to trigger i8042 reset event: {e:?}");
                 }
             }
             OFS_STATUS if data[0] == CMD_READ_CTR => {
@@ -291,7 +291,7 @@ impl BusDevice for I8042Device {
                 // Buffer is empty, push() will always succeed.
                 self.push_byte(0xFA).unwrap();
                 if let Err(Error::KbdInterruptFailure(err)) = self.trigger_kbd_interrupt() {
-                    warn!("Failed to trigger i8042 kbd interrupt {:?}", err);
+                    warn!("Failed to trigger i8042 kbd interrupt {err:?}");
                 }
             }
             _ => {}

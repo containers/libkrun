@@ -605,10 +605,7 @@ impl CrossDomainWorker {
                     *identifier_type = CROSS_DOMAIN_ID_TYPE_EVENTFD;
                     add_item(&self.item_state, CrossDomainItem::Eventfd(file))
                 } else {
-                    info!(
-                        "Unknown fd item path {:?}, treating as a shmem blob",
-                        fd_path
-                    );
+                    info!("Unknown fd item path {fd_path:?}, treating as a shmem blob");
                     add_item(&self.item_state, CrossDomainItem::ShmBlob(file.into()))
                 };
             } else {
@@ -651,7 +648,7 @@ impl CrossDomainWorker {
                     match self.handle_fence(fence, &thread_resample_evt, &mut receive_buf) {
                         Ok(()) => (),
                         Err(e) => {
-                            error!("Worker halting due to: {}", e);
+                            error!("Worker halting due to: {e}");
                             return Err(e);
                         }
                     }
@@ -1027,7 +1024,7 @@ impl Drop for CrossDomainContext {
             match channel_signal(&kill_evt) {
                 Ok(_) => (),
                 Err(e) => {
-                    error!("failed to write cross domain kill event: {}", e);
+                    error!("failed to write cross domain kill event: {e}");
                 }
             }
 

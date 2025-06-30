@@ -1229,7 +1229,7 @@ impl Vcpu {
                         ))
                         .unwrap();
                     if !response_receiver.recv().unwrap() {
-                        error!("Unable to convert memory with properties: gpa: 0x{:x} size: 0x{:x} to_private: {}", gpa, size, private);
+                        error!("Unable to convert memory with properties: gpa: 0x{gpa:x} size: 0x{size:x} to_private: {private}");
                         return Err(Error::VcpuUnhandledKvmExit);
                     }
                     Ok(VcpuEmulation::Handled)
@@ -1258,7 +1258,7 @@ impl Vcpu {
                         ))
                         .unwrap();
                     if !response_receiver.recv().unwrap() {
-                        error!("Unable to convert memory with properties: gpa: 0x{:x} size: 0x{:x} to_private: {}", gpa, size, private);
+                        error!("Unable to convert memory with properties: gpa: 0x{gpa:x} size: 0x{size:x} to_private: {private}");
                         return Err(Error::VcpuUnhandledKvmExit);
                     }
 
@@ -1305,7 +1305,7 @@ impl Vcpu {
                 r => {
                     // TODO: Are we sure we want to finish running a vcpu upon
                     // receiving a vm exit that is not necessarily an error?
-                    error!("Unexpected exit reason on vcpu run: {:?}", r);
+                    error!("Unexpected exit reason on vcpu run: {r:?}");
                     Err(Error::VcpuUnhandledKvmExit)
                 }
             },
@@ -1320,7 +1320,7 @@ impl Vcpu {
                         Ok(VcpuEmulation::Interrupted)
                     }
                     _ => {
-                        error!("Failure during vcpu run: {}", e);
+                        error!("Failure during vcpu run: {e}");
                         Err(Error::VcpuUnhandledKvmExit)
                     }
                 }
@@ -1426,7 +1426,7 @@ impl Vcpu {
             .expect("failed to send Exited status");
 
         if let Err(e) = self.exit_evt.write(1) {
-            error!("Failed signaling vcpu exit event: {}", e);
+            error!("Failed signaling vcpu exit event: {e}");
         }
 
         // State machine reached its end.

@@ -88,7 +88,7 @@ pub fn push_packet(
         if let Ok(mut pkt) = VsockPacket::from_rx_virtq_head(&head) {
             rx_to_pkt(cid, rx, &mut pkt);
             if let Err(e) = queue.add_used(mem, head.index, pkt.hdr().len() as u32 + pkt.len()) {
-                error!("failed to add used elements to the queue: {:?}", e);
+                error!("failed to add used elements to the queue: {e:?}");
             }
         }
     } else {
@@ -206,7 +206,7 @@ impl VsockMuxer {
     }
 
     pub fn update_polling(&self, id: u64, fd: RawFd, evset: EventSet) {
-        debug!("update_polling id={} fd={:?} evset={:?}", id, fd, evset);
+        debug!("update_polling id={id} fd={fd:?} evset={evset:?}");
         let _ = self
             .epoll
             .ctl(ControlOperation::Delete, fd, &EpollEvent::default());
@@ -225,11 +225,11 @@ impl VsockMuxer {
         match update.remove_proxy {
             ProxyRemoval::Keep => {}
             ProxyRemoval::Immediate => {
-                warn!("immediately removing proxy: {}", id);
+                warn!("immediately removing proxy: {id}");
                 self.proxy_map.write().unwrap().remove(&id);
             }
             ProxyRemoval::Deferred => {
-                warn!("deferring proxy removal: {}", id);
+                warn!("deferring proxy removal: {id}");
                 if let Some(reaper_sender) = &self.reaper_sender {
                     if reaper_sender.send(id).is_err() {
                         self.proxy_map.write().unwrap().remove(&id);
@@ -247,7 +247,7 @@ impl VsockMuxer {
                     .unwrap()
                     .set_irq(self.irq_line, Some(&self.interrupt_evt))
                 {
-                    warn!("failed to signal used queue: {:?}", e);
+                    warn!("failed to signal used queue: {e:?}");
                 }
             }
         }
@@ -294,7 +294,7 @@ impl VsockMuxer {
                                 .unwrap()
                                 .insert(id, Mutex::new(Box::new(proxy)));
                         }
-                        Err(e) => debug!("error creating tcp proxy: {}", e),
+                        Err(e) => debug!("error creating tcp proxy: {e}"),
                     }
                 }
                 defs::SOCK_DGRAM => {
@@ -314,7 +314,7 @@ impl VsockMuxer {
                                 .unwrap()
                                 .insert(id, Mutex::new(Box::new(proxy)));
                         }
-                        Err(e) => debug!("error creating udp proxy: {}", e),
+                        Err(e) => debug!("error creating udp proxy: {e}"),
                     }
                 }
                 _ => debug!("vsock: unknown type on connection request"),
@@ -326,7 +326,7 @@ impl VsockMuxer {
         debug!("vsock: proxy connect request");
         if let Some(req) = pkt.read_connect_req() {
             let id = ((req.peer_port as u64) << 32) | (defs::TSI_PROXY_PORT as u64);
-            debug!("vsock: proxy connect request: id={}", id);
+            debug!("vsock: proxy connect request: id={id}");
             let update = self
                 .proxy_map
                 .read()
@@ -359,7 +359,7 @@ impl VsockMuxer {
         debug!("vsock: new DGRAM sendto addr: src={}", pkt.src_port());
         if let Some(req) = pkt.read_sendto_addr() {
             let id = ((req.peer_port as u64) << 32) | (defs::TSI_PROXY_PORT as u64);
-            debug!("vsock: new DGRAM sendto addr: id={}", id);
+            debug!("vsock: new DGRAM sendto addr: id={id}");
             let update = self
                 .proxy_map
                 .read()
@@ -385,7 +385,7 @@ impl VsockMuxer {
         debug!("vsock: DGRAM listen request: src={}", pkt.src_port());
         if let Some(req) = pkt.read_listen_req() {
             let id = ((req.peer_port as u64) << 32) | (defs::TSI_PROXY_PORT as u64);
-            debug!("vsock: DGRAM listen request: id={}", id);
+            debug!("vsock: DGRAM listen request: id={id}");
             let update = self
                 .proxy_map
                 .read()
@@ -403,7 +403,7 @@ impl VsockMuxer {
         debug!("vsock: DGRAM accept request: src={}", pkt.src_port());
         if let Some(req) = pkt.read_accept_req() {
             let id = ((req.peer_port as u64) << 32) | (defs::TSI_PROXY_PORT as u64);
-            debug!("vsock: DGRAM accept request: id={}", id);
+            debug!("vsock: DGRAM accept request: id={id}");
             let update = self
                 .proxy_map
                 .read()

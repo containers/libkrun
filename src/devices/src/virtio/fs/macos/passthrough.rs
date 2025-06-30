@@ -86,7 +86,7 @@ fn item_to_value(item: &[u8], radix: u32) -> Option<u32> {
         Ok(val) => match u32::from_str_radix(val, radix) {
             Ok(i) => Some(i),
             Err(e) => {
-                debug!("invalid value: {} err={}", radix, e);
+                debug!("invalid value: {radix} err={e}");
                 None
             }
         },
@@ -131,7 +131,7 @@ fn get_xattr_stat(file: StatFile) -> io::Result<Option<(u32, u32, u32)>> {
         },
     };
     if res < 0 {
-        debug!("fget_xattr error: {}", res);
+        debug!("fget_xattr error: {res}");
         return Ok(None);
     }
 
@@ -470,7 +470,7 @@ impl PassthroughFs {
     }
 
     fn inode_to_path(&self, inode: Inode) -> io::Result<CString> {
-        debug!("inode_to_path: inode={}", inode);
+        debug!("inode_to_path: inode={inode}");
         let data = self
             .inodes
             .read()
@@ -973,7 +973,7 @@ impl FileSystem for PassthroughFs {
     }
 
     fn lookup(&self, _ctx: Context, parent: Inode, name: &CStr) -> io::Result<Entry> {
-        debug!("lookup: {:?}", name);
+        debug!("lookup: {name:?}");
         let _init_name = unsafe { CStr::from_bytes_with_nul_unchecked(INIT_CSTR) };
 
         #[cfg(not(feature = "efi"))]
@@ -1235,7 +1235,7 @@ impl FileSystem for PassthroughFs {
         _lock_owner: Option<u64>,
         _flags: u32,
     ) -> io::Result<usize> {
-        debug!("read: {:?}", inode);
+        debug!("read: {inode:?}");
         #[cfg(not(feature = "efi"))]
         if inode == self.init_inode {
             let off: usize = offset
@@ -1712,10 +1712,7 @@ impl FileSystem for PassthroughFs {
         value: &[u8],
         flags: u32,
     ) -> io::Result<()> {
-        debug!(
-            "setxattr: inode={} name={:?} value={:?}",
-            inode, name, value
-        );
+        debug!("setxattr: inode={inode} name={name:?} value={value:?}");
 
         if !self.cfg.xattr {
             return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
@@ -1760,7 +1757,7 @@ impl FileSystem for PassthroughFs {
         name: &CStr,
         size: u32,
     ) -> io::Result<GetxattrReply> {
-        debug!("getxattr: inode={} name={:?}, size={}", inode, name, size);
+        debug!("getxattr: inode={inode} name={name:?}, size={size}");
 
         if !self.cfg.xattr {
             return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
@@ -2012,10 +2009,7 @@ impl FileSystem for PassthroughFs {
 
         let guest_addr = guest_shm_base + moffset;
 
-        debug!(
-            "setupmapping: ino {:?} guest_addr={:x} len={}",
-            inode, guest_addr, len
-        );
+        debug!("setupmapping: ino {inode:?} guest_addr={guest_addr:x} len={len}");
 
         let file = self.open_inode(inode, libc::O_RDWR)?;
         let fd = file.as_raw_fd();

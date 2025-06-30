@@ -66,12 +66,12 @@ impl UdpProxy {
             Ok(flags) => match OFlag::from_bits(flags) {
                 Some(flags) => {
                     if let Err(e) = fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)) {
-                        warn!("error switching to non-blocking: id={}, err={}", id, e);
+                        warn!("error switching to non-blocking: id={id}, err={e}");
                     }
                 }
-                None => error!("invalid fd flags id={}", id),
+                None => error!("invalid fd flags id={id}"),
             },
-            Err(e) => error!("couldn't obtain fd flags id={}, err={}", id, e),
+            Err(e) => error!("couldn't obtain fd flags id={id}, err={e}"),
         };
 
         #[cfg(target_os = "macos")]
@@ -161,7 +161,7 @@ impl UdpProxy {
 
             match recv(self.fd, &mut buf[..max_len], MsgFlags::empty()) {
                 Ok(cnt) => {
-                    debug!("vsock: udp: recv cnt={}", cnt);
+                    debug!("vsock: udp: recv cnt={cnt}");
                     if cnt > 0 {
                         RecvPkt::Read(cnt)
                     } else {
@@ -169,7 +169,7 @@ impl UdpProxy {
                     }
                 }
                 Err(e) => {
-                    debug!("vsock: udp: recv_pkt: recv error: {:?}", e);
+                    debug!("vsock: udp: recv_pkt: recv error: {e:?}");
                     RecvPkt::Error
                 }
             }
@@ -204,7 +204,7 @@ impl UdpProxy {
                     RecvPkt::Error => 0,
                 },
                 Err(e) => {
-                    debug!("vsock: tcp: recv_pkt: RX queue error: {:?}", e);
+                    debug!("vsock: tcp: recv_pkt: RX queue error: {e:?}");
                     0
                 }
             };
@@ -214,14 +214,14 @@ impl UdpProxy {
                 break;
             } else {
                 have_used = true;
-                debug!("vsock: udp: recv_pkt: pushing packet with {} bytes", len);
+                debug!("vsock: udp: recv_pkt: pushing packet with {len} bytes");
                 if let Err(e) = queue.add_used(&self.mem, head.index, len as u32) {
-                    error!("failed to add used elements to the queue: {:?}", e);
+                    error!("failed to add used elements to the queue: {e:?}");
                 }
             }
         }
 
-        debug!("vsock: udp: recv_pkt: have_used={}", have_used);
+        debug!("vsock: udp: recv_pkt: have_used={have_used}");
         (have_used, wait_credit)
     }
 }
@@ -247,7 +247,7 @@ impl Proxy for UdpProxy {
                 0
             }
             Err(e) => {
-                debug!("vsock: UdpProxy: Error connecting: {}", e);
+                debug!("vsock: UdpProxy: Error connecting: {e}");
                 #[cfg(target_os = "macos")]
                 let errno = -linux_errno_raw(e as i32);
                 #[cfg(target_os = "linux")]
@@ -314,7 +314,7 @@ impl Proxy for UdpProxy {
             -libc::EINVAL
         };
 
-        debug!("vsock: udp_proxy: sendmsg ret={}", ret);
+        debug!("vsock: udp_proxy: sendmsg ret={ret}");
 
         ProxyUpdate::default()
     }
@@ -334,7 +334,7 @@ impl Proxy for UdpProxy {
                     self.listening = true;
                     update.polling = Some((self.id, self.fd, EventSet::IN));
                 }
-                Err(e) => debug!("vsock: udp_proxy: couldn't bind socket: {}", e),
+                Err(e) => debug!("vsock: udp_proxy: couldn't bind socket: {e}"),
             }
         }
 
@@ -358,7 +358,7 @@ impl Proxy for UdpProxy {
                     Ok(sent) => {
                         self.tx_cnt += Wrapping(sent as u32);
                     }
-                    Err(err) => debug!("error in sendto: {}", err),
+                    Err(err) => debug!("error in sendto: {err}"),
                 }
             } else {
                 debug!("vsock: udp_proxy: sendto_data pkt without buffer");
@@ -463,7 +463,7 @@ impl AsRawFd for UdpProxy {
 impl Drop for UdpProxy {
     fn drop(&mut self) {
         if let Err(e) = close(self.fd) {
-            warn!("error closing proxy fd: {}", e);
+            warn!("error closing proxy fd: {e}");
         }
     }
 }

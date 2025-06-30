@@ -42,7 +42,7 @@ pub fn alloc_audio_backend(
     backend: BackendType,
     streams: Arc<RwLock<Vec<Stream>>>,
 ) -> Result<Box<dyn AudioBackend + Send + Sync>> {
-    log::trace!("allocating audio backend {:?}", backend);
+    log::trace!("allocating audio backend {backend:?}");
     match backend {
         BackendType::Pipewire => Ok(Box::new(PwBackend::new(streams))),
     }

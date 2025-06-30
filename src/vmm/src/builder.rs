@@ -436,7 +436,7 @@ impl Display for StartMicrovmError {
                 )
             }
             ShmHostAddr(ref err) => {
-                let mut err_msg = format!("{:?}", err);
+                let mut err_msg = format!("{err:?}");
                 err_msg = err_msg.replace('\"', "");
 
                 write!(
@@ -445,13 +445,13 @@ impl Display for StartMicrovmError {
                 )
             }
             ShmConfig(ref err) => {
-                let mut err_msg = format!("{:?}", err);
+                let mut err_msg = format!("{err:?}");
                 err_msg = err_msg.replace('\"', "");
 
                 write!(f, "Error while configuring an SHM region. {err_msg}")
             }
             ShmCreate(ref err) => {
-                let mut err_msg = format!("{:?}", err);
+                let mut err_msg = format!("{err:?}");
                 err_msg = err_msg.replace('\"', "");
 
                 write!(f, "Error while creating an SHM region. {err_msg}")
@@ -933,7 +933,7 @@ fn load_external_kernel(
                 .windows(3)
                 .position(|window| window == [0x1f, 0x8b, 0x8])
             {
-                debug!("Found GZIP header on PE file at: 0x{:x}", magic);
+                debug!("Found GZIP header on PE file at: 0x{magic:x}");
                 let (_, compressed) = data.split_at(magic);
                 let mut gz = GzDecoder::new(compressed);
                 let mut kernel_data: Vec<u8> = Vec::new();
@@ -955,7 +955,7 @@ fn load_external_kernel(
                 .windows(4)
                 .position(|window| window == [b'B', b'Z', b'h'])
             {
-                debug!("Found BZIP2 header on Image file at: 0x{:x}", magic);
+                debug!("Found BZIP2 header on Image file at: 0x{magic:x}");
                 let (_, compressed) = data.split_at(magic);
                 let mut kernel_data: Vec<u8> = Vec::new();
                 let mut bz2 = bzip2::read::BzDecoder::new(compressed);
@@ -981,7 +981,7 @@ fn load_external_kernel(
                 .windows(3)
                 .position(|window| window == [0x1f, 0x8b, 0x8])
             {
-                debug!("Found GZIP header on Image file at: 0x{:x}", magic);
+                debug!("Found GZIP header on Image file at: 0x{magic:x}");
                 let (_, compressed) = data.split_at(magic);
                 let mut gz = GzDecoder::new(compressed);
                 let mut kernel_data: Vec<u8> = Vec::new();
@@ -1007,7 +1007,7 @@ fn load_external_kernel(
                 .windows(4)
                 .position(|window| window == [0x28, 0xb5, 0x2f, 0xfd])
             {
-                debug!("Found ZSTD header on Image file at: 0x{:x}", magic);
+                debug!("Found ZSTD header on Image file at: 0x{magic:x}");
                 let (_, zstd_data) = data.split_at(magic);
                 let mut kernel_data: Vec<u8> = Vec::new();
                 let _ = zstd::stream::copy_decode(zstd_data, &mut kernel_data);
@@ -1345,7 +1345,7 @@ pub fn setup_serial_device(
             // has been redirected to /dev/null via dup2 (this may happen inside the jailer).
             // Find a better solution to this (and think about the state of the serial device
             // while we're at it).
-            warn!("Could not add serial input event to epoll: {:?}", e);
+            warn!("Could not add serial input event to epoll: {e:?}");
         }
     }
     Ok(serial)
@@ -2013,62 +2013,62 @@ pub mod tests {
     fn test_error_messages() {
         use crate::builder::StartMicrovmError::*;
         let err = AttachBlockDevice(io::Error::from_raw_os_error(0));
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
 
         let err = CreateRateLimiter(io::Error::from_raw_os_error(0));
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
 
         let err = Internal(Error::Serial(io::Error::from_raw_os_error(0)));
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
 
         let err = InvalidKernelBundle(vm_memory::mmap::MmapRegionError::InvalidPointer);
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
 
         let err = KernelCmdline(String::from("dummy --cmdline"));
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
 
         let err = LoadCommandline(kernel::cmdline::Error::TooLarge);
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
 
         let err = MicroVMAlreadyRunning;
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
 
         let err = MissingKernelConfig;
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
 
         let err = MissingMemSizeConfig;
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
 
         let err = NetDeviceNotConfigured;
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
 
         let err = OpenBlockDevice(io::Error::from_raw_os_error(0));
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
 
         let err = RegisterBlockDevice(device_manager::mmio::Error::EventFd(
             io::Error::from_raw_os_error(0),
         ));
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
 
         let err = RegisterEvent(EventManagerError::EpollCreate(
             io::Error::from_raw_os_error(0),
         ));
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
 
         let err = RegisterNetDevice(device_manager::mmio::Error::EventFd(
             io::Error::from_raw_os_error(0),
         ));
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
 
         let err = RegisterVsockDevice(device_manager::mmio::Error::EventFd(
             io::Error::from_raw_os_error(0),
         ));
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
     }
 
     #[test]
     fn test_kernel_cmdline_err_to_startuvm_err() {
         let err = StartMicrovmError::from(kernel::cmdline::Error::HasSpace);
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
     }
 }

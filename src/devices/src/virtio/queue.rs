@@ -506,10 +506,7 @@ impl Queue {
         len: u32,
     ) -> Result<(), Error> {
         if head_index >= self.size {
-            error!(
-                "attempted to add out of bounds descriptor to used ring: {}",
-                head_index
-            );
+            error!("attempted to add out of bounds descriptor to used ring: {head_index}");
             return Err(Error::InvalidDescriptorIndex);
         }
 

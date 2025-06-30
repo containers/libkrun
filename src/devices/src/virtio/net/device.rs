@@ -186,7 +186,7 @@ impl VirtioDevice for Net {
     }
 
     fn set_irq_line(&mut self, irq: u32) {
-        debug!("SET_IRQ_LINE (NET)={}", irq);
+        debug!("SET_IRQ_LINE (NET)={irq}");
         self.irq_line = Some(irq);
     }
 

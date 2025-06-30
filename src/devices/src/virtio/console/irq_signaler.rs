@@ -64,7 +64,7 @@ impl IRQSignaler {
     }
 
     pub fn set_irq_line(&mut self, irq: u32) {
-        debug!("SET_IRQ_LINE (SIGNALER)={}", irq);
+        debug!("SET_IRQ_LINE (SIGNALER)={irq}");
         self.irq_line = Some(irq);
     }
 }

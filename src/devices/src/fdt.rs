@@ -155,7 +155,7 @@ fn create_cpu_nodes(fdt: &mut FdtWriter, vcpu_mpidr: &[u64]) -> Result<()> {
     let num_cpus = vcpu_mpidr.len();
 
     for (index, mpidr) in vcpu_mpidr.iter().enumerate() {
-        let cpu_name = format!("cpu@{:x}", index);
+        let cpu_name = format!("cpu@{index:x}");
         let cpu_name_node = fdt.begin_node(&cpu_name)?;
         fdt.property_string("device_type", "cpu")?;
         fdt.property_string("compatible", "arm,arm-v8")?;

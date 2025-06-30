@@ -94,8 +94,7 @@ impl Passt {
                         return Err(WriteError::NothingWritten);
                     } else {
                         log::trace!(
-                            "Wrote {} bytes, but socket blocked, will need try_finish_write() to finish",
-                            bytes_send
+                            "Wrote {bytes_send} bytes, but socket blocked, will need try_finish_write() to finish"
                         );
 
                         self.last_partial_write_length += bytes_send;
@@ -125,7 +124,7 @@ impl NetBackend for Passt {
         let frame_length = self.expecting_frame_length as usize;
         self.read_loop(&mut buf[..frame_length], false)?;
         self.expecting_frame_length = 0;
-        log::trace!("Read eth frame from passt: {} bytes", frame_length);
+        log::trace!("Read eth frame from passt: {frame_length} bytes");
         Ok(frame_length)
     }
 
@@ -171,10 +170,7 @@ impl NetBackend for Passt {
             let already_written = self.last_partial_write_length;
             log::trace!("Requested to finish partial write");
             self.write_loop(&buf[hdr_len - PASST_HEADER_LEN + already_written..])?;
-            log::debug!(
-                "Finished partial write ({}bytes written before)",
-                already_written
-            )
+            log::debug!("Finished partial write ({already_written}bytes written before)")
         }
 
         Ok(())

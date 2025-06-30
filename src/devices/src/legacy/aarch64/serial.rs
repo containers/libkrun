@@ -183,7 +183,7 @@ impl Serial {
     }
 
     pub fn set_irq_line(&mut self, irq: u32) {
-        debug!("SET_IRQ_LINE (SERIAL)={}", irq);
+        debug!("SET_IRQ_LINE (SERIAL)={irq}");
         self.irq_line = Some(irq);
     }
 
@@ -299,7 +299,7 @@ impl Serial {
                 //self.handle_debug();
             }
             off => {
-                debug!("PL011: Bad write offset, offset: {}", off);
+                debug!("PL011: Bad write offset, offset: {off}");
                 return Err(Error::BadWriteOffset(off));
             }
         }
@@ -318,7 +318,7 @@ impl Serial {
 
 impl BusDevice for Serial {
     fn read(&mut self, _base: u64, offset: u64, data: &mut [u8]) {
-        debug!("read: offset={:x}", offset);
+        debug!("read: offset={offset:x}");
         let mut read_ok = true;
         let v = if (AMBA_ID_LOW..AMBA_ID_HIGH).contains(&(offset >> 2)) {
             let index = ((offset - 0xfe0) >> 2) as usize;
@@ -372,11 +372,11 @@ impl BusDevice for Serial {
     }
 
     fn write(&mut self, _base: u64, offset: u64, data: &[u8]) {
-        debug!("write: offset={:x}, data={:?}", offset, data);
+        debug!("write: offset={offset:x}, data={data:?}");
         if data.len() <= 4 {
             let v = read_le_u32(data);
             if let Err(e) = self.handle_write(offset, v) {
-                warn!("Failed to write to PL011 device: {}", e);
+                warn!("Failed to write to PL011 device: {e}");
             }
         } else {
             warn!(
@@ -398,10 +398,7 @@ impl Subscriber for Serial {
         // to handle errors in devices.
         let supported_events = EventSet::IN;
         if !supported_events.contains(event_set) {
-            warn!(
-                "Received unknown event: {:?} from source: {:?}",
-                event_set, source
-            );
+            warn!("Received unknown event: {event_set:?} from source: {source:?}");
             return;
         }
 
@@ -411,10 +408,10 @@ impl Subscriber for Serial {
                 match input.read(&mut out[..]) {
                     Ok(count) => {
                         self.queue_input_bytes(&out[..count])
-                            .unwrap_or_else(|e| warn!("Serial error on input: {:?}", e));
+                            .unwrap_or_else(|e| warn!("Serial error on input: {e:?}"));
                     }
                     Err(e) => {
-                        warn!("error while reading stdin: {:?}", e);
+                        warn!("error while reading stdin: {e:?}");
                     }
                 }
             }

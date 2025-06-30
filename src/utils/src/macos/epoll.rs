@@ -91,7 +91,7 @@ impl std::fmt::Debug for EpollEvent {
 
 impl EpollEvent {
     pub fn new(events: EventSet, data: u64) -> Self {
-        debug!("EpollEvent new: {}", data);
+        debug!("EpollEvent new: {data}");
         EpollEvent {
             events: events.bits(),
             u64: data,
@@ -151,7 +151,7 @@ impl Epoll {
                     0
                 };
                 if eset.contains(EventSet::IN) {
-                    debug!("add fd in: {}", fd);
+                    debug!("add fd in: {fd}");
                     kevs.push(Kevent::new(
                         fd as usize,
                         libc::EVFILT_READ,
@@ -160,7 +160,7 @@ impl Epoll {
                     ));
                 }
                 if eset.contains(EventSet::OUT) {
-                    debug!("add fd out: {}", fd);
+                    debug!("add fd out: {fd}");
                     kevs.push(Kevent::new(
                         fd as usize,
                         libc::EVFILT_WRITE,
@@ -183,7 +183,7 @@ impl Epoll {
             ControlOperation::Delete => {
                 let mut kevs: Vec<Kevent> = Vec::new();
                 if eset.bits() == 0 {
-                    debug!("remove fd in and out: {}", fd);
+                    debug!("remove fd in and out: {fd}");
                     kevs.push(Kevent::new(
                         fd as usize,
                         libc::EVFILT_READ,
@@ -198,7 +198,7 @@ impl Epoll {
                     ));
                 } else {
                     if eset.contains(EventSet::IN) {
-                        debug!("remove fd in: {}", fd);
+                        debug!("remove fd in: {fd}");
                         kevs.push(Kevent::new(
                             fd as usize,
                             libc::EVFILT_READ,
@@ -207,7 +207,7 @@ impl Epoll {
                         ));
                     }
                     if eset.contains(EventSet::OUT) {
-                        debug!("remove fd out: {}", fd);
+                        debug!("remove fd out: {fd}");
                         kevs.push(Kevent::new(
                             fd as usize,
                             libc::EVFILT_WRITE,
@@ -261,7 +261,7 @@ impl Epoll {
             )
         };
 
-        debug!("ret: {}", ret);
+        debug!("ret: {ret}");
 
         for i in 0..ret {
             debug!("kev: {:?}", kevs[i as usize]);

@@ -504,7 +504,7 @@ mod tests {
                 .unwrap_err(),
         );
         assert_eq!(
-            format!("{}", e),
+            format!("{e}"),
             format!(
                 "unable to add device to kernel command line: {}",
                 kernel_cmdline::Error::HasEquals

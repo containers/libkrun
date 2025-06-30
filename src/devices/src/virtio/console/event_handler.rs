@@ -43,7 +43,7 @@ impl Console {
     fn handle_activate_event(&self, event_manager: &mut EventManager) {
         debug!("console: activate event");
         if let Err(e) = self.activate_evt.read() {
-            error!("Failed to consume console activate event: {:?}", e);
+            error!("Failed to consume console activate event: {e:?}");
         }
 
         // The subscriber must exist as we previously registered activate_evt via
@@ -72,7 +72,7 @@ impl Console {
         event_manager
             .unregister(self.activate_evt.as_raw_fd())
             .unwrap_or_else(|e| {
-                error!("Failed to unregister fs activate evt: {:?}", e);
+                error!("Failed to unregister fs activate evt: {e:?}");
             })
     }
 
@@ -81,11 +81,11 @@ impl Console {
 
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            warn!("console: sigwinch unexpected event {:?}", event_set);
+            warn!("console: sigwinch unexpected event {event_set:?}");
         }
 
         if let Err(e) = self.sigwinch_evt.read() {
-            error!("Failed to read the sigwinch event: {:?}", e);
+            error!("Failed to read the sigwinch event: {e:?}");
         }
 
         let (cols, rows) = get_win_size();
@@ -95,11 +95,11 @@ impl Console {
     fn read_control_queue_event(&mut self, event: &EpollEvent) {
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            warn!("Unexpected event {:?}", event_set);
+            warn!("Unexpected event {event_set:?}");
         }
 
         if let Err(e) = self.control.queue_evt().read() {
-            error!("Failed to read the ConsoleControl event: {:?}", e);
+            error!("Failed to read the ConsoleControl event: {e:?}");
         }
     }
 }
@@ -140,16 +140,13 @@ impl Subscriber for Console {
             } else if source == sigwinch_evt {
                 self.handle_sigwinch_event(event);
             } else {
-                log::warn!("Unexpected console event received: {:?}", source)
+                log::warn!("Unexpected console event received: {source:?}")
             }
             if raise_irq {
                 self.irq.signal_used_queue("event_handler");
             }
         } else {
-            warn!(
-                "console: The device is not yet activated. Spurious event received: {:?}",
-                source
-            );
+            warn!("console: The device is not yet activated. Spurious event received: {source:?}");
         }
     }
 

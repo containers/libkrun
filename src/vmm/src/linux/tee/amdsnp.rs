@@ -268,8 +268,8 @@ impl AmdSnp {
 
         for (i, entry) in old_cpuid.functions.iter().enumerate() {
             if *entry != new_cpuid.functions[i] {
-                debug!("cpuid entry: {} differs", i);
-                debug!("provided {:?}", entry);
+                debug!("cpuid entry: {i} differs");
+                debug!("provided {entry:?}");
                 debug!("expected: {:?}", new_cpuid.functions[i]);
             }
         }
@@ -359,7 +359,7 @@ impl AmdSnp {
             PageType::Cpuid,
         ) {
             // The PSP fixes the tables itself, so a second attempt should succeed.
-            warn!("PSP rejected the CPUID page ({:?}). Trying again.", e);
+            warn!("PSP rejected the CPUID page ({e:?}). Trying again.");
 
             self.check_cpuid_page(guest_mem, old_cpuid)?;
             if let Err(e) = self.add_region(
@@ -374,7 +374,7 @@ impl AmdSnp {
                 &mut launcher,
                 PageType::Cpuid,
             ) {
-                error!("PSP rejected the CPUID page fixed by itself: {:?}", e);
+                error!("PSP rejected the CPUID page fixed by itself: {e:?}");
             }
         }
 

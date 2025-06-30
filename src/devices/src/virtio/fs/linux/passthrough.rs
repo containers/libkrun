@@ -682,7 +682,7 @@ impl PassthroughFs {
     }
 
     fn do_open(&self, inode: Inode, mut flags: u32) -> io::Result<(Option<Handle>, OpenOptions)> {
-        debug!("do_open: {:?}", inode);
+        debug!("do_open: {inode:?}");
         if !self.cap_fowner {
             // O_NOATIME can only be used with CAP_FOWNER or if we are the file
             // owner. Not worth checking the latter, just drop it if we don't
@@ -939,7 +939,7 @@ impl FileSystem for PassthroughFs {
     }
 
     fn lookup(&self, _ctx: Context, parent: Inode, name: &CStr) -> io::Result<Entry> {
-        debug!("do_lookup: {:?}", name);
+        debug!("do_lookup: {name:?}");
         let init_name = unsafe { CStr::from_bytes_with_nul_unchecked(INIT_CSTR) };
 
         if self.init_inode != 0 && name == init_name {
@@ -1173,7 +1173,7 @@ impl FileSystem for PassthroughFs {
         _lock_owner: Option<u64>,
         _flags: u32,
     ) -> io::Result<usize> {
-        debug!("read: {:?}", inode);
+        debug!("read: {inode:?}");
         if inode == self.init_inode {
             let off: usize = offset
                 .try_into()
@@ -2017,7 +2017,7 @@ impl FileSystem for PassthroughFs {
 
         let addr = host_shm_base + moffset;
 
-        debug!("setupmapping: ino {:?} addr={:x} len={}", inode, addr, len);
+        debug!("setupmapping: ino {inode:?} addr={addr:x} len={len}");
 
         if inode == self.init_inode {
             let ret = unsafe {
