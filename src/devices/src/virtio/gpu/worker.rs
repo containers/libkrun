@@ -99,7 +99,7 @@ impl Worker {
             let _ = self.receiver.recv().unwrap();
             if self.process_queue(&mut virtio_gpu, 0) {
                 if let Err(e) = self.signal_used_queue() {
-                    error!("Error signaling queue: {:?}", e);
+                    error!("Error signaling queue: {e:?}");
                 }
             }
         }
@@ -176,7 +176,7 @@ impl Worker {
                     }
                     virtio_gpu.attach_backing(info.resource_id, mem, vecs)
                 } else {
-                    error!("missing data for command {:?}", cmd);
+                    error!("missing data for command {cmd:?}");
                     Err(GpuResponse::ErrUnspec)
                 }
             }
@@ -366,13 +366,13 @@ impl Worker {
                         ctrl_hdr = Some(hdr);
                         gpu_cmd = Some(cmd);
                     }
-                    Err(e) => debug!("descriptor decode error: {:?}", e),
+                    Err(e) => debug!("descriptor decode error: {e:?}"),
                 }
 
                 let mut gpu_response = match resp {
                     Ok(gpu_response) => gpu_response,
                     Err(gpu_response) => {
-                        debug!("{:?} -> {:?}", gpu_cmd, gpu_response);
+                        debug!("{gpu_cmd:?} -> {gpu_response:?}");
                         gpu_response
                     }
                 };
@@ -401,7 +401,7 @@ impl Worker {
                             gpu_response = match virtio_gpu.create_fence(fence) {
                                 Ok(_) => gpu_response,
                                 Err(fence_resp) => {
-                                    warn!("create_fence {} -> {:?}", fence_id, fence_resp);
+                                    warn!("create_fence {fence_id} -> {fence_resp:?}");
                                     fence_resp
                                 }
                             };
@@ -412,7 +412,7 @@ impl Worker {
                     // fence is complete.
                     match gpu_response.encode(flags, fence_id, ctx_id, ring_idx, &mut writer) {
                         Ok(l) => len = l,
-                        Err(e) => debug!("ctrl queue response encode error: {:?}", e),
+                        Err(e) => debug!("ctrl queue response encode error: {e:?}"),
                     }
 
                     if flags & VIRTIO_GPU_FLAG_FENCE != 0 {
@@ -432,7 +432,7 @@ impl Worker {
                         .unwrap()
                         .add_used(&mem, head.index, len)
                     {
-                        error!("failed to add used elements to the queue: {:?}", e);
+                        error!("failed to add used elements to the queue: {e:?}");
                     }
                     used_any = true;
                 }

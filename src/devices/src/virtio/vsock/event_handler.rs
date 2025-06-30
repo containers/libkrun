@@ -19,13 +19,13 @@ impl Vsock {
 
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            warn!("vsock: rxq unexpected event {:?}", event_set);
+            warn!("vsock: rxq unexpected event {event_set:?}");
             return false;
         }
 
         let mut raise_irq = false;
         if let Err(e) = self.queue_events[RXQ_INDEX].read() {
-            error!("Failed to get vsock rx queue event: {:?}", e);
+            error!("Failed to get vsock rx queue event: {e:?}");
         } else {
             raise_irq |= self.process_stream_rx();
         }
@@ -37,13 +37,13 @@ impl Vsock {
 
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            warn!("vsock: txq unexpected event {:?}", event_set);
+            warn!("vsock: txq unexpected event {event_set:?}");
             return false;
         }
 
         let mut raise_irq = false;
         if let Err(e) = self.queue_events[TXQ_INDEX].read() {
-            error!("Failed to get vsock tx queue event: {:?}", e);
+            error!("Failed to get vsock tx queue event: {e:?}");
         } else {
             raise_irq |= self.process_stream_tx();
             // The backend may have queued up responses to the packets we sent during
@@ -61,12 +61,12 @@ impl Vsock {
 
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            warn!("vsock: evq unexpected event {:?}", event_set);
+            warn!("vsock: evq unexpected event {event_set:?}");
             return false;
         }
 
         if let Err(e) = self.queue_events[EVQ_INDEX].read() {
-            error!("Failed to consume vsock evq event: {:?}", e);
+            error!("Failed to consume vsock evq event: {e:?}");
         }
         false
     }
@@ -74,7 +74,7 @@ impl Vsock {
     fn handle_activate_event(&self, event_manager: &mut EventManager) {
         debug!("vsock: activate event");
         if let Err(e) = self.activate_evt.read() {
-            error!("Failed to consume vsock activate event: {:?}", e);
+            error!("Failed to consume vsock activate event: {e:?}");
         }
 
         // The subscriber must exist as we previously registered activate_evt via
@@ -93,7 +93,7 @@ impl Vsock {
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
-                error!("Failed to register vsock rxq with event manager: {:?}", e);
+                error!("Failed to register vsock rxq with event manager: {e:?}");
             });
 
         event_manager
@@ -106,13 +106,13 @@ impl Vsock {
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
-                error!("Failed to register vsock txq with event manager: {:?}", e);
+                error!("Failed to register vsock txq with event manager: {e:?}");
             });
 
         event_manager
             .unregister(self.activate_evt.as_raw_fd())
             .unwrap_or_else(|e| {
-                error!("Failed to unregister vsock activate evt: {:?}", e);
+                error!("Failed to unregister vsock activate evt: {e:?}");
             })
     }
 }
@@ -140,17 +140,14 @@ impl Subscriber for Vsock {
                 _ if source == activate_evt => {
                     self.handle_activate_event(event_manager);
                 }
-                _ => warn!("Unexpected vsock event received: {:?}", source),
+                _ => warn!("Unexpected vsock event received: {source:?}"),
             }
             if raise_irq {
                 debug!("raising IRQ");
                 self.signal_used_queue().unwrap_or_default();
             }
         } else {
-            warn!(
-                "Vsock: The device is not yet activated. Spurious event received: {:?}",
-                source
-            );
+            warn!("Vsock: The device is not yet activated. Spurious event received: {source:?}");
         }
     }
 

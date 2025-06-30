@@ -253,7 +253,7 @@ impl BusDevice for Serial {
             return;
         }
         if let Err(e) = self.handle_write(offset as u8, data[0]) {
-            error!("Failed the write to serial: {}", e);
+            error!("Failed the write to serial: {e}");
         }
     }
 }
@@ -268,10 +268,7 @@ impl Subscriber for Serial {
         // to handle errors in devices.
         let supported_events = EventSet::IN;
         if !supported_events.contains(event_set) {
-            warn!(
-                "Received unknown event: {:?} from source: {:?}",
-                event_set, source
-            );
+            warn!("Received unknown event: {event_set:?} from source: {source:?}");
             return;
         }
 
@@ -281,10 +278,10 @@ impl Subscriber for Serial {
                 match input.read(&mut out[..]) {
                     Ok(count) => {
                         self.raw_input(&out[..count])
-                            .unwrap_or_else(|e| warn!("Serial error on input: {}", e));
+                            .unwrap_or_else(|e| warn!("Serial error on input: {e}"));
                     }
                     Err(e) => {
-                        warn!("error while reading stdin: {:?}", e);
+                        warn!("error while reading stdin: {e:?}");
                     }
                 }
             }

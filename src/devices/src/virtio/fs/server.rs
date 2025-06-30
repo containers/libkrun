@@ -850,7 +850,7 @@ impl<F: FileSystem + Sync> Server<F> {
         };
 
         if major < KERNEL_VERSION {
-            error!("Unsupported fuse protocol version: {}.{}", major, minor);
+            error!("Unsupported fuse protocol version: {major}.{minor}");
             return reply_error(
                 linux_error(io::Error::from_raw_os_error(libc::EPROTO)),
                 in_header.unique,
@@ -870,10 +870,7 @@ impl<F: FileSystem + Sync> Server<F> {
         }
 
         if minor < KERNEL_MINOR_VERSION {
-            error!(
-                "Unsupported fuse protocol minor version: {}.{}",
-                major, minor
-            );
+            error!("Unsupported fuse protocol minor version: {major}.{minor}");
             return reply_error(
                 linux_error(io::Error::from_raw_os_error(libc::EPROTO)),
                 in_header.unique,

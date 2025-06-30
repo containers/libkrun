@@ -45,7 +45,7 @@ pub(crate) fn process_tx(
         } else {
             log::trace!("Tx add used {bytes_written}");
             if let Err(e) = queue.add_used(&mem, head_index, bytes_written as u32) {
-                error!("failed to add used elements to the queue: {:?}", e);
+                error!("failed to add used elements to the queue: {e:?}");
             }
         }
     }
@@ -81,7 +81,7 @@ fn write_desc_to_output(
         .try_access(desc.len as usize, desc.addr, |_, len, addr, region| {
             let src = region.get_slice(addr, len).unwrap();
             loop {
-                log::trace!("Tx {:?}, write_volatile {len} bytes", src);
+                log::trace!("Tx {src:?}, write_volatile {len} bytes");
                 match output.write_volatile(&src) {
                     // try_access seem to handle partial write for us (we will be invoked again with an offset)
                     Ok(n) => break Ok(n),

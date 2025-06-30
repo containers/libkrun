@@ -275,14 +275,14 @@ impl Drop for ControlMessage {
         let mem = vring.mem.clone();
 
         if let Err(err) = vring.mem.write_obj(resp, self.desc_addr) {
-            log::error!("Error::DescriptorWriteFailed: {}", err);
+            log::error!("Error::DescriptorWriteFailed: {err}");
             return;
         }
         if let Err(err) = vring
             .queue
             .add_used(&mem, self.head_index, resp.as_slice().len() as u32)
         {
-            log::error!("Error adding used descriptors: {}", err);
+            log::error!("Error adding used descriptors: {err}");
             return;
         }
         vring.signal_used_queue();
@@ -309,12 +309,12 @@ impl Drop for IOMessage {
                 .into(),
         };
         let used_len: u32 = self.used_len.load(std::sync::atomic::Ordering::SeqCst);
-        log::trace!("dropping IOMessage {:?}", resp);
+        log::trace!("dropping IOMessage {resp:?}");
 
         let mut vring = self.vring.lock().unwrap();
         let mem = vring.mem.clone();
         if let Err(err) = mem.write_obj(resp, GuestAddress(self.response_descriptor.addr)) {
-            log::error!("Error::DescriptorWriteFailed: {}", err);
+            log::error!("Error::DescriptorWriteFailed: {err}");
             return;
         }
         if let Err(err) = vring.queue.add_used(
@@ -322,7 +322,7 @@ impl Drop for IOMessage {
             self.head_index,
             resp.as_slice().len() as u32 + used_len,
         ) {
-            log::error!("Couldn't add used bytes count to vring: {}", err);
+            log::error!("Couldn't add used bytes count to vring: {err}");
         }
         vring.signal_used_queue();
     }

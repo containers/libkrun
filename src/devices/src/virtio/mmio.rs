@@ -250,7 +250,7 @@ impl BusDevice for MmioTransport {
                         }
                     }
                     _ => {
-                        warn!("unknown virtio mmio register read: 0x{:x}", offset);
+                        warn!("unknown virtio mmio register read: 0x{offset:x}");
                         return;
                     }
                 };
@@ -319,7 +319,7 @@ impl BusDevice for MmioTransport {
                     0xa4 => self.update_queue_field(|q| hi(&mut q.used_ring, v)),
                     0xac => self.shm_region_select = v,
                     _ => {
-                        warn!("unknown virtio mmio register write: 0x{:x}", offset);
+                        warn!("unknown virtio mmio register write: 0x{offset:x}");
                     }
                 }
             }

@@ -74,12 +74,12 @@ impl TcpProxy {
             Ok(flags) => match OFlag::from_bits(flags) {
                 Some(flags) => {
                     if let Err(e) = fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)) {
-                        warn!("error switching to non-blocking: id={}, err={}", id, e);
+                        warn!("error switching to non-blocking: id={id}, err={e}");
                     }
                 }
-                None => error!("invalid fd flags id={}", id),
+                None => error!("invalid fd flags id={id}"),
             },
-            Err(e) => error!("couldn't obtain fd flags id={}, err={}", id, e),
+            Err(e) => error!("couldn't obtain fd flags id={id}, err={e}"),
         };
 
         setsockopt(fd, sockopt::ReusePort, &true).map_err(ProxyError::SettingReusePort)?;
@@ -132,10 +132,7 @@ impl TcpProxy {
         queue: Arc<Mutex<VirtQueue>>,
         rxq: Arc<Mutex<MuxerRxQ>>,
     ) -> Self {
-        debug!(
-            "new_reverse: id={} local_port={} peer_port={}",
-            id, local_port, peer_port
-        );
+        debug!("new_reverse: id={id} local_port={local_port} peer_port={peer_port}");
         TcpProxy {
             id,
             cid,
@@ -242,7 +239,7 @@ impl TcpProxy {
 
             match recv(self.fd, &mut buf[..max_len], MsgFlags::MSG_DONTWAIT) {
                 Ok(cnt) => {
-                    debug!("vsock: tcp: recv cnt={}", cnt);
+                    debug!("vsock: tcp: recv cnt={cnt}");
                     if cnt > 0 {
                         debug!("vsock: tcp: recv rx_cnt={}", self.rx_cnt);
                         RecvPkt::Read(cnt)
@@ -251,7 +248,7 @@ impl TcpProxy {
                     }
                 }
                 Err(e) => {
-                    debug!("vsock: tcp: recv_pkt: recv error: {:?}", e);
+                    debug!("vsock: tcp: recv_pkt: recv error: {e:?}");
                     RecvPkt::Error
                 }
             }
@@ -286,7 +283,7 @@ impl TcpProxy {
                     RecvPkt::Error => 0,
                 },
                 Err(e) => {
-                    debug!("vsock: tcp: recv_pkt: RX queue error: {:?}", e);
+                    debug!("vsock: tcp: recv_pkt: RX queue error: {e:?}");
                     0
                 }
             };
@@ -302,12 +299,12 @@ impl TcpProxy {
                     len, self.push_cnt
                 );
                 if let Err(e) = queue.add_used(&self.mem, head.index, len as u32) {
-                    error!("failed to add used elements to the queue: {:?}", e);
+                    error!("failed to add used elements to the queue: {e:?}");
                 }
             }
         }
 
-        debug!("vsock: tcp: recv_pkt: have_used={}", have_used);
+        debug!("vsock: tcp: recv_pkt: have_used={have_used}");
         (have_used, wait_credit)
     }
 
@@ -383,7 +380,7 @@ impl Proxy for TcpProxy {
                 0
             }
             Err(e) => {
-                debug!("vsock: TcpProxy: Error connecting: {}", e);
+                debug!("vsock: TcpProxy: Error connecting: {e}");
                 #[cfg(target_os = "macos")]
                 let errno = -linux_errno_raw(nix::errno::errno());
                 #[cfg(target_os = "linux")]
@@ -453,7 +450,7 @@ impl Proxy for TcpProxy {
 
         let data = TsiGetnameRsp { addr, port, result };
 
-        debug!("getpeername: reply={:?}", data);
+        debug!("getpeername: reply={data:?}");
 
         // This response goes to the control port (DGRAM).
         let rx = MuxerRx::GetnameResponse {
@@ -513,7 +510,7 @@ impl Proxy for TcpProxy {
             update.signal_queue = true;
         }
 
-        debug!("vsock: tcp_proxy: sendmsg ret={}", ret);
+        debug!("vsock: tcp_proxy: sendmsg ret={ret}");
         update
     }
 
@@ -662,7 +659,7 @@ impl Proxy for TcpProxy {
         };
 
         if let Err(e) = shutdown(self.fd, how) {
-            warn!("error sending shutdown to socket: {}", e);
+            warn!("error sending shutdown to socket: {e}");
         }
     }
 
@@ -779,7 +776,7 @@ impl AsRawFd for TcpProxy {
 impl Drop for TcpProxy {
     fn drop(&mut self) {
         if let Err(e) = close(self.fd) {
-            warn!("error closing proxy fd: {}", e);
+            warn!("error closing proxy fd: {e}");
         }
     }
 }

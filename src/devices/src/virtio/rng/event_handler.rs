@@ -12,12 +12,12 @@ impl Rng {
 
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            warn!("rng: request queue unexpected event {:?}", event_set);
+            warn!("rng: request queue unexpected event {event_set:?}");
             return;
         }
 
         if let Err(e) = self.queue_events[REQ_INDEX].read() {
-            error!("Failed to read request queue event: {:?}", e);
+            error!("Failed to read request queue event: {e:?}");
         } else if self.process_req() {
             if let Err(e) = self.signal_used_queue() {
                 warn!("Failed to signal queue: {e:?}");
@@ -28,7 +28,7 @@ impl Rng {
     fn handle_activate_event(&self, event_manager: &mut EventManager) {
         debug!("rng: activate event");
         if let Err(e) = self.activate_evt.read() {
-            error!("Failed to consume rng activate event: {:?}", e);
+            error!("Failed to consume rng activate event: {e:?}");
         }
 
         // The subscriber must exist as we previously registered activate_evt via
@@ -47,13 +47,13 @@ impl Rng {
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
-                error!("Failed to register rng frq with event manager: {:?}", e);
+                error!("Failed to register rng frq with event manager: {e:?}");
             });
 
         event_manager
             .unregister(self.activate_evt.as_raw_fd())
             .unwrap_or_else(|e| {
-                error!("Failed to unregister rng activate evt: {:?}", e);
+                error!("Failed to unregister rng activate evt: {e:?}");
             })
     }
 }
@@ -70,13 +70,10 @@ impl Subscriber for Rng {
                 _ if source == activate_evt => {
                     self.handle_activate_event(event_manager);
                 }
-                _ => warn!("Unexpected rng event received: {:?}", source),
+                _ => warn!("Unexpected rng event received: {source:?}"),
             }
         } else {
-            warn!(
-                "rng: The device is not yet activated. Spurious event received: {:?}",
-                source
-            );
+            warn!("rng: The device is not yet activated. Spurious event received: {source:?}");
         }
     }
 

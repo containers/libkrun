@@ -14,7 +14,7 @@ impl fmt::Display for BlockConfigError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::BlockConfigError::*;
         match *self {
-            CreateBlockDevice(ref e) => write!(f, "Cannot create block device: {:?}", e),
+            CreateBlockDevice(ref e) => write!(f, "Cannot create block device: {e:?}"),
         }
     }
 }

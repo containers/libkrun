@@ -268,12 +268,12 @@ mod tests {
     fn format_debug() {
         let f = DrmFormat::new(b'X', b'R', b'2', b'4');
         let mut buf = String::new();
-        write!(&mut buf, "{:?}", f).unwrap();
+        write!(&mut buf, "{f:?}").unwrap();
         assert_eq!(buf, "fourcc(XR24)");
 
         let f = DrmFormat::new(0, 1, 2, 16);
         let mut buf = String::new();
-        write!(&mut buf, "{:?}", f).unwrap();
+        write!(&mut buf, "{f:?}").unwrap();
         assert_eq!(buf, "fourcc(0x00010210)");
     }
 

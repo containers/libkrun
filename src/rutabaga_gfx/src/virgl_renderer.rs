@@ -110,7 +110,7 @@ impl RutabagaContext for VirglRendererContext {
     fn attach(&mut self, resource: &mut RutabagaResource) {
         match import_resource(resource) {
             Ok(()) => (),
-            Err(e) => error!("importing resource failing with {}", e),
+            Err(e) => error!("importing resource failing with {e}"),
         }
 
         // The context id and resource id must be valid because the respective instances ensure
@@ -179,10 +179,7 @@ extern "C" fn debug_callback(fmt: *const ::std::os::raw::c_char, ap: stdio::va_l
     };
 
     if printed_len < 0 {
-        debug!(
-            "rutabaga_gfx::virgl_renderer::debug_callback: vsnprintf returned {}",
-            printed_len
-        );
+        debug!("rutabaga_gfx::virgl_renderer::debug_callback: vsnprintf returned {printed_len}");
     } else {
         // vsnprintf returns the number of chars that *would* have been printed
         let len = min(printed_len as usize, BUF_LEN - 1);

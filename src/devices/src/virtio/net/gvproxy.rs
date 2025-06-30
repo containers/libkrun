@@ -44,12 +44,12 @@ impl Gvproxy {
             Ok(flags) => match OFlag::from_bits(flags) {
                 Some(flags) => {
                     if let Err(e) = fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)) {
-                        warn!("error switching to non-blocking: id={}, err={}", fd, e);
+                        warn!("error switching to non-blocking: id={fd}, err={e}");
                     }
                 }
-                None => error!("invalid fd flags id={}", fd),
+                None => error!("invalid fd flags id={fd}"),
             },
-            Err(e) => error!("couldn't obtain fd flags id={}, err={}", fd, e),
+            Err(e) => error!("couldn't obtain fd flags id={fd}, err={e}"),
         };
 
         #[cfg(target_os = "macos")]
@@ -97,7 +97,7 @@ impl NetBackend for Gvproxy {
                 return Err(ReadError::Internal(e));
             }
         };
-        debug!("Read eth frame from passt: {} bytes", frame_length);
+        debug!("Read eth frame from passt: {frame_length} bytes");
         Ok(frame_length)
     }
 

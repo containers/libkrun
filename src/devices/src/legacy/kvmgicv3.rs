@@ -99,7 +99,7 @@ impl IrqChipT for KvmGicV3 {
     ) -> Result<(), DeviceError> {
         if let Some(interrupt_evt) = interrupt_evt {
             if let Err(e) = interrupt_evt.write(1) {
-                error!("Failed to signal used queue: {:?}", e);
+                error!("Failed to signal used queue: {e:?}");
                 return Err(DeviceError::FailedSignalingUsedQueue(e));
             }
         } else {

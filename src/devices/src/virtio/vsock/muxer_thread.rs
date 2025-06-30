@@ -81,7 +81,7 @@ impl MuxerThread {
     }
 
     pub fn update_polling(&self, id: u64, fd: RawFd, evset: EventSet) {
-        debug!("update_polling id={} fd={:?} evset={:?}", id, fd, evset);
+        debug!("update_polling id={id} fd={fd:?} evset={evset:?}");
         let _ = self
             .epoll
             .ctl(ControlOperation::Delete, fd, &EpollEvent::default());
@@ -105,11 +105,11 @@ impl MuxerThread {
         match update.remove_proxy {
             ProxyRemoval::Keep => {}
             ProxyRemoval::Immediate => {
-                warn!("immediately removing proxy: {}", id);
+                warn!("immediately removing proxy: {id}");
                 self.proxy_map.write().unwrap().remove(&id);
             }
             ProxyRemoval::Deferred => {
-                warn!("deferring proxy removal: {}", id);
+                warn!("deferring proxy removal: {id}");
                 if self.reaper_sender.send(id).is_err() {
                     self.proxy_map.write().unwrap().remove(&id);
                 }
@@ -164,7 +164,7 @@ impl MuxerThread {
                     .unwrap()
                     .set_irq(self.irq_line, Some(&self.interrupt_evt))
                 {
-                    warn!("failed to signal used queue: {:?}", e);
+                    warn!("failed to signal used queue: {e:?}");
                 }
             }
         }
@@ -179,7 +179,7 @@ impl MuxerThread {
             let proxy = match UnixAcceptorProxy::new(id, path, *port) {
                 Ok(proxy) => proxy,
                 Err(e) => {
-                    warn!("Failed to create listening proxy at {:?}: {:?}", path, e);
+                    warn!("Failed to create listening proxy at {path:?}: {e:?}");
                     continue;
                 }
             };
@@ -219,7 +219,7 @@ impl MuxerThread {
                     }
                 }
                 Err(e) => {
-                    debug!("vsock: failed to consume muxer epoll event: {}", e);
+                    debug!("vsock: failed to consume muxer epoll event: {e}");
                 }
             }
         }

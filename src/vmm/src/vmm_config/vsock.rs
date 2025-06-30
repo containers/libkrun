@@ -143,6 +143,6 @@ pub(crate) mod tests {
         let err = CreateVsockDevice(devices::virtio::VsockError::EventFd(
             io::Error::from_raw_os_error(0),
         ));
-        let _ = format!("{}{:?}", err, err);
+        let _ = format!("{err}{err:?}");
     }
 }

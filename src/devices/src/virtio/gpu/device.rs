@@ -229,7 +229,7 @@ impl VirtioDevice for Gpu {
     }
 
     fn set_irq_line(&mut self, irq: u32) {
-        debug!("SET_IRQ_LINE (GPU)={}", irq);
+        debug!("SET_IRQ_LINE (GPU)={irq}");
         self.irq_line = Some(irq);
     }
 

@@ -779,7 +779,7 @@ pub unsafe extern "C" fn krun_set_gvproxy_path(ctx_id: u32, c_path: *const c_cha
     let path_str = match CStr::from_ptr(c_path).to_str() {
         Ok(path) => path,
         Err(e) => {
-            debug!("Error parsing gvproxy_path: {:?}", e);
+            debug!("Error parsing gvproxy_path: {e:?}");
             return -libc::EINVAL;
         }
     };
@@ -948,7 +948,7 @@ pub unsafe extern "C" fn krun_set_exec(
     let exec_path = match CStr::from_ptr(c_exec_path).to_str() {
         Ok(path) => path,
         Err(e) => {
-            debug!("Error parsing exec_path: {:?}", e);
+            debug!("Error parsing exec_path: {e:?}");
             return -libc::EINVAL;
         }
     };
@@ -958,7 +958,7 @@ pub unsafe extern "C" fn krun_set_exec(
         match collapse_str_array(argv_array) {
             Ok(s) => s,
             Err(e) => {
-                debug!("Error parsing args: {:?}", e);
+                debug!("Error parsing args: {e:?}");
                 return -libc::EINVAL;
             }
         }
@@ -971,7 +971,7 @@ pub unsafe extern "C" fn krun_set_exec(
         match collapse_str_array(envp_array) {
             Ok(s) => s,
             Err(e) => {
-                debug!("Error parsing args: {:?}", e);
+                debug!("Error parsing args: {e:?}");
                 return -libc::EINVAL;
             }
         }
@@ -1003,7 +1003,7 @@ pub unsafe extern "C" fn krun_set_env(ctx_id: u32, c_envp: *const *const c_char)
         match collapse_str_array(envp_array) {
             Ok(s) => s,
             Err(e) => {
-                debug!("Error parsing args: {:?}", e);
+                debug!("Error parsing args: {e:?}");
                 return -libc::EINVAL;
             }
         }
@@ -1340,7 +1340,7 @@ pub unsafe extern "C" fn krun_set_kernel(
     let path = match CStr::from_ptr(c_kernel_path).to_str() {
         Ok(path) => PathBuf::from(path),
         Err(e) => {
-            error!("Error parsing kernel_path: {:?}", e);
+            error!("Error parsing kernel_path: {e:?}");
             return -libc::EINVAL;
         }
     };
@@ -1369,14 +1369,14 @@ pub unsafe extern "C" fn krun_set_kernel(
                 let size = match std::fs::metadata(&path) {
                     Ok(metadata) => metadata.len(),
                     Err(e) => {
-                        error!("Can't read initramfs metadata: {:?}", e);
+                        error!("Can't read initramfs metadata: {e:?}");
                         return -libc::EINVAL;
                     }
                 };
                 (Some(path), size)
             }
             Err(e) => {
-                error!("Error parsing initramfs path: {:?}", e);
+                error!("Error parsing initramfs path: {e:?}");
                 return -libc::EINVAL;
             }
         }
@@ -1388,7 +1388,7 @@ pub unsafe extern "C" fn krun_set_kernel(
         match CStr::from_ptr(c_cmdline).to_str() {
             Ok(cmdline) => Some(cmdline.to_string()),
             Err(e) => {
-                error!("Error parsing kernel cmdline: {:?}", e);
+                error!("Error parsing kernel cmdline: {e:?}");
                 return -libc::EINVAL;
             }
         }
@@ -1545,7 +1545,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     let mut event_manager = match EventManager::new() {
         Ok(em) => em,
         Err(e) => {
-            error!("Unable to create EventManager: {:?}", e);
+            error!("Unable to create EventManager: {e:?}");
             return -libc::EINVAL;
         }
     };
@@ -1563,7 +1563,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
                 return -libc::ENOENT;
             }
         } else {
-            eprintln!("Couldn't find or load {}", KRUNFW_NAME);
+            eprintln!("Couldn't find or load {KRUNFW_NAME}");
             return -libc::ENOENT;
         }
     }
@@ -1585,7 +1585,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(feature = "tee")]
     if let Some(tee_config) = ctx_cfg.get_tee_config_file() {
         if let Err(e) = ctx_cfg.vmr.set_tee_config(tee_config) {
-            error!("Error setting up TEE config: {:?}", e);
+            error!("Error setting up TEE config: {e:?}");
             return -libc::EINVAL;
         }
     } else {
@@ -1664,14 +1664,14 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     if let Some(gid) = ctx_cfg.vmm_gid {
         if unsafe { libc::setgid(gid) } != 0 {
-            error!("Failed to set gid {}", gid);
+            error!("Failed to set gid {gid}");
             return -std::io::Error::last_os_error().raw_os_error().unwrap();
         }
     }
 
     if let Some(uid) = ctx_cfg.vmm_uid {
         if unsafe { libc::setuid(uid) } != 0 {
-            error!("Failed to set uid {}", uid);
+            error!("Failed to set uid {uid}");
             return -std::io::Error::last_os_error().raw_os_error().unwrap();
         }
     }
@@ -1686,7 +1686,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     ) {
         Ok(vmm) => vmm,
         Err(e) => {
-            error!("Building the microVM failed: {:?}", e);
+            error!("Building the microVM failed: {e:?}");
             return -libc::EINVAL;
         }
     };
@@ -1708,7 +1708,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         match event_manager.run() {
             Ok(_) => {}
             Err(e) => {
-                error!("Error in EventManager loop: {:?}", e);
+                error!("Error in EventManager loop: {e:?}");
                 return -libc::EINVAL;
             }
         }

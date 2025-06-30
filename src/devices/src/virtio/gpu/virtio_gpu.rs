@@ -152,14 +152,14 @@ impl VirtioGpu {
                     if let Err(e) =
                         queue.add_used(&mem, completed_desc.desc_index, completed_desc.len)
                     {
-                        error!("failed to add used elements to the queue: {:?}", e);
+                        error!("failed to add used elements to the queue: {e:?}");
                     }
 
                     interrupt_status.fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
                     if let Some(intc) = &intc {
                         if let Err(e) = intc.lock().unwrap().set_irq(irq_line, Some(&interrupt_evt))
                         {
-                            error!("Failed to signal used queue: {:?}", e);
+                            error!("Failed to signal used queue: {e:?}");
                         }
                     }
                 } else {
@@ -193,7 +193,7 @@ impl VirtioGpu {
             Ok(display) => display,
             Err(_) => "wayland-0".to_string(),
         };
-        let path = PathBuf::from(format!("{}/{}", xdg_runtime_dir, wayland_display));
+        let path = PathBuf::from(format!("{xdg_runtime_dir}/{wayland_display}"));
 
         #[allow(unused_mut)]
         let mut rutabaga_channels: Vec<RutabagaChannel> = vec![RutabagaChannel {
@@ -204,7 +204,7 @@ impl VirtioGpu {
         #[cfg(target_os = "linux")]
         if let Ok(x_display) = env::var("DISPLAY") {
             if let Some(x_display) = x_display.strip_prefix(":") {
-                let x_path = PathBuf::from(format!("/tmp/.X11-unix/X{}", x_display));
+                let x_path = PathBuf::from(format!("/tmp/.X11-unix/X{x_display}"));
                 rutabaga_channels.push(RutabagaChannel {
                     base_channel: x_path,
                     channel_type: RUTABAGA_CHANNEL_TYPE_X11,

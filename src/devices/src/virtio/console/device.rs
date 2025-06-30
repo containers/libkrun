@@ -50,7 +50,7 @@ pub(crate) fn get_win_size() -> (u16, u16) {
     let ret = unsafe { tiocgwinsz(0, &mut ws) };
 
     if let Err(err) = ret {
-        error!("Couldn't get terminal dimensions: {}", err);
+        error!("Couldn't get terminal dimensions: {err}");
         (0, 0)
     } else {
         (ws.cols, ws.rows)
@@ -151,7 +151,7 @@ impl Console {
     }
 
     pub fn update_console_size(&mut self, cols: u16, rows: u16) {
-        log::debug!("update_console_size: {} {}", cols, rows);
+        log::debug!("update_console_size: {cols} {rows}");
         // Note that we currently only support resizing on the first/main console
         self.control
             .console_resize(0, VirtioConsoleResize { rows, cols });
@@ -176,7 +176,7 @@ impl Console {
                         if let Err(e) =
                             self.queues[CONTROL_RXQ_INDEX].add_used(mem, head.index, n as u32)
                         {
-                            error!("failed to add used elements to the queue: {:?}", e);
+                            error!("failed to add used elements to the queue: {e:?}");
                         }
                     }
                     Err(e) => {
@@ -217,7 +217,7 @@ impl Console {
                 }
             };
             if let Err(e) = tx_queue.add_used(mem, head.index, size_of_val(&cmd) as u32) {
-                error!("failed to add used elements to the queue: {:?}", e);
+                error!("failed to add used elements to the queue: {e:?}");
             }
 
             log::trace!("VirtioConsoleControl cmd: {cmd:?}");
@@ -233,7 +233,7 @@ impl Console {
                 }
                 control_event::VIRTIO_CONSOLE_PORT_READY => {
                     if cmd.value != 1 {
-                        log::error!("Port initialization failed: {:?}", cmd);
+                        log::error!("Port initialization failed: {cmd:?}");
                         continue;
                     }
 
@@ -281,7 +281,7 @@ impl Console {
         }
 
         for port_id in ports_to_start {
-            log::trace!("Starting port io for port {}", port_id);
+            log::trace!("Starting port io for port {port_id}");
             self.ports[port_id].start(
                 mem.clone(),
                 self.queues[port_id_to_queue_idx(QueueDirection::Rx, port_id)].clone(),

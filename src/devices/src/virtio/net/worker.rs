@@ -156,16 +156,14 @@ impl NetWorker {
                             }
                             _ => {
                                 log::warn!(
-                                    "Received unknown event: {:?} from fd: {:?}",
-                                    event_set,
-                                    source
+                                    "Received unknown event: {event_set:?} from fd: {source:?}"
                                 );
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    debug!("vsock: failed to consume muxer epoll event: {}", e);
+                    debug!("vsock: failed to consume muxer epoll event: {e}");
                 }
             }
         }
@@ -173,16 +171,16 @@ impl NetWorker {
 
     pub(crate) fn process_rx_queue_event(&mut self) {
         if let Err(e) = self.queue_evts[RX_INDEX].read() {
-            log::error!("Failed to get rx event from queue: {:?}", e);
+            log::error!("Failed to get rx event from queue: {e:?}");
         }
         if let Err(e) = self.queues[RX_INDEX].disable_notification(&self.mem) {
-            error!("error disabling queue notifications: {:?}", e);
+            error!("error disabling queue notifications: {e:?}");
         }
         if let Err(e) = self.process_rx() {
             log::error!("Failed to process rx: {e:?} (triggered by queue event)")
         };
         if let Err(e) = self.queues[RX_INDEX].enable_notification(&self.mem) {
-            error!("error disabling queue notifications: {:?}", e);
+            error!("error disabling queue notifications: {e:?}");
         }
     }
 
@@ -197,13 +195,13 @@ impl NetWorker {
 
     pub(crate) fn process_backend_socket_readable(&mut self) {
         if let Err(e) = self.queues[RX_INDEX].enable_notification(&self.mem) {
-            error!("error disabling queue notifications: {:?}", e);
+            error!("error disabling queue notifications: {e:?}");
         }
         if let Err(e) = self.process_rx() {
             log::error!("Failed to process rx: {e:?} (triggered by backend socket readable)");
         };
         if let Err(e) = self.queues[RX_INDEX].disable_notification(&self.mem) {
-            error!("error disabling queue notifications: {:?}", e);
+            error!("error disabling queue notifications: {e:?}");
         }
     }
 
@@ -324,7 +322,7 @@ impl NetWorker {
                         read_count += limit - read_count;
                     }
                     Err(e) => {
-                        log::error!("Failed to read slice: {:?}", e);
+                        log::error!("Failed to read slice: {e:?}");
                         read_count = 0;
                         break;
                     }
@@ -418,7 +416,7 @@ impl NetWorker {
                     frame_slice = &frame_slice[len..];
                 }
                 Err(e) => {
-                    log::error!("Failed to write slice: {:?}", e);
+                    log::error!("Failed to write slice: {e:?}");
                     result = Err(FrontendError::GuestMemory(e));
                     break;
                 }

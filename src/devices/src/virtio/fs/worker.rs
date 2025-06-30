@@ -122,25 +122,23 @@ impl FsWorker {
                             }
                             _ => {
                                 log::warn!(
-                                    "Received unknown event: {:?} from fd: {:?}",
-                                    event_set,
-                                    source
+                                    "Received unknown event: {event_set:?} from fd: {source:?}"
                                 );
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    debug!("failed to consume muxer epoll event: {}", e);
+                    debug!("failed to consume muxer epoll event: {e}");
                 }
             }
         }
     }
 
     fn handle_event(&mut self, queue_index: usize) {
-        debug!("Fs: queue event: {}", queue_index);
+        debug!("Fs: queue event: {queue_index}");
         if let Err(e) = self.queue_evts[queue_index].read() {
-            error!("Failed to get queue event: {:?}", e);
+            error!("Failed to get queue event: {e:?}");
         }
 
         loop {
@@ -177,11 +175,11 @@ impl FsWorker {
                 #[cfg(target_os = "macos")]
                 &self.map_sender,
             ) {
-                error!("error handling message: {:?}", e);
+                error!("error handling message: {e:?}");
             }
 
             if let Err(e) = queue.add_used(&self.mem, head.index, 0) {
-                error!("failed to add used elements to the queue: {:?}", e);
+                error!("failed to add used elements to the queue: {e:?}");
             }
 
             if queue.needs_notification(&self.mem).unwrap() {
@@ -193,7 +191,7 @@ impl FsWorker {
                         .unwrap()
                         .set_irq(self.irq_line, Some(&self.interrupt_evt))
                     {
-                        error!("Failed to signal used queue: {:?}", e);
+                        error!("Failed to signal used queue: {e:?}");
                     }
                 }
             }

@@ -63,7 +63,7 @@ impl TimesyncThread {
                 if let Err(e) =
                     queue.add_used(&self.mem, head.index, pkt.hdr().len() as u32 + pkt.len())
                 {
-                    error!("failed to add used elements to the queue: {:?}", e);
+                    error!("failed to add used elements to the queue: {e:?}");
                 }
                 self.interrupt_status
                     .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
@@ -73,7 +73,7 @@ impl TimesyncThread {
                         .unwrap()
                         .set_irq(self.irq_line, Some(&self.interrupt_evt))
                     {
-                        warn!("failed to signal used queue: {:?}", e);
+                        warn!("failed to signal used queue: {e:?}");
                     }
                 }
             }

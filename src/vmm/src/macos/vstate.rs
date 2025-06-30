@@ -64,22 +64,21 @@ impl Display for Error {
         use self::Error::*;
 
         match self {
-            GuestMemoryMmap(e) => write!(f, "Guest memory error: {:?}", e),
+            GuestMemoryMmap(e) => write!(f, "Guest memory error: {e:?}"),
             VcpuCountNotInitialized => write!(f, "vCPU count is not initialized"),
-            VmSetup(e) => write!(f, "Cannot configure the microvm: {:?}", e),
+            VmSetup(e) => write!(f, "Cannot configure the microvm: {e:?}"),
             VcpuRun => write!(f, "Cannot run the VCPUs"),
             NotEnoughMemorySlots => write!(
                 f,
                 "The number of configured slots is bigger than the maximum reported by KVM"
             ),
-            SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {:?}", e),
-            SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {}", e),
+            SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e:?}"),
+            SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {e}"),
             REGSConfiguration(e) => write!(
                 f,
-                "Error configuring the general purpose aarch64 registers: {:?}",
-                e
+                "Error configuring the general purpose aarch64 registers: {e:?}"
             ),
-            VcpuSpawn(e) => write!(f, "Cannot spawn a new vCPU thread: {}", e),
+            VcpuSpawn(e) => write!(f, "Cannot spawn a new vCPU thread: {e}"),
             VcpuTlsInit => write!(f, "Cannot clean init vcpu TLS"),
             VcpuTlsNotPresent => write!(f, "Vcpu not present in TLS"),
             VcpuUnhandledKvmExit => write!(f, "Unexpected KVM_RUN exit reason"),
@@ -140,11 +139,11 @@ impl Vm {
     ) {
         debug!("add_mapping: host_addr={host_addr:x}, guest_addr={guest_addr:x}, len={len}");
         if let Err(e) = self.hvf_vm.unmap_memory(guest_addr, len) {
-            error!("Error removing memory map: {:?}", e);
+            error!("Error removing memory map: {e:?}");
         }
 
         if let Err(e) = self.hvf_vm.map_memory(host_addr, guest_addr, len) {
-            error!("Error adding memory map: {:?}", e);
+            error!("Error adding memory map: {e:?}");
             reply_sender.send(false).unwrap();
         } else {
             reply_sender.send(true).unwrap();
@@ -154,7 +153,7 @@ impl Vm {
     pub fn remove_mapping(&self, reply_sender: Sender<bool>, guest_addr: u64, len: u64) {
         debug!("remove_mapping: guest_addr={guest_addr:x}, len={len}");
         if let Err(e) = self.hvf_vm.unmap_memory(guest_addr, len) {
-            error!("Error removing memory map: {:?}", e);
+            error!("Error removing memory map: {e:?}");
             reply_sender.send(false).unwrap();
         } else {
             reply_sender.send(true).unwrap();
@@ -362,18 +361,15 @@ impl Vcpu {
         match hvf_vcpu.run(self.vcpu_list.clone()) {
             Ok(exit) => match exit {
                 VcpuExit::Breakpoint => {
-                    debug!("vCPU {} breakpoint", vcpuid);
+                    debug!("vCPU {vcpuid} breakpoint");
                     Ok(VcpuEmulation::Interrupted)
                 }
                 VcpuExit::Canceled => {
-                    debug!("vCPU {} canceled", vcpuid);
+                    debug!("vCPU {vcpuid} canceled");
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::CpuOn(mpidr, entry, context_id) => {
-                    debug!(
-                        "CpuOn: mpidr=0x{:x} entry=0x{:x} context_id={}",
-                        mpidr, entry, context_id
-                    );
+                    debug!("CpuOn: mpidr=0x{mpidr:x} entry=0x{entry:x} context_id={context_id}");
                     if let Some(boot_senders) = &self.boot_senders {
                         if let Some(sender) = boot_senders.get(&mpidr) {
                             sender.send(entry).unwrap()
@@ -384,12 +380,12 @@ impl Vcpu {
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::HypervisorCall => {
-                    debug!("vCPU {} HVC", vcpuid);
+                    debug!("vCPU {vcpuid} HVC");
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::MmioRead(addr, data) => {
                     if let Some(ref mmio_bus) = self.mmio_bus {
-                        debug!("vCPU {} MMIO read 0x{:x}", vcpuid, addr);
+                        debug!("vCPU {vcpuid} MMIO read 0x{addr:x}");
                         mmio_bus.read(vcpuid, addr, data);
                     }
                     Ok(VcpuEmulation::Handled)
@@ -401,40 +397,40 @@ impl Vcpu {
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::PsciHandled => {
-                    debug!("vCPU {} PSCI", vcpuid);
+                    debug!("vCPU {vcpuid} PSCI");
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::SecureMonitorCall => {
-                    debug!("vCPU {} SMC", vcpuid);
+                    debug!("vCPU {vcpuid} SMC");
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::Shutdown => {
-                    info!("vCPU {} received shutdown signal", vcpuid);
+                    info!("vCPU {vcpuid} received shutdown signal");
                     Ok(VcpuEmulation::Stopped)
                 }
                 VcpuExit::SystemRegister => {
-                    debug!("vCPU {} accessed a system register", vcpuid);
+                    debug!("vCPU {vcpuid} accessed a system register");
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::VtimerActivated => {
-                    debug!("vCPU {} VtimerActivated", vcpuid);
+                    debug!("vCPU {vcpuid} VtimerActivated");
                     self.vcpu_list.set_vtimer_irq(vcpuid);
                     Ok(VcpuEmulation::Handled)
                 }
                 VcpuExit::WaitForEvent => {
-                    debug!("vCPU {} WaitForEvent", vcpuid);
+                    debug!("vCPU {vcpuid} WaitForEvent");
                     Ok(VcpuEmulation::WaitForEvent)
                 }
                 VcpuExit::WaitForEventExpired => {
-                    debug!("vCPU {} WaitForEventExpired", vcpuid);
+                    debug!("vCPU {vcpuid} WaitForEventExpired");
                     Ok(VcpuEmulation::WaitForEventExpired)
                 }
                 VcpuExit::WaitForEventTimeout(duration) => {
-                    debug!("vCPU {} WaitForEventTimeout timeout={:?}", vcpuid, duration);
+                    debug!("vCPU {vcpuid} WaitForEventTimeout timeout={duration:?}");
                     Ok(VcpuEmulation::WaitForEventTimeout(duration))
                 }
             },
-            Err(e) => panic!("Error running HVF vCPU: {:?}", e),
+            Err(e) => panic!("Error running HVF vCPU: {e:?}"),
         }
     }
 
@@ -459,7 +455,7 @@ impl Vcpu {
 
         hvf_vcpu
             .set_initial_state(entry_addr, self.fdt_addr)
-            .unwrap_or_else(|_| panic!("Can't set HVF vCPU {} initial state", hvf_vcpuid));
+            .unwrap_or_else(|_| panic!("Can't set HVF vCPU {hvf_vcpuid} initial state"));
 
         loop {
             match self.run_emulation(&mut hvf_vcpu) {
@@ -518,7 +514,7 @@ impl Vcpu {
             .expect("failed to send Exited status");
 
         if let Err(e) = self.exit_evt.write(1) {
-            error!("Failed signaling vcpu exit event: {}", e);
+            error!("Failed signaling vcpu exit event: {e}");
         }
     }
 }

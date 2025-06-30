@@ -47,8 +47,8 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::BadWriteOffset(offset) => write!(f, "Bad Write Offset: {}", offset),
-            Error::InterruptFailure(e) => write!(f, "Failed to trigger interrupt: {}", e),
+            Error::BadWriteOffset(offset) => write!(f, "Bad Write Offset: {offset}"),
+            Error::InterruptFailure(e) => write!(f, "Failed to trigger interrupt: {e}"),
         }
     }
 }
@@ -168,7 +168,7 @@ impl BusDevice for RTC {
         if data.len() <= 4 {
             let v = byte_order::read_le_u32(data);
             if let Err(e) = self.handle_write(offset, v) {
-                warn!("Failed to write to RTC PL031 device: {}", e);
+                warn!("Failed to write to RTC PL031 device: {e}");
             }
         } else {
             warn!(

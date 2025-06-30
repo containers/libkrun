@@ -178,7 +178,7 @@ impl VirtioDevice for Fs {
     }
 
     fn set_irq_line(&mut self, irq: u32) {
-        debug!("SET_IRQ_LINE (FS)={}", irq);
+        debug!("SET_IRQ_LINE (FS)={irq}");
         self.irq_line = Some(irq);
     }
 
@@ -254,7 +254,7 @@ impl VirtioDevice for Fs {
         if let Some(worker) = self.worker_thread.take() {
             let _ = self.worker_stopfd.write(1);
             if let Err(e) = worker.join() {
-                error!("error waiting for worker thread: {:?}", e);
+                error!("error waiting for worker thread: {e:?}");
             }
         }
         self.device_state = DeviceState::Inactive;

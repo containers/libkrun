@@ -44,11 +44,11 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::BusError(ref e) => write!(f, "failed to perform bus operation: {}", e),
+            Error::BusError(ref e) => write!(f, "failed to perform bus operation: {e}"),
             Error::Cmdline(ref e) => {
-                write!(f, "unable to add device to kernel command line: {}", e)
+                write!(f, "unable to add device to kernel command line: {e}")
             }
-            Error::EventFd(ref e) => write!(f, "failed to create or clone event descriptor: {}", e),
+            Error::EventFd(ref e) => write!(f, "failed to create or clone event descriptor: {e}"),
             Error::IrqsExhausted => write!(f, "no more IRQs are available"),
             Error::RegisterIoEvent => write!(f, "failed to register IO event"),
             Error::RegisterIrqFd => write!(f, "failed to register irqfd"),

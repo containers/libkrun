@@ -12,12 +12,12 @@ impl Balloon {
 
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            warn!("balloon: inflate unexpected event {:?}", event_set);
+            warn!("balloon: inflate unexpected event {event_set:?}");
             return;
         }
 
         if let Err(e) = self.queue_events[IFQ_INDEX].read() {
-            error!("Failed to read balloon inflate queue event: {:?}", e);
+            error!("Failed to read balloon inflate queue event: {e:?}");
         }
     }
 
@@ -26,12 +26,12 @@ impl Balloon {
 
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            warn!("balloon: deflate unexpected event {:?}", event_set);
+            warn!("balloon: deflate unexpected event {event_set:?}");
             return;
         }
 
         if let Err(e) = self.queue_events[DFQ_INDEX].read() {
-            error!("Failed to read balloon inflate queue event: {:?}", e);
+            error!("Failed to read balloon inflate queue event: {e:?}");
         }
     }
 
@@ -40,12 +40,12 @@ impl Balloon {
 
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            warn!("balloon: stats unexpected event {:?}", event_set);
+            warn!("balloon: stats unexpected event {event_set:?}");
             return;
         }
 
         if let Err(e) = self.queue_events[STQ_INDEX].read() {
-            error!("Failed to read balloon stats queue event: {:?}", e);
+            error!("Failed to read balloon stats queue event: {e:?}");
         }
     }
 
@@ -54,12 +54,12 @@ impl Balloon {
 
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            warn!("balloon: page-hinting unexpected event {:?}", event_set);
+            warn!("balloon: page-hinting unexpected event {event_set:?}");
             return;
         }
 
         if let Err(e) = self.queue_events[PHQ_INDEX].read() {
-            error!("Failed to read balloon page-hinting queue event: {:?}", e);
+            error!("Failed to read balloon page-hinting queue event: {e:?}");
         }
     }
 
@@ -68,18 +68,12 @@ impl Balloon {
 
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            warn!(
-                "balloon: free-page reporting unexpected event {:?}",
-                event_set
-            );
+            warn!("balloon: free-page reporting unexpected event {event_set:?}");
             return;
         }
 
         if let Err(e) = self.queue_events[FRQ_INDEX].read() {
-            error!(
-                "Failed to read balloon free-page reporting queue event: {:?}",
-                e
-            );
+            error!("Failed to read balloon free-page reporting queue event: {e:?}");
         } else if self.process_frq() {
             if let Err(e) = self.signal_used_queue() {
                 warn!("Failed to signal queue: {e:?}");
@@ -90,7 +84,7 @@ impl Balloon {
     fn handle_activate_event(&self, event_manager: &mut EventManager) {
         debug!("balloon: activate event");
         if let Err(e) = self.activate_evt.read() {
-            error!("Failed to consume balloon activate event: {:?}", e);
+            error!("Failed to consume balloon activate event: {e:?}");
         }
 
         // The subscriber must exist as we previously registered activate_evt via
@@ -109,7 +103,7 @@ impl Balloon {
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
-                error!("Failed to register balloon ifq with event manager: {:?}", e);
+                error!("Failed to register balloon ifq with event manager: {e:?}");
             });
 
         event_manager
@@ -122,7 +116,7 @@ impl Balloon {
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
-                error!("Failed to register balloon dfq with event manager: {:?}", e);
+                error!("Failed to register balloon dfq with event manager: {e:?}");
             });
 
         event_manager
@@ -135,7 +129,7 @@ impl Balloon {
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
-                error!("Failed to register balloon stq with event manager: {:?}", e);
+                error!("Failed to register balloon stq with event manager: {e:?}");
             });
 
         event_manager
@@ -148,7 +142,7 @@ impl Balloon {
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
-                error!("Failed to register balloon dfq with event manager: {:?}", e);
+                error!("Failed to register balloon dfq with event manager: {e:?}");
             });
 
         event_manager
@@ -161,13 +155,13 @@ impl Balloon {
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
-                error!("Failed to register balloon frq with event manager: {:?}", e);
+                error!("Failed to register balloon frq with event manager: {e:?}");
             });
 
         event_manager
             .unregister(self.activate_evt.as_raw_fd())
             .unwrap_or_else(|e| {
-                error!("Failed to unregister balloon activate evt: {:?}", e);
+                error!("Failed to unregister balloon activate evt: {e:?}");
             })
     }
 }
@@ -192,13 +186,10 @@ impl Subscriber for Balloon {
                 _ if source == activate_evt => {
                     self.handle_activate_event(event_manager);
                 }
-                _ => warn!("Unexpected balloon event received: {:?}", source),
+                _ => warn!("Unexpected balloon event received: {source:?}"),
             }
         } else {
-            warn!(
-                "balloon: The device is not yet activated. Spurious event received: {:?}",
-                source
-            );
+            warn!("balloon: The device is not yet activated. Spurious event received: {source:?}");
         }
     }
 

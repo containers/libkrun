@@ -180,10 +180,7 @@ impl Vcpus for VcpuList {
                 let aff3aff2aff1 = val & ((0xff << 48) | (0xff << 32) | (0xff << 16));
                 let rs = (val & (0xf << 44)) >> 44;
 
-                debug!(
-                    "vCPU {} GenerateSoftwareInterrupt={} (0x{:x})",
-                    vcpuid, intid, val
-                );
+                debug!("vCPU {vcpuid} GenerateSoftwareInterrupt={intid} (0x{val:x})");
 
                 // A flat core hierarchy should be good enough, but if we ever start using
                 // Aff[123] MPIDR fields (currently MPID is configured via DT), GICv3 support

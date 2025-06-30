@@ -41,7 +41,7 @@ impl ReaperThread {
         if !expired.is_empty() {
             let mut pmap = self.proxy_map.write().unwrap();
             for id in expired {
-                debug!("removing proxy: {}", id);
+                debug!("removing proxy: {id}");
                 pmap.remove(&id);
                 self.released_map.remove(&id);
             }

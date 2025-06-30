@@ -126,7 +126,7 @@ impl Display for Error {
 
         match self {
             EnableEL2 => write!(f, "Error enabling EL2 mode in HVF"),
-            FindSymbol(ref err) => write!(f, "Couldn't find symbol in HVF library: {}", err),
+            FindSymbol(ref err) => write!(f, "Couldn't find symbol in HVF library: {err}"),
             MemoryMap => write!(f, "Error registering memory region in HVF"),
             MemoryUnmap => write!(f, "Error unregistering memory region in HVF"),
             NestedCheck => write!(
@@ -143,8 +143,7 @@ impl Display for Error {
             VcpuSetRegister => write!(f, "Error setting HVF vCPU register"),
             VcpuSetSystemRegister(reg, val) => write!(
                 f,
-                "Error setting HVF vCPU system register 0x{:#x} to 0x{:#x}",
-                reg, val
+                "Error setting HVF vCPU system register 0x{reg:#x} to 0x{val:#x}"
             ),
             VcpuSetVtimerMask => write!(f, "Error setting HVF vCPU vtimer mask"),
             VmCreate => write!(f, "Error creating HVF VM instance"),
@@ -222,7 +221,7 @@ pub fn check_nested_virt() -> Result<bool, Error> {
     let mut el2_supported: bool = false;
     let ret = unsafe { (get_el2_supported.unwrap())(&mut el2_supported) };
     if ret != HV_SUCCESS {
-        error!("hv_vm_config_get_el2_supported failed: {:?}", ret);
+        error!("hv_vm_config_get_el2_supported failed: {ret:?}");
         return Err(Error::NestedCheck);
     }
 
@@ -545,7 +544,7 @@ impl HvfVcpu<'_> {
                 self.write_reg(hv_reg_t_HV_REG_X0, 0)?;
                 Ok(VcpuExit::CpuOn(mpidr, entry, context_id))
             }
-            val => panic!("Unexpected val={}", val)
+            val => panic!("Unexpected val={val}")
         }
     }
 

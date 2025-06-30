@@ -104,7 +104,7 @@ impl Rng {
                 let mut rand_bytes = vec![0u8; desc.len as usize];
                 OsRng.fill_bytes(&mut rand_bytes);
                 if let Err(e) = mem.write_slice(&rand_bytes[..], desc.addr) {
-                    error!("Failed to write slice: {:?}", e);
+                    error!("Failed to write slice: {e:?}");
                     self.queues[REQ_INDEX].go_to_previous_position();
                     break;
                 }
@@ -113,7 +113,7 @@ impl Rng {
 
             have_used = true;
             if let Err(e) = self.queues[REQ_INDEX].add_used(mem, index, written) {
-                error!("failed to add used elements to the queue: {:?}", e);
+                error!("failed to add used elements to the queue: {e:?}");
             }
         }
 
@@ -159,7 +159,7 @@ impl VirtioDevice for Rng {
     }
 
     fn set_irq_line(&mut self, irq: u32) {
-        debug!("SET_IRQ_LINE (RNG)={}", irq);
+        debug!("SET_IRQ_LINE (RNG)={irq}");
         self.irq_line = Some(irq);
     }
 

@@ -204,7 +204,7 @@ mod tests {
         let result = bus.insert(dummy.clone(), 0x0f, 0x10);
         // This overlaps the address space of the existing bus device at 0x10.
         assert!(result.is_err());
-        assert_eq!(format!("{:?}", result), "Err(Overlap)");
+        assert_eq!(format!("{result:?}"), "Err(Overlap)");
 
         // This overlaps the address space of the existing bus device at 0x10.
         assert!(bus.insert(dummy.clone(), 0x10, 0x10).is_err());

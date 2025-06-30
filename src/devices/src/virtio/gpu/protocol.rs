@@ -709,8 +709,8 @@ impl Display for GpuResponse {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::GpuResponse::*;
         match self {
-            ErrRutabaga(e) => write!(f, "renderer error: {}", e),
-            ErrScanout { num_scanouts } => write!(f, "non-zero scanout: {}", num_scanouts),
+            ErrRutabaga(e) => write!(f, "renderer error: {e}"),
+            ErrScanout { num_scanouts } => write!(f, "non-zero scanout: {num_scanouts}"),
             _ => Ok(()),
         }
     }

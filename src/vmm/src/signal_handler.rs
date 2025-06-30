@@ -37,10 +37,7 @@ extern "C" fn sigsys_handler(num: c_int, info: *mut siginfo_t, _unused: *mut c_v
     // Other signals which might do async unsafe things incompatible with the rest of this
     // function are blocked due to the sa_mask used when registering the signal handler.
     let syscall = unsafe { *(info as *const i32).offset(SI_OFF_SYSCALL) as usize };
-    error!(
-        "Shutting down VM after intercepting a bad syscall ({}).",
-        syscall
-    );
+    error!("Shutting down VM after intercepting a bad syscall ({syscall}).");
     // Safe because we're terminating the process anyway. We don't actually do anything when
     // running unit tests.
     #[cfg(not(test))]
@@ -63,10 +60,7 @@ extern "C" fn sigbus_sigsegv_handler(num: c_int, info: *mut siginfo_t, _unused: 
         unsafe { _exit(i32::from(super::FC_EXIT_CODE_UNEXPECTED_ERROR)) };
     }
 
-    error!(
-        "Shutting down VM after intercepting signal {}, code {}.",
-        si_signo, si_code
-    );
+    error!("Shutting down VM after intercepting signal {si_signo}, code {si_code}.");
 
     // Safe because we're terminating the process anyway. We don't actually do anything when
     // running unit tests.

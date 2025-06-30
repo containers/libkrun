@@ -222,12 +222,12 @@ impl GicV3 {
             0xc => {
                 // invalid guest read on Qemu
             }
-            _ => panic!("Unknown GIC DIST read32 offset=0x{:x}", offset),
+            _ => panic!("Unknown GIC DIST read32 offset=0x{offset:x}"),
         }
         for (i, b) in val.to_le_bytes().iter().enumerate() {
             data[i] = *b;
         }
-        debug!("[GICv3] -> read32 DIST offset={} val={}", offset, val);
+        debug!("[GICv3] -> read32 DIST offset={offset} val={val}");
     }
 
     fn handle_dist_write32(&mut self, _vcpuid: u64, offset: u64, data: &[u8]) {
@@ -280,22 +280,19 @@ impl GicV3 {
                 value = (oldval & !mask) | (value & mask);
                 self.edge_trigger[idx as usize] = value;
             }
-            _ => panic!("Unknown GIC DIST write32 offset=0x{:x}", offset),
+            _ => panic!("Unknown GIC DIST write32 offset=0x{offset:x}"),
         }
     }
 
     fn handle_dist_write64(&mut self, _vcpuid: u64, offset: u64, data: &[u8]) {
         let val = u64::from_le_bytes(data.try_into().unwrap());
-        debug!(
-            "[GICv3] write64 DIST offset=0x{:x} value=0x{:x}",
-            offset, val
-        );
+        debug!("[GICv3] write64 DIST offset=0x{offset:x} value=0x{val:x}");
         match offset {
             _ if (GICD_IROUTER..GICD_IROUTER + 0x1fdf).contains(&offset) => {
                 let intid = ((offset - GICD_IROUTER) / 8) as usize;
                 self.gicd_irouter[intid] = val;
             }
-            _ => panic!("Unknown GIC DIST write64 offset=0x{:x}", offset),
+            _ => panic!("Unknown GIC DIST write64 offset=0x{offset:x}"),
         }
     }
 
@@ -338,13 +335,13 @@ impl GicV3 {
                 val = id;
             }
             GICR_ICFGR1 => {}
-            _ => panic!("Unknown GIC REDIST read32 offset=0x{:x}", offset),
+            _ => panic!("Unknown GIC REDIST read32 offset=0x{offset:x}"),
         }
         for (i, b) in val.to_le_bytes().iter().enumerate() {
             data[i] = *b;
         }
 
-        debug!("[GICv3] -> read32 REDIST offset={} val={}", offset, val);
+        debug!("[GICv3] -> read32 REDIST offset={offset} val={val}");
     }
 
     fn handle_redist_read64(&self, vcpuid: u64, offset: u64, data: &mut [u8]) {
@@ -359,13 +356,13 @@ impl GicV3 {
                 }
                 typer
             }
-            _ => panic!("Unknown GIC REDIST read64 offset=0x{:x}", offset),
+            _ => panic!("Unknown GIC REDIST read64 offset=0x{offset:x}"),
         };
         for (i, b) in val.to_le_bytes().iter().enumerate() {
             data[i] = *b;
         }
 
-        debug!("[GICv3] -> read64 REDIST offset={} val={}", offset, val);
+        debug!("[GICv3] -> read64 REDIST offset={offset} val={val}");
     }
 
     fn handle_redist_write32(&mut self, _vcpuid: u64, offset: u64, data: &[u8]) {
@@ -386,7 +383,7 @@ impl GicV3 {
             }
             GICR_IGROUPR0 | GICR_ISENABLER0 | GICR_ICENABLER0 | GICR_ICACTIVER0 => {}
             _ if (GICR_IPRIORITYR..GICR_IPRIORITYR + 0x1f).contains(&offset) => {}
-            _ => panic!("Unknown GIC REDIST write32 offset=0x{:x}", offset),
+            _ => panic!("Unknown GIC REDIST write32 offset=0x{offset:x}"),
         }
     }
 }
@@ -425,10 +422,10 @@ impl BusDevice for GicV3 {
         if offset >= self.redists_size {
             let offset = offset - self.redists_size;
             match data.len() {
-                1 => panic!("GIC DIST read8 vcpuid={} offset=0x{:x}", vcpuid, offset),
-                2 => panic!("GIC DIST read16 vcpuid={} offset=0x{:x}", vcpuid, offset),
+                1 => panic!("GIC DIST read8 vcpuid={vcpuid} offset=0x{offset:x}"),
+                2 => panic!("GIC DIST read16 vcpuid={vcpuid} offset=0x{offset:x}"),
                 4 => self.handle_dist_read32(vcpuid, offset, data),
-                8 => panic!("GIC DIST read64 vcpuid={} offset=0x{:x}", vcpuid, offset),
+                8 => panic!("GIC DIST read64 vcpuid={vcpuid} offset=0x{offset:x}"),
                 _ => panic!("GIC DIST unsupported read size"),
             }
         } else {
@@ -436,8 +433,8 @@ impl BusDevice for GicV3 {
             let offset = offset % self.redist_size;
 
             match data.len() {
-                1 => panic!("GIC REDIST read8 vcpuid={} offset=0x{:x}", vcpuid, offset),
-                2 => panic!("GIC REDIST read16 vcpuid={} offset=0x{:x}", vcpuid, offset),
+                1 => panic!("GIC REDIST read8 vcpuid={vcpuid} offset=0x{offset:x}"),
+                2 => panic!("GIC REDIST read16 vcpuid={vcpuid} offset=0x{offset:x}"),
                 4 => self.handle_redist_read32(vcpuid, offset, data),
                 8 => self.handle_redist_read64(vcpuid, offset, data),
                 _ => panic!("GIC REDIST unsupported read size"),
@@ -449,14 +446,8 @@ impl BusDevice for GicV3 {
         if offset >= self.redists_size {
             let offset = offset - self.redists_size;
             match data.len() {
-                1 => panic!(
-                    "GIC DIST write8 vcpuid={} offset=0x{:x}, data={:?}",
-                    vcpuid, offset, data
-                ),
-                2 => panic!(
-                    "GIC DIST write16 vcpuid={} offset=0x{:x}, data={:?}",
-                    vcpuid, offset, data
-                ),
+                1 => panic!("GIC DIST write8 vcpuid={vcpuid} offset=0x{offset:x}, data={data:?}"),
+                2 => panic!("GIC DIST write16 vcpuid={vcpuid} offset=0x{offset:x}, data={data:?}"),
                 4 => self.handle_dist_write32(vcpuid, offset, data),
                 8 => self.handle_dist_write64(vcpuid, offset, data),
                 _ => panic!("GIC DIST unsupported read size"),
@@ -466,19 +457,14 @@ impl BusDevice for GicV3 {
             let offset = offset % self.redist_size;
 
             match data.len() {
-                1 => panic!(
-                    "GIC REDIST write8 vcpuid={} offset=0x{:x}, data={:?}",
-                    vcpuid, offset, data
-                ),
-                2 => panic!(
-                    "GIC REDIST write16 vcpuid={} offset=0x{:x}, data={:?}",
-                    vcpuid, offset, data
-                ),
+                1 => panic!("GIC REDIST write8 vcpuid={vcpuid} offset=0x{offset:x}, data={data:?}"),
+                2 => {
+                    panic!("GIC REDIST write16 vcpuid={vcpuid} offset=0x{offset:x}, data={data:?}")
+                }
                 4 => self.handle_redist_write32(vcpuid, offset, data),
-                8 => panic!(
-                    "GIC REDIST write64 vcpuid={} offset=0x{:x}, data={:?}",
-                    vcpuid, offset, data
-                ),
+                8 => {
+                    panic!("GIC REDIST write64 vcpuid={vcpuid} offset=0x{offset:x}, data={data:?}")
+                }
                 _ => panic!("GIC REDIST unsupported write size"),
             }
         }
