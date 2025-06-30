@@ -28,5 +28,5 @@ jobs:
       - name: Formatting (rustfmt)
         run: cargo fmt -- --check
 
-      - name: Formatting (rustfmt)
+      - name: Clippy (efi+gpu features)
         run: cargo clippy --features efi,gpu -- -D warnings
