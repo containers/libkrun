@@ -23,6 +23,8 @@ use crate::vstate::Vm;
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
 pub enum Error {
+    /// Failed to create MmioTransport
+    CreateMmioTransport(devices::virtio::CreateMmioTransportError),
     /// Failed to perform an operation on the bus.
     BusError(devices::BusError),
     /// Appending to kernel command line failed.
@@ -44,6 +46,9 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
+            Error::CreateMmioTransport(ref e) => {
+                write!(f, "failed to create mmio transport for the device {e}")
+            }
             Error::BusError(ref e) => write!(f, "failed to perform bus operation: {e}"),
             Error::Cmdline(ref e) => {
                 write!(f, "unable to add device to kernel command line: {e}")
@@ -55,6 +60,12 @@ impl fmt::Display for Error {
             Error::DeviceNotFound => write!(f, "the device couldn't be found"),
             Error::UpdateFailed => write!(f, "failed to update the mmio device"),
         }
+    }
+}
+
+impl From<devices::virtio::CreateMmioTransportError> for crate::device_manager::mmio::Error {
+    fn from(e: devices::virtio::CreateMmioTransportError) -> Self {
+        Self::CreateMmioTransport(e)
     }
 }
 
