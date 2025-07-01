@@ -23,6 +23,8 @@
 #define MAX_PATH 4096
 #endif
 
+#define COMPAT_NET_FLAGS NET_CSUM | NET_GUEST_CSUM | NET_GUEST_TSO4 | NET_GUEST_UFO | NET_HOST_TSO4 | NET_HOST_UFO
+
 static void print_help(char *const name)
 {
     fprintf(stderr,
@@ -220,10 +222,11 @@ int main(int argc, char *const argv[])
       return -1;
     }
 
-    if (err = krun_set_passt_fd(ctx_id, passt_fd)) {
-      errno = -err;
-      perror("Error configuring net mode");
-      return -1;
+    uint8_t mac[] = {0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee};
+    if (err = krun_add_net_passt(ctx_id, passt_fd, &mac[0], COMPAT_NET_FLAGS)) {
+        errno = -err;
+        perror("Error configuring net mode");
+        return -1;
     }
 
     int efd = krun_get_shutdown_eventfd(ctx_id);
