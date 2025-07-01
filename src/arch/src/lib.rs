@@ -24,6 +24,16 @@ pub use aarch64::{
     layout::CMDLINE_MAX_SIZE, layout::IRQ_BASE, layout::IRQ_MAX, Error, MMIO_MEM_START,
 };
 
+/// Module for riscv64 related functionality.
+#[cfg(target_arch = "riscv64")]
+pub mod riscv64;
+
+#[cfg(target_arch = "riscv64")]
+pub use riscv64::{
+    arch_memory_regions, configure_system, get_kernel_start, initrd_load_addr,
+    layout::CMDLINE_MAX_SIZE, layout::IRQ_BASE, layout::IRQ_MAX, Error, MMIO_MEM_START,
+};
+
 /// Module for x86_64 related functionality.
 #[cfg(target_arch = "x86_64")]
 pub mod x86_64;
