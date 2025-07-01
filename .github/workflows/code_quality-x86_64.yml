@@ -33,6 +33,9 @@ jobs:
       - name: Clippy (amd-sev feature)
         run: cargo clippy --features amd-sev -- -D warnings
 
+      - name: Clippy (tdx feature)
+        run: cargo clippy --features tdx -- -D warnings
+
       - name: Clippy (net+blk+gpu+snd features)
         run: cargo clippy --features net,blk,gpu,snd -- -D warnings
 
