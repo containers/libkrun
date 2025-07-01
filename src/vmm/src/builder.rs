@@ -25,6 +25,8 @@ use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
 use crate::resources::VmResources;
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
+#[cfg(feature = "net")]
+use crate::vmm_config::net::NetBuilder;
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 use devices::legacy::KvmGicV3;
 #[cfg(target_arch = "x86_64")]
@@ -37,8 +39,6 @@ use devices::legacy::{GicV3, HvfGicV3};
 #[cfg(target_arch = "x86_64")]
 use devices::legacy::{IoApic, IrqChipT};
 use devices::legacy::{IrqChip, IrqChipDevice};
-#[cfg(feature = "net")]
-use devices::virtio::Net;
 use devices::virtio::{port_io, MmioTransport, PortDescription, Vsock};
 
 #[cfg(feature = "tee")]
@@ -826,18 +826,13 @@ pub fn build_microvm(
         #[cfg(not(feature = "net"))]
         vmm.kernel_cmdline.insert_str("tsi_hijack")?;
         #[cfg(feature = "net")]
-        if vm_resources
-            .net_builder
-            .iter()
-            .collect::<Vec<_>>()
-            .is_empty()
-        {
+        if vm_resources.net.list.is_empty() {
             // Only enable TSI if we don't have any network devices.
             vmm.kernel_cmdline.insert_str("tsi_hijack")?;
         }
     }
     #[cfg(feature = "net")]
-    attach_net_devices(&mut vmm, vm_resources.net_builder.iter(), intc.clone())?;
+    attach_net_devices(&mut vmm, &vm_resources.net, intc.clone())?;
     #[cfg(feature = "snd")]
     if vm_resources.snd_device {
         attach_snd_device(&mut vmm, intc.clone())?;
@@ -1735,12 +1730,12 @@ fn attach_console_devices(
 }
 
 #[cfg(feature = "net")]
-fn attach_net_devices<'a>(
+fn attach_net_devices(
     vmm: &mut Vmm,
-    net_devices: impl Iterator<Item = &'a Arc<Mutex<Net>>>,
+    net_devices: &NetBuilder,
     intc: IrqChip,
 ) -> Result<(), StartMicrovmError> {
-    for net_device in net_devices {
+    for net_device in net_devices.list.iter() {
         let id = net_device.lock().unwrap().id().to_string();
 
         net_device.lock().unwrap().set_intc(intc.clone());
