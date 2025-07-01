@@ -572,7 +572,10 @@ impl Attr {
             mode: st.st_mode as u32,
             #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
             nlink: st.st_nlink as u32,
-            #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+            #[cfg(all(
+                target_os = "linux",
+                any(target_arch = "aarch64", target_arch = "riscv64")
+            ))]
             nlink: st.st_nlink,
             #[cfg(target_os = "macos")]
             nlink: st.st_nlink as u32,
