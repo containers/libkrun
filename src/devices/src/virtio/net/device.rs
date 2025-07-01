@@ -21,10 +21,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use utils::eventfd::{EventFd, EFD_NONBLOCK};
-use virtio_bindings::virtio_net::{
-    VIRTIO_NET_F_CSUM, VIRTIO_NET_F_GUEST_CSUM, VIRTIO_NET_F_GUEST_TSO4, VIRTIO_NET_F_GUEST_UFO,
-    VIRTIO_NET_F_HOST_TSO4, VIRTIO_NET_F_HOST_UFO, VIRTIO_NET_F_MAC,
-};
+use virtio_bindings::virtio_net::VIRTIO_NET_F_MAC;
 use virtio_bindings::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 use vm_memory::{ByteValued, GuestMemoryError, GuestMemoryMmap};
 
@@ -65,8 +62,10 @@ unsafe impl ByteValued for VirtioNetConfig {}
 
 #[derive(Clone)]
 pub enum VirtioNetBackend {
-    Passt(RawFd),
-    Gvproxy(PathBuf),
+    UnixstreamFd(RawFd),
+    UnixstreamPath(PathBuf),
+    UnixgramFd(RawFd),
+    UnixgramPath(PathBuf, bool),
 }
 
 pub struct Net {
@@ -92,13 +91,13 @@ pub struct Net {
 
 impl Net {
     /// Create a new virtio network device using the backend
-    pub fn new(id: String, cfg_backend: VirtioNetBackend, mac: [u8; 6]) -> Result<Self> {
-        let avail_features = (1 << VIRTIO_NET_F_GUEST_CSUM)
-            | (1 << VIRTIO_NET_F_CSUM)
-            | (1 << VIRTIO_NET_F_GUEST_TSO4)
-            | (1 << VIRTIO_NET_F_HOST_TSO4)
-            | (1 << VIRTIO_NET_F_GUEST_UFO)
-            | (1 << VIRTIO_NET_F_HOST_UFO)
+    pub fn new(
+        id: String,
+        cfg_backend: VirtioNetBackend,
+        mac: [u8; 6],
+        features: u32,
+    ) -> Result<Self> {
+        let avail_features = features as u64
             | (1 << VIRTIO_NET_F_MAC)
             | (1 << VIRTIO_RING_F_EVENT_IDX)
             | (1 << VIRTIO_F_VERSION_1);

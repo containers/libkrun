@@ -1,6 +1,6 @@
 use crate::legacy::IrqChip;
-use crate::virtio::net::gvproxy::Gvproxy;
-use crate::virtio::net::passt::Passt;
+use crate::virtio::net::unixgram::Unixgram;
+use crate::virtio::net::unixstream::Unixstream;
 use crate::virtio::net::{MAX_BUFFER_SIZE, QUEUE_SIZE, RX_INDEX, TX_INDEX};
 use crate::virtio::{Queue, VIRTIO_MMIO_INT_VRING};
 use crate::Error as DeviceError;
@@ -64,9 +64,17 @@ impl NetWorker {
         cfg_backend: VirtioNetBackend,
     ) -> Self {
         let backend = match cfg_backend {
-            VirtioNetBackend::Passt(fd) => Box::new(Passt::new(fd)) as Box<dyn NetBackend + Send>,
-            VirtioNetBackend::Gvproxy(path) => {
-                Box::new(Gvproxy::new(path).unwrap()) as Box<dyn NetBackend + Send>
+            VirtioNetBackend::UnixstreamFd(fd) => {
+                Box::new(Unixstream::new(fd)) as Box<dyn NetBackend + Send>
+            }
+            VirtioNetBackend::UnixstreamPath(path) => {
+                Box::new(Unixstream::open(path).unwrap()) as Box<dyn NetBackend + Send>
+            }
+            VirtioNetBackend::UnixgramFd(fd) => {
+                Box::new(Unixgram::new(fd)) as Box<dyn NetBackend + Send>
+            }
+            VirtioNetBackend::UnixgramPath(path, vfkit_magic) => {
+                Box::new(Unixgram::open(path, vfkit_magic).unwrap()) as Box<dyn NetBackend + Send>
             }
         };
 

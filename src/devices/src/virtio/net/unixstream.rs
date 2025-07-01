@@ -1,13 +1,21 @@
-use nix::sys::socket::{getsockopt, recv, send, setsockopt, sockopt, MsgFlags};
-use std::os::fd::{AsRawFd, RawFd};
+use nix::sys::socket::{
+    connect, getsockopt, recv, send, setsockopt, socket, sockopt, AddressFamily, MsgFlags,
+    SockFlag, SockType, UnixAddr,
+};
+use std::{
+    os::fd::{AsRawFd, RawFd},
+    path::PathBuf,
+};
+
+use crate::virtio::net::backend::ConnectError;
 
 use super::backend::{NetBackend, ReadError, WriteError};
 
-/// Each frame from passt is prepended by a 4 byte "header".
+/// Each frame the network proxy is prepended by a 4 byte "header".
 /// It is interpreted as a big-endian u32 integer and is the length of the following ethernet frame.
-const PASST_HEADER_LEN: usize = 4;
+const FRAME_HEADER_LEN: usize = 4;
 
-pub struct Passt {
+pub struct Unixstream {
     fd: RawFd,
     // 0 when a frame length has not been read
     expecting_frame_length: u32,
@@ -15,24 +23,53 @@ pub struct Passt {
     last_partial_write_length: usize,
 }
 
-impl Passt {
-    /// Connect to a running passt instance, given a socket file descriptor
-    pub fn new(passt_fd: RawFd) -> Self {
-        if let Err(e) = setsockopt(passt_fd, sockopt::SndBuf, &(16 * 1024 * 1024)) {
+impl Unixstream {
+    /// Create the backend with a pre-established connection to the userspace network proxy.
+    pub fn new(fd: RawFd) -> Self {
+        if let Err(e) = setsockopt(fd, sockopt::SndBuf, &(16 * 1024 * 1024)) {
             log::warn!("Failed to increase SO_SNDBUF (performance may be decreased): {e}");
         }
 
         log::debug!(
-            "passt socket (fd {passt_fd}) buffer sizes: SndBuf={:?} RcvBuf={:?}",
-            getsockopt(passt_fd, sockopt::SndBuf),
-            getsockopt(passt_fd, sockopt::RcvBuf)
+            "network proxy socket (fd {fd}) buffer sizes: SndBuf={:?} RcvBuf={:?}",
+            getsockopt(fd, sockopt::SndBuf),
+            getsockopt(fd, sockopt::RcvBuf)
         );
 
         Self {
-            fd: passt_fd,
+            fd,
             expecting_frame_length: 0,
             last_partial_write_length: 0,
         }
+    }
+
+    /// Create the backend opening a connection to the userspace network proxy.
+    pub fn open(path: PathBuf) -> Result<Self, ConnectError> {
+        let fd = socket(
+            AddressFamily::Unix,
+            SockType::Stream,
+            SockFlag::empty(),
+            None,
+        )
+        .map_err(ConnectError::CreateSocket)?;
+        let peer_addr = UnixAddr::new(&path).map_err(ConnectError::InvalidAddress)?;
+        connect(fd, &peer_addr).map_err(ConnectError::Binding)?;
+
+        if let Err(e) = setsockopt(fd, sockopt::SndBuf, &(16 * 1024 * 1024)) {
+            log::warn!("Failed to increase SO_SNDBUF (performance may be decreased): {e}");
+        }
+
+        log::debug!(
+            "network socket (fd {fd}) buffer sizes: SndBuf={:?} RcvBuf={:?}",
+            getsockopt(fd, sockopt::SndBuf),
+            getsockopt(fd, sockopt::RcvBuf)
+        );
+
+        Ok(Self {
+            fd,
+            expecting_frame_length: 0,
+            last_partial_write_length: 0,
+        })
     }
 
     /// Try to read until filling the whole slice.
@@ -69,7 +106,7 @@ impl Passt {
                 Err(e) => return Err(ReadError::Internal(e)),
                 Ok(size) => {
                     bytes_read += size;
-                    //log::trace!("passt recv {}/{}", bytes_read, buf.len());
+                    //log::trace!("proxy recv {}/{}", bytes_read, buf.len());
                 }
             }
         }
@@ -110,12 +147,12 @@ impl Passt {
     }
 }
 
-impl NetBackend for Passt {
-    /// Try to read a frame from passt. If no bytes are available reports ReadError::NothingRead
+impl NetBackend for Unixstream {
+    /// Try to read a frame from the proxy. If no bytes are available reports ReadError::NothingRead
     fn read_frame(&mut self, buf: &mut [u8]) -> Result<usize, ReadError> {
         if self.expecting_frame_length == 0 {
             self.expecting_frame_length = {
-                let mut frame_length_buf = [0u8; PASST_HEADER_LEN];
+                let mut frame_length_buf = [0u8; FRAME_HEADER_LEN];
                 self.read_loop(&mut frame_length_buf, false)?;
                 u32::from_be_bytes(frame_length_buf)
             };
@@ -124,34 +161,34 @@ impl NetBackend for Passt {
         let frame_length = self.expecting_frame_length as usize;
         self.read_loop(&mut buf[..frame_length], false)?;
         self.expecting_frame_length = 0;
-        log::trace!("Read eth frame from passt: {frame_length} bytes");
+        log::trace!("Read eth frame from network proxy: {frame_length} bytes");
         Ok(frame_length)
     }
 
-    /// Try to write a frame to passt.
-    /// (Will mutate and override parts of buf, with a passt header!)
+    /// Try to write a frame to the proxy.
+    /// (Will mutate and override parts of buf, with a frame header!)
     ///
     /// * `hdr_len` - specifies the size of any existing headers encapsulating the ethernet frame,
-    ///   (such as vnet header), that can be overwritten. Must be >= PASST_HEADER_LEN.
-    /// * `buf` - the buffer to write to passt, `buf[..hdr_len]` may be overwritten
+    ///   (such as vnet header), that can be overwritten. Must be >= FRAME_HEADER_LEN.
+    /// * `buf` - the buffer to write to the proxy, `buf[..hdr_len]` may be overwritten
     ///
     /// If this function returns WriteError::PartialWrite, you have to finish the write using
     /// try_finish_write.
     fn write_frame(&mut self, hdr_len: usize, buf: &mut [u8]) -> Result<(), WriteError> {
         if self.last_partial_write_length != 0 {
-            panic!("Cannot write a frame to passt, while a partial write is not resolved.");
+            panic!("Cannot write a frame to the proxy, while a partial write is not resolved.");
         }
         assert!(
-            hdr_len >= PASST_HEADER_LEN,
-            "Not enough space to write passt header"
+            hdr_len >= FRAME_HEADER_LEN,
+            "Not enough space to write the frame header"
         );
         assert!(buf.len() > hdr_len);
         let frame_length = buf.len() - hdr_len;
 
-        buf[hdr_len - PASST_HEADER_LEN..hdr_len]
+        buf[hdr_len - FRAME_HEADER_LEN..hdr_len]
             .copy_from_slice(&(frame_length as u32).to_be_bytes());
 
-        self.write_loop(&buf[hdr_len - PASST_HEADER_LEN..])?;
+        self.write_loop(&buf[hdr_len - FRAME_HEADER_LEN..])?;
         Ok(())
     }
 
@@ -169,7 +206,7 @@ impl NetBackend for Passt {
         if self.last_partial_write_length != 0 {
             let already_written = self.last_partial_write_length;
             log::trace!("Requested to finish partial write");
-            self.write_loop(&buf[hdr_len - PASST_HEADER_LEN + already_written..])?;
+            self.write_loop(&buf[hdr_len - FRAME_HEADER_LEN + already_written..])?;
             log::debug!("Finished partial write ({already_written}bytes written before)")
         }
 

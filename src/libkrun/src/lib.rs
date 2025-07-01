@@ -29,9 +29,11 @@ use devices::virtio::net::device::VirtioNetBackend;
 #[cfg(feature = "blk")]
 use devices::virtio::CacheType;
 use env_logger::{Env, Target};
+use libc::c_char;
+#[cfg(feature = "net")]
+use libc::c_int;
 #[cfg(not(feature = "efi"))]
 use libc::size_t;
-use libc::{c_char, c_int};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
 use utils::eventfd::EventFd;
@@ -114,24 +116,6 @@ impl KrunfwBindings {
 }
 
 #[derive(Default)]
-struct TsiConfig {
-    port_map: Option<HashMap<u16, u16>>,
-}
-
-enum NetworkConfig {
-    Tsi(TsiConfig),
-    VirtioNetPasst(RawFd),
-    VirtioNetGvproxy(PathBuf),
-}
-
-impl Default for NetworkConfig {
-    /// Default network mode is TSI, for backwards compatibility
-    fn default() -> Self {
-        NetworkConfig::Tsi(Default::default())
-    }
-}
-
-#[derive(Default)]
 struct ContextConfig {
     #[cfg(not(feature = "efi"))]
     krunfw: Option<KrunfwBindings>,
@@ -141,7 +125,8 @@ struct ContextConfig {
     env: Option<String>,
     args: Option<String>,
     rlimits: Option<String>,
-    net_cfg: NetworkConfig,
+    net_index: u8,
+    tsi_port_map: Option<HashMap<u16, u16>>,
     mac: Option<[u8; 6]>,
     #[cfg(feature = "blk")]
     block_cfgs: Vec<BlockDeviceConfig>,
@@ -253,23 +238,17 @@ impl ContextConfig {
         }
     }
 
-    fn set_net_cfg(&mut self, net_cfg: NetworkConfig) {
-        self.net_cfg = net_cfg;
-    }
-
     fn set_net_mac(&mut self, mac: [u8; 6]) {
         self.mac = Some(mac);
     }
 
     fn set_port_map(&mut self, new_port_map: HashMap<u16, u16>) -> Result<(), ()> {
-        match &mut self.net_cfg {
-            NetworkConfig::Tsi(tsi_config) => {
-                tsi_config.port_map.replace(new_port_map);
-                Ok(())
-            }
-            NetworkConfig::VirtioNetPasst(_) => Err(()),
-            NetworkConfig::VirtioNetGvproxy(_) => Err(()),
+        if self.net_index != 0 {
+            return Err(());
         }
+
+        self.tsi_port_map.replace(new_port_map);
+        Ok(())
     }
 
     #[cfg(feature = "tee")]
@@ -752,8 +731,177 @@ pub unsafe extern "C" fn krun_set_data_disk(ctx_id: u32, c_disk_path: *const c_c
     KRUN_SUCCESS
 }
 
+/*
+ * Send the VFKIT magic after establishing the connection,
+ * as required by gvproxy in vfkit mode.
+ */
+#[cfg(feature = "net")]
+const NET_FLAG_VFKIT: u32 = 1 << 0;
+
+/* Taken from uapi/linux/virtio_net.h */
+#[cfg(feature = "net")]
+const NET_FEATURE_CSUM: u32 = 1 << 0;
+#[cfg(feature = "net")]
+const NET_FEATURE_GUEST_CSUM: u32 = 1 << 1;
+#[cfg(feature = "net")]
+const NET_FEATURE_GUEST_TSO4: u32 = 1 << 7;
+#[cfg(feature = "net")]
+const NET_FEATURE_GUEST_TSO6: u32 = 1 << 8;
+#[cfg(feature = "net")]
+const NET_FEATURE_GUEST_UFO: u32 = 1 << 10;
+#[cfg(feature = "net")]
+const NET_FEATURE_HOST_TSO4: u32 = 1 << 11;
+#[cfg(feature = "net")]
+const NET_FEATURE_HOST_TSO6: u32 = 1 << 12;
+#[cfg(feature = "net")]
+const NET_FEATURE_HOST_UFO: u32 = 1 << 14;
+/*
+ * These are the flags enabled by default on each virtio-net instance
+ * before the introduction of "krun_add_net_*". They are now used in
+ * the legacy API ("krun_set_passt_fd" and "krun_set_gvproxy_path")
+ * for compatiblity reasons.
+ */
+#[cfg(feature = "net")]
+const NET_COMPAT_FEATURES: u32 = NET_FEATURE_CSUM
+    | NET_FEATURE_GUEST_CSUM
+    | NET_FEATURE_GUEST_TSO4
+    | NET_FEATURE_GUEST_UFO
+    | NET_FEATURE_HOST_TSO4
+    | NET_FEATURE_HOST_UFO;
+#[cfg(feature = "net")]
+const NET_ALL_FEATURES: u32 = NET_FEATURE_CSUM
+    | NET_FEATURE_GUEST_CSUM
+    | NET_FEATURE_GUEST_TSO4
+    | NET_FEATURE_GUEST_TSO6
+    | NET_FEATURE_GUEST_UFO
+    | NET_FEATURE_HOST_TSO4
+    | NET_FEATURE_HOST_TSO6
+    | NET_FEATURE_HOST_UFO;
+
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+#[cfg(feature = "net")]
+pub unsafe extern "C" fn krun_add_net_unixstream(
+    ctx_id: u32,
+    c_path: *const c_char,
+    fd: c_int,
+    c_mac: *const u8,
+    features: u32,
+    flags: u32,
+) -> i32 {
+    if cfg!(not(feature = "net")) {
+        return -libc::ENOTSUP;
+    }
+
+    let path = if !c_path.is_null() {
+        match CStr::from_ptr(c_path).to_str() {
+            Ok(path) => Some(PathBuf::from(path)),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    if fd >= 0 && path.is_some() {
+        return -libc::EINVAL;
+    }
+    if fd < 0 && path.is_none() {
+        return -libc::EINVAL;
+    }
+    let backend = if let Some(path) = path {
+        VirtioNetBackend::UnixstreamPath(path)
+    } else {
+        VirtioNetBackend::UnixstreamFd(fd)
+    };
+
+    let mac: [u8; 6] = match slice::from_raw_parts(c_mac, 6).try_into() {
+        Ok(m) => m,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    /* The unixstream backend doesn't support any flags */
+    if flags != 0 {
+        return -libc::EINVAL;
+    }
+
+    if (features & !NET_ALL_FEATURES) != 0 {
+        return -libc::EINVAL;
+    }
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            create_virtio_net(cfg, backend, mac, features);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(feature = "net")]
+pub unsafe extern "C" fn krun_add_net_unixgram(
+    ctx_id: u32,
+    c_path: *const c_char,
+    fd: c_int,
+    c_mac: *const u8,
+    features: u32,
+    flags: u32,
+) -> i32 {
+    if cfg!(not(feature = "net")) {
+        return -libc::ENOTSUP;
+    }
+
+    let path = if !c_path.is_null() {
+        match CStr::from_ptr(c_path).to_str() {
+            Ok(path) => Some(PathBuf::from(path)),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    if fd >= 0 && path.is_some() {
+        return -libc::EINVAL;
+    }
+    if fd < 0 && path.is_none() {
+        return -libc::EINVAL;
+    }
+
+    let mac: [u8; 6] = match slice::from_raw_parts(c_mac, 6).try_into() {
+        Ok(m) => m,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    if (features & !NET_ALL_FEATURES) != 0 {
+        return -libc::EINVAL;
+    }
+
+    if (flags & !NET_FLAG_VFKIT) != 0 {
+        return -libc::EINVAL;
+    }
+    let send_vfkit_magic: bool = flags & NET_FLAG_VFKIT != 0;
+
+    let backend = if let Some(path) = path {
+        VirtioNetBackend::UnixgramPath(path, send_vfkit_magic)
+    } else {
+        VirtioNetBackend::UnixgramFd(fd)
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            create_virtio_net(cfg, backend, mac, features);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(feature = "net")]
 pub unsafe extern "C" fn krun_set_passt_fd(ctx_id: u32, fd: c_int) -> i32 {
     if fd < 0 {
         return -libc::EINVAL;
@@ -766,7 +914,17 @@ pub unsafe extern "C" fn krun_set_passt_fd(ctx_id: u32, fd: c_int) -> i32 {
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            cfg.set_net_cfg(NetworkConfig::VirtioNetPasst(fd));
+            // The legacy interface only supports a single network interface.
+            if cfg.net_index != 0 {
+                return -libc::EINVAL;
+            }
+            let mac = cfg.mac.unwrap_or([0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee]);
+            create_virtio_net(
+                cfg,
+                VirtioNetBackend::UnixstreamFd(fd),
+                mac,
+                NET_COMPAT_FEATURES,
+            );
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -775,7 +933,12 @@ pub unsafe extern "C" fn krun_set_passt_fd(ctx_id: u32, fd: c_int) -> i32 {
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+#[cfg(feature = "net")]
 pub unsafe extern "C" fn krun_set_gvproxy_path(ctx_id: u32, c_path: *const c_char) -> i32 {
+    if cfg!(not(feature = "net")) {
+        return -libc::ENOTSUP;
+    }
+
     let path_str = match CStr::from_ptr(c_path).to_str() {
         Ok(path) => path,
         Err(e) => {
@@ -789,7 +952,17 @@ pub unsafe extern "C" fn krun_set_gvproxy_path(ctx_id: u32, c_path: *const c_cha
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            cfg.set_net_cfg(NetworkConfig::VirtioNetGvproxy(path));
+            // The legacy interface only supports a single network interface.
+            if cfg.net_index != 0 {
+                return -libc::EINVAL;
+            }
+            let mac = cfg.mac.unwrap_or([0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee]);
+            create_virtio_net(
+                cfg,
+                VirtioNetBackend::UnixgramPath(path, true),
+                mac,
+                NET_COMPAT_FEATURES,
+            );
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -860,7 +1033,7 @@ pub unsafe extern "C" fn krun_set_port_map(ctx_id: u32, c_port_map: *const *cons
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             if cfg.set_port_map(port_map).is_err() {
-                return -libc::ENOTSUP;
+                return -libc::EINVAL;
             }
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -1258,14 +1431,19 @@ pub unsafe extern "C" fn krun_set_smbios_oem_strings(
 }
 
 #[cfg(feature = "net")]
-fn create_virtio_net(ctx_cfg: &mut ContextConfig, backend: VirtioNetBackend) {
-    let mac = ctx_cfg.mac.unwrap_or([0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee]);
-
+fn create_virtio_net(
+    ctx_cfg: &mut ContextConfig,
+    backend: VirtioNetBackend,
+    mac: [u8; 6],
+    features: u32,
+) {
     let network_interface_config = NetworkInterfaceConfig {
-        iface_id: "eth0".to_string(),
+        iface_id: format!("eth{}", ctx_cfg.net_index),
         backend,
         mac,
+        features,
     };
+    ctx_cfg.net_index += 1;
     ctx_cfg
         .vmr
         .add_network_interface(network_interface_config)
@@ -1610,6 +1788,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         return -libc::EINVAL;
     }
 
+    #[allow(unused_assignments)]
     let mut vsock_set = false;
     let mut vsock_config = VsockDeviceConfig {
         vsock_id: "vsock0".to_string(),
@@ -1618,30 +1797,20 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         unix_ipc_port_map: None,
     };
 
-    if let Some(ref map) = ctx_cfg.unix_ipc_port_map {
-        vsock_config.unix_ipc_port_map = Some(map.clone());
+    #[cfg(feature = "net")]
+    if ctx_cfg.vmr.net.list.is_empty() {
+        vsock_config.host_port_map = ctx_cfg.tsi_port_map;
+        vsock_set = true;
+    }
+    #[cfg(not(feature = "net"))]
+    {
+        vsock_config.host_port_map = ctx_cfg.tsi_port_map;
         vsock_set = true;
     }
 
-    match ctx_cfg.net_cfg {
-        NetworkConfig::Tsi(tsi_cfg) => {
-            vsock_config.host_port_map = tsi_cfg.port_map;
-            vsock_set = true;
-        }
-        NetworkConfig::VirtioNetPasst(_fd) => {
-            #[cfg(feature = "net")]
-            {
-                let backend = VirtioNetBackend::Passt(_fd);
-                create_virtio_net(&mut ctx_cfg, backend);
-            }
-        }
-        NetworkConfig::VirtioNetGvproxy(ref _path) => {
-            #[cfg(feature = "net")]
-            {
-                let backend = VirtioNetBackend::Gvproxy(_path.clone());
-                create_virtio_net(&mut ctx_cfg, backend);
-            }
-        }
+    if let Some(ref map) = ctx_cfg.unix_ipc_port_map {
+        vsock_config.unix_ipc_port_map = Some(map.clone());
+        vsock_set = true;
     }
 
     if vsock_set {

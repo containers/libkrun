@@ -104,7 +104,7 @@ pub struct VmResources {
     pub block: BlockBuilder,
     /// The network devices builder.
     #[cfg(feature = "net")]
-    pub net_builder: NetBuilder,
+    pub net: NetBuilder,
     /// TEE configuration
     #[cfg(feature = "tee")]
     pub tee_config: TeeConfig,
@@ -282,8 +282,7 @@ impl VmResources {
         &mut self,
         config: NetworkInterfaceConfig,
     ) -> Result<NetworkInterfaceError> {
-        self.net_builder.build(config)?;
-        Ok(())
+        self.net.insert(config)
     }
 
     #[cfg(feature = "tee")]

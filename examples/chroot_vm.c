@@ -175,7 +175,7 @@ int start_passt()
     int socket_fds[2];
     const int PARENT = 0;
     const int CHILD = 1;
-    
+
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, socket_fds) < 0) {
         perror("Failed to create passt socket fd");
         return -1;
@@ -186,13 +186,13 @@ int start_passt()
         perror("fork");
         return -1;
     }
-    
+
     if (pid == 0) { // child
         if (close(socket_fds[PARENT]) < 0) {
             perror("close PARENT");
         }
 
-        char fd_as_str[16]; 
+        char fd_as_str[16];
         snprintf(fd_as_str, sizeof(fd_as_str), "%d", socket_fds[CHILD]);
 
         printf("passing fd %s to passt", fd_as_str);

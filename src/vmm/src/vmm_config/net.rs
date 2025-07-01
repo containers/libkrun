@@ -1,6 +1,7 @@
 // Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::VecDeque;
 use std::fmt;
 use std::result;
 use std::sync::{Arc, Mutex};
@@ -15,6 +16,8 @@ pub struct NetworkInterfaceConfig {
     pub backend: VirtioNetBackend,
     /// MAC address.
     pub mac: [u8; 6],
+    /// virtio-net features for the network interface.
+    pub features: u32,
 }
 
 /// Errors associated with `NetworkInterfaceConfig`.
@@ -41,7 +44,7 @@ type Result<T> = result::Result<T, NetworkInterfaceError>;
 /// Builder for a list of network devices.
 #[derive(Default)]
 pub struct NetBuilder {
-    net_devices: Vec<Arc<Mutex<Net>>>,
+    pub list: VecDeque<Arc<Mutex<Net>>>,
 }
 
 impl NetBuilder {
@@ -49,43 +52,20 @@ impl NetBuilder {
     pub fn new() -> Self {
         NetBuilder {
             // List of built network devices.
-            net_devices: Vec::new(),
+            list: VecDeque::new(),
         }
     }
 
-    /// Returns a immutable iterator over the network devices.
-    pub fn iter(&self) -> ::std::slice::Iter<Arc<Mutex<Net>>> {
-        self.net_devices.iter()
-    }
-
-    /// Returns a mutable iterator over the network devices.
-    pub fn iter_mut(&mut self) -> ::std::slice::IterMut<Arc<Mutex<Net>>> {
-        self.net_devices.iter_mut()
-    }
-
-    /// Builds a network device based on a network interface config. Keeps a device reference
-    /// in the builder's internal list.
-    pub fn build(&mut self, netif_config: NetworkInterfaceConfig) -> Result<Arc<Mutex<Net>>> {
-        // If this is an update, just remove the old one.
-        if let Some(index) = self
-            .net_devices
-            .iter()
-            .position(|net| net.lock().expect("Poisoned lock").id() == netif_config.iface_id)
-        {
-            self.net_devices.swap_remove(index);
-        }
-
-        // Add new device.
-        let net = Arc::new(Mutex::new(Self::create_net(netif_config)?));
-        self.net_devices.push(net.clone());
-
-        Ok(net)
+    pub fn insert(&mut self, config: NetworkInterfaceConfig) -> Result<()> {
+        let net_dev = Arc::new(Mutex::new(Self::create_net(config)?));
+        self.list.push_back(net_dev);
+        Ok(())
     }
 
     /// Creates a Net device from a NetworkInterfaceConfig.
     pub fn create_net(cfg: NetworkInterfaceConfig) -> Result<Net> {
         // Create and return the Net device
-        Net::new(cfg.iface_id, cfg.backend, cfg.mac)
+        Net::new(cfg.iface_id, cfg.backend, cfg.mac, cfg.features)
             .map_err(NetworkInterfaceError::CreateNetworkDevice)
     }
 }
