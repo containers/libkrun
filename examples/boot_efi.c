@@ -90,27 +90,6 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
     return false;
 }
 
-int connect_to_passt(char const *socket_path)
-{
-    struct sockaddr_un addr;
-    int socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (socket_fd < 0) {
-        perror("Failed to create passt socket fd");
-        return -1;
-    }
-
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
-
-    if (connect(socket_fd, (const struct sockaddr *) &addr, sizeof(addr)) < 0) {
-        perror("Failed to bind passt socket");
-        return -1;
-    }
-
-    return socket_fd;
-}
-
 #define SHUTDOWN_SOCK_PATH  "/tmp/krun_shutdown.sock"
 
 void *listen_shutdown_request(void *opaque)
@@ -214,16 +193,11 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    int passt_fd = connect_to_passt(cmdline.passt_socket_path);
-
-    if (passt_fd < 0) {
-      return -1;
-    }
-
-    if (err = krun_set_passt_fd(ctx_id, passt_fd)) {
-      errno = -err;
-      perror("Error configuring net mode");
-      return -1;
+    uint8_t mac[] = {0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee};
+    if (err = krun_add_net_unixgram(ctx_id, cmdline.passt_socket_path, -1, &mac[0], COMPAT_NET_FEATURES, NET_FLAG_VFKIT)) {
+        errno = -err;
+        perror("Error configuring net mode");
+        return -1;
     }
 
     int efd = krun_get_shutdown_eventfd(ctx_id);
