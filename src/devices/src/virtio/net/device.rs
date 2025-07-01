@@ -64,6 +64,7 @@ unsafe impl ByteValued for VirtioNetConfig {}
 pub enum VirtioNetBackend {
     Passt(RawFd),
     Gvproxy(PathBuf),
+    Tap(String),
 }
 
 pub struct Net {

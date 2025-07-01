@@ -17,6 +17,7 @@ mod backend;
 pub mod device;
 mod gvproxy;
 mod passt;
+mod tap;
 mod worker;
 
 fn vnet_hdr_len() -> usize {

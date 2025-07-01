@@ -797,6 +797,41 @@ pub unsafe extern "C" fn krun_add_net_gvproxy(
     KRUN_SUCCESS
 }
 
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_net_tap(
+    ctx_id: u32,
+    c_tap_name: *const c_char,
+    c_mac: *const u8,
+    flags: u32,
+) -> i32 {
+    if cfg!(not(feature = "net")) {
+        return -libc::ENOTSUP;
+    }
+
+    let tap_name = match CStr::from_ptr(c_tap_name).to_str() {
+        Ok(tap_name) => tap_name.to_string(),
+        Err(e) => {
+            debug!("Error parsing gvproxy_path: {e:?}");
+            return -libc::EINVAL;
+        }
+    };
+
+    let mac: [u8; 6] = match slice::from_raw_parts(c_mac, 6).try_into() {
+        Ok(m) => m,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            create_virtio_net(cfg, VirtioNetBackend::Tap(tap_name), mac, flags);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+    KRUN_SUCCESS
+}
+
 const NET_CSUM: u32 = 1 << 0;
 const NET_GUEST_CSUM: u32 = 1 << 1;
 const NET_GUEST_TSO4: u32 = 1 << 7;

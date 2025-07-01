@@ -320,6 +320,29 @@ int32_t krun_add_net_gvproxy(uint32_t ctx_id,
                              uint32_t flags);
 
 /**
+ * Adds an independent virtio-net device with the tap backend.
+ * Call to this function disables TSI backend.
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "c_tap_name"  - a null-terminated string representing the tap
+ *                  device name.
+ *  "c_mac"       - MAC address as an array of 6 uint8_t entries.
+ *  "flags"       - network interface flags.
+ *
+ * Notes:
+ * If no network devices are added, networking uses the TSI backend.
+ * This function should be called before krun_set_port_map.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_net_tap(uint32_t ctx_id,
+                         char *c_tap_name ,
+                         uint8_t *const c_mac,
+                         uint32_t flags);
+
+/**
  * DEPRECATED. Use krun_add_net_passt instead.
  *
  * Configures the networking to use passt.

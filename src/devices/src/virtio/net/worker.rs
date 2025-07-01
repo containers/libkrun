@@ -1,6 +1,7 @@
 use crate::legacy::IrqChip;
 use crate::virtio::net::gvproxy::Gvproxy;
 use crate::virtio::net::passt::Passt;
+use crate::virtio::net::tap::Tap;
 use crate::virtio::net::{MAX_BUFFER_SIZE, QUEUE_SIZE, RX_INDEX, TX_INDEX};
 use crate::virtio::{Queue, VIRTIO_MMIO_INT_VRING};
 use crate::Error as DeviceError;
@@ -55,6 +56,9 @@ impl NetWorker {
             VirtioNetBackend::Passt(fd) => Box::new(Passt::new(fd)) as Box<dyn NetBackend + Send>,
             VirtioNetBackend::Gvproxy(path) => {
                 Box::new(Gvproxy::new(path).unwrap()) as Box<dyn NetBackend + Send>
+            }
+            VirtioNetBackend::Tap(tap_name) => {
+                Box::new(Tap::new(tap_name).unwrap()) as Box<dyn NetBackend + Send>
             }
         };
 
