@@ -36,9 +36,9 @@ impl fmt::Display for NitroError {
                 format!("unable to accept enclave heartbeat vsock: {e}")
             }
             NitroError::HeartbeatBind(e) => {
-                format!("unable to bind to enclave hearbeat vsock: {e}")
+                format!("unable to bind to enclave heartbeat vsock: {e}")
             }
-            NitroError::HeartbeatRead(e) => format!("unable to read enclave hearbeat vsock: {e}"),
+            NitroError::HeartbeatRead(e) => format!("unable to read enclave heartbeat vsock: {e}"),
             NitroError::HeartbeatWrite(e) => {
                 format!("unable to write to enclave heartbeat vsock: {e}")
             }
