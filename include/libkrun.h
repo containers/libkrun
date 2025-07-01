@@ -265,7 +265,63 @@ int32_t krun_add_virtiofs2(uint32_t ctx_id,
                            const char *c_path,
                            uint64_t shm_size);
 
+
+#define NET_CSUM 1 << 0
+#define NET_GUEST_CSUM 1 << 1
+#define NET_GUEST_TSO4 1 << 7
+#define NET_GUEST_TSO6 1 << 8
+#define NET_GUEST_UFO 1 << 10
+#define NET_HOST_TSO4 1 << 11
+#define NET_HOST_TSO6 1 << 12
+#define NET_HOST_UFO 1 << 14
 /**
+ * Adds an independent virtio-net device with the passt backend.
+ * Call to this function disables TSI backend.
+ *
+ * Arguments:
+ *  "ctx_id"  - the configuration context ID.
+ *  "fd"      - a file descriptor to communicate with passt.
+ *  "c_mac"   - MAC address as an array of 6 uint8_t entries.
+ *  "flags"   - network interface flags.
+ *
+ * Notes:
+ * If no network devices are added, networking uses the TSI backend.
+ * This function should be called before krun_set_port_map.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_net_passt(uint32_t ctx_id,
+                           int fd,
+                           uint8_t *const c_mac,
+                           uint32_t flags);
+
+/**
+ * Adds an independent virtio-net device with the gvproxy backend.
+ * Call to this function disables TSI backend.
+ *
+ * Arguments:
+ *  "ctx_id"  - the configuration context ID.
+ *  "c_path"  - a null-terminated string representing the path for
+ *              gvproxy's listen-vfkit unixdgram socket.
+ *  "c_mac"   - MAC address as an array of 6 uint8_t entries.
+ *  "flags"   - network interface flags.
+ *
+ * Notes:
+ * If no network devices are added, networking uses the TSI backend.
+ * This function should be called before krun_set_port_map.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_net_gvproxy(uint32_t ctx_id,
+                             char *c_path,
+                             uint8_t *const c_mac,
+                             uint32_t flags);
+
+/**
+ * DEPRECATED. Use krun_add_net_passt instead.
+ *
  * Configures the networking to use passt.
  * Call to this function disables TSI backend to use passt instead.
  *
@@ -283,6 +339,8 @@ int32_t krun_add_virtiofs2(uint32_t ctx_id,
 int32_t krun_set_passt_fd(uint32_t ctx_id, int fd);
 
 /**
+ * DEPRECATED. Use krun_add_net_gvproxy instead.
+ *
  * Configures the networking to use gvproxy in vfkit mode.
  * Call to this function disables TSI backend to use gvproxy instead.
  *
@@ -659,9 +717,9 @@ int32_t krun_nitro_set_start_flags(uint32_t ctx_id, uint64_t start_flags);
  * Notes:
  *  This function only returns if an error happens before starting the microVM. Otherwise, the
  *  VMM assumes it has full control of the process, and will call to exit() with the workload's exit
- *  code once the microVM shuts down. If an error occurred before running the workload the process 
+ *  code once the microVM shuts down. If an error occurred before running the workload the process
  *  will exit() with an error exit code.
- * 
+ *
  * Error exit codes:
  *  125     - "init" cannot set up the environment inside the microVM.
  *  126     - "init" can find the executable to be run inside the microVM but cannot execute it.
