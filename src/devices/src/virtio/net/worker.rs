@@ -5,7 +5,7 @@ use crate::virtio::{InterruptTransport, Queue};
 
 use super::backend::{NetBackend, ReadError, WriteError};
 use super::device::{FrontendError, RxError, TxError, VirtioNetBackend};
-use super::{vnet_hdr_len, write_virtio_net_hdr};
+use super::vnet_hdr_len;
 
 use std::os::fd::AsRawFd;
 use std::thread;
@@ -435,10 +435,7 @@ impl NetWorker {
 
     /// Fills self.rx_frame_buf with an ethernet frame from backend and prepends virtio_net_hdr to it
     fn read_into_rx_frame_buf_from_backend(&mut self) -> result::Result<(), ReadError> {
-        let mut len = 0;
-        len += write_virtio_net_hdr(&mut self.rx_frame_buf);
-        len += self.backend.read_frame(&mut self.rx_frame_buf[len..])?;
-        self.rx_frame_buf_len = len;
+        self.rx_frame_buf_len = self.backend.read_frame(&mut self.rx_frame_buf)?;
         Ok(())
     }
 }
