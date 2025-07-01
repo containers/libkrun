@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use crate::bus::BusDevice;
+#[cfg(target_arch = "riscv64")]
+use crate::legacy::aia::AIADevice;
 #[cfg(target_arch = "aarch64")]
 use crate::legacy::gic::GICDevice;
 use crate::Error as DeviceError;
@@ -73,6 +75,43 @@ impl GICDevice for IrqChipDevice {
     }
 }
 
+#[cfg(target_arch = "riscv64")]
+impl AIADevice for IrqChipDevice {
+    fn aplic_compatibility(&self) -> &str {
+        "riscv,aplic"
+    }
+
+    fn aplic_properties(&self) -> [u32; 4] {
+        [
+            0,
+            arch::riscv64::layout::APLIC_START as u32,
+            0,
+            kvm_bindings::KVM_DEV_RISCV_APLIC_SIZE,
+        ]
+    }
+
+    fn imsic_compatibility(&self) -> &str {
+        "riscv,imsics"
+    }
+
+    fn imsic_properties(&self) -> [u32; 4] {
+        [
+            0,
+            arch::riscv64::layout::IMSIC_START as u32,
+            0,
+            kvm_bindings::KVM_DEV_RISCV_IMSIC_SIZE * self.vcpu_count(),
+        ]
+    }
+
+    fn vcpu_count(&self) -> u32 {
+        self.inner.vcpu_count()
+    }
+
+    fn msi_compatible(&self) -> bool {
+        true
+    }
+}
+
 #[cfg(target_arch = "x86_64")]
 pub trait IrqChipT: BusDevice {
     fn get_mmio_addr(&self) -> u64;
@@ -86,6 +125,17 @@ pub trait IrqChipT: BusDevice {
 
 #[cfg(target_arch = "aarch64")]
 pub trait IrqChipT: BusDevice + GICDevice {
+    fn get_mmio_addr(&self) -> u64;
+    fn get_mmio_size(&self) -> u64;
+    fn set_irq(
+        &self,
+        irq_line: Option<u32>,
+        interrupt_evt: Option<&EventFd>,
+    ) -> Result<(), DeviceError>;
+}
+
+#[cfg(target_arch = "riscv64")]
+pub trait IrqChipT: BusDevice + AIADevice {
     fn get_mmio_addr(&self) -> u64;
     fn get_mmio_size(&self) -> u64;
     fn set_irq(
