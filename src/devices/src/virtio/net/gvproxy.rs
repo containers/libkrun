@@ -8,6 +8,7 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::path::PathBuf;
 
 use super::backend::{ConnectError, NetBackend, ReadError, WriteError};
+use super::write_virtio_net_hdr;
 
 const VFKIT_MAGIC: [u8; 4] = *b"VFKT";
 
@@ -87,7 +88,8 @@ impl Gvproxy {
 impl NetBackend for Gvproxy {
     /// Try to read a frame from passt. If no bytes are available reports ReadError::NothingRead
     fn read_frame(&mut self, buf: &mut [u8]) -> Result<usize, ReadError> {
-        let frame_length = match recv(self.fd, buf, MsgFlags::empty()) {
+        let hdr_len = write_virtio_net_hdr(buf);
+        let frame_length = match recv(self.fd, &mut buf[hdr_len..], MsgFlags::empty()) {
             Ok(f) => f,
             #[allow(unreachable_patterns)]
             Err(nix::Error::EAGAIN | nix::Error::EWOULDBLOCK) => {
@@ -98,7 +100,7 @@ impl NetBackend for Gvproxy {
             }
         };
         debug!("Read eth frame from passt: {frame_length} bytes");
-        Ok(frame_length)
+        Ok(hdr_len + frame_length)
     }
 
     /// Try to write a frame to passt.

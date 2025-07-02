@@ -24,6 +24,8 @@
 #define MAX_PATH 4096
 #endif
 
+#define COMPAT_NET_FLAGS NET_CSUM | NET_GUEST_CSUM | NET_GUEST_TSO4 | NET_GUEST_UFO | NET_HOST_TSO4 | NET_HOST_UFO
+
 enum net_mode {
     NET_MODE_PASST = 0,
     NET_MODE_TSI,
@@ -175,7 +177,7 @@ int start_passt()
     int socket_fds[2];
     const int PARENT = 0;
     const int CHILD = 1;
-    
+
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, socket_fds) < 0) {
         perror("Failed to create passt socket fd");
         return -1;
@@ -186,13 +188,13 @@ int start_passt()
         perror("fork");
         return -1;
     }
-    
+
     if (pid == 0) { // child
         if (close(socket_fds[PARENT]) < 0) {
             perror("close PARENT");
         }
 
-        char fd_as_str[16]; 
+        char fd_as_str[16];
         snprintf(fd_as_str, sizeof(fd_as_str), "%d", socket_fds[CHILD]);
 
         printf("passing fd %s to passt", fd_as_str);
@@ -303,7 +305,8 @@ int main(int argc, char *const argv[])
             return -1;
         }
 
-        if (err = krun_set_passt_fd(ctx_id, passt_fd)) {
+        uint8_t mac[] = {0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee};
+        if (err = krun_add_net_passt(ctx_id, passt_fd, &mac[0], COMPAT_NET_FLAGS)) {
             errno = -err;
             perror("Error configuring net mode");
             return -1;

@@ -1,35 +1,24 @@
 use crate::legacy::IrqChip;
 use crate::virtio::net::gvproxy::Gvproxy;
 use crate::virtio::net::passt::Passt;
+use crate::virtio::net::tap::Tap;
 use crate::virtio::net::{MAX_BUFFER_SIZE, QUEUE_SIZE, RX_INDEX, TX_INDEX};
 use crate::virtio::{Queue, VIRTIO_MMIO_INT_VRING};
 use crate::Error as DeviceError;
 
 use super::backend::{NetBackend, ReadError, WriteError};
 use super::device::{FrontendError, RxError, TxError, VirtioNetBackend};
+use super::vnet_hdr_len;
 
 use std::os::fd::AsRawFd;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
-use std::{cmp, mem, result};
+use std::{cmp, result};
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 use utils::eventfd::EventFd;
-use virtio_bindings::virtio_net::virtio_net_hdr_v1;
 use vm_memory::{Bytes, GuestAddress, GuestMemoryMmap};
-
-fn vnet_hdr_len() -> usize {
-    mem::size_of::<virtio_net_hdr_v1>()
-}
-
-// This initializes to all 0 the virtio_net_hdr part of a buf and return the length of the header
-// https://docs.oasis-open.org/virtio/virtio/v1.1/csprd01/virtio-v1.1-csprd01.html#x1-2050006
-fn write_virtio_net_hdr(buf: &mut [u8]) -> usize {
-    let len = vnet_hdr_len();
-    buf[0..len].fill(0);
-    len
-}
 
 pub struct NetWorker {
     queues: Vec<Queue>,
@@ -67,6 +56,9 @@ impl NetWorker {
             VirtioNetBackend::Passt(fd) => Box::new(Passt::new(fd)) as Box<dyn NetBackend + Send>,
             VirtioNetBackend::Gvproxy(path) => {
                 Box::new(Gvproxy::new(path).unwrap()) as Box<dyn NetBackend + Send>
+            }
+            VirtioNetBackend::Tap(tap_name) => {
+                Box::new(Tap::new(tap_name).unwrap()) as Box<dyn NetBackend + Send>
             }
         };
 
@@ -460,10 +452,7 @@ impl NetWorker {
 
     /// Fills self.rx_frame_buf with an ethernet frame from backend and prepends virtio_net_hdr to it
     fn read_into_rx_frame_buf_from_backend(&mut self) -> result::Result<(), ReadError> {
-        let mut len = 0;
-        len += write_virtio_net_hdr(&mut self.rx_frame_buf);
-        len += self.backend.read_frame(&mut self.rx_frame_buf[len..])?;
-        self.rx_frame_buf_len = len;
+        self.rx_frame_buf_len = self.backend.read_frame(&mut self.rx_frame_buf)?;
         Ok(())
     }
 }
