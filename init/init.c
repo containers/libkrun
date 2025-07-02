@@ -990,6 +990,28 @@ int main(int argc, char **argv)
     char *rlimits;
     char **config_argv, **exec_argv;
 
+#ifdef TDX
+    if (mkdir("/tmp", 0755) < 0 && errno != EEXIST) {
+        perror("mkdir(/tmp)");
+        exit(-1);
+    }
+    if (mkdir("/tmp/vda", 0755) < 0 && errno != EEXIST) {
+        perror("mkdir(/tmp/vda)");
+        exit(-1);
+    }
+    if (mount("/dev/vda", "/tmp/vda", "ext4", MS_RELATIME, NULL) < 0) {
+        perror("mount(/dev/vda)");
+        exit(-1);
+    }
+    chdir("/tmp/vda");
+    if (mount(".", "/", NULL, MS_MOVE, NULL) < 0) {
+        perror("remount root");
+        exit(-1);
+    }
+    chroot(".");
+
+#endif
+
 #ifdef SEV
     if (chroot_luks() < 0) {
         printf("Couldn't switch to LUKS volume, bailing out\n");
