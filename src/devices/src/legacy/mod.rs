@@ -35,6 +35,10 @@ mod aarch64;
 use aarch64::gpio;
 #[cfg(target_arch = "aarch64")]
 use aarch64::serial;
+#[cfg(target_arch = "riscv64")]
+mod riscv64;
+#[cfg(target_arch = "riscv64")]
+use riscv64::serial;
 
 #[cfg(target_os = "macos")]
 pub use self::gicv3::GicV3;
