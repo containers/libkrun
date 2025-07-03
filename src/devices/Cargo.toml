@@ -10,7 +10,7 @@ amd-sev = ["blk", "tee"]
 net = []
 blk = []
 efi = ["blk", "net"]
-gpu = ["rutabaga_gfx", "thiserror", "zerocopy", "zerocopy-derive"]
+gpu = ["rutabaga_gfx", "thiserror", "zerocopy", "zerocopy-derive", "krun_display"]
 snd = ["pw", "thiserror"]
 virgl_resource_map2 = []
 nitro = []
@@ -29,6 +29,7 @@ virtio-bindings = "0.2.0"
 vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
 zerocopy = { version = "0.6.3", optional = true }
 zerocopy-derive = { version = "0.6.3", optional = true }
+krun_display = { path = "../krun_display", optional = true }
 
 arch = { path = "../arch" }
 utils = { path = "../utils" }

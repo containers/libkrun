@@ -1,13 +1,21 @@
 use std::collections::BTreeMap;
 use std::env;
+use std::io::IoSliceMut;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use super::super::Queue as VirtQueue;
+use super::protocol::GpuResponse::*;
+use super::protocol::{
+    GpuResponse, GpuResponsePlaneInfo, VirtioGpuResult, VIRTIO_GPU_BLOB_FLAG_CREATE_GUEST_HANDLE,
+    VIRTIO_GPU_BLOB_MEM_HOST3D,
+};
 #[cfg(target_os = "macos")]
 use crossbeam_channel::{unbounded, Sender};
+use krun_display::{DisplayBackend, DisplayBackendBasicFramebuffer, DisplayBackendInstance};
 use libc::c_void;
 #[cfg(target_os = "macos")]
 use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_APPLE;
@@ -30,18 +38,12 @@ use utils::eventfd::EventFd;
 use utils::worker_message::WorkerMessage;
 use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, VolatileSlice};
 
-use super::super::Queue as VirtQueue;
-use super::protocol::GpuResponse::*;
-use super::protocol::{
-    GpuResponse, GpuResponsePlaneInfo, VirtioGpuResult, VIRTIO_GPU_BLOB_FLAG_CREATE_GUEST_HANDLE,
-    VIRTIO_GPU_BLOB_MEM_HOST3D,
-};
-
 use super::{GpuError, Result};
 use crate::legacy::IrqChip;
+use crate::virtio::display::{DisplayInfo, DisplayInfoList};
 use crate::virtio::fs::ExportTable;
-use crate::virtio::gpu::protocol::VIRTIO_GPU_FLAG_INFO_RING_IDX;
-use crate::virtio::{VirtioShmRegion, VIRTIO_MMIO_INT_VRING};
+use crate::virtio::gpu::protocol::{VIRTIO_GPU_FLAG_INFO_RING_IDX, VIRTIO_GPU_MAX_SCANOUTS};
+use crate::virtio::{GpuResourceFormat, VirtioShmRegion, VIRTIO_MMIO_INT_VRING};
 
 fn sglist_to_rutabaga_iovecs(
     vecs: &[(GuestAddress, usize)],
@@ -84,8 +86,35 @@ pub struct FenceState {
     completed_fences: BTreeMap<VirtioGpuRing, u64>,
 }
 
+#[derive(Copy, Clone, Debug, Default)]
+struct AssociatedScanouts(u32);
+
+impl AssociatedScanouts {
+    fn enable(&mut self, scanout_id: u32) {
+        self.0 |= 1 << scanout_id;
+    }
+
+    fn disable(&mut self, scanout_id: u32) {
+        self.0 ^= 1 << scanout_id;
+    }
+
+    const fn has_any_enabled(self) -> bool {
+        self.0 != 0
+    }
+
+    fn iter_enabled(self) -> impl Iterator<Item = u32> {
+        (0..VIRTIO_GPU_MAX_SCANOUTS).filter(move |i| ((self.0 >> i) & 1) == 1)
+    }
+}
+
+#[derive(Copy, Clone)]
 struct VirtioGpuResource {
-    size: u64,
+    id: u32,
+    width: u32,
+    height: u32,
+    scanouts: AssociatedScanouts,
+    format: Option<GpuResourceFormat>,
+    size: u64, // only for blob resources
     shmem_offset: Option<u64>,
     rutabaga_external_mapping: bool,
 }
@@ -93,13 +122,28 @@ struct VirtioGpuResource {
 impl VirtioGpuResource {
     /// Creates a new VirtioGpuResource with the given metadata.  Width and height are used by the
     /// display, while size is useful for hypervisor mapping.
-    pub fn new(_resource_id: u32, _width: u32, _height: u32, size: u64) -> VirtioGpuResource {
+    pub fn new(
+        resource_id: u32,
+        width: u32,
+        height: u32,
+        format: Option<GpuResourceFormat>,
+        size: u64,
+    ) -> VirtioGpuResource {
         VirtioGpuResource {
+            id: resource_id,
+            width,
+            height,
+            scanouts: Default::default(),
             size,
+            format,
             shmem_offset: None,
             rutabaga_external_mapping: false,
         }
     }
+}
+
+pub struct VirtioGpuScanout {
+    resource_id: u32,
 }
 
 pub struct VirtioGpu {
@@ -108,6 +152,9 @@ pub struct VirtioGpu {
     fence_state: Arc<Mutex<FenceState>>,
     #[cfg(target_os = "macos")]
     map_sender: Sender<WorkerMessage>,
+    scanouts: [Option<VirtioGpuScanout>; VIRTIO_GPU_MAX_SCANOUTS as usize],
+    displays: DisplayInfoList,
+    display_backend: DisplayBackendInstance,
 }
 
 impl VirtioGpu {
@@ -184,6 +231,8 @@ impl VirtioGpu {
         virgl_flags: u32,
         #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
         export_table: Option<ExportTable>,
+        displays: DisplayInfoList,
+        display_backend: DisplayBackend,
     ) -> Self {
         let xdg_runtime_dir = match env::var("XDG_RUNTIME_DIR") {
             Ok(dir) => dir,
@@ -232,7 +281,6 @@ impl VirtioGpu {
             0,
         )
         .set_rutabaga_channels(rutabaga_channels_opt);
-
         let builder = if let Some(export_table) = export_table {
             builder.set_export_table(export_table)
         } else {
@@ -253,10 +301,17 @@ impl VirtioGpu {
             .build(fence, None)
             .expect("Rutabaga initialization failed!");
 
+        let display_backend = display_backend
+            .create_instance()
+            .expect("Failed to create display backend instance!");
+
         Self {
             rutabaga,
             resources: Default::default(),
             fence_state,
+            scanouts: Default::default(),
+            displays,
+            display_backend,
             #[cfg(target_os = "macos")]
             map_sender,
         }
@@ -296,10 +351,19 @@ impl VirtioGpu {
         self.rutabaga
             .resource_create_3d(resource_id, resource_create_3d)?;
 
+        let format = GpuResourceFormat::try_from(resource_create_3d.format).ok();
+        if format.is_none() {
+            debug!(
+                "Unknown format {} for resource {}",
+                resource_create_3d.format, resource_id
+            );
+        }
+
         let resource = VirtioGpuResource::new(
             resource_id,
             resource_create_3d.width,
             resource_create_3d.height,
+            format,
             0,
         );
 
@@ -315,6 +379,14 @@ impl VirtioGpu {
             .remove(&resource_id)
             .ok_or(ErrInvalidResourceId)?;
 
+        if resource.scanouts.has_any_enabled() {
+            warn!(
+                "The driver requested unref_resource, but resource {resource_id} has \
+                     associated scanouts, refusing to delete the resource."
+            );
+            return Err(ErrUnspec);
+        }
+
         if resource.rutabaga_external_mapping {
             self.rutabaga.unmap(resource_id)?;
         }
@@ -323,10 +395,116 @@ impl VirtioGpu {
         Ok(OkNoData)
     }
 
+    pub fn set_scanout(
+        &mut self,
+        scanout_id: u32,
+        resource_id: u32,
+        width: u32,
+        height: u32,
+    ) -> VirtioGpuResult {
+        let scanout = self
+            .scanouts
+            .get_mut(scanout_id as usize)
+            .ok_or(ErrInvalidScanoutId)?;
+
+        // If a resource is already associated with this scanout, make sure to disable
+        // this scanout for that resource
+        if let Some(resource_id) = scanout.as_ref().map(|scanout| scanout.resource_id) {
+            let resource = self
+                .resources
+                .get_mut(&resource_id)
+                .ok_or(ErrInvalidResourceId)?;
+
+            resource.scanouts.disable(scanout_id);
+        }
+
+        // Virtio spec: "The driver can use resource_id = 0 to disable a scanout."
+        if resource_id == 0 {
+            debug!("Disabling scanout {scanout_id:?}");
+            *scanout = None;
+            self.display_backend.disable_scanout(scanout_id)?;
+            return Ok(OkNoData);
+        }
+
+        // Enable the scanout
+        let resource = self
+            .resources
+            .get_mut(&resource_id)
+            .ok_or(ErrInvalidResourceId)?;
+        resource.scanouts.enable(scanout_id);
+
+        let Some(format) = resource.format else {
+            warn!(
+                "Cannot use resource {} ith unknown format for scanout",
+                resource_id
+            );
+            return Err(ErrUnspec);
+        };
+
+        let display: DisplayInfo = self
+            .displays
+            .get(scanout_id as usize)
+            .ok_or(ErrInvalidScanoutId)?
+            .clone()
+            .ok_or(ErrInvalidScanoutId)?;
+
+        self.display_backend.configure_scanout(
+            scanout_id,
+            display.width,
+            display.height,
+            width,
+            height,
+            format as u32,
+        )?;
+
+        *scanout = Some(VirtioGpuScanout { resource_id });
+        Ok(OkNoData)
+    }
+
+    fn read_2d_resource(
+        rutabaga: &mut Rutabaga,
+        resource: VirtioGpuResource,
+        output: &mut [u8],
+    ) -> VirtioGpuResult {
+        let transfer = Transfer3D {
+            x: 0,
+            y: 0,
+            z: 0,
+            w: resource.width,
+            h: resource.height,
+            d: 1,
+            level: 0,
+            stride: resource.width * GpuResourceFormat::BYTES_PER_PIXEL,
+            layer_stride: 0,
+            offset: 0,
+        };
+
+        rutabaga
+            .transfer_read(0, resource.id, transfer, Some(IoSliceMut::new(output)))
+            .map_err(|e| format!("{e}"))
+            .unwrap();
+
+        Ok(OkNoData)
+    }
+
     /// If the resource is the scanout resource, flush it to the display.
     pub fn flush_resource(&mut self, resource_id: u32) -> VirtioGpuResult {
         if resource_id == 0 {
             return Ok(OkNoData);
+        }
+
+        let resource = *self
+            .resources
+            .get(&resource_id)
+            .ok_or(ErrInvalidResourceId)?;
+
+        for scanout_id in resource.scanouts.iter_enabled() {
+            let (frame_id, buffer) = self.display_backend.alloc_frame(scanout_id)?;
+            if let Err(e) = Self::read_2d_resource(&mut self.rutabaga, resource, buffer) {
+                log::error!("Failed to read resource {resource_id} for scanout {scanout_id}: {e}");
+                return Err(ErrUnspec);
+            }
+            self.display_backend.present_frame(scanout_id, frame_id)?
         }
 
         #[cfg(windows)]
@@ -337,6 +515,20 @@ impl VirtioGpu {
         }
 
         Ok(OkNoData)
+    }
+
+    pub fn display_info(&self) -> VirtioGpuResult {
+        let display_info = self
+            .displays
+            .iter()
+            .map(|d| {
+                d.as_ref()
+                    .map(|d| (d.width, d.height, true))
+                    .unwrap_or((0, 0, false))
+            })
+            .collect();
+
+        Ok(OkDisplayInfo(display_info))
     }
 
     /// Copies data to host resource from the attached iovecs. Can also be used to flush caches.
@@ -516,7 +708,7 @@ impl VirtioGpu {
             None,
         )?;
 
-        let resource = VirtioGpuResource::new(resource_id, 0, 0, resource_create_blob.size);
+        let resource = VirtioGpuResource::new(resource_id, 0, 0, None, resource_create_blob.size);
 
         // Rely on rutabaga to check for duplicate resource ids.
         self.resources.insert(resource_id, resource);
@@ -769,5 +961,46 @@ impl VirtioGpu {
         resource.shmem_offset = None;
 
         Ok(OkNoData)
+    }
+}
+#[cfg(test)]
+mod test {
+    use crate::virtio::gpu::protocol::VIRTIO_GPU_MAX_SCANOUTS;
+
+    #[test]
+    fn test_virtio_gpu_associated_scanouts() {
+        use super::AssociatedScanouts;
+
+        let mut scanouts = AssociatedScanouts::default();
+
+        assert!(!scanouts.has_any_enabled());
+        assert_eq!(scanouts.iter_enabled().next(), None);
+
+        scanouts.enable(1);
+        assert!(scanouts.has_any_enabled());
+        scanouts.disable(1);
+        assert!(!scanouts.has_any_enabled());
+
+        (0..VIRTIO_GPU_MAX_SCANOUTS).for_each(|scanout| scanouts.enable(scanout));
+        assert!(scanouts.has_any_enabled());
+        assert_eq!(
+            scanouts.iter_enabled().collect::<Vec<u32>>(),
+            (0..VIRTIO_GPU_MAX_SCANOUTS).collect::<Vec<u32>>()
+        );
+
+        (0..VIRTIO_GPU_MAX_SCANOUTS)
+            .filter(|&i| i % 2 == 0)
+            .for_each(|scanout| scanouts.disable(scanout));
+        assert_eq!(
+            scanouts.iter_enabled().collect::<Vec<u32>>(),
+            (1..VIRTIO_GPU_MAX_SCANOUTS)
+                .step_by(2)
+                .collect::<Vec<u32>>()
+        );
+
+        (0..VIRTIO_GPU_MAX_SCANOUTS)
+            .filter(|&i| i % 2 != 0)
+            .for_each(|scanout| scanouts.disable(scanout));
+        assert!(!scanouts.has_any_enabled());
     }
 }
