@@ -41,12 +41,13 @@ use kvm_bindings::{
     KVM_MAX_CPUID_ENTRIES,
 };
 use kvm_bindings::{
-    kvm_create_guest_memfd, kvm_memory_attributes, kvm_userspace_memory_region,
-    kvm_userspace_memory_region2, KVM_API_VERSION, KVM_MEMORY_ATTRIBUTE_PRIVATE,
-    KVM_MEM_GUEST_MEMFD, KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN,
+    kvm_create_guest_memfd, kvm_userspace_memory_region, kvm_userspace_memory_region2,
+    KVM_API_VERSION, KVM_MEM_GUEST_MEMFD, KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN,
 };
 #[cfg(feature = "tee")]
 use kvm_bindings::{kvm_enable_cap, KVM_CAP_EXIT_HYPERCALL, KVM_MEMORY_EXIT_FLAG_PRIVATE};
+#[cfg(not(target_arch = "riscv64"))]
+use kvm_bindings::{kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE};
 use kvm_ioctls::{Cap::*, *};
 use utils::eventfd::EventFd;
 use utils::signal::{register_signal_handler, sigrtmin, Killable};
@@ -108,6 +109,9 @@ pub enum Error {
     #[cfg(target_arch = "aarch64")]
     /// Error configuring the general purpose aarch64 registers.
     REGSConfiguration(arch::aarch64::regs::Error),
+    #[cfg(target_arch = "riscv64")]
+    /// Error configuring the general purpose riscv64 registers.
+    REGSConfiguration(arch::riscv64::regs::Error),
     #[cfg(target_arch = "x86_64")]
     /// Error configuring the general purpose registers
     REGSConfiguration(arch::x86_64::regs::Error),
@@ -300,6 +304,11 @@ impl Display for Error {
                 f,
                 "Error configuring the general purpose aarch64 registers: {e:?}"
             ),
+            #[cfg(target_arch = "riscv64")]
+            REGSConfiguration(e) => write!(
+                f,
+                "Error configuring the general purpose riscv64 registers: {e:?}"
+            ),
             #[cfg(target_arch = "x86_64")]
             REGSConfiguration(e) => {
                 write!(f, "Error configuring the general purpose registers: {e:?}")
@@ -414,6 +423,9 @@ impl KvmContext {
 
         #[cfg(target_arch = "aarch64")]
         let capabilities = [Irqchip, Ioeventfd, Irqfd, UserMemory, ArmPsci02];
+
+        #[cfg(target_arch = "riscv64")]
+        let capabilities = [Irqchip, Ioeventfd, Irqfd, UserMemory];
 
         // Check that all desired capabilities are supported.
         match capabilities
@@ -624,6 +636,7 @@ impl Vm {
                     .map_err(Error::SetUserMemoryRegion)?;
             };
 
+            #[cfg(not(target_arch = "riscv64"))]
             let attr = kvm_memory_attributes {
                 address: start,
                 size: region.len(),
@@ -631,6 +644,7 @@ impl Vm {
                 flags: 0,
             };
 
+            #[cfg(not(target_arch = "riscv64"))]
             self.fd
                 .set_memory_attributes(attr)
                 .map_err(Error::SetMemoryAttributes)?;
@@ -950,6 +964,32 @@ impl Vcpu {
         })
     }
 
+    /// Constructs a new VCPU for `vm`.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Represents the CPU number between [0, max vcpus).
+    /// * `vm_fd` - The kvm `VmFd` for the virtual machine this vcpu will get attached to.
+    /// * `exit_evt` - An `EventFd` that will be written into when this vcpu exits.
+    /// * `create_ts` - A timestamp used by the vcpu to calculate its lifetime.
+    #[cfg(target_arch = "riscv64")]
+    pub fn new_riscv64(id: u8, vm_fd: &VmFd, exit_evt: EventFd) -> Result<Self> {
+        let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
+        let (event_sender, event_receiver) = unbounded();
+        let (response_sender, response_receiver) = unbounded();
+
+        Ok(Vcpu {
+            fd: kvm_vcpu,
+            id,
+            mmio_bus: None,
+            exit_evt,
+            event_receiver,
+            event_sender: Some(event_sender),
+            response_receiver: Some(response_receiver),
+            response_sender,
+        })
+    }
+
     /// Returns the cpu index as seen by the guest OS.
     pub fn cpu_index(&self) -> u8 {
         self.id
@@ -1047,6 +1087,25 @@ impl Vcpu {
 
         self.mpidr = arch::aarch64::regs::read_mpidr(&self.fd).map_err(Error::REGSConfiguration)?;
 
+        Ok(())
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    /// Configures an riscv64 specific vcpu.
+    ///
+    /// # Arguments
+    ///
+    /// * `vm_fd` - The kvm `VmFd` for this microvm.
+    /// * `guest_mem` - The guest memory used by this microvm.
+    /// * `kernel_load_addr` - Offset from `guest_mem` at which the kernel is loaded.
+    pub fn configure_riscv64(
+        &mut self,
+        _vm_fd: &VmFd,
+        guest_mem: &GuestMemoryMmap,
+        kernel_load_addr: GuestAddress,
+    ) -> Result<()> {
+        arch::riscv64::regs::setup_regs(&self.fd, self.id, kernel_load_addr.raw_value(), guest_mem)
+            .map_err(Error::REGSConfiguration)?;
         Ok(())
     }
 

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::{fmt, io};
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 use devices::fdt::DeviceInfoForFDT;
 use devices::{BusDevice, DeviceType};
 use kernel::cmdline as kernel_cmdline;
@@ -76,7 +76,7 @@ pub struct MMIODeviceManager {
 impl MMIODeviceManager {
     /// Create a new DeviceManager handling mmio devices (virtio net, block).
     pub fn new(mmio_base: &mut u64, irq_interval: (u32, u32)) -> MMIODeviceManager {
-        if cfg!(target_arch = "aarch64") {
+        if cfg!(any(target_arch = "aarch64", target_arch = "riscv64")) {
             *mmio_base += MMIO_LEN;
         }
         MMIODeviceManager {
@@ -175,7 +175,7 @@ impl MMIODeviceManager {
             .map_err(Error::Cmdline)
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
     /// Register an early console at some MMIO address.
     pub fn register_mmio_serial(
         &mut self,
@@ -197,7 +197,10 @@ impl MMIODeviceManager {
         cmdline
             .insert(
                 "earlycon",
+                #[cfg(target_arch = "aarch64")]
                 &format!("pl011,mmio32,0x{:08x}", self.mmio_base),
+                #[cfg(target_arch = "riscv64")]
+                &format!("uart,mmio,0x{:08x}", self.mmio_base),
             )
             .map_err(Error::Cmdline)?;
 
@@ -250,7 +253,7 @@ impl MMIODeviceManager {
         Ok(())
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
     /// Gets the information of the devices registered up to some point in time.
     pub fn get_device_info(&self) -> &HashMap<(DeviceType, String), MMIODeviceInfo> {
         &self.id_to_dev_info
@@ -282,7 +285,7 @@ pub struct MMIODeviceInfo {
     _len: u64,
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 impl DeviceInfoForFDT for MMIODeviceInfo {
     fn addr(&self) -> u64 {
         self.addr

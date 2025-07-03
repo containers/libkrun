@@ -27,6 +27,8 @@ use crate::resources::VmResources;
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(feature = "net")]
 use crate::vmm_config::net::NetBuilder;
+#[cfg(all(target_os = "linux", target_arch = "riscv64"))]
+use devices::legacy::KvmAia;
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 use devices::legacy::KvmGicV3;
 #[cfg(target_arch = "x86_64")]
@@ -466,7 +468,7 @@ impl Display for StartMicrovmError {
 enum Payload {
     #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
     KernelMmap,
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
     KernelCopy,
     ExternalKernel(ExternalKernel),
     #[cfg(test)]
@@ -489,7 +491,7 @@ fn choose_payload(vm_resources: &VmResources) -> Result<Payload, StartMicrovmErr
         #[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "tee")))]
         return Ok(Payload::KernelMmap);
 
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
         return Ok(Payload::KernelCopy);
     } else if let Some(external_kernel) = vm_resources.external_kernel() {
         Ok(Payload::ExternalKernel(external_kernel.clone()))
@@ -758,6 +760,29 @@ pub fn build_microvm(
         )?;
     }
 
+    #[cfg(all(target_arch = "riscv64", target_os = "linux"))]
+    {
+        vcpus = create_vcpus_riscv64(
+            &vm,
+            &vcpu_config,
+            &guest_memory,
+            payload_config.entry_addr,
+            &exit_evt,
+        )
+        .map_err(StartMicrovmError::Internal)?;
+
+        intc = Arc::new(Mutex::new(IrqChipDevice::new(Box::new(
+            KvmAia::new(vm.fd(), vm_resources.vm_config().vcpu_count.unwrap() as u32).unwrap(),
+        ))));
+
+        attach_legacy_devices(
+            &vm,
+            &mut mmio_device_manager,
+            &mut kernel_cmdline,
+            serial_device,
+        )?;
+    }
+
     // We use this atomic to record the exit code set by init/init.c in the VM.
     let exit_code = Arc::new(AtomicI32::new(i32::MAX));
 
@@ -902,7 +927,7 @@ fn load_external_kernel(
         // Raw images are treated as bundled kernels on x86_64
         #[cfg(target_arch = "x86_64")]
         KernelFormat::Raw => unreachable!(),
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
         KernelFormat::Raw => {
             let data: Vec<u8> = std::fs::read(external_kernel.path.clone())
                 .map_err(StartMicrovmError::RawOpenKernel)?;
@@ -920,7 +945,7 @@ fn load_external_kernel(
                 .map_err(StartMicrovmError::ElfLoadKernel)?;
             load_result.kernel_load
         }
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
         KernelFormat::PeGz => {
             let data: Vec<u8> = std::fs::read(external_kernel.path.clone())
                 .map_err(StartMicrovmError::PeGzOpenKernel)?;
@@ -1054,7 +1079,7 @@ fn load_payload(
     StartMicrovmError,
 > {
     match payload {
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
         Payload::KernelCopy => {
             let (kernel_entry_addr, kernel_host_addr, kernel_guest_addr, kernel_size) =
                 if let Some(kernel_bundle) = &_vm_resources.kernel_bundle {
@@ -1224,7 +1249,7 @@ fn create_guest_memory(
         Payload::Empty => arch::arch_memory_regions(mem_size, None, 0, 0),
         Payload::Efi => unreachable!(),
     };
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
     let (arch_mem_info, mut arch_mem_regions) = match payload {
         Payload::ExternalKernel(external_kernel) => {
             arch::arch_memory_regions(mem_size, external_kernel.initramfs_size)
@@ -1385,7 +1410,10 @@ fn attach_legacy_devices(
     Ok(())
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+#[cfg(all(
+    any(target_arch = "aarch64", target_arch = "riscv64"),
+    target_os = "linux"
+))]
 fn attach_legacy_devices(
     vm: &Vm,
     mmio_device_manager: &mut MMIODeviceManager,
@@ -1399,6 +1427,7 @@ fn attach_legacy_devices(
             .map_err(StartMicrovmError::Internal)?;
     }
 
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
     mmio_device_manager
         .register_mmio_rtc(vm.fd())
         .map_err(Error::RegisterMMIODevice)
@@ -1543,6 +1572,31 @@ fn create_vcpus_aarch64(
 
     vcpus[0].set_boot_senders(boot_senders);
 
+    Ok(vcpus)
+}
+
+#[cfg(all(target_arch = "riscv64", target_os = "linux"))]
+fn create_vcpus_riscv64(
+    vm: &Vm,
+    vcpu_config: &VcpuConfig,
+    guest_mem: &GuestMemoryMmap,
+    entry_addr: GuestAddress,
+    exit_evt: &EventFd,
+) -> super::Result<Vec<Vcpu>> {
+    let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
+    for cpu_index in 0..vcpu_config.vcpu_count {
+        let mut vcpu = Vcpu::new_riscv64(
+            cpu_index,
+            vm.fd(),
+            exit_evt.try_clone().map_err(Error::EventFd)?,
+        )
+        .map_err(Error::Vcpu)?;
+
+        vcpu.configure_riscv64(vm.fd(), guest_mem, entry_addr)
+            .map_err(Error::Vcpu)?;
+
+        vcpus.push(vcpu);
+    }
     Ok(vcpus)
 }
 
