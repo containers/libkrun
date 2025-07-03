@@ -4,19 +4,18 @@ use std::{io, thread};
 
 use vm_memory::{GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion};
 
-use crate::virtio::console::irq_signaler::IRQSignaler;
 use crate::virtio::console::port_io::PortOutput;
-use crate::virtio::{DescriptorChain, Queue};
+use crate::virtio::{DescriptorChain, InterruptTransport, Queue};
 
 pub(crate) fn process_tx(
     mem: GuestMemoryMmap,
     mut queue: Queue,
-    irq: IRQSignaler,
+    interrupt: InterruptTransport,
     output: Arc<Mutex<Box<dyn PortOutput + Send>>>,
     stop: Arc<AtomicBool>,
 ) {
     loop {
-        let Some(head) = pop_head_blocking(&mut queue, &mem, &irq, &stop) else {
+        let Some(head) = pop_head_blocking(&mut queue, &mem, &interrupt, &stop) else {
             return;
         };
 
@@ -25,7 +24,7 @@ pub(crate) fn process_tx(
 
         for desc in head.into_iter().readable() {
             let desc_len = desc.len as usize;
-            match write_desc_to_output(desc, output.lock().unwrap().as_mut(), &irq) {
+            match write_desc_to_output(desc, output.lock().unwrap().as_mut(), &interrupt) {
                 Ok(0) => {
                     break;
                 }
@@ -54,14 +53,14 @@ pub(crate) fn process_tx(
 fn pop_head_blocking<'mem>(
     queue: &mut Queue,
     mem: &'mem GuestMemoryMmap,
-    irq: &IRQSignaler,
+    interrupt: &InterruptTransport,
     stop: &AtomicBool,
 ) -> Option<DescriptorChain<'mem>> {
     loop {
         match queue.pop(mem) {
             Some(descriptor) => break Some(descriptor),
             None => {
-                irq.signal_used_queue("tx queue empty, parking");
+                interrupt.signal_used_queue();
                 thread::park();
                 if stop.load(Ordering::Acquire) {
                     break None;
@@ -75,7 +74,7 @@ fn pop_head_blocking<'mem>(
 fn write_desc_to_output(
     desc: DescriptorChain,
     output: &mut (dyn PortOutput + Send),
-    irq: &IRQSignaler,
+    interrupt: &InterruptTransport,
 ) -> Result<usize, GuestMemoryError> {
     desc.mem
         .try_access(desc.len as usize, desc.addr, |_, len, addr, region| {
@@ -88,7 +87,7 @@ fn write_desc_to_output(
                     // We can't return an error otherwise we would not know how many bytes were processed before WouldBlock
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                         log::trace!("Tx wait for output (would block)");
-                        irq.signal_used_queue("tx waiting for output");
+                        interrupt.signal_used_queue();
                         output.wait_until_writable();
                     }
                     Err(e) => break Err(GuestMemoryError::IOError(e)),

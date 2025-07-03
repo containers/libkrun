@@ -1,7 +1,6 @@
 use std::io::Read;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::{result, thread};
+use std::thread;
 
 use crossbeam_channel::Receiver;
 #[cfg(target_os = "macos")]
@@ -10,32 +9,26 @@ use rutabaga_gfx::{
     ResourceCreate3D, ResourceCreateBlob, RutabagaFence, Transfer3D,
     RUTABAGA_PIPE_BIND_RENDER_TARGET, RUTABAGA_PIPE_TEXTURE_2D,
 };
-use utils::eventfd::EventFd;
 #[cfg(target_os = "macos")]
 use utils::worker_message::WorkerMessage;
 use vm_memory::{GuestAddress, GuestMemoryMmap};
 
 use super::super::descriptor_utils::{Reader, Writer};
-use super::super::{GpuError, Queue as VirtQueue, VIRTIO_MMIO_INT_VRING};
+use super::super::{GpuError, Queue as VirtQueue};
 use super::protocol::{
     virtio_gpu_ctrl_hdr, virtio_gpu_mem_entry, GpuCommand, GpuResponse, VirtioGpuResult,
 };
 use super::virtio_gpu::VirtioGpu;
-use crate::legacy::IrqChip;
 use crate::virtio::fs::ExportTable;
 use crate::virtio::gpu::protocol::{VIRTIO_GPU_FLAG_FENCE, VIRTIO_GPU_FLAG_INFO_RING_IDX};
 use crate::virtio::gpu::virtio_gpu::VirtioGpuRing;
-use crate::virtio::VirtioShmRegion;
-use crate::Error as DeviceError;
+use crate::virtio::{InterruptTransport, VirtioShmRegion};
 
 pub struct Worker {
     receiver: Receiver<u64>,
     mem: GuestMemoryMmap,
     queue_ctl: Arc<Mutex<VirtQueue>>,
-    interrupt_status: Arc<AtomicUsize>,
-    interrupt_evt: EventFd,
-    intc: Option<IrqChip>,
-    irq_line: Option<u32>,
+    interrupt: InterruptTransport,
     shm_region: VirtioShmRegion,
     virgl_flags: u32,
     #[cfg(target_os = "macos")]
@@ -49,10 +42,7 @@ impl Worker {
         receiver: Receiver<u64>,
         mem: GuestMemoryMmap,
         queue_ctl: Arc<Mutex<VirtQueue>>,
-        interrupt_status: Arc<AtomicUsize>,
-        interrupt_evt: EventFd,
-        intc: Option<IrqChip>,
-        irq_line: Option<u32>,
+        interrupt: InterruptTransport,
         shm_region: VirtioShmRegion,
         virgl_flags: u32,
         #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
@@ -62,10 +52,7 @@ impl Worker {
             receiver,
             mem,
             queue_ctl,
-            interrupt_status,
-            interrupt_evt,
-            intc,
-            irq_line,
+            interrupt,
             shm_region,
             virgl_flags,
             #[cfg(target_os = "macos")]
@@ -85,10 +72,7 @@ impl Worker {
         let mut virtio_gpu = VirtioGpu::new(
             self.mem.clone(),
             self.queue_ctl.clone(),
-            self.interrupt_status.clone(),
-            self.interrupt_evt.try_clone().unwrap(),
-            self.intc.clone(),
-            self.irq_line,
+            self.interrupt.clone(),
             self.virgl_flags,
             #[cfg(target_os = "macos")]
             self.map_sender.clone(),
@@ -98,23 +82,11 @@ impl Worker {
         loop {
             let _ = self.receiver.recv().unwrap();
             if self.process_queue(&mut virtio_gpu, 0) {
-                if let Err(e) = self.signal_used_queue() {
+                if let Err(e) = self.interrupt.try_signal_used_queue() {
                     error!("Error signaling queue: {e:?}");
                 }
             }
         }
-    }
-
-    pub fn signal_used_queue(&self) -> result::Result<(), DeviceError> {
-        debug!("gpu: raising IRQ");
-        self.interrupt_status
-            .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-        if let Some(intc) = &self.intc {
-            intc.lock()
-                .unwrap()
-                .set_irq(self.irq_line, Some(&self.interrupt_evt))?;
-        }
-        Ok(())
     }
 
     fn process_gpu_command(

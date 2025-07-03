@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 use std::mem::size_of;
 use std::os::fd::AsRawFd;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::{result, thread};
 
@@ -9,7 +8,7 @@ use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 use vm_memory::{ByteValued, Bytes, GuestMemoryMmap};
 
-use super::super::{Queue, VIRTIO_MMIO_INT_VRING};
+use super::super::Queue;
 use super::audio_backends::{alloc_audio_backend, AudioBackend};
 use super::defs::{CTL_INDEX, EVT_INDEX, QUEUE_INDEXES, RXQ_INDEX, TXQ_INDEX};
 use super::stream::{Error as StreamError, Stream};
@@ -23,19 +22,14 @@ use super::{
     BackendType, Direction, Error, VirtioSoundChmapInfo, VirtioSoundJackInfo, Vring,
     VIRTIO_SND_CHMAP_FL, VIRTIO_SND_CHMAP_FR, VIRTIO_SND_CHMAP_MAX_SIZE, VIRTIO_SND_CHMAP_NONE,
 };
-use crate::legacy::IrqChip;
 use crate::virtio::snd::stream::Buffer;
 use crate::virtio::snd::{ControlMessageKind, IOMessage};
-use crate::virtio::DescriptorChain;
+use crate::virtio::{DescriptorChain, InterruptTransport};
 
 pub struct SndWorker {
     vrings: Vec<Arc<Mutex<Vring>>>,
     queue_evts: Vec<EventFd>,
-    interrupt_status: Arc<AtomicUsize>,
-    interrupt_evt: EventFd,
-    intc: Option<IrqChip>,
-    irq_line: Option<u32>,
-
+    interrupt: InterruptTransport,
     mem: GuestMemoryMmap,
     streams: Arc<RwLock<Vec<Stream>>>,
     streams_no: usize,
@@ -50,10 +44,7 @@ impl SndWorker {
     pub fn new(
         queues: Vec<Queue>,
         queue_evts: Vec<EventFd>,
-        interrupt_status: Arc<AtomicUsize>,
-        interrupt_evt: EventFd,
-        intc: Option<IrqChip>,
-        irq_line: Option<u32>,
+        interrupt: InterruptTransport,
         mem: GuestMemoryMmap,
         stop_fd: EventFd,
     ) -> Self {
@@ -100,21 +91,14 @@ impl SndWorker {
             vrings.push(Arc::new(Mutex::new(Vring {
                 mem: mem.clone(),
                 queue: queues[idx].clone(),
-                interrupt_evt: interrupt_evt.try_clone().unwrap(),
-                interrupt_status: interrupt_status.clone(),
-                intc: intc.clone(),
-                irq_line,
+                interrupt: interrupt.clone(),
             })));
         }
 
         Self {
             vrings,
             queue_evts,
-            interrupt_status,
-            interrupt_evt,
-            intc,
-            irq_line,
-
+            interrupt,
             mem,
             streams,
             streams_no,
@@ -244,17 +228,7 @@ impl SndWorker {
                     .needs_notification(&self.mem)
                     .unwrap()
                 {
-                    self.interrupt_status
-                        .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-                    if let Some(intc) = &self.intc {
-                        if let Err(e) = intc
-                            .lock()
-                            .unwrap()
-                            .set_irq(self.irq_line, Some(&self.interrupt_evt))
-                        {
-                            error!("Failed to signal used queue: {e:?}");
-                        }
-                    }
+                    self.interrupt.signal_used_queue();
                 }
             } else {
                 break;

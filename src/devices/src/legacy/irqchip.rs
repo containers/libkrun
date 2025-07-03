@@ -94,3 +94,43 @@ pub trait IrqChipT: BusDevice + GICDevice {
         interrupt_evt: Option<&EventFd>,
     ) -> Result<(), DeviceError>;
 }
+
+#[cfg(any(test, feature = "test_utils"))]
+pub mod test_utils {
+    use super::*;
+
+    #[derive(Clone, Default, Debug)]
+    pub struct DummyIrqChip {}
+
+    impl DummyIrqChip {
+        pub fn new() -> Self {
+            Default::default()
+        }
+    }
+
+    impl Into<IrqChip> for DummyIrqChip {
+        fn into(self) -> IrqChip {
+            Arc::new(Mutex::new(IrqChipDevice::new(
+                Box::new(DummyIrqChip::new()),
+            )))
+        }
+    }
+
+    impl BusDevice for DummyIrqChip {}
+
+    impl IrqChipT for DummyIrqChip {
+        fn get_mmio_addr(&self) -> u64 {
+            0
+        }
+        fn get_mmio_size(&self) -> u64 {
+            0
+        }
+        fn set_irq(
+            &self,
+            _irq_line: Option<u32>,
+            _interrupt_evt: Option<&EventFd>,
+        ) -> Result<(), DeviceError> {
+            Ok(())
+        }
+    }
+}

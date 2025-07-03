@@ -143,7 +143,7 @@ impl Subscriber for Console {
                 log::warn!("Unexpected console event received: {source:?}")
             }
             if raise_irq {
-                self.irq.signal_used_queue("event_handler");
+                self.device_state.signal_used_queue();
             }
         } else {
             warn!("console: The device is not yet activated. Spurious event received: {source:?}");
