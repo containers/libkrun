@@ -2,6 +2,7 @@ ARCH = $(shell uname -m)
 OS = $(shell uname -s)
 LDFLAGS_x86_64_Linux = -lkrun
 LDFLAGS_aarch64_Linux = -lkrun
+LDFLAGS_riscv64_Linux = -lkrun
 LDFLAGS_arm64_Darwin = -L/opt/homebrew/lib -lkrun
 LDFLAGS_sev = -lkrun-sev
 LDFLAGS_efi = -L/opt/homebrew/lib -lkrun-efi
