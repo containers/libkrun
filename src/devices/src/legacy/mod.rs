@@ -5,6 +5,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
+pub mod aia;
 pub mod gic;
 #[cfg(target_os = "macos")]
 mod gicv3;
@@ -14,6 +15,8 @@ mod i8042;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod ioapic;
 mod irqchip;
+#[cfg(all(target_os = "linux", target_arch = "riscv64"))]
+mod kvmaia;
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 mod kvmgicv3;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -32,6 +35,10 @@ mod aarch64;
 use aarch64::gpio;
 #[cfg(target_arch = "aarch64")]
 use aarch64::serial;
+#[cfg(target_arch = "riscv64")]
+mod riscv64;
+#[cfg(target_arch = "riscv64")]
+use riscv64::serial;
 
 #[cfg(target_os = "macos")]
 pub use self::gicv3::GicV3;
@@ -44,6 +51,8 @@ pub use self::i8042::I8042Device;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub use self::ioapic::IoApic;
 pub use self::irqchip::{IrqChip, IrqChipDevice, IrqChipT};
+#[cfg(all(target_os = "linux", target_arch = "riscv64"))]
+pub use self::kvmaia::KvmAia;
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 pub use self::kvmgicv3::KvmGicV3;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]

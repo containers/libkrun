@@ -55,7 +55,7 @@ use crate::vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
 use arch::{ArchMemoryInfo, InitrdConfig};
 #[cfg(target_os = "macos")]
 use crossbeam_channel::Sender;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 use devices::fdt;
 use devices::legacy::IrqChip;
 use devices::virtio::VmmExitObserver;
@@ -114,7 +114,7 @@ pub enum Error {
     RegisterMMIODevice(device_manager::mmio::Error),
     /// Write to the serial console failed.
     Serial(io::Error),
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
     /// Cannot generate or write FDT
     SetupFDT(devices::fdt::Error),
     /// Cannot create Timer file descriptor.
@@ -155,7 +155,7 @@ impl Display for Error {
             LoadCommandline(e) => write!(f, "Cannot load command line: {e}"),
             RegisterMMIODevice(e) => write!(f, "Cannot add a device to the MMIO Bus. {e}"),
             Serial(e) => write!(f, "Error writing to the serial console: {e:?}"),
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
             SetupFDT(e) => write!(f, "Error generating or writing FDT: {e:?}"),
             TimerFd(e) => write!(f, "Error creating timer fd: {e}"),
             Vcpu(e) => write!(f, "Vcpu error: {e}"),
@@ -319,6 +319,24 @@ impl Vmm {
             arch::aarch64::configure_system(&self.guest_memory, _smbios_oem_strings)
                 .map_err(Error::ConfigureSystem)?;
         }
+
+        #[cfg(target_arch = "riscv64")]
+        {
+            fdt::create_fdt(
+                &self.guest_memory,
+                &self.arch_memory_info,
+                vcpus.len() as u32,
+                self.kernel_cmdline.as_str(),
+                self.mmio_device_manager.get_device_info(),
+                _intc,
+                initrd,
+            )
+            .map_err(Error::SetupFDT)?;
+
+            arch::riscv64::configure_system(&self.guest_memory, _smbios_oem_strings)
+                .map_err(Error::ConfigureSystem)?;
+        }
+
         Ok(())
     }
 
