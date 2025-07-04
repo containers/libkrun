@@ -24,6 +24,8 @@
 #define MAX_PATH 4096
 #endif
 
+#define COMPAT_NET_VFLAGS NET_VFLAG_CSUM | NET_VFLAG_GUEST_CSUM | NET_VFLAG_GUEST_TSO4 | NET_VFLAG_GUEST_UFO | NET_VFLAG_HOST_TSO4 | NET_VFLAG_HOST_UFO
+
 enum net_mode {
     NET_MODE_PASST = 0,
     NET_MODE_TSI,
@@ -149,33 +151,12 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
     return false;
 }
 
-int connect_to_passt(char const *socket_path)
-{
-    struct sockaddr_un addr;
-    int socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (socket_fd < 0) {
-        perror("Failed to create passt socket fd");
-        return -1;
-    }
-
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
-
-    if (connect(socket_fd, (const struct sockaddr *) &addr, sizeof(addr)) < 0) {
-        perror("Failed to bind passt socket");
-        return -1;
-    }
-
-    return socket_fd;
-}
-
 int start_passt()
 {
     int socket_fds[2];
     const int PARENT = 0;
     const int CHILD = 1;
-    
+
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, socket_fds) < 0) {
         perror("Failed to create passt socket fd");
         return -1;
@@ -186,13 +167,13 @@ int start_passt()
         perror("fork");
         return -1;
     }
-    
+
     if (pid == 0) { // child
         if (close(socket_fds[PARENT]) < 0) {
             perror("close PARENT");
         }
 
-        char fd_as_str[16]; 
+        char fd_as_str[16];
         snprintf(fd_as_str, sizeof(fd_as_str), "%d", socket_fds[CHILD]);
 
         printf("passing fd %s to passt", fd_as_str);
@@ -297,16 +278,25 @@ int main(int argc, char *const argv[])
             return -1;
         }
     } else {
-        int passt_fd = cmdline.passt_socket_path ? connect_to_passt(cmdline.passt_socket_path) : start_passt();
+        uint8_t mac[] = {0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee};
+        if (cmdline.passt_socket_path != NULL) {
+            if (err = krun_add_net_unixstream(ctx_id, cmdline.passt_socket_path, -1, &mac[0], 0, COMPAT_NET_VFLAGS)) {
+                errno = -err;
+                perror("Error configuring net mode");
+                return -1;
+            }
+        } else {
+            int passt_fd = start_passt();
 
-        if (passt_fd < 0) {
-            return -1;
-        }
+            if (passt_fd < 0) {
+                return -1;
+            }
 
-        if (err = krun_set_passt_fd(ctx_id, passt_fd)) {
-            errno = -err;
-            perror("Error configuring net mode");
-            return -1;
+            if (err = krun_add_net_unixstream(ctx_id, NULL, passt_fd, &mac[0], 0, COMPAT_NET_VFLAGS)) {
+                errno = -err;
+                perror("Error configuring net mode");
+                return -1;
+            }
         }
     }
 

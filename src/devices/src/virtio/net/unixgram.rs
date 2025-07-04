@@ -11,13 +11,18 @@ use super::backend::{ConnectError, NetBackend, ReadError, WriteError};
 
 const VFKIT_MAGIC: [u8; 4] = *b"VFKT";
 
-pub struct Gvproxy {
+pub struct Unixgram {
     fd: RawFd,
 }
 
-impl Gvproxy {
-    /// Connect to a running gvproxy instance, given a socket file descriptor
-    pub fn new(path: PathBuf) -> Result<Self, ConnectError> {
+impl Unixgram {
+    /// Create the backend with a pre-established connection to the userspace network proxy.
+    pub fn new(fd: RawFd) -> Self {
+        Self { fd }
+    }
+
+    /// Create the backend opening a connection to the userspace network proxy.
+    pub fn open(path: PathBuf, send_vfkit_magic: bool) -> Result<Self, ConnectError> {
         let fd = socket(
             AddressFamily::Unix,
             SockType::Datagram,
@@ -37,7 +42,9 @@ impl Gvproxy {
         // allows the server to remove the socket after the connection.
         connect(fd, &peer_addr).map_err(ConnectError::Binding)?;
 
-        send(fd, &VFKIT_MAGIC, MsgFlags::empty()).map_err(ConnectError::SendingMagic)?;
+        if send_vfkit_magic {
+            send(fd, &VFKIT_MAGIC, MsgFlags::empty()).map_err(ConnectError::SendingMagic)?;
+        }
 
         // macOS forces us to do this here instead of just using SockFlag::SOCK_NONBLOCK above.
         match fcntl(fd, FcntlArg::F_GETFL) {
@@ -75,17 +82,17 @@ impl Gvproxy {
         }
 
         log::debug!(
-            "passt socket (fd {fd}) buffer sizes: SndBuf={:?} RcvBuf={:?}",
+            "network proxy socket (fd {fd}) buffer sizes: SndBuf={:?} RcvBuf={:?}",
             getsockopt(fd, sockopt::SndBuf),
             getsockopt(fd, sockopt::RcvBuf)
         );
 
-        Ok(Self { fd })
+        Ok(Self::new(fd))
     }
 }
 
-impl NetBackend for Gvproxy {
-    /// Try to read a frame from passt. If no bytes are available reports ReadError::NothingRead
+impl NetBackend for Unixgram {
+    /// Try to read a frame the proxy. If no bytes are available reports ReadError::NothingRead
     fn read_frame(&mut self, buf: &mut [u8]) -> Result<usize, ReadError> {
         let frame_length = match recv(self.fd, buf, MsgFlags::empty()) {
             Ok(f) => f,
@@ -97,19 +104,11 @@ impl NetBackend for Gvproxy {
                 return Err(ReadError::Internal(e));
             }
         };
-        debug!("Read eth frame from passt: {frame_length} bytes");
+        debug!("Read eth frame from proxy: {frame_length} bytes");
         Ok(frame_length)
     }
 
-    /// Try to write a frame to passt.
-    /// (Will mutate and override parts of buf, with a passt header!)
-    ///
-    /// * `hdr_len` - specifies the size of any existing headers encapsulating the ethernet frame,
-    ///   (such as vnet header), that can be overwritten. Must be >= PASST_HEADER_LEN.
-    /// * `buf` - the buffer to write to passt, `buf[..hdr_len]` may be overwritten
-    ///
-    /// If this function returns WriteError::PartialWrite, you have to finish the write using
-    /// try_finish_write.
+    /// Try to write a frame to the proxy.
     fn write_frame(&mut self, hdr_len: usize, buf: &mut [u8]) -> Result<(), WriteError> {
         let ret =
             send(self.fd, &buf[hdr_len..], MsgFlags::empty()).map_err(WriteError::Internal)?;
@@ -126,7 +125,7 @@ impl NetBackend for Gvproxy {
     }
 
     fn try_finish_write(&mut self, _hdr_len: usize, _buf: &[u8]) -> Result<(), WriteError> {
-        // The gvproxy backend doesn't do partial writes.
+        // The unixgram backend doesn't do partial writes.
         Ok(())
     }
 
