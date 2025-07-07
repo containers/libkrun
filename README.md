@@ -1,3 +1,9 @@
+<picture>
+   <source media="(prefers-color-scheme: dark)" srcset="docs/images/libkrun_logo_horizontal_darkmode.png">
+   <source media="(prefers-color-scheme: light)" srcset="docs/images/libkrun_logo_horizontal.png">
+   <img alt="libkrun logo" src="docs/images/libkrun_logo_horizontal_200.png">
+</picture>
+
 # libkrun
 
 ```libkrun``` is a dynamic library that allows programs to easily acquire the ability to run processes in a partially isolated environment using [KVM](https://www.kernel.org/doc/Documentation/virtual/kvm/api.txt) Virtualization on Linux and [HVF](https://developer.apple.com/documentation/hypervisor) on macOS/ARM64.
