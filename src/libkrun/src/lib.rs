@@ -925,6 +925,59 @@ pub unsafe extern "C" fn krun_add_net_unixgram(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+#[cfg(all(target_os = "linux", feature = "net"))]
+pub unsafe extern "C" fn krun_add_net_tap(
+    ctx_id: u32,
+    c_tap_name: *const c_char,
+    c_mac: *const u8,
+    features: u32,
+    flags: u32,
+) -> i32 {
+    if cfg!(not(feature = "net")) {
+        return -libc::ENOTSUP;
+    }
+
+    let tap_name = match CStr::from_ptr(c_tap_name).to_str() {
+        Ok(tap_name) => tap_name.to_string(),
+        Err(e) => {
+            debug!("Error parsing tap_name: {e:?}");
+            return -libc::EINVAL;
+        }
+    };
+
+    let mac: [u8; 6] = match slice::from_raw_parts(c_mac, 6).try_into() {
+        Ok(m) => m,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    if (features & !NET_ALL_FEATURES) != 0 {
+        return -libc::EINVAL;
+    }
+
+    if features & (NET_FEATURE_GUEST_TSO4 | NET_FEATURE_GUEST_TSO6 | NET_FEATURE_GUEST_UFO) != 0
+        && features & NET_FEATURE_GUEST_CSUM == 0
+    {
+        debug!("Network tap backend requires GUEST_CSUM to be requested if any of GUEST_TSO4, GUEST_TSO6 and/or GUEST_UFO are required");
+        return -libc::EINVAL;
+    }
+
+    /* The tap backend doesn't support any flags */
+    if flags != 0 {
+        return -libc::EINVAL;
+    }
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            create_virtio_net(cfg, VirtioNetBackend::Tap(tap_name), mac, features);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
 #[cfg(feature = "net")]
 pub unsafe extern "C" fn krun_set_passt_fd(ctx_id: u32, fd: c_int) -> i32 {
     if fd < 0 {

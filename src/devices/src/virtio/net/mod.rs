@@ -15,6 +15,8 @@ pub const TX_INDEX: usize = 1;
 
 mod backend;
 pub mod device;
+#[cfg(target_os = "linux")]
+mod tap;
 mod unixgram;
 mod unixstream;
 mod worker;
