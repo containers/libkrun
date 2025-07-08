@@ -5,15 +5,14 @@ use std::{io, thread};
 use vm_memory::{GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion};
 
 use crate::virtio::console::console_control::ConsoleControl;
-use crate::virtio::console::irq_signaler::IRQSignaler;
 use crate::virtio::console::port_io::PortInput;
-use crate::virtio::{DescriptorChain, Queue};
+use crate::virtio::{DescriptorChain, InterruptTransport, Queue};
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn process_rx(
     mem: GuestMemoryMmap,
     mut queue: Queue,
-    irq: IRQSignaler,
+    interrupt: InterruptTransport,
     input: Arc<Mutex<Box<dyn PortInput + Send>>>,
     control: Arc<ConsoleControl>,
     port_id: u32,
@@ -25,7 +24,7 @@ pub(crate) fn process_rx(
 
     let mut input = input.lock().unwrap();
     loop {
-        let head = pop_head_blocking(&mut queue, mem, &irq);
+        let head = pop_head_blocking(&mut queue, mem, &interrupt);
 
         let head_index = head.index;
         let mut bytes_read = 0;
@@ -52,13 +51,13 @@ pub(crate) fn process_rx(
 
         // We signal_used_queue only when we get WouldBlock or EOF
         if eof {
-            irq.signal_used_queue("rx EOF");
+            interrupt.signal_used_queue();
             log::trace!("signaling EOF on port {port_id}");
             control.port_open(port_id, false);
             return;
         } else if bytes_read == 0 {
             queue.undo_pop();
-            irq.signal_used_queue("rx WouldBlock");
+            interrupt.signal_used_queue();
             input.wait_until_readable(Some(&stopfd));
         }
 
@@ -71,13 +70,13 @@ pub(crate) fn process_rx(
 fn pop_head_blocking<'mem>(
     queue: &mut Queue,
     mem: &'mem GuestMemoryMmap,
-    irq: &IRQSignaler,
+    interrupt: &InterruptTransport,
 ) -> DescriptorChain<'mem> {
     loop {
         match queue.pop(mem) {
             Some(descriptor) => break descriptor,
             None => {
-                irq.signal_used_queue("rx queue empty, parking");
+                interrupt.signal_used_queue();
                 thread::park();
                 log::trace!("rx unparked, queue len {}", queue.len(mem))
             }

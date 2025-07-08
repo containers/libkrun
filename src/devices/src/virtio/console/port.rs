@@ -7,11 +7,10 @@ use std::{mem, thread};
 use vm_memory::GuestMemoryMmap;
 
 use crate::virtio::console::console_control::ConsoleControl;
-use crate::virtio::console::irq_signaler::IRQSignaler;
 use crate::virtio::console::port_io::{PortInput, PortOutput};
 use crate::virtio::console::process_rx::process_rx;
 use crate::virtio::console::process_tx::process_tx;
-use crate::virtio::Queue;
+use crate::virtio::{InterruptTransport, Queue};
 
 pub enum PortDescription {
     Console {
@@ -111,7 +110,7 @@ impl Port {
         mem: GuestMemoryMmap,
         rx_queue: Queue,
         tx_queue: Queue,
-        irq_signaler: IRQSignaler,
+        interrupt: InterruptTransport,
         control: Arc<ConsoleControl>,
     ) {
         if let PortState::Active { .. } = &mut self.state {
@@ -127,7 +126,7 @@ impl Port {
 
         let rx_thread = input.map(|input| {
             let mem = mem.clone();
-            let irq_signaler = irq_signaler.clone();
+            let interrupt = interrupt.clone();
             let port_id = self.port_id;
             let stopfd = stopfd.try_clone().unwrap();
             let stop = stop.clone();
@@ -135,14 +134,7 @@ impl Port {
                 .name("console port".into())
                 .spawn(move || {
                     process_rx(
-                        mem,
-                        rx_queue,
-                        irq_signaler,
-                        input,
-                        control,
-                        port_id,
-                        stopfd,
-                        stop,
+                        mem, rx_queue, interrupt, input, control, port_id, stopfd, stop,
                     )
                 })
                 .unwrap()
@@ -150,7 +142,7 @@ impl Port {
 
         let tx_thread = output.map(|output| {
             let stop = stop.clone();
-            thread::spawn(move || process_tx(mem, tx_queue, irq_signaler, output, stop))
+            thread::spawn(move || process_tx(mem, tx_queue, interrupt, output, stop))
         });
 
         self.state = PortState::Active {

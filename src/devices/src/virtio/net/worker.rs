@@ -1,17 +1,12 @@
-use crate::legacy::IrqChip;
 use crate::virtio::net::gvproxy::Gvproxy;
 use crate::virtio::net::passt::Passt;
 use crate::virtio::net::{MAX_BUFFER_SIZE, QUEUE_SIZE, RX_INDEX, TX_INDEX};
-use crate::virtio::{Queue, VIRTIO_MMIO_INT_VRING};
-use crate::Error as DeviceError;
+use crate::virtio::{InterruptTransport, Queue};
 
 use super::backend::{NetBackend, ReadError, WriteError};
 use super::device::{FrontendError, RxError, TxError, VirtioNetBackend};
 
 use std::os::fd::AsRawFd;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use std::thread;
 use std::{cmp, mem, result};
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
@@ -34,10 +29,7 @@ fn write_virtio_net_hdr(buf: &mut [u8]) -> usize {
 pub struct NetWorker {
     queues: Vec<Queue>,
     queue_evts: Vec<EventFd>,
-    interrupt_status: Arc<AtomicUsize>,
-    interrupt_evt: EventFd,
-    intc: Option<IrqChip>,
-    irq_line: Option<u32>,
+    interrupt: InterruptTransport,
 
     mem: GuestMemoryMmap,
     backend: Box<dyn NetBackend + Send>,
@@ -56,10 +48,7 @@ impl NetWorker {
     pub fn new(
         queues: Vec<Queue>,
         queue_evts: Vec<EventFd>,
-        interrupt_status: Arc<AtomicUsize>,
-        interrupt_evt: EventFd,
-        intc: Option<IrqChip>,
-        irq_line: Option<u32>,
+        interrupt: InterruptTransport,
         mem: GuestMemoryMmap,
         cfg_backend: VirtioNetBackend,
     ) -> Self {
@@ -73,13 +62,10 @@ impl NetWorker {
         Self {
             queues,
             queue_evts,
-            interrupt_status,
-            interrupt_evt,
-            intc,
-            irq_line,
 
             mem,
             backend,
+            interrupt,
 
             rx_frame_buf: [0u8; MAX_BUFFER_SIZE],
             rx_frame_buf_len: 0,
@@ -253,7 +239,9 @@ impl NetWorker {
         // At this point we processed as many Rx frames as possible.
         // We have to wake the guest if at least one descriptor chain has been used.
         if signal_queue {
-            self.signal_used_queue().map_err(RxError::DeviceError)?;
+            self.interrupt
+                .try_signal_used_queue()
+                .map_err(RxError::DeviceError)?;
         }
 
         result
@@ -371,20 +359,11 @@ impl NetWorker {
         }
 
         if raise_irq && tx_queue.needs_notification(&self.mem).unwrap() {
-            self.signal_used_queue().map_err(TxError::DeviceError)?;
+            self.interrupt
+                .try_signal_used_queue()
+                .map_err(TxError::DeviceError)?;
         }
 
-        Ok(())
-    }
-
-    fn signal_used_queue(&mut self) -> result::Result<(), DeviceError> {
-        self.interrupt_status
-            .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-        if let Some(intc) = &self.intc {
-            intc.lock()
-                .unwrap()
-                .set_irq(self.irq_line, Some(&self.interrupt_evt))?;
-        }
         Ok(())
     }
 

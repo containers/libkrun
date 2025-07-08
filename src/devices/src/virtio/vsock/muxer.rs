@@ -1,12 +1,9 @@
 use std::collections::HashMap;
 use std::os::unix::io::RawFd;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-use super::super::super::legacy::IrqChip;
 use super::super::Queue as VirtQueue;
-use super::super::VIRTIO_MMIO_INT_VRING;
 use super::defs;
 use super::defs::uapi;
 use super::muxer_rxq::{rx_to_pkt, MuxerRxQ};
@@ -22,9 +19,9 @@ use super::unix::UnixProxy;
 use super::VsockError;
 use crossbeam_channel::{unbounded, Sender};
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
-use utils::eventfd::EventFd;
 use vm_memory::GuestMemoryMmap;
 
+use crate::virtio::InterruptTransport;
 use std::net::Ipv4Addr;
 
 pub type ProxyMap = Arc<RwLock<HashMap<u64, Mutex<Box<dyn Proxy>>>>>;
@@ -105,10 +102,7 @@ pub struct VsockMuxer {
     mem: Option<GuestMemoryMmap>,
     rxq: Arc<Mutex<MuxerRxQ>>,
     epoll: Epoll,
-    interrupt_evt: EventFd,
-    interrupt_status: Arc<AtomicUsize>,
-    intc: Option<IrqChip>,
-    irq_line: Option<u32>,
+    interrupt: Option<InterruptTransport>,
     proxy_map: ProxyMap,
     reaper_sender: Option<Sender<u64>>,
     unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
@@ -118,8 +112,6 @@ impl VsockMuxer {
     pub(crate) fn new(
         cid: u64,
         host_port_map: Option<HashMap<u16, u16>>,
-        interrupt_evt: EventFd,
-        interrupt_status: Arc<AtomicUsize>,
         unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
     ) -> Self {
         VsockMuxer {
@@ -129,10 +121,7 @@ impl VsockMuxer {
             mem: None,
             rxq: Arc::new(Mutex::new(MuxerRxQ::new())),
             epoll: Epoll::new().unwrap(),
-            interrupt_evt,
-            interrupt_status,
-            intc: None,
-            irq_line: None,
+            interrupt: None,
             proxy_map: Arc::new(RwLock::new(HashMap::new())),
             reaper_sender: None,
             unix_ipc_port_map,
@@ -143,25 +132,16 @@ impl VsockMuxer {
         &mut self,
         mem: GuestMemoryMmap,
         queue: Arc<Mutex<VirtQueue>>,
-        intc: Option<IrqChip>,
-        irq_line: Option<u32>,
+        interrupt: InterruptTransport,
     ) {
         self.queue = Some(queue.clone());
         self.mem = Some(mem.clone());
-        self.intc.clone_from(&intc);
-        self.irq_line = irq_line;
+        self.interrupt = Some(interrupt.clone());
 
         #[cfg(target_os = "macos")]
         {
-            let timesync = TimesyncThread::new(
-                self.cid,
-                mem.clone(),
-                queue.clone(),
-                self.interrupt_evt.try_clone().unwrap(),
-                self.interrupt_status.clone(),
-                intc.clone(),
-                irq_line,
-            );
+            let timesync =
+                TimesyncThread::new(self.cid, mem.clone(), queue.clone(), interrupt.clone());
             timesync.run();
         }
 
@@ -174,10 +154,7 @@ impl VsockMuxer {
             self.proxy_map.clone(),
             mem,
             queue,
-            self.interrupt_evt.try_clone().unwrap(),
-            self.interrupt_status.clone(),
-            intc,
-            irq_line,
+            interrupt.clone(),
             sender.clone(),
             self.unix_ipc_port_map.clone().unwrap_or_default(),
         );
@@ -239,16 +216,8 @@ impl VsockMuxer {
         }
 
         if update.signal_queue {
-            self.interrupt_status
-                .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-            if let Some(intc) = &self.intc {
-                if let Err(e) = intc
-                    .lock()
-                    .unwrap()
-                    .set_irq(self.irq_line, Some(&self.interrupt_evt))
-                {
-                    warn!("failed to signal used queue: {e:?}");
-                }
+            if let Some(interrupt) = &self.interrupt {
+                interrupt.signal_used_queue();
             }
         }
     }

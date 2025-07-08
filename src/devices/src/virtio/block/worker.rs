@@ -1,15 +1,12 @@
-use crate::legacy::IrqChip;
 use crate::virtio::descriptor_utils::{Reader, Writer};
-use crate::Error as DeviceError;
 
-use super::super::{Queue, VIRTIO_MMIO_INT_VRING};
+use super::super::Queue;
 use super::device::{CacheType, DiskProperties};
 
+use crate::virtio::InterruptTransport;
 use std::io::{self, Write};
 use std::os::fd::AsRawFd;
 use std::result;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use std::thread;
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 use utils::eventfd::EventFd;
@@ -49,11 +46,7 @@ unsafe impl ByteValued for RequestHeader {}
 pub struct BlockWorker {
     queue: Queue,
     queue_evt: EventFd,
-    interrupt_status: Arc<AtomicUsize>,
-    interrupt_evt: EventFd,
-    intc: Option<IrqChip>,
-    irq_line: Option<u32>,
-
+    interrupt: InterruptTransport,
     mem: GuestMemoryMmap,
     disk: DiskProperties,
     stop_fd: EventFd,
@@ -64,10 +57,7 @@ impl BlockWorker {
     pub fn new(
         queue: Queue,
         queue_evt: EventFd,
-        interrupt_status: Arc<AtomicUsize>,
-        interrupt_evt: EventFd,
-        intc: Option<IrqChip>,
-        irq_line: Option<u32>,
+        interrupt: InterruptTransport,
         mem: GuestMemoryMmap,
         disk: DiskProperties,
         stop_fd: EventFd,
@@ -75,11 +65,7 @@ impl BlockWorker {
         Self {
             queue,
             queue_evt,
-            interrupt_status,
-            interrupt_evt,
-            intc,
-            irq_line,
-
+            interrupt,
             mem,
             disk,
             stop_fd,
@@ -206,7 +192,7 @@ impl BlockWorker {
             }
 
             if self.queue.needs_notification(mem).unwrap() {
-                if let Err(e) = self.signal_used_queue() {
+                if let Err(e) = self.interrupt.try_signal_used_queue() {
                     error!("error signalling queue: {e:?}");
                 }
             }
@@ -263,16 +249,5 @@ impl BlockWorker {
             }
             _ => Err(RequestError::UnknownRequest),
         }
-    }
-
-    fn signal_used_queue(&self) -> result::Result<(), DeviceError> {
-        self.interrupt_status
-            .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-        if let Some(intc) = &self.intc {
-            intc.lock()
-                .unwrap()
-                .set_irq(self.irq_line, Some(&self.interrupt_evt))?;
-        }
-        Ok(())
     }
 }

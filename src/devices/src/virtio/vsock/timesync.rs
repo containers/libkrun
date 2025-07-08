@@ -1,15 +1,12 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time;
 
-use super::super::super::legacy::IrqChip;
 use super::super::Queue as VirtQueue;
-use super::super::VIRTIO_MMIO_INT_VRING;
 use super::defs::uapi;
 use super::packet::VsockPacket;
 
-use utils::eventfd::EventFd;
+use crate::virtio::InterruptTransport;
 use vm_memory::GuestMemoryMmap;
 
 const UPDATE_INTERVAL: u64 = 60 * 1000 * 1000 * 1000;
@@ -20,10 +17,7 @@ pub struct TimesyncThread {
     cid: u64,
     mem: GuestMemoryMmap,
     queue_mutex: Arc<Mutex<VirtQueue>>,
-    interrupt_evt: EventFd,
-    interrupt_status: Arc<AtomicUsize>,
-    intc: Option<IrqChip>,
-    irq_line: Option<u32>,
+    interrupt: InterruptTransport,
 }
 
 impl TimesyncThread {
@@ -31,19 +25,13 @@ impl TimesyncThread {
         cid: u64,
         mem: GuestMemoryMmap,
         queue_mutex: Arc<Mutex<VirtQueue>>,
-        interrupt_evt: EventFd,
-        interrupt_status: Arc<AtomicUsize>,
-        intc: Option<IrqChip>,
-        irq_line: Option<u32>,
+        interrupt: InterruptTransport,
     ) -> Self {
         Self {
             cid,
             mem,
             queue_mutex,
-            interrupt_evt,
-            interrupt_status,
-            intc,
-            irq_line,
+            interrupt,
         }
     }
 
@@ -65,17 +53,7 @@ impl TimesyncThread {
                 {
                     error!("failed to add used elements to the queue: {e:?}");
                 }
-                self.interrupt_status
-                    .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-                if let Some(intc) = &self.intc {
-                    if let Err(e) = intc
-                        .lock()
-                        .unwrap()
-                        .set_irq(self.irq_line, Some(&self.interrupt_evt))
-                    {
-                        warn!("failed to signal used queue: {e:?}");
-                    }
-                }
+                self.interrupt.signal_used_queue();
             }
         }
     }

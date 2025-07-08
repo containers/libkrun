@@ -1,13 +1,10 @@
 use std::collections::HashMap;
 use std::os::unix::io::RawFd;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use super::super::super::legacy::IrqChip;
 use super::super::Queue as VirtQueue;
-use super::super::VIRTIO_MMIO_INT_VRING;
 use super::muxer::{push_packet, MuxerRx, ProxyMap};
 use super::muxer_rxq::MuxerRxQ;
 use super::proxy::{NewProxyType, Proxy, ProxyRemoval, ProxyUpdate};
@@ -15,10 +12,10 @@ use super::tcp::TcpProxy;
 
 use crate::virtio::vsock::defs;
 use crate::virtio::vsock::unix::{UnixAcceptorProxy, UnixProxy};
+use crate::virtio::InterruptTransport;
 use crossbeam_channel::Sender;
 use rand::{rngs::ThreadRng, thread_rng, Rng};
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
-use utils::eventfd::EventFd;
 use vm_memory::GuestMemoryMmap;
 
 pub struct MuxerThread {
@@ -28,10 +25,7 @@ pub struct MuxerThread {
     proxy_map: ProxyMap,
     mem: GuestMemoryMmap,
     queue: Arc<Mutex<VirtQueue>>,
-    interrupt_evt: EventFd,
-    interrupt_status: Arc<AtomicUsize>,
-    intc: Option<IrqChip>,
-    irq_line: Option<u32>,
+    interrupt: InterruptTransport,
     reaper_sender: Sender<u64>,
     unix_ipc_port_map: HashMap<u32, (PathBuf, bool)>,
 }
@@ -45,10 +39,7 @@ impl MuxerThread {
         proxy_map: ProxyMap,
         mem: GuestMemoryMmap,
         queue: Arc<Mutex<VirtQueue>>,
-        interrupt_evt: EventFd,
-        interrupt_status: Arc<AtomicUsize>,
-        intc: Option<IrqChip>,
-        irq_line: Option<u32>,
+        interrupt: InterruptTransport,
         reaper_sender: Sender<u64>,
         unix_ipc_port_map: HashMap<u32, (PathBuf, bool)>,
     ) -> Self {
@@ -59,10 +50,7 @@ impl MuxerThread {
             proxy_map,
             mem,
             queue,
-            interrupt_evt,
-            interrupt_status,
-            intc,
-            irq_line,
+            interrupt,
             reaper_sender,
             unix_ipc_port_map,
         }
@@ -156,17 +144,7 @@ impl MuxerThread {
 
         if should_signal {
             debug!("signal IRQ");
-            self.interrupt_status
-                .fetch_or(VIRTIO_MMIO_INT_VRING as usize, Ordering::SeqCst);
-            if let Some(intc) = &self.intc {
-                if let Err(e) = intc
-                    .lock()
-                    .unwrap()
-                    .set_irq(self.irq_line, Some(&self.interrupt_evt))
-                {
-                    warn!("failed to signal used queue: {e:?}");
-                }
-            }
+            self.interrupt.signal_used_queue();
         }
     }
 
