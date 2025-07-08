@@ -8,7 +8,7 @@ use crate::virtio::net::{Error, Result};
 use crate::virtio::net::{QUEUE_SIZES, RX_INDEX, TX_INDEX};
 use crate::virtio::queue::Error as QueueError;
 use crate::virtio::{
-    ActivateResult, DeviceState, InterruptTransport, Queue, VirtioDevice, TYPE_NET,
+    ActivateError, ActivateResult, DeviceState, InterruptTransport, Queue, VirtioDevice, TYPE_NET,
 };
 use crate::Error as DeviceError;
 
@@ -195,18 +195,28 @@ impl VirtioDevice for Net {
             .iter()
             .map(|e| e.try_clone().unwrap())
             .collect();
-        let worker = NetWorker::new(
+
+        match NetWorker::new(
             self.queues.clone(),
             queue_evts,
             interrupt.clone(),
             mem.clone(),
             self.acked_features,
             self.cfg_backend.clone(),
-        );
-        worker.run();
-
-        self.device_state = DeviceState::Activated(mem, interrupt);
-        Ok(())
+        ) {
+            Ok(worker) => {
+                worker.run();
+                self.device_state = DeviceState::Activated(mem, interrupt);
+                Ok(())
+            }
+            Err(err) => {
+                error!(
+                    "Error activating virtio-net ({}) backend: {err:?}",
+                    self.id()
+                );
+                Err(ActivateError::BadActivate)
+            }
+        }
     }
 
     fn is_activated(&self) -> bool {

@@ -1,3 +1,4 @@
+use crate::virtio::net::backend::ConnectError;
 #[cfg(target_os = "linux")]
 use crate::virtio::net::tap::Tap;
 use crate::virtio::net::unixgram::Unixgram;
@@ -42,27 +43,27 @@ impl NetWorker {
         mem: GuestMemoryMmap,
         _vnet_features: u64,
         cfg_backend: VirtioNetBackend,
-    ) -> Self {
+    ) -> Result<Self, ConnectError> {
         let backend = match cfg_backend {
             VirtioNetBackend::UnixstreamFd(fd) => {
                 Box::new(Unixstream::new(fd)) as Box<dyn NetBackend + Send>
             }
             VirtioNetBackend::UnixstreamPath(path) => {
-                Box::new(Unixstream::open(path).unwrap()) as Box<dyn NetBackend + Send>
+                Box::new(Unixstream::open(path)?) as Box<dyn NetBackend + Send>
             }
             VirtioNetBackend::UnixgramFd(fd) => {
                 Box::new(Unixgram::new(fd)) as Box<dyn NetBackend + Send>
             }
             VirtioNetBackend::UnixgramPath(path, vfkit_magic) => {
-                Box::new(Unixgram::open(path, vfkit_magic).unwrap()) as Box<dyn NetBackend + Send>
+                Box::new(Unixgram::open(path, vfkit_magic)?) as Box<dyn NetBackend + Send>
             }
             #[cfg(target_os = "linux")]
             VirtioNetBackend::Tap(tap_name) => {
-                Box::new(Tap::new(tap_name, _vnet_features).unwrap()) as Box<dyn NetBackend + Send>
+                Box::new(Tap::new(tap_name, _vnet_features)?) as Box<dyn NetBackend + Send>
             }
         };
 
-        Self {
+        Ok(Self {
             queues,
             queue_evts,
 
@@ -77,7 +78,7 @@ impl NetWorker {
             tx_frame_buf: [0u8; MAX_BUFFER_SIZE],
             tx_frame_len: 0,
             tx_iovec: Vec::with_capacity(QUEUE_SIZE as usize),
-        }
+        })
     }
 
     pub fn run(self) {
