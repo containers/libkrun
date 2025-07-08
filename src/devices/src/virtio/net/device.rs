@@ -65,6 +65,8 @@ pub enum VirtioNetBackend {
     UnixstreamPath(PathBuf),
     UnixgramFd(RawFd),
     UnixgramPath(PathBuf, bool),
+    #[cfg(target_os = "linux")]
+    Tap(String),
 }
 
 pub struct Net {
@@ -198,6 +200,7 @@ impl VirtioDevice for Net {
             queue_evts,
             interrupt.clone(),
             mem.clone(),
+            self.acked_features,
             self.cfg_backend.clone(),
         );
         worker.run();

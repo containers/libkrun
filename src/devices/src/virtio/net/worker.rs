@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use crate::virtio::net::tap::Tap;
 use crate::virtio::net::unixgram::Unixgram;
 use crate::virtio::net::unixstream::Unixstream;
 use crate::virtio::net::{MAX_BUFFER_SIZE, QUEUE_SIZE, RX_INDEX, TX_INDEX};
@@ -38,6 +40,7 @@ impl NetWorker {
         queue_evts: Vec<EventFd>,
         interrupt: InterruptTransport,
         mem: GuestMemoryMmap,
+        _vnet_features: u64,
         cfg_backend: VirtioNetBackend,
     ) -> Self {
         let backend = match cfg_backend {
@@ -52,6 +55,10 @@ impl NetWorker {
             }
             VirtioNetBackend::UnixgramPath(path, vfkit_magic) => {
                 Box::new(Unixgram::open(path, vfkit_magic).unwrap()) as Box<dyn NetBackend + Send>
+            }
+            #[cfg(target_os = "linux")]
+            VirtioNetBackend::Tap(tap_name) => {
+                Box::new(Tap::new(tap_name, _vnet_features).unwrap()) as Box<dyn NetBackend + Send>
             }
         };
 
