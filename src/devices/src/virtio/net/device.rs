@@ -8,7 +8,7 @@ use crate::legacy::IrqChip;
 use crate::virtio::net::{Error, Result};
 use crate::virtio::net::{QUEUE_SIZES, RX_INDEX, TX_INDEX};
 use crate::virtio::queue::Error as QueueError;
-use crate::virtio::{ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_NET};
+use crate::virtio::{ActivateError, ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_NET};
 use crate::Error as DeviceError;
 
 use super::backend::{ReadError, WriteError};
@@ -223,7 +223,8 @@ impl VirtioDevice for Net {
             .iter()
             .map(|e| e.try_clone().unwrap())
             .collect();
-        let worker = NetWorker::new(
+
+        match NetWorker::new(
             self.queues.clone(),
             queue_evts,
             self.interrupt_status.clone(),
@@ -232,11 +233,20 @@ impl VirtioDevice for Net {
             self.irq_line,
             mem.clone(),
             self.cfg_backend.clone(),
-        );
-        worker.run();
-
-        self.device_state = DeviceState::Activated(mem);
-        Ok(())
+        ) {
+            Ok(worker) => {
+                worker.run();
+                self.device_state = DeviceState::Activated(mem);
+                Ok(())
+            }
+            Err(err) => {
+                error!(
+                    "Error activating virtio-net ({}) backend: {err:?}",
+                    self.id()
+                );
+                Err(ActivateError::BadActivate)
+            }
+        }
     }
 
     fn is_activated(&self) -> bool {
