@@ -65,6 +65,8 @@ pub enum VirtioNetBackend {
     UnixstreamPath(PathBuf),
     UnixgramFd(RawFd),
     UnixgramPath(PathBuf, bool),
+    #[cfg(target_os = "linux")]
+    Tap(String),
 }
 
 pub struct Net {
