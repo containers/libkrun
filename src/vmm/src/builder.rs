@@ -47,8 +47,6 @@ use devices::virtio::{port_io, MmioTransport, PortDescription, Vsock};
 use kbs_types::Tee;
 
 use crate::device_manager;
-#[cfg(feature = "tee")]
-use crate::resources::TeeConfig;
 #[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigint_handler;
 #[cfg(target_os = "linux")]
@@ -69,7 +67,7 @@ use device_manager::shm::ShmManager;
 #[cfg(not(any(feature = "tee", feature = "nitro")))]
 use devices::virtio::{fs::ExportTable, VirtioShmRegion};
 use flate2::read::GzDecoder;
-#[cfg(feature = "tee")]
+#[cfg(feature = "amd-sev")]
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
 use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 #[cfg(target_arch = "x86_64")]
@@ -543,18 +541,24 @@ pub fn build_microvm(
     let mut vm = setup_vm(&guest_memory, vm_resources.nested_enabled)?;
 
     #[cfg(feature = "tee")]
-    let (kvm, vm) = {
+    let (_kvm, vm) = {
         let kvm = KvmContext::new()
             .map_err(Error::KvmContext)
             .map_err(StartMicrovmError::Internal)?;
-        let vm = setup_vm(&kvm, &guest_memory, vm_resources.tee_config())?;
+        let vm = setup_vm(
+            &kvm,
+            &guest_memory,
+            vm_resources,
+            #[cfg(feature = "tdx")]
+            _sender.clone(),
+        )?;
         (kvm, vm)
     };
 
     #[cfg(feature = "tee")]
     let tee = vm_resources.tee_config().tee;
 
-    #[cfg(feature = "tee")]
+    #[cfg(feature = "amd-sev")]
     let snp_launcher = match tee {
         Tee::Snp => Some(
             vm.snp_secure_virt_prepare(&guest_memory)
@@ -563,7 +567,15 @@ pub fn build_microvm(
         _ => None,
     };
 
-    #[cfg(feature = "tee")]
+    #[cfg(feature = "tdx")]
+    let mut tdx_launcher = match tee {
+        Tee::Tdx => vm
+            .tdx_secure_virt_prepare()
+            .map_err(StartMicrovmError::SecureVirtPrepare)?,
+        _ => panic!(),
+    };
+
+    #[cfg(all(feature = "tee", not(feature = "tdx")))]
     let measured_regions = {
         println!("Injecting and measuring memory regions. This may take a while.");
 
@@ -613,6 +625,32 @@ pub fn build_microvm(
                 size: 4096,
             },
         ]
+    };
+
+    #[cfg(feature = "tdx")]
+    let measured_regions = {
+        println!("Injecting and measuring memory regions. This may take a while.");
+        let qboot_size = if let Some(qboot_bundle) = &vm_resources.qboot_bundle {
+            qboot_bundle.size
+        } else {
+            return Err(StartMicrovmError::MissingKernelConfig);
+        };
+        let m = vec![
+            MeasuredRegion {
+                guest_addr: 0,
+                host_addr: guest_memory.get_host_address(GuestAddress(0)).unwrap() as u64,
+                size: 0x8000_0000,
+            },
+            MeasuredRegion {
+                guest_addr: arch::BIOS_START,
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(arch::BIOS_START))
+                    .unwrap() as u64,
+                size: qboot_size,
+            },
+        ];
+
+        m
     };
 
     // On x86_64 always create a serial device,
@@ -696,6 +734,14 @@ pub fn build_microvm(
             _sender,
         )
         .map_err(StartMicrovmError::Internal)?;
+    }
+
+    #[cfg(feature = "tdx")]
+    {
+        for vcpu in &vcpus {
+            vcpu.tdx_secure_virt_prepare(&mut tdx_launcher);
+        }
+        vm.tdx_secure_virt_init_vcpus(&mut tdx_launcher).unwrap();
     }
 
     // On aarch64, the vCPUs need to be created (i.e call KVM_CREATE_VCPU) and configured before
@@ -883,8 +929,9 @@ pub fn build_microvm(
     #[cfg(feature = "tee")]
     {
         match tee {
+            #[cfg(feature = "amd-sev")]
             Tee::Snp => {
-                let cpuid = kvm
+                let cpuid = _kvm
                     .fd()
                     .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
                     .map_err(VstateError::KvmCpuId)
@@ -897,6 +944,15 @@ pub fn build_microvm(
                         snp_launcher.unwrap(),
                     )
                     .map_err(StartMicrovmError::SecureVirtAttest)?;
+            }
+            #[cfg(feature = "tdx")]
+            Tee::Tdx => {
+                vmm.kvm_vm()
+                    .tdx_secure_virt_prepare_memory(&mut tdx_launcher, &measured_regions)
+                    .unwrap();
+                vmm.kvm_vm()
+                    .tdx_secure_virt_finalize_vm(tdx_launcher)
+                    .map_err(StartMicrovmError::SecureVirtPrepare)?;
             }
             _ => return Err(StartMicrovmError::InvalidTee),
         }
@@ -1323,11 +1379,17 @@ pub(crate) fn setup_vm(
 pub(crate) fn setup_vm(
     kvm: &KvmContext,
     guest_memory: &GuestMemoryMmap,
-    tee_config: &TeeConfig,
+    resources: &super::resources::VmResources,
+    #[cfg(feature = "tdx")] _sender: Sender<WorkerMessage>,
 ) -> std::result::Result<Vm, StartMicrovmError> {
-    let mut vm = Vm::new(kvm.fd(), tee_config)
-        .map_err(Error::Vm)
-        .map_err(StartMicrovmError::Internal)?;
+    let mut vm = Vm::new(
+        kvm.fd(),
+        resources.tee_config(),
+        #[cfg(feature = "tdx")]
+        _sender,
+    )
+    .map_err(Error::Vm)
+    .map_err(StartMicrovmError::Internal)?;
     vm.memory_init(guest_memory, kvm.max_memslots())
         .map_err(Error::Vm)
         .map_err(StartMicrovmError::Internal)?;

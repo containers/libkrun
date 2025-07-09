@@ -37,6 +37,7 @@ This project provides two different variants of the library:
 
 - **libkrun**: Generic variant compatible with all Virtualization-capable systems.
 - **libkrun-sev**: Variant including support for AMD SEV (SEV, SEV-ES and SEV-SNP) memory encryption and remote attestation. Requires an SEV-capable CPU.
+- **libkrun-tdx**: Variant including support for Intel TDX memory encryption. Requires a TDX-capable CPU.
 - **libkrun-efi**: Variant that bundles OVMF/EDK2 for booting a distribution-provided kernel (only available on macOS).
 
 Each variant generates a dynamic library with a different name (and ```soname```), so both can be installed at the same time in the same system.
@@ -115,6 +116,32 @@ make SEV=1
 ```
 sudo make SEV=1 install
 ```
+
+### Linux (TDX variant)
+
+#### Requirements
+
+* The TDX variant of [libkrunfw](https://github.com/containers/libkrunfw), which provides a ```libkrunfw-tdx.so``` library.
+* A working [Rust](https://www.rust-lang.org/) toolchain
+* C Library static libraries, as the [init](init/init.c) binary is statically linked (package ```glibc-static``` in Fedora)
+* patchelf
+* OpenSSL headers and libraries (package ```openssl-devel``` in Fedora).
+
+#### Compiling
+
+```
+make TDX=1
+```
+
+#### Installing
+
+```
+sudo make TDX=1 install
+```
+
+#### Limitations
+
+The TDX flavor of libkrun only supports guests with 1 vCPU and memory less than or equal to 3072mib.
 
 ### macOS (EFI variant)
 

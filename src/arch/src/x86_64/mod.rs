@@ -52,7 +52,10 @@ pub enum Error {
 
 // Where BIOS/VGA magic would live on a real PC.
 const EBDA_START: u64 = 0x9fc00;
+#[cfg(not(feature = "tdx"))]
 pub const RESET_VECTOR: u64 = 0xfff0;
+#[cfg(feature = "tdx")]
+pub const RESET_VECTOR: u64 = 0xffff_fff0;
 pub const RESET_VECTOR_SEV_AP: u64 = 0xfff3;
 pub const BIOS_START: u64 = 0xffff_0000;
 pub const BIOS_SIZE: usize = 65536;
@@ -269,12 +272,19 @@ pub fn configure_system(
         params.0.hdr.ramdisk_size = initrd_config.size as u32;
     }
 
-    #[cfg(feature = "tee")]
-    {
-        params.0.hdr.syssize = num_cpus as u32;
-    }
+    if cfg!(feature = "tdx") {
+        // number of 4k pages
+        params.0.hdr.syssize = (arch_memory_info.ram_last_addr / 4096) as u32;
+        // nuymber of vCPUs
+        params.0.hdr.root_flags = num_cpus as u16;
 
-    add_e820_entry(&mut params.0, 0, EBDA_START, E820_RAM)?;
+        add_e820_entry(&mut params.0, 0, EBDA_START - 0x10000, E820_RAM)?;
+    } else {
+        if cfg!(feature = "tee") {
+            params.0.hdr.syssize = num_cpus as u32;
+        }
+        add_e820_entry(&mut params.0, 0, EBDA_START, E820_RAM)?;
+    }
 
     let last_addr = GuestAddress(arch_memory_info.ram_last_addr);
     if last_addr < end_32bit_gap_start {
