@@ -6,11 +6,11 @@ edition = "2021"
 
 [features]
 tee = []
-amd-sev = [ "blk", "tee", "codicon", "kbs-types", "procfs", "rdrand", "serde", "serde_json", "sev", "curl" ]
+amd-sev = ["blk", "tee", "codicon", "kbs-types", "procfs", "rdrand", "serde", "serde_json", "sev", "curl"]
 net = []
 blk = []
-efi = [ "blk", "net" ]
-gpu = []
+efi = ["blk", "net"]
+gpu = ["krun_display"]
 snd = []
 nitro = []
 
@@ -22,11 +22,12 @@ linux-loader = { version = "0.13.0", features = ["bzimage", "elf", "pe"] }
 log = "0.4.0"
 vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
 vmm-sys-util = ">=0.14"
+krun_display = { path = "../krun_display", optional = true }
 
 arch = { path = "../arch" }
 devices = { path = "../devices" }
 kernel = { path = "../kernel" }
-utils = { path = "../utils"}
+utils = { path = "../utils" }
 polly = { path = "../polly" }
 
 # Dependencies for amd-sev

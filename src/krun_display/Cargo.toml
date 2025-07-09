@@ -1,0 +1,10 @@
+[package]
+name = "krun_display"
+description = "High level bindings for implemeting display backends in Rust for libkrun"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror = "2.0.12"
+log = "0.4.27"
+bitflags = "2.9.1"

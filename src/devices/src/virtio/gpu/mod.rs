@@ -1,4 +1,5 @@
 mod device;
+pub mod display;
 mod event_handler;
 mod protocol;
 mod virtio_gpu;
@@ -8,6 +9,12 @@ use super::descriptor_utils::Error as DescriptorError;
 
 pub use self::defs::uapi::VIRTIO_ID_GPU as TYPE_GPU;
 pub use self::device::Gpu;
+use crate::virtio::gpu::protocol::{
+    VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM, VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM,
+    VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM, VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM,
+    VIRTIO_GPU_FORMAT_R8G8B8A8_UNORM, VIRTIO_GPU_FORMAT_R8G8B8X8_UNORM,
+    VIRTIO_GPU_FORMAT_X8B8G8R8_UNORM, VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM,
+};
 
 mod defs {
     pub const GPU_DEV_ID: &str = "virtio_gpu";
@@ -39,6 +46,42 @@ mod defs {
             pub num_capsets: u32,
         }
         unsafe impl ByteValued for virtio_gpu_config {}
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum GpuResourceFormat {
+    BGRA = VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM,
+    BGRX = VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM,
+    ARGB = VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM,
+    XRGB = VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM,
+    RGBA = VIRTIO_GPU_FORMAT_R8G8B8A8_UNORM,
+    XBGR = VIRTIO_GPU_FORMAT_X8B8G8R8_UNORM,
+    ABGR = VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM,
+    RGBX = VIRTIO_GPU_FORMAT_R8G8B8X8_UNORM,
+}
+
+impl GpuResourceFormat {
+    // This is true for all exiting formats, hence we can hardcode it here
+    const BYTES_PER_PIXEL: u32 = 4;
+}
+
+impl TryFrom<u32> for GpuResourceFormat {
+    type Error = ();
+
+    fn try_from(value: u32) -> std::result::Result<Self, Self::Error> {
+        match value {
+            VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM => Ok(Self::BGRA),
+            VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM => Ok(Self::BGRX),
+            VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM => Ok(Self::ARGB),
+            VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM => Ok(Self::XRGB),
+            VIRTIO_GPU_FORMAT_R8G8B8A8_UNORM => Ok(Self::RGBA),
+            VIRTIO_GPU_FORMAT_X8B8G8R8_UNORM => Ok(Self::XBGR),
+            VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM => Ok(Self::ABGR),
+            VIRTIO_GPU_FORMAT_R8G8B8X8_UNORM => Ok(Self::RGBX),
+            _ => Err(()),
+        }
     }
 }
 

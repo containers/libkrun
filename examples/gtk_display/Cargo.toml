@@ -1,0 +1,16 @@
+[package]
+name = "gtk_display"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gtk4 = { version = "0.9.6", features = ["v4_14"] }
+krun_display = { path = "../../src/krun_display" }
+utils = {path = "../../src/utils"}
+krun-sys = "1.10.1"
+anyhow = "1.0.98"
+clap = "4.5.39"
+clap_derive = "4.5.32"
+log = "0.4.27"
+libc = "0.2.172"
+env_logger = "0.9.3"

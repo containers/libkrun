@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 #include <inttypes.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include <unistd.h>
 
@@ -378,6 +379,194 @@ int32_t krun_set_gpu_options(uint32_t ctx_id, uint32_t virgl_flags);
 int32_t krun_set_gpu_options2(uint32_t ctx_id,
                               uint32_t virgl_flags,
                               uint64_t shm_size);
+
+/* Maximum number of displays. Same as VIRTIO_GPU_MAX_SCANOUTS defined in the virtio-gpu spec */
+#define KRUN_MAX_DISPLAYS 16
+
+/**
+ * Configure and enable a display output for the VM.
+ *
+ * A display backend must be set using krun_set_display_backend_impl and the GPU device must be enabled, otherwise this
+ * call will fail.
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "display_id"  - the ID of the display (range: 0 to KRUN_MAX_DISPLAYS - 1)
+ *  "width"       - the width of the window/display
+ *  "height"      - the height of the window/display
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_display(uint32_t ctx_id, uint32_t display_id, uint32_t width, uint32_t height);
+
+////////////////////////////////////////////////
+////////////////////////////////////////////////
+
+// TODO: move to a separate header
+
+#define KRUN_DISPLAY_ERR_INTERNAL -1
+#define KRUN_DISPLAY_ERR_INVALID_SCANOUT_ID -3
+#define KRUN_DISPLAY_ERR_INVALID_PARAM -4
+
+// Same as VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM
+#define KRUN_PIXEL_FORMAT_B8G8R8A8_UNORM 1
+// Same as VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM
+#define KRUN_PIXEL_FORMAT_B8G8R8X8_UNORM 2
+// Same as VIRTIO_GPU_FORMAT_A8R8G8B8_UNORM
+#define KRUN_PIXEL_FORMAT_A8R8G8B8_UNORM 3
+// Same as VIRTIO_GPU_FORMAT_X8R8G8B8_UNORM
+#define KRUN_PIXEL_FORMAT_X8R8G8B8_UNORM 4
+// Same as VIRTIO_GPU_FORMAT_R8G8B8A8_UNORM
+#define KRUN_PIXEL_FORMAT_R8G8B8A8_UNORM 67
+// Same as VIRTIO_GPU_PIXEL_FORMAT_X8B8G8R8_UNORM
+#define KRUN_PIXEL_FORMAT_X8B8G8R8_UNORM 68
+// Same as VIRTIO_GPU_PIXEL_FORMAT_A8B8G8R8_UNORM
+#define KRUN_PIXEL_FORMAT_A8B8G8R8_UNORM 121
+// Same as VIRTIO_GPU_PIXEL_FORMAT_R8G8B8X8_UNORM
+#define KRUN_PIXEL_FORMAT_R8G8B8X8_UNORM 134
+
+/**
+ * Indicates support for basic framebuffer operations.
+ * If supported, the implementation must provide `disable_scanout`, `configure_scanout`, `alloc_frame`,
+ * and `present_frame`.
+ */
+#define KRUN_DISPLAY_FEATURE_BASIC_FRAMEBUFFER 1
+
+/**
+ * Called to create a display instance.
+ *
+ * Arguments:
+ *  "instance"    - (Output) pointer to userdata which can be used to represents this/self argument.
+ *                  Implementation may set it to any value (even NULL)
+ *  "userdata"    - userdata specified in the `krun_display_backend` instance
+ *  "reserved"    - reserved/unused for now
+ *
+ * Returns:
+ *  Zero on success or a negative error code (KRUN_DISPLAY_ERR_*) otherwise.
+ */
+typedef int32_t (*krun_display_create)(void **instance, const void *userdata, const void *reserved);
+
+/**
+ * Called to destroy the display instance.
+ *
+ * Arguments:
+ *  "instance"    - userdata set by `krun_display_create`, represents this/self argument
+ *
+ * Returns:
+ *  Zero on success or a negative error code (KRUN_DISPLAY_ERR_*) otherwise.
+ */
+typedef int32_t (*krun_display_destroy)(void *instance);
+
+/**
+ * Configures or reconfigures a display scanout.
+ *
+ * Arguments:
+ *  "instance"    - userdata set by `krun_display_create`, represents this/self argument
+ *  "scanout_id"  - The identifier of the scanout to configure.
+ *  "width"       - The desired width of the scanout in pixels.
+ *  "height"      - The desired height of the scanout in pixels.
+ *  "format"      - The pixel format for the scanout (see KRUN_PIXEL_FORMAT_* constants).
+ *
+ * Returns:
+ *  Zero on success or a negative error code (KRUN_DISPLAY_ERR_*) otherwise.
+ */
+typedef int32_t (*krun_display_configure_scanout)(void *instance, uint32_t scanout_id, uint32_t width, uint32_t height, uint32_t format);
+
+/**
+ * Disables a display scanout.
+ *
+ * Arguments:
+ *  "userdata"    - userdata set by `krun_display_create`, represents this/self argument
+ *  "scanout_id"  - The identifier of the scanout to disable.
+ *
+ * Returns:
+ *  Zero on success or a negative error code (KRUN_DISPLAY_ERR_*) otherwise.
+ */
+typedef int32_t (*krun_display_disable_scanout)(void *userdata, uint32_t scanout_id);
+
+/**
+ * Allocates a new frame for a specified scanout.
+ * This function provides a direct pointer to the frame's buffer.
+ * The caller is responsible for writing pixel data into this buffer.
+ *
+ * Arguments:
+ *  "instance"    - userdata set by `krun_display_create`, represents this/self argument
+ *  "scanout_id"  - The identifier of the scanout for which to allocate the frame.
+ *  "buffer"      - (Output) A pointer to a pointer that will be set to the address
+ *                  of the allocated frame's memory. The memory pointed to
+ *                  by *buffer must be writable by the caller.
+ * "buffer_size"  -  (Output) The size of the allocated buffer. This is mostly a sanity check, because the size
+ *                   is already determined by krun_display_configure_scanout.
+ *
+ * Returns:
+ *  The "frame_id" of the allocated frame or a negative error code (KRUN_DISPLAY_ERR_*) otherwise.
+ */
+typedef int32_t (*krun_display_alloc_frame)(void *instance, uint32_t scanout_id, uint8_t **buffer, size_t *buffer_size);
+
+/**
+ * Presents a previously allocated frame to the display.
+ * After this call, the `frame_id` is considered consumed or "deallocated"
+ * from the user's perspective. The user must call `krun_display_alloc_frame`
+ * again to obtain a new valid frame for the next rendering cycle.
+ * The content of the buffer associated with the `frame_id` should not be
+ * modified after this call.
+ *
+ * Arguments:
+ *  "instance"        - userdata set by `krun_display_create`, represents this/self argument
+ *  "scanout_id"      - The identifier of the scanout on which to present the frame.
+ *  "frame_id"        - The identifier of the frame to present, previously obtained from `krun_display_alloc_frame`.
+ *
+ * Returns:
+ * Zero on success or a negative error or a negative error code (KRUN_DISPLAY_ERR_*) otherwise.
+ */
+typedef int32_t (*krun_display_present_frame)(void *instance, uint32_t scanout_id, uint32_t frame_id);
+
+/**
+ * Defines the set of callbacks for a display implementation.
+ * This structure holds function pointers that a display backend implements to integrate with the libkrun.
+ *
+ * This is modeled as an object, an object instance is created using the `create` function and destroyed using `destroy`.
+ * It is possible for the `create` function to be null in this case, the pointer to the object instance will be null
+ * in the methods.
+ *
+ * The gpu device instantiates the display backend using the krun_display_create in a specific thread. All further calls
+ * to the display backend will be called from the same thread. Note that the display methods should not block for a long
+ * time otherwise this will negatively impact performance of the emulated GPU device.
+ *
+ * See krun_display_* function pointer typedef definitions for descriptions of individual methods.
+ * In the future more methods may be added, depending on which KRUN_DISPLAY_FEATURE_* flags are passed to
+ * krun_set_display_backend. The user of the library *MUST* zero initialize this struct to make all (future) unset
+ * fields NULL.
+ */
+struct krun_display_vtable {
+    krun_display_destroy             destroy; // (optional)
+    krun_display_configure_scanout   configure_scanout; // Required by KRUN_DISPLAY_FEATURE_BASIC_FRAMEBUFFER
+    krun_display_disable_scanout     disable_scanout; // Required by KRUN_DISPLAY_FEATURE_BASIC_FRAMEBUFFER
+    krun_display_alloc_frame         alloc_frame; // Required by KRUN_DISPLAY_FEATURE_BASIC_FRAMEBUFFER
+    krun_display_present_frame       present_frame; // Required by KRUN_DISPLAY_FEATURE_BASIC_FRAMEBUFFER
+};
+
+struct krun_display_backend {
+    void                       *create_userdata; // (optional)
+    krun_display_create         create; // (optional)
+    struct krun_display_vtable  vtable;
+};
+
+/**
+ * Configures a constructed krun_display_backend to be used for display output.
+ *
+ * Arguments:
+ *  "ctx_id"         - the configuration context ID
+ *  "features"       - bitmask of supported features by the display implementation see KRUN_DISPLAY_FEATURE_*
+ *  "display_vtable" - Pointer to struct krun_display_backend
+ *  "vtable_size"    - sizeof() the krun_display_backend struct (for backwards compatibility with older version
+ *                     of the struct)
+ *
+ * Returns:
+ *  Zero on success or a negative error number (errno) on failure.
+ */
+int32_t krun_set_display_backend(uint32_t ctx_id, uint64_t features, const void *display_backend, size_t backend_size);
 
 /**
  * Enables or disables a virtio-snd device.
