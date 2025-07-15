@@ -51,7 +51,7 @@ pub struct NitroEnclave {
 
 impl NitroEnclave {
     /// Run the enclave.
-    pub fn run(&mut self) -> Result<()> {
+    pub fn run(&mut self) -> Result<u32> {
         let device = Device::open().map_err(NitroError::DeviceOpen)?;
 
         let mut launcher = Launcher::new(&device).map_err(NitroError::VmCreate)?;
@@ -80,7 +80,7 @@ impl NitroEnclave {
 
         self.listen(VMADDR_CID_HYPERVISOR, cid + CID_TO_CONSOLE_PORT_OFFSET)?;
 
-        Ok(())
+        Ok(cid)
     }
 
     fn listen(&mut self, cid: u32, port: u32) -> Result<()> {

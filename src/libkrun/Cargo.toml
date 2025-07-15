@@ -36,7 +36,7 @@ hvf = { path = "../hvf" }
 kvm-bindings = { version = ">=0.11", features = ["fam-wrappers"] }
 kvm-ioctls = ">=0.21"
 nitro = { path = "../nitro", optional = true }
-nitro-enclaves = { version = "0.2.0", optional = true }
+nitro-enclaves = { version = "0.3.0", optional = true }
 vm-memory = ">=0.13"
 
 [lib]
