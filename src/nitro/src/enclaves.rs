@@ -5,33 +5,19 @@ use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
     Device,
 };
-use nix::{
-    poll::{poll, PollFd, PollFlags},
-    sys::{
-        socket::{connect, socket, AddressFamily, SockFlag, SockType, VsockAddr as NixVsockAddr},
-        time::{TimeVal, TimeValLike},
-    },
-    unistd::read,
-};
+use nix::poll::{poll, PollFd, PollFlags};
 use std::{
     fs::File,
     io::{Read, Write},
-    os::{
-        fd::{AsRawFd, RawFd},
-        unix::net::UnixStream,
-    },
+    os::fd::AsRawFd,
 };
 use vsock::{VsockAddr, VsockListener};
 
 type Result<T> = std::result::Result<T, NitroError>;
 
 const ENCLAVE_READY_VSOCK_PORT: u32 = 9000;
-const CID_TO_CONSOLE_PORT_OFFSET: u32 = 10000;
 
 const VMADDR_CID_PARENT: u32 = 3;
-const VMADDR_CID_HYPERVISOR: u32 = 0;
-
-const SO_VM_SOCKETS_CONNECT_TIMEOUT: i32 = 6;
 
 const HEART_BEAT: u8 = 0xb7;
 
@@ -43,8 +29,6 @@ pub struct NitroEnclave {
     pub mem_size_mib: usize,
     /// Number of vCPUs.
     pub vcpus: u8,
-    /// Path of vsock for initial enclave communication.
-    pub ipc_stream: UnixStream,
     /// Enclave start flags.
     pub start_flags: StartFlags,
 }
@@ -78,44 +62,7 @@ impl NitroEnclave {
 
         enclave_check(listener, poll_timeout.into(), cid)?;
 
-        self.listen(VMADDR_CID_HYPERVISOR, cid + CID_TO_CONSOLE_PORT_OFFSET)?;
-
         Ok(cid)
-    }
-
-    fn listen(&mut self, cid: u32, port: u32) -> Result<()> {
-        let socket_fd = socket(
-            AddressFamily::Vsock,
-            SockType::Stream,
-            SockFlag::empty(),
-            None,
-        )
-        .map_err(|_| NitroError::VsockCreate)?;
-
-        let sockaddr = NixVsockAddr::new(cid, port);
-
-        vsock_timeout(socket_fd)?;
-
-        connect(socket_fd, &sockaddr).map_err(|_| NitroError::VsockConnect)?;
-
-        let mut buf = [0u8; 512];
-        loop {
-            // Read debug output from vsock.
-            if let Ok(sz) = read(socket_fd, &mut buf) {
-                // If there is enclave debug output read, write it to the IPC socket.
-                if sz > 0 {
-                    self.ipc_stream
-                        .write_all(&buf[..sz])
-                        .map_err(NitroError::IpcWrite)?;
-
-                    continue;
-                }
-            }
-
-            break;
-        }
-
-        Ok(())
     }
 }
 
@@ -144,27 +91,6 @@ fn enclave_check(listener: VsockListener, poll_timeout_ms: libc::c_int, cid: u32
 
     if stream.1.cid() != cid {
         return Err(NitroError::HeartbeatCidMismatch);
-    }
-
-    Ok(())
-}
-
-fn vsock_timeout(socket_fd: RawFd) -> Result<()> {
-    // Set the timeout to 20 seconds.
-    let timeval = TimeVal::milliseconds(20000);
-
-    let ret = unsafe {
-        libc::setsockopt(
-            socket_fd,
-            libc::AF_VSOCK,
-            SO_VM_SOCKETS_CONNECT_TIMEOUT,
-            &timeval as *const _ as *const libc::c_void,
-            size_of::<TimeVal>() as u32,
-        )
-    };
-
-    if ret != 0 {
-        return Err(NitroError::VsockSetTimeout);
     }
 
     Ok(())
