@@ -11,7 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/un.h>
+#include <linux/vm_sockets.h>
 #include <libkrun.h>
 #include <getopt.h>
 #include <stdbool.h>
@@ -23,7 +25,10 @@
 #define MAX_PATH 4096
 #endif
 
-#define IPC_SOCK_PATH "/tmp/krun_nitro_example_ipc.sock"
+#define VMADDR_CID_HYPERVISOR 0
+#define CID_TO_CONSOLE_PORT_OFFSET 10000
+
+#define BUFSIZE 512
 
 static void print_help(char *const name)
 {
@@ -84,21 +89,47 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
 
 void *listen_enclave_output(void *opaque)
 {
-    int ret, fd = (int) opaque, sock, len;
-    char buf[512];
-    struct sockaddr_un client_sockaddr;
+    socklen_t addr_sz = sizeof(struct sockaddr_vm);
+    struct sockaddr_vm addr;
+    int ret, sock_fd, cid;
+    struct timeval timeval;
+    char buf[BUFSIZE];
 
-    sock = accept(fd, (struct sockaddr *) &client_sockaddr, &len);
-    if (sock < 1)
+    cid = (int) opaque;
+
+    sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
+    if (sock_fd < 0)
         return (void *) -1;
 
+    bzero((char *) &addr, sizeof(struct sockaddr_vm));
+    addr.svm_family = AF_VSOCK;
+    addr.svm_cid = VMADDR_CID_HYPERVISOR;
+    addr.svm_port = cid + CID_TO_CONSOLE_PORT_OFFSET;
+
+    // Set vsock timeout limit to 5 seconds.
+    memset(&timeval, 0, sizeof(struct timeval));
+    timeval.tv_sec = 5;
+
+    ret = setsockopt(sock_fd, AF_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
+                        (void *) &timeval, sizeof(struct timeval));
+    if (ret < 0) {
+        close(sock_fd);
+        return (void *) -1;
+    }
+
+    ret = connect(sock_fd, (struct sockaddr *) &addr, addr_sz);
+    if (ret < 0) {
+        close(sock_fd);
+        return (void *) -1;
+    }
+
+    bzero(buf, BUFSIZE);
     for (;;) {
-        ret = read(sock, &buf, 512);
+        ret = read(sock_fd, &buf, BUFSIZE);
         if (ret <= 0)
             break;
-        else if (ret < 512) {
-            buf[ret] = '\0';
-        }
+
+        buf[ret] = '\0';
 
         printf("%s", buf);
     }
@@ -106,9 +137,8 @@ void *listen_enclave_output(void *opaque)
 
 int main(int argc, char *const argv[])
 {
-    int ret, ctx_id, err, i, sock_fd, enable = 1;
+    int ret, cid, ctx_id, err;
     struct cmdline cmdline;
-    struct sockaddr_un addr;
     pthread_t thread;
 
     if (!parse_cmdline(argc, argv, &cmdline)) {
@@ -161,62 +191,26 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    // Create and initialize UNIX IPC socket for reading enclave output.
-    sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock_fd < 0) {
-        perror("Error creating UNIX IPC socket for enclave communication");
-        return -1;
-    }
-    memset(&addr, 0, sizeof(struct sockaddr_un));
-    addr.sun_family = AF_UNIX;
-    strcpy(addr.sun_path, IPC_SOCK_PATH);
-
-    // Listen on the socket for enclave output.
-    unlink(IPC_SOCK_PATH);
-    ret = bind(sock_fd, (struct sockaddr *) &addr, sizeof(addr));
-    if (ret < 0) {
-        perror("Error binding socket");
-        close(sock_fd);
-        exit(1);
-    }
-
-    ret = listen(sock_fd, 1);
-    if (ret < 0) {
-        perror("Error listening on socket");
-        close(sock_fd);
-        exit(1);
-    }
-
-    // Configure the IPC socket to read output from the enclave. The "port"
-    // argument is ignored.
-    if (err = krun_add_vsock_port(ctx_id, 0, IPC_SOCK_PATH)) {
-        close(sock_fd);
-        errno = -err;
-        perror("Error configuring enclave vsock");
-        return -1;
-    }
-
-    ret = pthread_create(&thread, NULL, listen_enclave_output,
-                         (void *) sock_fd);
-    if (ret < 0) {
-        perror("unable to create new listener thread");
-        close(sock_fd);
-        exit(1);
-    }
-
-    // Start and enter the microVM. Unless there is some error while creating the microVM
-    // this function never returns.
-    if (err = krun_start_enter(ctx_id)) {
-        close(sock_fd);
+    /*
+     * Start and enter the microVM. In the libkrun-nitro flavor, a positive
+     * value returned by krun_start_enter() is the enclave's CID.
+     */
+    cid = krun_start_enter(ctx_id);
+    if (cid < 0) {
         errno = -err;
         perror("Error creating the microVM");
         return -1;
     }
 
+    ret = pthread_create(&thread, NULL, listen_enclave_output, (void *) cid);
+    if (ret < 0) {
+        perror("unable to create new listener thread");
+        exit(1);
+    }
+
     ret = pthread_join(thread, NULL);
     if (ret < 0) {
         perror("unable to join listener thread");
-        close(sock_fd);
         exit(1);
     }
 
