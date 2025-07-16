@@ -436,10 +436,7 @@ impl VirtioGpu {
         resource.scanouts.enable(scanout_id);
 
         let Some(format) = resource.format else {
-            warn!(
-                "Cannot use resource {} ith unknown format for scanout",
-                resource_id
-            );
+            warn!("Cannot use resource {resource_id} with unknown format for scanout");
             return Err(ErrUnspec);
         };
 
