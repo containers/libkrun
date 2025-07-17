@@ -57,7 +57,7 @@ jobs:
           sudo usermod -a -G kvm $USER
 
       - name: Install packages
-        run: sudo apt-get update && sudo apt-get install -y libvirglrenderer-dev libepoxy-dev libdrm-dev libpipewire-0.3-dev libclang-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libvirglrenderer-dev libepoxy-dev libdrm-dev libpipewire-0.3-dev clang-format llvm-dev libclang1 libclang-dev
 
       - name: Create a fake init
         run: touch init/init
