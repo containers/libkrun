@@ -1,4 +1,7 @@
 use crate::legacy::IrqChip;
+use crate::virtio::net::backend::ConnectError;
+#[cfg(target_os = "linux")]
+use crate::virtio::net::tap::Tap;
 use crate::virtio::net::unixgram::Unixgram;
 use crate::virtio::net::unixstream::Unixstream;
 use crate::virtio::net::{MAX_BUFFER_SIZE, QUEUE_SIZE, RX_INDEX, TX_INDEX};
@@ -7,29 +10,17 @@ use crate::Error as DeviceError;
 
 use super::backend::{NetBackend, ReadError, WriteError};
 use super::device::{FrontendError, RxError, TxError, VirtioNetBackend};
+use super::vnet_hdr_len;
 
 use std::os::fd::AsRawFd;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
-use std::{cmp, mem, result};
+use std::{cmp, result};
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 use utils::eventfd::EventFd;
-use virtio_bindings::virtio_net::virtio_net_hdr_v1;
 use vm_memory::{Bytes, GuestAddress, GuestMemoryMmap};
-
-fn vnet_hdr_len() -> usize {
-    mem::size_of::<virtio_net_hdr_v1>()
-}
-
-// This initializes to all 0 the virtio_net_hdr part of a buf and return the length of the header
-// https://docs.oasis-open.org/virtio/virtio/v1.1/csprd01/virtio-v1.1-csprd01.html#x1-2050006
-fn write_virtio_net_hdr(buf: &mut [u8]) -> usize {
-    let len = vnet_hdr_len();
-    buf[0..len].fill(0);
-    len
-}
 
 pub struct NetWorker {
     queues: Vec<Queue>,
@@ -62,23 +53,27 @@ impl NetWorker {
         irq_line: Option<u32>,
         mem: GuestMemoryMmap,
         cfg_backend: VirtioNetBackend,
-    ) -> Self {
+    ) -> Result<Self, ConnectError> {
         let backend = match cfg_backend {
             VirtioNetBackend::UnixstreamFd(fd) => {
                 Box::new(Unixstream::new(fd)) as Box<dyn NetBackend + Send>
             }
             VirtioNetBackend::UnixstreamPath(path) => {
-                Box::new(Unixstream::open(path).unwrap()) as Box<dyn NetBackend + Send>
+                Box::new(Unixstream::open(path)?) as Box<dyn NetBackend + Send>
             }
             VirtioNetBackend::UnixgramFd(fd) => {
                 Box::new(Unixgram::new(fd)) as Box<dyn NetBackend + Send>
             }
             VirtioNetBackend::UnixgramPath(path, vfkit_magic) => {
-                Box::new(Unixgram::open(path, vfkit_magic).unwrap()) as Box<dyn NetBackend + Send>
+                Box::new(Unixgram::open(path, vfkit_magic)?) as Box<dyn NetBackend + Send>
+            }
+            #[cfg(target_os = "linux")]
+            VirtioNetBackend::Tap(tap_name) => {
+                Box::new(Tap::new(tap_name)?) as Box<dyn NetBackend + Send>
             }
         };
 
-        Self {
+        Ok(Self {
             queues,
             queue_evts,
             interrupt_status,
@@ -96,7 +91,7 @@ impl NetWorker {
             tx_frame_buf: [0u8; MAX_BUFFER_SIZE],
             tx_frame_len: 0,
             tx_iovec: Vec::with_capacity(QUEUE_SIZE as usize),
-        }
+        })
     }
 
     pub fn run(self) {
@@ -468,10 +463,7 @@ impl NetWorker {
 
     /// Fills self.rx_frame_buf with an ethernet frame from backend and prepends virtio_net_hdr to it
     fn read_into_rx_frame_buf_from_backend(&mut self) -> result::Result<(), ReadError> {
-        let mut len = 0;
-        len += write_virtio_net_hdr(&mut self.rx_frame_buf);
-        len += self.backend.read_frame(&mut self.rx_frame_buf[len..])?;
-        self.rx_frame_buf_len = len;
+        self.rx_frame_buf_len = self.backend.read_frame(&mut self.rx_frame_buf)?;
         Ok(())
     }
 }
