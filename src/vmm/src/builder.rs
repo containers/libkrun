@@ -830,7 +830,6 @@ pub fn build_microvm(
     if let Some(virgl_flags) = vm_resources.gpu_virgl_flags {
         let display_backend = vm_resources
             .display_backend
-            .clone()
             .unwrap_or_else(|| NoopDisplayBackend::into_display_backend(None));
 
         attach_gpu_device(
