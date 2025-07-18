@@ -29,7 +29,7 @@ virtio-bindings = "0.2.0"
 vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
 zerocopy = { version = "0.6.3", optional = true }
 zerocopy-derive = { version = "0.6.3", optional = true }
-krun_display = { path = "../krun_display", optional = true }
+krun_display = { path = "../krun_display", optional = true, features = ["bindgen_clang_runtime"] }
 
 arch = { path = "../arch" }
 utils = { path = "../utils" }
