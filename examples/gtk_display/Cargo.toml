@@ -18,3 +18,9 @@ clap_derive = "4.5.32"
 log = "0.4.27"
 libc = "0.2.172"
 env_logger = "0.9.3"
+
+#[dev-dependencies]
+# HACK: we don't depened on this directly. But this makes feature unification of the resolver, use the "runtime" feature
+# of clang-sys, which fixes the error message:
+# "a `libclang` shared library is not loaded on this thread"
+#bindgen = { version = "0.69", default-features = false, features = ["runtime"] }

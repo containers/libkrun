@@ -10,5 +10,5 @@ log = "0.4.27"
 bitflags = "2.9.1"
 
 [build-dependencies]
-bindgen = { version = "0.71.1", default-features = false }
+bindgen = { version = "0.71.1", default-features = false, features = ["runtime"] }
 #clang-sys = { version = "=1.6.1", features = ["runtime"] }
