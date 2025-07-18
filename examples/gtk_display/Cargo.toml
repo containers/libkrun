@@ -1,0 +1,20 @@
+[package]
+name = "gtk_display"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+efi = []
+
+[dependencies]
+crossbeam-channel = "0.5.15"
+gtk = { version = "0.9.7", package = "gtk4", features = ["v4_16"] }
+krun_display = { path = "../../src/krun_display" }
+utils = { path = "../../src/utils" }
+krun-sys = { path = "../../krun-sys" }
+anyhow = "1.0.98"
+clap = "4.5.39"
+clap_derive = "4.5.32"
+log = "0.4.27"
+libc = "0.2.172"
+env_logger = "0.9.3"

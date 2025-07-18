@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 #include <inttypes.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include <unistd.h>
 
@@ -487,6 +488,39 @@ int32_t krun_set_gpu_options(uint32_t ctx_id, uint32_t virgl_flags);
 int32_t krun_set_gpu_options2(uint32_t ctx_id,
                               uint32_t virgl_flags,
                               uint64_t shm_size);
+
+/* Maximum number of displays. Same as VIRTIO_GPU_MAX_SCANOUTS defined in the virtio-gpu spec */
+#define KRUN_MAX_DISPLAYS 16
+
+/**
+ * Configure a display output for the VM.
+ *
+ * Note that to have display output a display backend must also be set (see krun_set_display_backend).
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "display_id"  - the ID of the display (range: 0 to KRUN_MAX_DISPLAYS - 1)
+ *  "width"       - the width of the window/display
+ *  "height"      - the height of the window/display
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_display(uint32_t ctx_id, uint32_t display_id, uint32_t width, uint32_t height);
+
+
+/**
+ * Configures a krun_display_backend struct to be used for display output. (see libkrun_display.h)
+ *
+ * Arguments:
+ *  "ctx_id"          - the configuration context ID
+ *  "display_backend" - Pointer to a krun_display_backend struct
+ *  "backend_size"    - sizeof() the krun_display_backend struct
+ *
+ * Returns:
+ *  Zero on success or a negative error number (errno) on failure.
+ */
+int32_t krun_set_display_backend(uint32_t ctx_id, const void *display_backend, size_t backend_size);
 
 /**
  * Enables or disables a virtio-snd device.

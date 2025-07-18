@@ -194,7 +194,25 @@ dependencies = [
  "proc-macro2",
  "quote",
  "regex",
- "rustc-hash",
+ "rustc-hash 1.1.0",
+ "shlex",
+ "syn",
+]
+
+[[package]]
+name = "bindgen"
+version = "0.71.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f58bf3d7db68cfbac37cfc485a8d711e87e064c3d0fe0435b92f7a407f9d6b3"
+dependencies = [
+ "bitflags 2.9.1",
+ "cexpr",
+ "clang-sys",
+ "itertools",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "rustc-hash 2.1.1",
  "shlex",
  "syn",
 ]
@@ -330,13 +348,13 @@ dependencies = [
 
 [[package]]
 name = "clang-sys"
-version = "1.8.1"
+version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b023947811758c97c59bf9d1c188fd619ad4718dcaa767947df1cadb14f39f4"
+checksum = "c688fc74432808e3eb684cae8830a86be1d66a2bd58e1f248ed0960a590baf6f"
 dependencies = [
  "glob",
  "libc",
- "libloading",
+ "libloading 0.7.4",
 ]
 
 [[package]]
@@ -448,10 +466,11 @@ dependencies = [
  "crossbeam-channel",
  "hvf",
  "imago",
+ "krun_display",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
- "libloading",
+ "libloading 0.8.8",
  "log",
  "lru",
  "nix 0.24.3",
@@ -708,7 +727,7 @@ version = "0.1.0"
 dependencies = [
  "arch",
  "crossbeam-channel",
- "libloading",
+ "libloading 0.8.8",
  "log",
 ]
 
@@ -860,6 +879,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "krun_display"
+version = "0.1.0"
+dependencies = [
+ "bindgen 0.71.1",
+ "bitflags 2.9.1",
+ "log",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "kvm-bindings"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -906,10 +935,11 @@ dependencies = [
  "devices",
  "env_logger",
  "hvf",
+ "krun_display",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
- "libloading",
+ "libloading 0.8.8",
  "log",
  "nitro",
  "nitro-enclaves",
@@ -918,6 +948,16 @@ dependencies = [
  "utils",
  "vm-memory",
  "vmm",
+]
+
+[[package]]
+name = "libloading"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b67380fd3b2fbe7527a606e18729d21c6f3951633d0500574c4dc22d2d638b9f"
+dependencies = [
+ "cfg-if",
+ "winapi",
 ]
 
 [[package]]
@@ -963,7 +1003,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf0d9716420364790e85cbb9d3ac2c950bde16a7dd36f3209b7dfdfc4a24d01f"
 dependencies = [
- "bindgen",
+ "bindgen 0.69.5",
  "cc",
  "system-deps",
 ]
@@ -1269,7 +1309,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "849e188f90b1dda88fe2bfe1ad31fe5f158af2c98f80fb5d13726c44f3f01112"
 dependencies = [
- "bindgen",
+ "bindgen 0.69.5",
  "libspa-sys",
  "system-deps",
 ]
@@ -1481,6 +1521,12 @@ name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
+
+[[package]]
+name = "rustc-hash"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
 
 [[package]]
 name = "rustc_version"
@@ -1906,6 +1952,7 @@ dependencies = [
  "hvf",
  "kbs-types",
  "kernel",
+ "krun_display",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",

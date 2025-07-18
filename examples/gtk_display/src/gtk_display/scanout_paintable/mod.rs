@@ -1,0 +1,51 @@
+mod imp;
+
+use gtk::{
+    cairo::{RectangleInt, Region},
+    gdk::{self, MemoryFormat, MemoryTextureBuilder},
+    glib,
+    glib::Bytes,
+    prelude::*,
+    subclass::prelude::*,
+};
+
+glib::wrapper! {
+    pub struct ScanoutPaintable(ObjectSubclass<imp::ScanoutPaintable>) @implements gdk::Paintable;
+}
+
+impl ScanoutPaintable {
+    pub fn new(default_width: i32, default_height: i32) -> Self {
+        let self_: Self = glib::Object::new();
+        self_.init(default_width, default_height);
+        self_
+    }
+
+    fn init(&self, default_width: i32, default_height: i32) {
+        self.imp().default_width.replace(default_width);
+        self.imp().default_height.replace(default_height);
+    }
+
+    pub fn update(&mut self, buffer: Bytes, width: i32, height: i32, format: MemoryFormat) {
+        assert_eq!(buffer.len(), width as usize * height as usize * 4);
+        let imp = self.imp();
+        let builder = MemoryTextureBuilder::new();
+        builder.set_width(width);
+        builder.set_height(height);
+        builder.set_format(format);
+        builder.set_stride(width as usize * 4);
+        builder.set_update_region(Some(&Region::create_rectangle(&RectangleInt::new(
+            0, 0, width, height,
+        ))));
+        builder.set_update_texture(imp.texture.borrow().as_ref());
+        builder.set_bytes(Some(&buffer));
+
+        let old_texture = imp.texture.replace(Some(builder.build()));
+
+        self.invalidate_contents();
+        if let Some(old_texture) = old_texture {
+            if old_texture.width() != width && old_texture.height() != height {
+                self.invalidate_size();
+            }
+        }
+    }
+}

@@ -20,7 +20,7 @@ jobs:
         uses: Homebrew/actions/setup-homebrew@master
 
       - name: Install dependencies
-        run: brew tap slp/krunkit && brew install virglrenderer clang-format
+        run: brew tap slp/krunkit && brew install virglrenderer clang-format llvm
 
       - name: Formatting (clang-format)
         run: find init -iname '*.h' -o -iname '*.c' | xargs clang-format -n -Werror
@@ -29,4 +29,4 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Clippy (efi+gpu features)
-        run: cargo clippy --features efi,gpu -- -D warnings
+        run: LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib cargo clippy --features efi,gpu -- -D warnings
