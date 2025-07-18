@@ -14,3 +14,4 @@ pkg-config = { version = "0.3", default-features = false }
 
 [features]
 default = []
+bindgen_clang_runtime = ["bindgen/runtime"]
