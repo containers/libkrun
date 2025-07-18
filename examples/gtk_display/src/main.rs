@@ -35,14 +35,11 @@ fn parse_display(s: &str) -> Result<DisplayArg, String> {
 
 #[derive(Parser, Debug)]
 struct Args {
-    #[cfg(not(feature = "efi"))]
     #[arg(long)]
     root_dir: Option<CString>,
 
     executable: Option<CString>,
-
     argv: Vec<CString>,
-
     #[clap(long, value_parser = parse_display)]
     display: Vec<DisplayArg>,
 }
