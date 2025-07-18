@@ -348,13 +348,13 @@ dependencies = [
 
 [[package]]
 name = "clang-sys"
-version = "1.8.1"
+version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b023947811758c97c59bf9d1c188fd619ad4718dcaa767947df1cadb14f39f4"
+checksum = "c688fc74432808e3eb684cae8830a86be1d66a2bd58e1f248ed0960a590baf6f"
 dependencies = [
  "glob",
  "libc",
- "libloading",
+ "libloading 0.7.4",
 ]
 
 [[package]]
@@ -470,7 +470,7 @@ dependencies = [
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
- "libloading",
+ "libloading 0.8.8",
  "log",
  "lru",
  "nix 0.24.3",
@@ -727,7 +727,7 @@ version = "0.1.0"
 dependencies = [
  "arch",
  "crossbeam-channel",
- "libloading",
+ "libloading 0.8.8",
  "log",
 ]
 
@@ -939,7 +939,7 @@ dependencies = [
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
- "libloading",
+ "libloading 0.8.8",
  "log",
  "nitro",
  "nitro-enclaves",
@@ -948,6 +948,16 @@ dependencies = [
  "utils",
  "vm-memory",
  "vmm",
+]
+
+[[package]]
+name = "libloading"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b67380fd3b2fbe7527a606e18729d21c6f3951633d0500574c4dc22d2d638b9f"
+dependencies = [
+ "cfg-if",
+ "winapi",
 ]
 
 [[package]]

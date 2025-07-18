@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rerun-if-changed=libkrun_display.h");
-
+    //clang_sys::load().unwrap();
     let bindings = bindgen::Builder::default()
         .header("libkrun_display.h")
         .generate()
