@@ -1,3 +1,3 @@
 [workspace]
-members = ["krun_gtk_display"]
+members = ["krun_gtk_display", "gui_vm"]
 resolver = "2"

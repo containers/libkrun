@@ -1,0 +1,13 @@
+[package]
+name = "gui_vm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gtk_display = { path = "../krun_gtk_display" }
+krun-sys = { path = "../../krun-sys" }
+anyhow = "1.0.98"
+clap = "4.5.39"
+clap_derive = "4.5.32"
+log = "0.4.27"
+env_logger = "0.9.3"
