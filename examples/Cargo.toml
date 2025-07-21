@@ -1,0 +1,3 @@
+[workspace]
+members = ["krun_gtk_display"]
+resolver = "2"
