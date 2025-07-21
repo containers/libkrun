@@ -12,8 +12,8 @@ use gtk::{
     AlertDialog, Align, Application, ApplicationWindow, Button, EventControllerMotion, HeaderBar,
     Overlay, Picture, Revealer, RevealerTransitionType, Window, gdk,
     gdk::MemoryFormat,
+    gio::ActionEntry,
     gio::Cancellable,
-    gio::{ActionEntry, SimpleActionGroup},
     glib::{self, Bytes, ControlFlow, IOCondition, Propagation, unix_fd_add_local},
     prelude::*,
 };
@@ -60,7 +60,7 @@ impl ScanoutWindow {
                 move |b| match b {
                     Ok(0) => {
                         // SAFETY: Safe because we are terminating the process anyway.
-                        // Currently, libkrun also uses _exit, on normal VM exit, so we mimic that
+                        // Currently, libkrun also uses _exit on normal VM exit, so we mimic that
                         // behavior here.
                         unsafe { libc::_exit(125) }
                     }
@@ -75,7 +75,6 @@ impl ScanoutWindow {
             Propagation::Stop
         });
 
-        let actions = SimpleActionGroup::new();
         window.add_action_entries([
             ActionEntry::builder("fullscreen")
                 .activate(move |window: &ApplicationWindow, _, _| window.fullscreen())
@@ -84,7 +83,6 @@ impl ScanoutWindow {
                 .activate(move |window: &ApplicationWindow, _, _| window.unfullscreen())
                 .build(),
         ]);
-        window.insert_action_group("scanout", Some(&actions));
 
         let fullscreen_btn = Button::builder()
             .icon_name("view-fullscreen")
@@ -102,7 +100,6 @@ impl ScanoutWindow {
         overlay.set_child(Some(&picture));
         window.set_child(Some(&overlay));
         window.set_visible(true);
-        trace!("Shown window");
 
         Self {
             window,
