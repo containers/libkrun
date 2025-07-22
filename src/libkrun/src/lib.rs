@@ -1760,6 +1760,19 @@ pub unsafe extern "C" fn krun_nitro_set_start_flags(ctx_id: u32, start_flags: u6
 }
 
 #[no_mangle]
+pub extern "C" fn krun_disable_implicit_console(ctx_id: u32) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.disable_implicit_console = true;
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[no_mangle]
 #[allow(unreachable_code)]
 pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(target_os = "linux")]
