@@ -679,7 +679,7 @@ pub fn build_microvm(
 
     // On x86_64 always create a serial device,
     // while on aarch64 only create it if 'console=' is specified in the boot args.
-    let serial_device = if cfg!(feature = "efi") {
+    let serial_device = if cfg!(feature = "efi") && !vm_resources.disable_implicit_console {
         Some(setup_serial_device(
             event_manager,
             None,
@@ -874,12 +874,14 @@ pub fn build_microvm(
     attach_balloon_device(&mut vmm, event_manager, intc.clone())?;
     #[cfg(not(feature = "tee"))]
     attach_rng_device(&mut vmm, event_manager, intc.clone())?;
-    attach_console_devices(
-        &mut vmm,
-        event_manager,
-        intc.clone(),
-        vm_resources.console_output.clone(),
-    )?;
+    if !vm_resources.disable_implicit_console {
+        attach_console_devices(
+            &mut vmm,
+            event_manager,
+            intc.clone(),
+            vm_resources.console_output.clone(),
+        )?;
+    }
 
     #[cfg(not(any(feature = "tee", feature = "nitro")))]
     let export_table: Option<ExportTable> = if cfg!(feature = "gpu") {

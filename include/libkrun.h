@@ -889,6 +889,20 @@ int32_t krun_nitro_set_image(uint32_t ctx_id, const char *image_path,
  */
 int32_t krun_nitro_set_start_flags(uint32_t ctx_id, uint64_t start_flags);
 
+/*
+ * Do not create an implicit console device in the guest. By using this API,
+ * libkrun will create zero console devices on behalf of the user. Any
+ * console devices needed by the user must be added manually via other API
+ * calls.
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_disable_implicit_console(uint32_t ctx_id);
+
 /**
  * Configure block device to be used as root filesystem.
  *
