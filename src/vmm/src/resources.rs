@@ -130,6 +130,8 @@ pub struct VmResources {
     pub nested_enabled: bool,
     /// Whether to enable split irqchip
     pub split_irqchip: bool,
+    /// Do not create an implicit console device in the guest
+    pub disable_implicit_console: bool,
 }
 
 impl VmResources {
