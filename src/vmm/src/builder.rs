@@ -177,6 +177,8 @@ pub enum StartMicrovmError {
     RegisterEvent(EventManagerError),
     /// Cannot initialize a MMIO Fs Device or add ad device to the MMIO Bus.
     RegisterFsDevice(device_manager::mmio::Error),
+    // Cannot initialize a MMIO Fs Device or add ad device to the MMIO Bus.
+    RegisterConsoleDevice(device_manager::mmio::Error),
     /// Cannot register SIGWINCH event file descriptor.
     #[cfg(target_os = "linux")]
     RegisterFsSigwinch(kvm_ioctls::Error),
@@ -365,6 +367,15 @@ impl Display for StartMicrovmError {
                 write!(
                     f,
                     "Cannot initialize a MMIO Fs Device or add a device to the MMIO Bus. {err_msg}"
+                )
+            }
+            RegisterConsoleDevice(ref err) => {
+                let mut err_msg = format!("{err}");
+                err_msg = err_msg.replace('\"', "");
+
+                write!(
+                    f,
+                    "Cannot initialize a MMIO Console Device or add a device to the MMIO Bus. {err_msg}"
                 )
             }
             #[cfg(target_os = "linux")]
@@ -1774,7 +1785,7 @@ fn attach_console_devices(
         "hvc0".to_string(),
         MmioTransport::new(vmm.guest_memory().clone(), intc.clone(), console),
     )
-    .map_err(RegisterFsDevice)?;
+    .map_err(RegisterConsoleDevice)?;
 
     Ok(())
 }
