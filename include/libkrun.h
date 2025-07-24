@@ -756,6 +756,16 @@ int32_t krun_nitro_set_image(uint32_t ctx_id, const char *image_path,
 int32_t krun_nitro_set_start_flags(uint32_t ctx_id, uint64_t start_flags);
 
 /**
+ * Specify whether to enable the serial console
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *  "enable" - whether to enable the serial console.
+ *  "debug"  - whether to redirect serial console output to stdout.
+ */
+int32_t krun_set_serial_console(uint32_t ctx_id, bool enable, bool debug);
+
+/**
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
  * stdin/stdout to manage them on behalf of the process running inside the isolated environment,
  * simulating that the latter has direct control of the terminal.

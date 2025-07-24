@@ -1682,6 +1682,20 @@ pub unsafe extern "C" fn krun_nitro_set_start_flags(ctx_id: u32, start_flags: u6
     KRUN_SUCCESS
 }
 
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_serial_console(ctx_id: u32, enable: bool, debug: bool) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.serial_console_enabled = (enable, debug);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
 #[no_mangle]
 #[allow(unreachable_code)]
 pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
