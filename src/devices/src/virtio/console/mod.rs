@@ -22,6 +22,7 @@ mod defs {
         pub const VIRTIO_CONSOLE_F_MULTIPORT: u32 = 1;
         pub const VIRTIO_F_VERSION_1: u32 = 32;
         pub const VIRTIO_ID_CONSOLE: u32 = 3;
+        pub const VIRTIO_F_ACCESS_PLATFORM: u32 = 33;
     }
 
     #[allow(dead_code)]

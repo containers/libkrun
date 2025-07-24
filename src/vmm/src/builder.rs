@@ -44,10 +44,12 @@ use devices::legacy::{IrqChip, IrqChipDevice};
 use devices::virtio::{port_io, MmioTransport, PortDescription, Vsock};
 
 #[cfg(feature = "tee")]
+#[cfg(target_arch = "x86_64")]
 use kbs_types::Tee;
 
 use crate::device_manager;
 #[cfg(feature = "tee")]
+#[cfg(target_arch = "x86_64")]
 use crate::resources::TeeConfig;
 #[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigint_handler;
@@ -57,7 +59,7 @@ use crate::terminal::term_set_raw_mode;
 #[cfg(feature = "blk")]
 use crate::vmm_config::block::BlockBuilder;
 use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
-#[cfg(not(any(feature = "tee", feature = "nitro")))]
+#[cfg(not(any(feature = "tee", feature = "nitro", feature = "cca")))]
 use crate::vmm_config::fs::FsDeviceConfig;
 #[cfg(target_os = "linux")]
 use crate::vstate::KvmContext;
@@ -66,10 +68,11 @@ use crate::vstate::MeasuredRegion;
 use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
 use arch::{ArchMemoryInfo, InitrdConfig};
 use device_manager::shm::ShmManager;
-#[cfg(not(any(feature = "tee", feature = "nitro")))]
+#[cfg(not(any(feature = "tee", feature = "nitro", feature = "cca")))]
 use devices::virtio::{fs::ExportTable, VirtioShmRegion};
 use flate2::read::GzDecoder;
 #[cfg(feature = "tee")]
+#[cfg(target_arch = "x86_64")]
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
 use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 #[cfg(target_arch = "x86_64")]
@@ -88,6 +91,15 @@ use vm_memory::GuestMemory;
 #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
 use vm_memory::GuestRegionMmap;
 use vm_memory::{GuestAddress, GuestMemoryMmap};
+
+#[cfg(feature = "cca")]
+use kvm_bindings::KVM_ARM_VCPU_REC;
+
+#[cfg(feature = "cca")]
+use vm_memory::Address;
+
+#[cfg(feature = "cca")]
+use cca::Algo;
 
 #[cfg(feature = "efi")]
 static EDK2_BINARY: &[u8] = include_bytes!("../../../edk2/KRUN_EFI.silent.fd");
@@ -475,17 +487,20 @@ enum Payload {
     Empty,
     Efi,
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     Tee,
 }
 
 fn choose_payload(vm_resources: &VmResources) -> Result<Payload, StartMicrovmError> {
     if let Some(_kernel_bundle) = &vm_resources.kernel_bundle {
         #[cfg(feature = "tee")]
+        #[cfg(target_arch = "x86_64")]
         if vm_resources.qboot_bundle.is_none() || vm_resources.initrd_bundle.is_none() {
             return Err(StartMicrovmError::MissingKernelConfig);
         }
 
         #[cfg(feature = "tee")]
+        #[cfg(target_arch = "x86_64")]
         return Ok(Payload::Tee);
 
         #[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "tee")))]
@@ -547,14 +562,19 @@ pub fn build_microvm(
         let kvm = KvmContext::new()
             .map_err(Error::KvmContext)
             .map_err(StartMicrovmError::Internal)?;
+        #[cfg(feature = "cca")]
+        let vm = setup_vm(&kvm, &guest_memory)?;
+        #[cfg(target_arch = "x86_64")]
         let vm = setup_vm(&kvm, &guest_memory, vm_resources.tee_config())?;
         (kvm, vm)
     };
 
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     let tee = vm_resources.tee_config().tee;
 
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     let snp_launcher = match tee {
         Tee::Snp => Some(
             vm.snp_secure_virt_prepare(&guest_memory)
@@ -564,6 +584,7 @@ pub fn build_microvm(
     };
 
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     let measured_regions = {
         println!("Injecting and measuring memory regions. This may take a while.");
 
@@ -615,6 +636,50 @@ pub fn build_microvm(
         ]
     };
 
+    #[cfg(feature = "cca")]
+    let measured_regions = {
+        let (kernel_guest_addr, kernel_size) =
+            if let Some(kernel_bundle) = &vm_resources.kernel_bundle {
+                (kernel_bundle.guest_addr, kernel_bundle.size)
+            } else {
+                return Err(StartMicrovmError::MissingKernelConfig);
+            };
+
+        let m = vec![
+            MeasuredRegion {
+                guest_addr: kernel_guest_addr,
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(kernel_guest_addr))
+                    .unwrap() as u64,
+                size: kernel_size,
+                populate: true,
+            },
+            MeasuredRegion {
+                guest_addr: kernel_guest_addr + kernel_size as u64,
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(kernel_guest_addr + kernel_size as u64))
+                    .unwrap() as u64,
+                size: vm_resources.vm_config().mem_size_mib.unwrap() << 20 - kernel_size,
+                populate: false,
+            },
+            // The region used for the FDT must be populated. However, we only know the addr and the size after
+            // configure_system() but at that point guest_memory is already shared. For the moment, hardcore the
+            // fdt addr and size.
+            // TODO: to correct this
+            MeasuredRegion {
+                guest_addr: 0x3BFE00000,
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(0x3BFE00000))
+                    .unwrap() as u64,
+                // size must be page aligned
+                size: 0x1000,
+                populate: true,
+            },
+        ];
+
+        m
+    };
+
     // On x86_64 always create a serial device,
     // while on aarch64 only create it if 'console=' is specified in the boot args.
     let serial_device = if cfg!(feature = "efi") {
@@ -661,7 +726,7 @@ pub fn build_microvm(
         Arc::new(VcpuList::new(cpu_count as u64))
     };
 
-    let vcpus;
+    let mut vcpus;
     let intc: IrqChip;
     // For x86_64 we need to create the interrupt controller before calling `KVM_CREATE_VCPUS`
     // while on aarch64 we need to do it the other way around.
@@ -710,6 +775,8 @@ pub fn build_microvm(
             &guest_memory,
             payload_config.entry_addr,
             &exit_evt,
+            #[cfg(feature = "tee")]
+            _sender,
         )
         .map_err(StartMicrovmError::Internal)?;
 
@@ -811,7 +878,7 @@ pub fn build_microvm(
         vm_resources.console_output.clone(),
     )?;
 
-    #[cfg(not(any(feature = "tee", feature = "nitro")))]
+    #[cfg(not(any(feature = "tee", feature = "nitro", feature = "cca")))]
     let export_table: Option<ExportTable> = if cfg!(feature = "gpu") {
         Some(Default::default())
     } else {
@@ -832,12 +899,12 @@ pub fn build_microvm(
             _sender.clone(),
         )?;
     }
-    #[cfg(not(any(feature = "tee", feature = "nitro")))]
+    #[cfg(not(any(feature = "tee", feature = "nitro", feature = "cca")))]
     attach_fs_devices(
         &mut vmm,
         &vm_resources.fs,
         &mut _shm_manager,
-        #[cfg(not(feature = "tee"))]
+        #[cfg(any(not(feature = "tee"), feature = "cca"))]
         export_table,
         intc.clone(),
         exit_code,
@@ -881,6 +948,7 @@ pub fn build_microvm(
     .map_err(StartMicrovmError::Internal)?;
 
     #[cfg(feature = "tee")]
+    #[cfg(target_arch = "x86_64")]
     {
         match tee {
             Tee::Snp => {
@@ -902,6 +970,52 @@ pub fn build_microvm(
         }
 
         println!("Starting TEE/microVM.");
+    }
+
+    // after this point guest memory and regs are not accesible anymore
+    #[cfg(feature = "cca")]
+    {
+        let _ = vmm
+            .kvm_vm()
+            .realm
+            .configure_measurement(&vmm.kvm_vm().fd(), Algo::AlgoSha256);
+
+        vmm.kvm_vm()
+            .realm
+            .create_realm_descriptor(&vmm.kvm_vm().fd())
+            .unwrap();
+
+        println!("Injecting and measuring memory regions. This may take a while.");
+
+        for region in measured_regions.iter() {
+            if region.populate {
+                vmm.kvm_vm()
+                    .realm
+                    .populate(
+                        &vmm.kvm_vm().fd(),
+                        region.guest_addr,
+                        region.size.try_into().unwrap(),
+                    )
+                    .unwrap();
+            } else {
+                vmm.kvm_vm()
+                    .realm
+                    .initiate(
+                        &vmm.kvm_vm().fd(),
+                        region.guest_addr,
+                        region.size.try_into().unwrap(),
+                    )
+                    .unwrap();
+            }
+        }
+
+        let features = KVM_ARM_VCPU_REC as i32;
+
+        for vcpu in vcpus.iter_mut() {
+            vcpu.finalize(features).unwrap();
+        }
+
+        vmm.kvm_vm().realm.activate(&vmm.kvm_vm().fd()).unwrap();
     }
 
     vmm.start_vcpus(vcpus)
@@ -1139,6 +1253,7 @@ fn load_payload(
         #[cfg(test)]
         Payload::Empty => Ok((guest_mem, GuestAddress(0), None, None)),
         #[cfg(feature = "tee")]
+        #[cfg(target_arch = "x86_64")]
         Payload::Tee => {
             let (kernel_host_addr, kernel_guest_addr, kernel_size) =
                 if let Some(kernel_bundle) = &_vm_resources.kernel_bundle {
@@ -1319,7 +1434,27 @@ pub(crate) fn setup_vm(
         .map_err(StartMicrovmError::Internal)?;
     Ok(vm)
 }
-#[cfg(all(target_os = "linux", feature = "tee"))]
+
+#[cfg(all(target_os = "linux", feature = "tee", target_arch = "aarch64"))]
+pub(crate) fn setup_vm(
+    kvm: &KvmContext,
+    guest_memory: &GuestMemoryMmap,
+) -> std::result::Result<Vm, StartMicrovmError> {
+    // calculate max_addr for max_ipa
+    let mut vm = Vm::new(
+        kvm.fd(),
+        (guest_memory.last_addr().raw_value() * 2) as usize,
+    )
+    .map_err(Error::Vm)
+    .map_err(StartMicrovmError::Internal)?;
+
+    vm.memory_init(guest_memory, kvm.max_memslots())
+        .map_err(Error::Vm)
+        .map_err(StartMicrovmError::Internal)?;
+    Ok(vm)
+}
+
+#[cfg(all(target_os = "linux", feature = "tee", target_arch = "x86_64"))]
 pub(crate) fn setup_vm(
     kvm: &KvmContext,
     guest_memory: &GuestMemoryMmap,
@@ -1512,13 +1647,16 @@ fn create_vcpus_aarch64(
     guest_mem: &GuestMemoryMmap,
     entry_addr: GuestAddress,
     exit_evt: &EventFd,
+    #[cfg(feature = "tee")] pm_sender: Sender<WorkerMessage>,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
     for cpu_index in 0..vcpu_config.vcpu_count {
-        let mut vcpu = Vcpu::new_aarch64(
+        let mut vcpu: Vcpu = Vcpu::new_aarch64(
             cpu_index,
             vm.fd(),
             exit_evt.try_clone().map_err(Error::EventFd)?,
+            #[cfg(feature = "tee")]
+            pm_sender.clone(),
         )
         .map_err(Error::Vcpu)?;
 
@@ -1629,12 +1767,12 @@ fn attach_mmio_device(
     Ok(())
 }
 
-#[cfg(not(any(feature = "tee", feature = "nitro")))]
+#[cfg(not(any(feature = "tee", feature = "nitro", feature = "cca")))]
 fn attach_fs_devices(
     vmm: &mut Vmm,
     fs_devs: &[FsDeviceConfig],
     shm_manager: &mut ShmManager,
-    #[cfg(not(feature = "tee"))] export_table: Option<ExportTable>,
+    #[cfg(any(not(feature = "tee"), feature = "cca"))] export_table: Option<ExportTable>,
     intc: IrqChip,
     exit_code: Arc<AtomicI32>,
     #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
@@ -1666,7 +1804,7 @@ fn attach_fs_devices(
             });
         }
 
-        #[cfg(not(feature = "tee"))]
+        #[cfg(any(not(feature = "tee"), feature = "cca"))]
         if let Some(export_table) = export_table.as_ref() {
             fs.lock().unwrap().set_export_table(export_table.clone());
         }

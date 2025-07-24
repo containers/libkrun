@@ -5,6 +5,7 @@ authors = ["The Chromium OS Authors"]
 edition = "2021"
 
 [features]
+cca = [ "tee" ]
 tee = []
 amd-sev = [ "tee" ]
 efi = []
@@ -19,8 +20,12 @@ smbios = { path = "../smbios" }
 utils = { path = "../utils" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-kvm-bindings = { version = ">=0.11", features = ["fam-wrappers"] }
-kvm-ioctls = ">=0.21"
+kvm-bindings = { version = ">=0.8", features = ["fam-wrappers"] , git = "https://github.com/virtee/kvm-bindings", branch = "add_bindings_for_realms" }
+kvm-ioctls = { version = ">=0.17", git = "https://github.com/virtee/kvm-ioctls", branch = "cca" }
+
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+vm-fdt = ">= 0.2.0"
 
 [dev-dependencies]
 utils = { path = "../utils" }

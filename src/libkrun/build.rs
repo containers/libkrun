@@ -12,4 +12,6 @@ fn main() {
     );
     #[cfg(target_os = "macos")]
     println!("cargo:rustc-link-lib=framework=Hypervisor");
+    #[cfg(feature = "cca")]
+    println!("cargo:rustc-link-lib=krunfw");
 }

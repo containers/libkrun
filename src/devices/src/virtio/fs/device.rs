@@ -9,7 +9,10 @@ use std::thread::JoinHandle;
 use utils::eventfd::{EventFd, EFD_NONBLOCK};
 #[cfg(target_os = "macos")]
 use utils::worker_message::WorkerMessage;
-use virtio_bindings::{virtio_config::VIRTIO_F_VERSION_1, virtio_ring::VIRTIO_RING_F_EVENT_IDX};
+use virtio_bindings::{
+    virtio_config::VIRTIO_F_ACCESS_PLATFORM, virtio_config::VIRTIO_F_VERSION_1,
+    virtio_ring::VIRTIO_RING_F_EVENT_IDX,
+};
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::super::{
@@ -72,7 +75,13 @@ impl Fs {
                 .push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(FsError::EventFd)?);
         }
 
-        let avail_features = (1u64 << VIRTIO_F_VERSION_1) | (1u64 << VIRTIO_RING_F_EVENT_IDX);
+        let avail_features = if cfg!(feature = "cca") {
+            (1u64 << VIRTIO_F_VERSION_1)
+                | (1u64 << VIRTIO_RING_F_EVENT_IDX)
+                | (1 << VIRTIO_F_ACCESS_PLATFORM as u64)
+        } else {
+            (1u64 << VIRTIO_F_VERSION_1) | (1u64 << VIRTIO_RING_F_EVENT_IDX)
+        };
 
         let tag = fs_id.into_bytes();
         let mut config = VirtioFsConfig::default();

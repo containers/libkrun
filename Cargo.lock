@@ -123,6 +123,7 @@ dependencies = [
  "libc",
  "smbios",
  "utils",
+ "vm-fdt",
  "vm-memory",
  "vmm-sys-util",
 ]
@@ -281,6 +282,16 @@ dependencies = [
  "jobserver",
  "libc",
  "shlex",
+]
+
+[[package]]
+name = "cca"
+version = "0.0.1"
+dependencies = [
+ "kvm-bindings",
+ "kvm-ioctls",
+ "libc",
+ "vmm-sys-util",
 ]
 
 [[package]]
@@ -1897,6 +1908,7 @@ version = "0.1.0"
 dependencies = [
  "arch",
  "bzip2",
+ "cca",
  "codicon",
  "cpuid",
  "crossbeam-channel",

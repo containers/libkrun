@@ -7,6 +7,7 @@ edition = "2021"
 [features]
 tee = []
 amd-sev = [ "blk", "tee", "codicon", "kbs-types", "procfs", "rdrand", "serde", "serde_json", "sev", "curl" ]
+cca = [ "tee" ]
 net = []
 blk = []
 efi = [ "blk", "net" ]
@@ -40,14 +41,16 @@ sev = { version = "6.0.0", features = ["openssl"], optional = true }
 curl = { version = "0.4", optional = true }
 nix = "0.24.1"
 
+cca = { git = "https://github.com/virtee/cca" }
+
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 bzip2 = "0.5"
 cpuid = { path = "../cpuid" }
 zstd = "0.13"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-kvm-bindings = { version = ">=0.11", features = ["fam-wrappers"] }
-kvm-ioctls = ">=0.21"
+kvm-bindings = { version = ">=0.8", features = ["fam-wrappers"] , git = "https://github.com/virtee/kvm-bindings", branch = "add_bindings_for_realms" }
+kvm-ioctls = { version = ">=0.17", git = "https://github.com/virtee/kvm-ioctls", branch = "cca" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 hvf = { path = "../hvf" }
