@@ -60,7 +60,7 @@ use vmm::vmm_config::vsock::VsockDeviceConfig;
 use nitro::enclaves::NitroEnclave;
 
 #[cfg(feature = "gpu")]
-use devices::virtio::display::MAX_DISPLAYS;
+use devices::virtio::display::{MAX_DISPLAYS, PhysicalSize, DisplayInfoEdid};
 #[cfg(feature = "nitro")]
 use nitro_enclaves::launch::StartFlags;
 
@@ -1263,6 +1263,58 @@ pub unsafe extern "C" fn krun_set_gpu_options(ctx_id: u32, virgl_flags: u32) -> 
     KRUN_SUCCESS
 }
 
+#[allow(dead_code)]
+fn with_context(ctx_id: u32, f: impl FnOnce(&mut ContextConfig) -> i32) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => f(ctx_cfg.get_mut()),
+        Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
+// TODO: check function signature at compile time (using bindgen)
+#[macro_export]
+macro_rules! api_fn {
+    (
+        #[cfg($cfg_content:meta)]
+        unsafe fn $name:ident( $cfg:ident:&mut ContextConfig, $($arg_name:ident : $arg_type:ty),* $(,)? ) -> i32 {
+            $($body:tt)*
+        }
+    ) => {
+        #[cfg($cfg_content)]
+        #[allow(clippy::missing_safety_doc)]
+        #[no_mangle]
+        pub unsafe extern "C" fn $name( ctx_id: u32, $($arg_name : $arg_type),* ) -> i32 {
+            with_context(ctx_id, |cfg| {
+                let $cfg = cfg;
+                $($body)*
+            })
+        }
+
+        #[cfg(not($cfg_content))]
+        #[allow(clippy::missing_safety_doc)]
+        #[no_mangle]
+        pub unsafe extern "C" fn $name( _ctx_id: u32, $($arg_name : $arg_type),* ) -> i32 {
+            $(let _ = $arg_name;)*
+            -libc::EOPNOTSUPP
+        }
+    };
+
+    (
+        unsafe fn $name:ident( $cfg:ident : &mut ContextConfig, $($arg_name:ident : $arg_type:ty),* $(,)? ) -> $ret_type:ty {
+            $($body:tt)*
+        }
+    ) => {
+        #[allow(clippy::missing_safety_doc)]
+        #[no_mangle]
+        pub unsafe extern "C" fn $name( ctx_id: u32, $($arg_name : $arg_type),* ) -> $ret_type {
+            with_context(ctx_id, |cfg| {
+                let $cfg = cfg;
+                $($body)*
+            })
+        }
+    };
+}
+
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_set_gpu_options2(
@@ -1350,6 +1402,80 @@ pub unsafe extern "C" fn krun_add_display(ctx_id: u32, width: u32, height: u32) 
 pub unsafe extern "C" fn krun_add_display(_ctx_id: u32, _width: u32, _height: u32) -> i32 {
     -libc::ENOTSUP
 }
+
+api_fn!(
+    #[cfg(feature = "gpu")]
+    unsafe fn krun_set_display_refresh_rate(
+        cfg: &mut ContextConfig,
+        display_id: u32,
+        refresh_rate: u32,
+    ) -> i32 {
+        if let Some(display) = cfg.vmr.displays.get_mut(display_id as usize) {
+            display.edid.generated_params_mut_or_default().refresh_rate = refresh_rate;
+            KRUN_SUCCESS
+        } else {
+            -libc::EINVAL
+        }
+    }
+);
+
+api_fn!(
+    #[cfg(feature = "gpu")]
+    unsafe fn krun_display_set_edid(
+        cfg: &mut ContextConfig,
+        display_id: u32,
+        edid: *const u8,
+        size: size_t,
+    ) -> i32 {
+        if let Some(display_entry) = cfg.vmr.displays.get_mut(display_id as usize) {
+            if edid.is_null() {
+                return -libc::EINVAL;
+            }
+
+            let blob = unsafe { slice::from_raw_parts(edid, size) };
+
+            display_entry.edid = DisplayInfoEdid::Provided(Box::from(blob));
+            KRUN_SUCCESS
+        } else {
+            -libc::EINVAL
+        }
+    }
+);
+
+api_fn!(
+    #[cfg(feature = "gpu")]
+    unsafe fn krun_display_set_physical_dimension(
+        cfg: &mut ContextConfig,
+        display_id: u32,
+        width_mm: u16,
+        height_mm: u16,
+    ) -> i32 {
+        if let Some(display_entry) = cfg.vmr.displays.get_mut(display_id as usize) {
+            display_entry
+                .edid
+                .generated_params_mut_or_default()
+                .physical_size = PhysicalSize::DimensionsMillimeters(width_mm, height_mm);
+            KRUN_SUCCESS
+        } else {
+            -libc::EINVAL
+        }
+    }
+);
+
+api_fn!(
+    #[cfg(feature = "gpu")]
+    unsafe fn krun_display_set_dpi(cfg: &mut ContextConfig, display_id: u32, dpi: u32) -> i32 {
+        if let Some(display_entry) = cfg.vmr.displays.get_mut(display_id as usize) {
+            display_entry
+                .edid
+                .generated_params_mut_or_default()
+                .physical_size = PhysicalSize::Dpi(dpi);
+            KRUN_SUCCESS
+        } else {
+            -libc::EINVAL
+        }
+    }
+);
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
