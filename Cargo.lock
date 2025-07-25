@@ -195,7 +195,25 @@ dependencies = [
  "proc-macro2",
  "quote",
  "regex",
- "rustc-hash",
+ "rustc-hash 1.1.0",
+ "shlex",
+ "syn",
+]
+
+[[package]]
+name = "bindgen"
+version = "0.72.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f72209734318d0b619a5e0f5129918b848c416e122a3c4ce054e03cb87b726f"
+dependencies = [
+ "bitflags 2.9.1",
+ "cexpr",
+ "clang-sys",
+ "itertools",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "rustc-hash 2.1.1",
  "shlex",
  "syn",
 ]
@@ -449,6 +467,7 @@ dependencies = [
  "crossbeam-channel",
  "hvf",
  "imago",
+ "krun_display",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
@@ -861,6 +880,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "krun_display"
+version = "0.1.0"
+dependencies = [
+ "bindgen 0.72.0",
+ "bitflags 2.9.1",
+ "log",
+ "static_assertions",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "kvm-bindings"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -907,6 +937,7 @@ dependencies = [
  "devices",
  "env_logger",
  "hvf",
+ "krun_display",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
@@ -964,7 +995,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf0d9716420364790e85cbb9d3ac2c950bde16a7dd36f3209b7dfdfc4a24d01f"
 dependencies = [
- "bindgen",
+ "bindgen 0.69.5",
  "cc",
  "system-deps",
 ]
@@ -1270,7 +1301,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "849e188f90b1dda88fe2bfe1ad31fe5f158af2c98f80fb5d13726c44f3f01112"
 dependencies = [
- "bindgen",
+ "bindgen 0.69.5",
  "libspa-sys",
  "system-deps",
 ]
@@ -1482,6 +1513,12 @@ name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
+
+[[package]]
+name = "rustc-hash"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
 
 [[package]]
 name = "rustc_version"
@@ -1923,6 +1960,7 @@ dependencies = [
  "hvf",
  "kbs-types",
  "kernel",
+ "krun_display",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",

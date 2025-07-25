@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 #include <inttypes.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include <unistd.h>
 
@@ -487,6 +488,103 @@ int32_t krun_set_gpu_options(uint32_t ctx_id, uint32_t virgl_flags);
 int32_t krun_set_gpu_options2(uint32_t ctx_id,
                               uint32_t virgl_flags,
                               uint64_t shm_size);
+
+/* Maximum number of displays. Same as VIRTIO_GPU_MAX_SCANOUTS defined in the virtio-gpu spec */
+#define KRUN_MAX_DISPLAYS 16
+
+/**
+ * Configure a display output for the VM.
+ *
+ * Note that to have display output a display backend must also be set (see krun_set_display_backend).
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "width"       - the width of the window/display
+ *  "height"      - the height of the window/display
+ *
+ * Returns:
+ *  The id of the display (0 to KRUN_MAX_DISPLAYS - 1) on success or a negative error number on failure.
+ */
+int32_t krun_add_display(uint32_t ctx_id, uint32_t width, uint32_t height);
+
+/**
+ * Configure refresh rate for a display
+ *
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "display_id"  - the ID of the display (range: 0 to KRUN_MAX_DISPLAYS - 1)
+ *  "refresh_rate" - refresh rate (in Hz)
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_display_set_refresh_rate(uint32_t ctx_id, uint32_t display_id, uint32_t refresh_rate);
+
+
+/**
+ * Configure physical size of the display reported to the guest
+ *
+ * This overrides the DPI set by krun_set_display_dpi()
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "display_id"  - the ID of the display (range: 0 to KRUN_MAX_DISPLAYS - 1)
+ *  "width_mm"    - width of the display in millimeters
+ *  "height_mm"   - height of the display in millimeters
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_display_set_physical_size(uint32_t ctx_id, uint32_t display_id, uint16_t width_mm, uint16_t height_mm);
+
+
+/**
+ * Configure DPI of the display reported to the guest
+ *
+ * This overrides the physical size of the display set by krun_set_display_physical_size()
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "display_id"  - the ID of the display (range: 0 to KRUN_MAX_DISPLAYS - 1)
+ *  "dpi"         - DPI (PPI) dots/pixels per inch of the display
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_display_set_dpi(uint32_t ctx_id, uint32_t display_id, uint32_t dpi);
+
+/**
+ * Configure a custom EDID blob for a display
+ *
+ * This replaces the generated EDID with a custom one. Configuring an EDID blob makes all display parameters except
+ * width and height ignored.
+ *
+ * Note that libkrun doesn't do any checks if the EDID matches the width/height specified in krun_add_display().
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "display_id"  - the ID of the display (range: 0 to KRUN_MAX_DISPLAYS - 1)
+ *  "edid_blob"   - the EDID blob
+ *  "blob_size"   - the size of the blob in bytes
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_display_set_edid(uint32_t ctx_id, uint32_t display_id, const uint8_t* edid_blob, size_t blob_size);
+
+/**
+ * Configures a krun_display_backend struct to be used for display output. (see libkrun_display.h)
+ *
+ * Arguments:
+ *  "ctx_id"          - the configuration context ID
+ *  "display_backend" - Pointer to a krun_display_backend struct
+ *  "backend_size"    - sizeof() the krun_display_backend struct
+ *
+ * Returns:
+ *  Zero on success or a negative error number (errno) on failure.
+ */
+int32_t krun_set_display_backend(uint32_t ctx_id, const void *display_backend, size_t backend_size);
 
 /**
  * Enables or disables a virtio-snd device.

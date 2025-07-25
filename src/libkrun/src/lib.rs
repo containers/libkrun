@@ -5,9 +5,9 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::env;
-use std::ffi::CStr;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
+use std::ffi::{c_void, CStr};
 use std::fs::File;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
@@ -22,11 +22,15 @@ use std::sync::Mutex;
 use crossbeam_channel::unbounded;
 #[cfg(feature = "blk")]
 use devices::virtio::block::ImageType;
+#[cfg(feature = "gpu")]
+use devices::virtio::gpu::display::DisplayInfo;
 #[cfg(feature = "net")]
 use devices::virtio::net::device::VirtioNetBackend;
 #[cfg(feature = "blk")]
 use devices::virtio::CacheType;
 use env_logger::{Env, Target};
+#[cfg(feature = "gpu")]
+use krun_display::DisplayBackend;
 use libc::c_char;
 #[cfg(feature = "net")]
 use libc::c_int;
@@ -55,6 +59,8 @@ use vmm::vmm_config::vsock::VsockDeviceConfig;
 #[cfg(feature = "nitro")]
 use nitro::enclaves::NitroEnclave;
 
+#[cfg(feature = "gpu")]
+use devices::virtio::display::{MAX_DISPLAYS, PhysicalSize, DisplayInfoEdid};
 #[cfg(feature = "nitro")]
 use nitro_enclaves::launch::StartFlags;
 
@@ -1257,6 +1263,58 @@ pub unsafe extern "C" fn krun_set_gpu_options(ctx_id: u32, virgl_flags: u32) -> 
     KRUN_SUCCESS
 }
 
+#[allow(dead_code)]
+fn with_context(ctx_id: u32, f: impl FnOnce(&mut ContextConfig) -> i32) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => f(ctx_cfg.get_mut()),
+        Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
+// TODO: check function signature at compile time (using bindgen)
+#[macro_export]
+macro_rules! api_fn {
+    (
+        #[cfg($cfg_content:meta)]
+        unsafe fn $name:ident( $cfg:ident:&mut ContextConfig, $($arg_name:ident : $arg_type:ty),* $(,)? ) -> i32 {
+            $($body:tt)*
+        }
+    ) => {
+        #[cfg($cfg_content)]
+        #[allow(clippy::missing_safety_doc)]
+        #[no_mangle]
+        pub unsafe extern "C" fn $name( ctx_id: u32, $($arg_name : $arg_type),* ) -> i32 {
+            with_context(ctx_id, |cfg| {
+                let $cfg = cfg;
+                $($body)*
+            })
+        }
+
+        #[cfg(not($cfg_content))]
+        #[allow(clippy::missing_safety_doc)]
+        #[no_mangle]
+        pub unsafe extern "C" fn $name( _ctx_id: u32, $($arg_name : $arg_type),* ) -> i32 {
+            $(let _ = $arg_name;)*
+            -libc::EOPNOTSUPP
+        }
+    };
+
+    (
+        unsafe fn $name:ident( $cfg:ident : &mut ContextConfig, $($arg_name:ident : $arg_type:ty),* $(,)? ) -> $ret_type:ty {
+            $($body:tt)*
+        }
+    ) => {
+        #[allow(clippy::missing_safety_doc)]
+        #[no_mangle]
+        pub unsafe extern "C" fn $name( ctx_id: u32, $($arg_name : $arg_type),* ) -> $ret_type {
+            with_context(ctx_id, |cfg| {
+                let $cfg = cfg;
+                $($body)*
+            })
+        }
+    };
+}
+
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_set_gpu_options2(
@@ -1275,6 +1333,149 @@ pub unsafe extern "C" fn krun_set_gpu_options2(
 
     KRUN_SUCCESS
 }
+
+#[cfg(not(feature = "gpu"))]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub extern "C" fn krun_set_display_backend(
+    _ctx_id: u32,
+    _features: u32,
+    _vtable: *const c_void,
+    _vtable_size: usize,
+) -> i32 {
+    -libc::ENOTSUP
+}
+
+#[cfg(feature = "gpu")]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub extern "C" fn krun_set_display_backend(
+    ctx_id: u32,
+    vtable: *const c_void,
+    vtable_size: usize,
+) -> i32 {
+    if vtable_size < size_of::<DisplayBackend>() {
+        return -libc::EINVAL;
+    }
+
+    // SAFETY: We have checked the vtable size is fine, otherwise we have to trust the user. Just
+    // to be extra careful, this uses read_unaligned, but we could probably get away with ptr::read.
+    let display_backend: DisplayBackend =
+        unsafe { std::ptr::read_unaligned(vtable as *const DisplayBackend) };
+
+    if !display_backend.verify() {
+        return -libc::EINVAL;
+    }
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.display_backend = Some(display_backend);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[cfg(feature = "gpu")]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_display(ctx_id: u32, width: u32, height: u32) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            if cfg.vmr.displays.len() >= MAX_DISPLAYS {
+                return -libc::ENOMEM;
+            }
+
+            cfg.vmr.displays.push(DisplayInfo::new(width, height));
+            (cfg.vmr.displays.len() - 1) as i32
+        }
+        Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
+#[cfg(not(feature = "gpu"))]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_display(_ctx_id: u32, _width: u32, _height: u32) -> i32 {
+    -libc::ENOTSUP
+}
+
+api_fn!(
+    #[cfg(feature = "gpu")]
+    unsafe fn krun_set_display_refresh_rate(
+        cfg: &mut ContextConfig,
+        display_id: u32,
+        refresh_rate: u32,
+    ) -> i32 {
+        if let Some(display) = cfg.vmr.displays.get_mut(display_id as usize) {
+            display.edid.generated_params_mut_or_default().refresh_rate = refresh_rate;
+            KRUN_SUCCESS
+        } else {
+            -libc::EINVAL
+        }
+    }
+);
+
+api_fn!(
+    #[cfg(feature = "gpu")]
+    unsafe fn krun_display_set_edid(
+        cfg: &mut ContextConfig,
+        display_id: u32,
+        edid: *const u8,
+        size: size_t,
+    ) -> i32 {
+        if let Some(display_entry) = cfg.vmr.displays.get_mut(display_id as usize) {
+            if edid.is_null() {
+                return -libc::EINVAL;
+            }
+
+            let blob = unsafe { slice::from_raw_parts(edid, size) };
+
+            display_entry.edid = DisplayInfoEdid::Provided(Box::from(blob));
+            KRUN_SUCCESS
+        } else {
+            -libc::EINVAL
+        }
+    }
+);
+
+api_fn!(
+    #[cfg(feature = "gpu")]
+    unsafe fn krun_display_set_physical_dimension(
+        cfg: &mut ContextConfig,
+        display_id: u32,
+        width_mm: u16,
+        height_mm: u16,
+    ) -> i32 {
+        if let Some(display_entry) = cfg.vmr.displays.get_mut(display_id as usize) {
+            display_entry
+                .edid
+                .generated_params_mut_or_default()
+                .physical_size = PhysicalSize::DimensionsMillimeters(width_mm, height_mm);
+            KRUN_SUCCESS
+        } else {
+            -libc::EINVAL
+        }
+    }
+);
+
+api_fn!(
+    #[cfg(feature = "gpu")]
+    unsafe fn krun_display_set_dpi(cfg: &mut ContextConfig, display_id: u32, dpi: u32) -> i32 {
+        if let Some(display_entry) = cfg.vmr.displays.get_mut(display_id as usize) {
+            display_entry
+                .edid
+                .generated_params_mut_or_default()
+                .physical_size = PhysicalSize::Dpi(dpi);
+            KRUN_SUCCESS
+        } else {
+            -libc::EINVAL
+        }
+    }
+);
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
