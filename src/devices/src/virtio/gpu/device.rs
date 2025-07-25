@@ -13,7 +13,9 @@ use super::defs;
 use super::defs::uapi;
 use super::defs::uapi::virtio_gpu_config;
 use super::worker::Worker;
+use crate::virtio::display::DisplayInfo;
 use crate::virtio::InterruptTransport;
+use krun_display::DisplayBackend;
 #[cfg(target_os = "macos")]
 use utils::worker_message::WorkerMessage;
 
@@ -44,12 +46,16 @@ pub struct Gpu {
     #[cfg(target_os = "macos")]
     map_sender: Sender<WorkerMessage>,
     export_table: Option<ExportTable>,
+    displays: Box<[DisplayInfo]>,
+    display_backend: DisplayBackend<'static>,
 }
 
 impl Gpu {
     pub(crate) fn with_queues(
         queues: Vec<VirtQueue>,
         virgl_flags: u32,
+        displays: Box<[DisplayInfo]>,
+        display_backend: DisplayBackend<'static>,
         #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
     ) -> super::Result<Gpu> {
         let mut queue_events = Vec::new();
@@ -76,11 +82,15 @@ impl Gpu {
             #[cfg(target_os = "macos")]
             map_sender,
             export_table: None,
+            displays,
+            display_backend,
         })
     }
 
     pub fn new(
         virgl_flags: u32,
+        displays: Box<[DisplayInfo]>,
+        display_backend: DisplayBackend<'static>,
         #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
     ) -> super::Result<Gpu> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
@@ -90,6 +100,8 @@ impl Gpu {
         Self::with_queues(
             queues,
             virgl_flags,
+            displays,
+            display_backend,
             #[cfg(target_os = "macos")]
             map_sender,
         )
@@ -201,7 +213,7 @@ impl VirtioDevice for Gpu {
         let config = virtio_gpu_config {
             events_read: 0,
             events_clear: 0,
-            num_scanouts: 0,
+            num_scanouts: self.displays.len() as u32,
             num_capsets: 5,
         };
 
@@ -255,6 +267,8 @@ impl VirtioDevice for Gpu {
             #[cfg(target_os = "macos")]
             self.map_sender.clone(),
             self.export_table.take(),
+            self.displays.clone(),
+            self.display_backend,
         );
         worker.run();
 

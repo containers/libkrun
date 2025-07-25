@@ -13,6 +13,10 @@ use libc::{c_void, dup, fcntl, pipe, read, write, F_GETFL, F_SETFL, O_NONBLOCK};
 
 pub const EFD_NONBLOCK: i32 = 1;
 
+// NOTE: We introduce the semaphore flag here, but we don't implement the semantics exactly - We don't
+//       return the correct value from read().
+pub const EFD_SEMAPHORE: i32 = 2;
+
 fn set_nonblock(fd: RawFd) -> result::Result<(), io::Error> {
     let flags = unsafe { fcntl(fd, F_GETFL) };
     if flags < 0 {
