@@ -16,6 +16,7 @@
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/statfs.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -956,10 +957,35 @@ int setup_redirects()
     return 0;
 }
 
+int is_virtiofs(const char *path)
+{
+    struct statfs fs;
+
+    if (statfs(path, &fs) != 0) {
+        perror("statfs");
+        return -1;
+    }
+
+    // virtiofs magic number: 0x65735546
+    return (fs.f_type == 0x65735546) ? 1 : 0;
+}
+
 void set_exit_code(int code)
 {
     int fd;
     int ret;
+    int virtiofs_check;
+
+    // Only use the ioctl if virtiofs is used for root filesystem
+    virtiofs_check = is_virtiofs("/");
+    if (virtiofs_check < 0) {
+        printf("Warning: Could not determine filesystem type for root\n");
+    }
+
+    if (virtiofs_check == 0) {
+        // Root filesystem is not virtiofs, skip the ioctl
+        return;
+    }
 
     fd = open("/", O_RDONLY);
     if (fd < 0) {
