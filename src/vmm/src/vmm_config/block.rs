@@ -30,6 +30,13 @@ pub struct BlockDeviceConfig {
     pub is_disk_read_only: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BlockRootConfig {
+    pub device: String,
+    pub fstype: Option<String>,
+    pub options: Option<String>,
+}
+
 #[derive(Default)]
 pub struct BlockBuilder {
     pub list: VecDeque<Arc<Mutex<Block>>>,
