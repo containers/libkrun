@@ -19,6 +19,8 @@ use libc::c_int;
 use libc::size_t;
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
+#[cfg(all(feature = "blk", not(feature = "tee")))]
+use rand::distr::{Alphanumeric, SampleString};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -39,7 +41,7 @@ use std::sync::Mutex;
 use utils::eventfd::EventFd;
 use vmm::resources::VmResources;
 #[cfg(feature = "blk")]
-use vmm::vmm_config::block::BlockDeviceConfig;
+use vmm::vmm_config::block::{BlockDeviceConfig, BlockRootConfig};
 use vmm::vmm_config::boot_source::{BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
 #[cfg(not(feature = "tee"))]
 use vmm::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
@@ -138,6 +140,8 @@ struct ContextConfig {
     root_block_cfg: Option<BlockDeviceConfig>,
     #[cfg(feature = "blk")]
     data_block_cfg: Option<BlockDeviceConfig>,
+    #[cfg(feature = "blk")]
+    block_root: Option<BlockRootConfig>,
     #[cfg(feature = "tee")]
     tee_config_file: Option<PathBuf>,
     unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
@@ -175,6 +179,34 @@ impl ContextConfig {
             Some(exec_path) => format!("KRUN_INIT={exec_path}"),
             None => "".to_string(),
         }
+    }
+
+    #[cfg(all(feature = "blk", not(feature = "tee")))]
+    fn set_block_root(&mut self, device: String, fstype: Option<String>, options: Option<String>) {
+        self.block_root = Some(BlockRootConfig {
+            device,
+            fstype,
+            options,
+        });
+    }
+
+    fn get_block_root(&self) -> String {
+        #[cfg(feature = "blk")]
+        match &self.block_root {
+            Some(block_root) => {
+                let mut res = format!("KRUN_BLOCK_ROOT_DEVICE={}", block_root.device);
+                if let Some(fstype) = &block_root.fstype {
+                    res += &format!(" KRUN_BLOCK_ROOT_FSTYPE={}", fstype);
+                }
+                if let Some(options) = &block_root.options {
+                    res += &format!(" KRUN_BLOCK_ROOT_OPTIONS={}", options);
+                }
+                res
+            }
+            None => "".to_string(),
+        }
+        #[cfg(not(feature = "blk"))]
+        "".to_string()
     }
 
     fn set_env(&mut self, env: String) {
@@ -1887,6 +1919,94 @@ pub unsafe extern "C" fn krun_nitro_set_start_flags(ctx_id: u32, start_flags: u6
     KRUN_SUCCESS
 }
 
+#[cfg(all(feature = "blk", not(feature = "tee")))]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_root_disk_remount(
+    ctx_id: u32,
+    c_device: *const c_char,
+    c_fstype: *const c_char,
+    c_options: *const c_char,
+) -> i32 {
+    let device = match CStr::from_ptr(c_device).to_str() {
+        Ok(device) => device.to_string(),
+        Err(e) => {
+            error!("Error parsing device path: {e:?}");
+            return -libc::EINVAL;
+        }
+    };
+
+    let fstype = if !c_fstype.is_null() {
+        match CStr::from_ptr(c_fstype).to_str() {
+            Ok(fstype) => {
+                if fstype == "auto" {
+                    None
+                } else {
+                    Some(fstype.to_string())
+                }
+            }
+            Err(e) => {
+                error!("Error parsing fstype: {e:?}");
+                return -libc::EINVAL;
+            }
+        }
+    } else {
+        None
+    };
+
+    let options = if !c_options.is_null() {
+        match CStr::from_ptr(c_options).to_str() {
+            Ok(options) => Some(options.to_string()),
+            Err(e) => {
+                error!("Error parsing options: {e:?}");
+                return -libc::EINVAL;
+            }
+        }
+    } else {
+        None
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let ctx_cfg = ctx_cfg.get_mut();
+
+            if ctx_cfg.vmr.fs.iter().any(|fs| fs.fs_id == "/dev/root") {
+                error!("Root filesystem already configured");
+                return -libc::EINVAL;
+            }
+
+            if ctx_cfg.block_cfgs.is_empty() {
+                error!("No block devices configured");
+                return -libc::EINVAL;
+            }
+
+            // To boot from a filesystem other than virtiofs,
+            // we need to setup a temporary root from which init.krun can be executed.
+            // Otherwise, it would have to be copied to the target filesystem beforehand.
+            // Instead, init.krun will run from virtiofs and then switch to the real root.
+            let root_dir_suffix = Alphanumeric.sample_string(&mut rand::rng(), 6);
+            let empty_root = env::temp_dir().join(format!("krun-empty-root-{root_dir_suffix}"));
+
+            if let Err(e) = std::fs::create_dir_all(&empty_root) {
+                error!("Failed to create empty root directory: {e:?}");
+                return -libc::EINVAL;
+            }
+
+            ctx_cfg.vmr.add_fs_device(FsDeviceConfig {
+                fs_id: "/dev/root".into(),
+                shared_dir: empty_root.to_string_lossy().into(),
+                // Default to a conservative 512 MB window.
+                shm_size: Some(1 << 29),
+            });
+
+            ctx_cfg.set_block_root(device, fstype, options);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    };
+
+    KRUN_SUCCESS
+}
+
 #[no_mangle]
 #[allow(unreachable_code)]
 pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
@@ -1955,11 +2075,12 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     let boot_source = BootSourceConfig {
         kernel_cmdline_prolog: Some(format!(
-            "{} init={} {} {} {} {}",
+            "{} init={} {} {} {} {} {}",
             DEFAULT_KERNEL_CMDLINE,
             INIT_PATH,
             ctx_cfg.get_exec_path(),
             ctx_cfg.get_workdir(),
+            ctx_cfg.get_block_root(),
             ctx_cfg.get_rlimits(),
             ctx_cfg.get_env(),
         )),

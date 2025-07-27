@@ -852,6 +852,25 @@ int32_t krun_nitro_set_image(uint32_t ctx_id, const char *image_path,
 int32_t krun_nitro_set_start_flags(uint32_t ctx_id, uint64_t start_flags);
 
 /**
+ * Configure block device to be used as root filesystem.
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *  "device" - a null-terminated string specifying the root device
+ *             (e.g. "/dev/vda1", must refer to a previously configured block device)
+ *  "fstype" - a null-terminated string specifying the filesystem type (e.g. "ext4", can be set to "auto" or NULL)
+ *  "options" - a null-terminated string with a comma-separated list of mount options (can be NULL)
+ *
+ * Notes:
+ *  This function can be used if you want a root filesystem backed by a block device instead of a virtiofs path.
+ *  Because libkrun uses its own built-in init process (implemented as a virtual file in the virtiofs driver),
+ *  you'd normally have to copy the executable into every filesystem image (or partition) you intend to boot from.
+ *  This is obviously difficult to maintain, so instead we can create a dummy virtiofs root behind the scenes,
+ *  execute init from it as usual and then switch to the actual root configured by this function.
+ */
+int32_t krun_set_root_disk_remount(uint32_t ctx_id, const char *device, const char *fstype, const char *options);
+
+/**
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
  * stdin/stdout to manage them on behalf of the process running inside the isolated environment,
  * simulating that the latter has direct control of the terminal.
