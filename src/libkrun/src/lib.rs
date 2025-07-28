@@ -35,7 +35,7 @@ use libc::size_t;
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
 use utils::eventfd::EventFd;
-use vmm::resources::VmResources;
+use vmm::resources::{ConsoleConfig, ConsoleType, VmResources};
 #[cfg(feature = "blk")]
 use vmm::vmm_config::block::BlockDeviceConfig;
 use vmm::vmm_config::boot_source::{BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
@@ -1690,6 +1690,25 @@ pub extern "C" fn krun_disable_implicit_console(ctx_id: u32) -> i32 {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             cfg.vmr.disable_implicit_console = true;
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_virtio_console_default(ctx_id: u32) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr
+                .consoles
+                .entry(ConsoleType::Virtio)
+                .or_insert_with(Vec::new);
+            let consoles = cfg.vmr.consoles.get_mut(&ConsoleType::Virtio).unwrap();
+            consoles.push(ConsoleConfig {});
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }

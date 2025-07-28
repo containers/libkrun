@@ -3,6 +3,7 @@
 
 //#![deny(warnings)]
 
+use std::collections::HashMap;
 #[cfg(feature = "tee")]
 use std::fs::File;
 #[cfg(feature = "tee")]
@@ -76,6 +77,15 @@ impl Default for TeeConfig {
     }
 }
 
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub enum ConsoleType {
+    Serial,
+    Virtio,
+}
+
+#[derive(Debug)]
+pub struct ConsoleConfig {}
+
 /// A data structure that encapsulates the device configurations
 /// held in the Vmm.
 #[derive(Default)]
@@ -126,6 +136,8 @@ pub struct VmResources {
     pub disable_implicit_console: bool,
     /// The console id to use for console= in the kernel cmdline
     pub kernel_console: Option<String>,
+    /// Consoles to attach to the guest
+    pub consoles: HashMap<ConsoleType, Vec<ConsoleConfig>>,
 }
 
 impl VmResources {

@@ -23,7 +23,7 @@ use super::{Error, Vmm};
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
-use crate::resources::VmResources;
+use crate::resources::{ConsoleType, VmResources};
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(feature = "net")]
 use crate::vmm_config::net::NetBuilder;
@@ -876,13 +876,34 @@ pub fn build_microvm(
     attach_balloon_device(&mut vmm, event_manager, intc.clone())?;
     #[cfg(not(feature = "tee"))]
     attach_rng_device(&mut vmm, event_manager, intc.clone())?;
+    let mut console_id = 0;
     if !vm_resources.disable_implicit_console {
         attach_console_devices(
             &mut vmm,
             event_manager,
             intc.clone(),
-            vm_resources.console_output.clone(),
+            vm_resources,
+            None,
+            console_id,
         )?;
+        console_id += 1;
+    }
+
+    for console in vm_resources
+        .consoles
+        .get(&ConsoleType::Virtio)
+        .unwrap_or(&Vec::new())
+        .iter()
+    {
+        attach_console_devices(
+            &mut vmm,
+            event_manager,
+            intc.clone(),
+            vm_resources,
+            Some(console),
+            console_id,
+        )?;
+        console_id += 1;
     }
 
     #[cfg(not(any(feature = "tee", feature = "nitro")))]
@@ -1772,12 +1793,25 @@ fn attach_console_devices(
     vmm: &mut Vmm,
     event_manager: &mut EventManager,
     intc: IrqChip,
-    console_output: Option<PathBuf>,
+    vm_resources: &VmResources,
+    cfg: Option<&super::resources::ConsoleConfig>,
+    id_number: u32,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
-    let ports = if let Some(console_output) = console_output {
-        let file = File::create(console_output.as_path()).map_err(OpenConsoleFile)?;
+    let mut console_output_path: Option<PathBuf> = None;
+
+    // we don't care about the console output that was set for the vm_resources
+    // if the implicit console is disabled
+    if let Some(path) = vm_resources.console_output.clone() {
+        // only set the console output for the implicit console
+        if !vm_resources.disable_implicit_console && cfg.is_none() {
+            console_output_path = Some(path)
+        }
+    }
+
+    let ports = if console_output_path.is_some() {
+        let file = File::create(console_output_path.unwrap()).map_err(OpenConsoleFile)?;
         vec![PortDescription::Console {
             input: Some(port_io::input_empty().unwrap()),
             output: Some(port_io::output_file(file).unwrap()),
@@ -1853,7 +1887,9 @@ fn attach_console_devices(
         .map_err(RegisterFsSigwinch)?;
 
     // The device mutex mustn't be locked here otherwise it will deadlock.
-    attach_mmio_device(vmm, "hvc0".to_string(), intc, console).map_err(RegisterConsoleDevice)?;
+    attach_mmio_device(vmm, format!("hvc{id_number}"), intc, console)
+        .map_err(RegisterConsoleDevice)?;
+
     Ok(())
 }
 
