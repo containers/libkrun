@@ -753,6 +753,12 @@ int32_t krun_get_shutdown_eventfd(uint32_t ctx_id);
  *  "ctx_id"    - the configuration context ID.
  *  "filepath"  - a null-terminated string representing the path of the file to write the
  *                console output.
+ *
+ * Notes:
+ *  This API only applies to the implicitly created console. If the implicit console is
+ *  disabled via `krun_disable_implicit_console` the operation is a NOOP. Additionally,
+ *  this API does not have any effect on consoles created via the `krun_add_*_console_default`
+ *  APIs.
  */
 int32_t krun_set_console_output(uint32_t ctx_id, const char *c_filepath);
 
@@ -878,6 +884,55 @@ int32_t krun_disable_implicit_console(uint32_t ctx_id);
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_set_kernel_console(uint32_t ctx_id, const char *console_id);
+
+/*
+ * Adds a virtio-console device to the guest.
+ *
+ * The function can be called multiple times for adding multiple virtio-console devices.
+ * In the guest, the consoles will appear in the same order as they are added (that is,
+ * the first added console will be "hvc0", the second "hvc1", ...). However, if the
+ * implicit console is not disabled via `krun_disable_implicit_console`, the first
+ * console created with the function will occupy the "hvc1" ID.
+ *
+ * When calling this function, a port is added for each stream (input, output, error).
+ * However, if the standard stream file descriptors are in fact not TTYs, an additional port
+ * will be created that interacts with the init process and redirects the application in the
+ * guest to the port instead of the console.
+ *
+ * Arguments:
+ *  "ctx_id"    - the configuration context ID.
+ *  "input_fd"  - file descriptor to use as input for console.
+ *  "output_fd" - file descriptor to use as output for console.
+ *  "err_fd"    - file descriptor to use as err for console.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_virtio_console_default(uint32_t ctx_id,
+                                      int input_fd,
+                                      int output_fd,
+                                      int err_fd);
+
+/*
+ * Adds a legacy serial device to the guest.
+ *
+ * The function can be called multiple times for adding multiple serial devices.
+ * In the guest, the consoles will appear in the same order as they are added (that is,
+ * the first added console will be "ttyS0", the second "ttyS1", ...). However, if the
+ * implicit console is not disabled via `krun_disable_implicit_console` on aarch64 or macOS,
+ * the first console created with the function will occupy the "ttyS1" ID.
+ *
+ * Arguments:
+ *  "ctx_id"    - the configuration context ID.
+ *  "input_fd"  - file descriptor to use as input for console.
+ *  "output_fd" - file descriptor to use as output for console.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_serial_console_default(uint32_t ctx_id,
+                                      int input_fd,
+                                      int output_fd);
 
 /**
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
