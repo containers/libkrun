@@ -132,6 +132,8 @@ pub struct VmResources {
     pub split_irqchip: bool,
     /// Do not create an implicit console device in the guest
     pub disable_implicit_console: bool,
+    /// The console id to use for console= in the kernel cmdline
+    pub kernel_console: Option<String>,
 }
 
 impl VmResources {

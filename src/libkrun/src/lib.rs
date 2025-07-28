@@ -2095,6 +2095,24 @@ pub extern "C" fn krun_disable_implicit_console(ctx_id: u32) -> i32 {
     KRUN_SUCCESS
 }
 
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_kernel_console(ctx_id: u32, console_id: *const c_char) -> i32 {
+    let console_id = match CStr::from_ptr(console_id).to_str() {
+        Ok(id) => id.to_string(),
+        Err(_) => return -libc::EINVAL,
+    };
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.kernel_console = Some(console_id);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
 #[no_mangle]
 #[allow(unreachable_code)]
 pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {

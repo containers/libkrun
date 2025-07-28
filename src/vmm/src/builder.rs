@@ -560,6 +560,21 @@ pub fn build_microvm(
         kernel_cmdline.insert_str(cmdline.as_str()).unwrap();
     }
 
+    if let Some(kernel_console) = &vm_resources.kernel_console {
+        let cmdline = kernel_cmdline.as_str();
+        let console_start_idx = cmdline.find("console=").unwrap();
+        let console_end_idx = cmdline
+            .get(console_start_idx..)
+            .and_then(|s| s.find(" ").map(|i| i + console_start_idx));
+
+        let cmdline = cmdline.replace(
+            &cmdline[console_start_idx..console_end_idx.unwrap()],
+            format!("console={kernel_console}").as_str(),
+        );
+        kernel_cmdline = Cmdline::new(arch::CMDLINE_MAX_SIZE);
+        kernel_cmdline.insert_str(cmdline).unwrap();
+    }
+
     #[cfg(not(feature = "tee"))]
     #[allow(unused_mut)]
     let mut vm = setup_vm(&guest_memory, vm_resources.nested_enabled)?;
