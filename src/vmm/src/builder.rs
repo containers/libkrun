@@ -14,7 +14,7 @@ use std::fs::File;
 use std::io::{self, Read};
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
-use std::os::fd::BorrowedFd;
+use std::os::fd::{BorrowedFd, FromRawFd};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
@@ -24,7 +24,7 @@ use super::{Error, Vmm};
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
-use crate::resources::VmResources;
+use crate::resources::{ConsoleType, VmResources};
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(feature = "net")]
 use crate::vmm_config::net::NetBuilder;
@@ -692,19 +692,33 @@ pub fn build_microvm(
         m
     };
 
+    let mut serial_devices = Vec::new();
+
     // On x86_64 always create a serial device,
     // while on aarch64 only create it if 'console=' is specified in the boot args.
-    let serial_device = if cfg!(feature = "efi") && !vm_resources.disable_implicit_console {
-        Some(setup_serial_device(
-            event_manager,
-            None,
-            None,
-            // Uncomment this to get EFI output when debugging EDK2.
-            //Some(Box::new(io::stdout())),
-        )?)
-    } else {
-        None
+    if cfg!(feature = "efi") && !vm_resources.disable_implicit_console {
+        serial_devices.push(setup_serial_device(event_manager, None, None)?);
     };
+
+    for s in vm_resources
+        .consoles
+        .get(&ConsoleType::Serial)
+        .unwrap_or(&Vec::new())
+    {
+        let input: Option<Box<dyn devices::legacy::ReadableFd + Send>> = if s.input_fd >= 0 {
+            Some(Box::new(unsafe { File::from_raw_fd(s.input_fd) }))
+        } else {
+            None
+        };
+
+        let output: Option<Box<dyn io::Write + Send>> = if s.output_fd >= 0 {
+            Some(Box::new(unsafe { File::from_raw_fd(s.output_fd) }))
+        } else {
+            None
+        };
+
+        serial_devices.push(setup_serial_device(event_manager, input, output)?);
+    }
 
     let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
         .map_err(Error::EventFd)
@@ -714,7 +728,7 @@ pub fn build_microvm(
     // Safe to unwrap 'serial_device' as it's always 'Some' on x86_64.
     // x86_64 uses the i8042 reset event as the Vmm exit event.
     let mut pio_device_manager = PortIODeviceManager::new(
-        serial_device,
+        serial_devices,
         exit_evt
             .try_clone()
             .map_err(Error::EventFd)
@@ -807,7 +821,7 @@ pub fn build_microvm(
             &vm,
             &mut mmio_device_manager,
             &mut kernel_cmdline,
-            serial_device,
+            serial_devices,
         )?;
     }
 
@@ -839,7 +853,7 @@ pub fn build_microvm(
             &mut mmio_device_manager,
             &mut kernel_cmdline,
             intc.clone(),
-            serial_device,
+            serial_devices,
             event_manager,
             _shutdown_efd,
         )?;
@@ -889,13 +903,34 @@ pub fn build_microvm(
     attach_balloon_device(&mut vmm, event_manager, intc.clone())?;
     #[cfg(not(feature = "tee"))]
     attach_rng_device(&mut vmm, event_manager, intc.clone())?;
+    let mut console_id = 0;
     if !vm_resources.disable_implicit_console {
         attach_console_devices(
             &mut vmm,
             event_manager,
             intc.clone(),
-            vm_resources.console_output.clone(),
+            vm_resources,
+            None,
+            console_id,
         )?;
+        console_id += 1;
+    }
+
+    for console in vm_resources
+        .consoles
+        .get(&ConsoleType::Virtio)
+        .unwrap_or(&Vec::new())
+        .iter()
+    {
+        attach_console_devices(
+            &mut vmm,
+            event_manager,
+            intc.clone(),
+            vm_resources,
+            Some(console),
+            console_id,
+        )?;
+        console_id += 1;
     }
 
     #[cfg(not(any(feature = "tee", feature = "nitro")))]
@@ -1513,8 +1548,10 @@ fn attach_legacy_devices(
         }};
     }
 
-    register_irqfd_evt!(com_evt_1_3, 4);
-    register_irqfd_evt!(com_evt_2_4, 3);
+    register_irqfd_evt!(com_evt_1, 4);
+    register_irqfd_evt!(com_evt_2, 3);
+    register_irqfd_evt!(com_evt_3, 4);
+    register_irqfd_evt!(com_evt_4, 3);
     register_irqfd_evt!(kbd_evt, 1);
     Ok(())
 }
@@ -1527,11 +1564,11 @@ fn attach_legacy_devices(
     vm: &Vm,
     mmio_device_manager: &mut MMIODeviceManager,
     kernel_cmdline: &mut kernel::cmdline::Cmdline,
-    serial: Option<Arc<Mutex<Serial>>>,
+    serial: Vec<Arc<Mutex<Serial>>>,
 ) -> std::result::Result<(), StartMicrovmError> {
-    if let Some(serial) = serial {
+    for s in serial {
         mmio_device_manager
-            .register_mmio_serial(vm.fd(), kernel_cmdline, serial)
+            .register_mmio_serial(vm.fd(), kernel_cmdline, s)
             .map_err(Error::RegisterMMIODevice)
             .map_err(StartMicrovmError::Internal)?;
     }
@@ -1551,13 +1588,13 @@ fn attach_legacy_devices(
     mmio_device_manager: &mut MMIODeviceManager,
     kernel_cmdline: &mut kernel::cmdline::Cmdline,
     intc: IrqChip,
-    serial: Option<Arc<Mutex<Serial>>>,
+    serial: Vec<Arc<Mutex<Serial>>>,
     event_manager: &mut EventManager,
     shutdown_efd: Option<EventFd>,
 ) -> Result<(), StartMicrovmError> {
-    if let Some(serial) = serial {
+    for s in serial {
         mmio_device_manager
-            .register_mmio_serial(vm, kernel_cmdline, intc.clone(), serial)
+            .register_mmio_serial(vm, kernel_cmdline, intc.clone(), s)
             .map_err(Error::RegisterMMIODevice)
             .map_err(StartMicrovmError::Internal)?;
     }
@@ -1791,23 +1828,39 @@ fn attach_console_devices(
     vmm: &mut Vmm,
     event_manager: &mut EventManager,
     intc: IrqChip,
-    console_output: Option<PathBuf>,
+    vm_resources: &VmResources,
+    cfg: Option<&super::resources::ConsoleConfig>,
+    id_number: u32,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
-    let ports = if let Some(console_output) = console_output {
-        let file = File::create(console_output.as_path()).map_err(OpenConsoleFile)?;
+    let mut console_output_path: Option<PathBuf> = None;
+
+    // we don't care about the console output that was set for the vm_resources
+    // if the implicit console is disabled
+    if let Some(path) = vm_resources.console_output.clone() {
+        // only set the console output for the implicit console
+        if !vm_resources.disable_implicit_console && cfg.is_none() {
+            console_output_path = Some(path)
+        }
+    }
+
+    let ports = if console_output_path.is_some() {
+        let file = File::create(console_output_path.unwrap()).map_err(OpenConsoleFile)?;
         vec![PortDescription::Console {
             input: Some(port_io::input_empty().unwrap()),
             output: Some(port_io::output_file(file).unwrap()),
         }]
     } else {
+        let (input_fd, output_fd, err_fd) = match cfg {
+            Some(c) => (c.input_fd, c.output_fd, c.err_fd),
+            None => (STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO),
+        };
         let stdin_is_terminal =
-            isatty(unsafe { BorrowedFd::borrow_raw(STDIN_FILENO) }).unwrap_or(false);
+            isatty(unsafe { BorrowedFd::borrow_raw(input_fd) }).unwrap_or(false);
         let stdout_is_terminal =
-            isatty(unsafe { BorrowedFd::borrow_raw(STDOUT_FILENO) }).unwrap_or(false);
-        let stderr_is_terminal =
-            isatty(unsafe { BorrowedFd::borrow_raw(STDERR_FILENO) }).unwrap_or(false);
+            isatty(unsafe { BorrowedFd::borrow_raw(output_fd) }).unwrap_or(false);
+        let stderr_is_terminal = isatty(unsafe { BorrowedFd::borrow_raw(err_fd) }).unwrap_or(false);
 
         if let Err(e) = term_set_raw_mode(!stdin_is_terminal) {
             log::error!("Failed to set terminal to raw mode: {e}")
@@ -1815,6 +1868,10 @@ fn attach_console_devices(
 
         let console_input = if stdin_is_terminal {
             Some(port_io::stdin().unwrap())
+        } else if input_fd < 0 {
+            Some(port_io::input_empty().unwrap())
+        } else if input_fd != STDIN_FILENO {
+            Some(port_io::input_to_raw_fd_dup(input_fd).unwrap())
         } else {
             #[cfg(target_os = "linux")]
             {
@@ -1829,6 +1886,8 @@ fn attach_console_devices(
 
         let console_output = if stdout_is_terminal {
             Some(port_io::stdout().unwrap())
+        } else if output_fd != STDOUT_FILENO && output_fd > 0 {
+            Some(port_io::output_to_raw_fd_dup(output_fd).unwrap())
         } else {
             Some(port_io::output_to_log_as_err())
         };
@@ -1838,21 +1897,34 @@ fn attach_console_devices(
             output: console_output,
         }];
 
-        if !stdin_is_terminal {
+        let console_err = if stderr_is_terminal {
+            Some(port_io::stderr().unwrap())
+        } else if err_fd != STDERR_FILENO && err_fd > 0 {
+            Some(port_io::output_to_raw_fd_dup(err_fd).unwrap())
+        } else {
+            None
+        };
+
+        ports.push(PortDescription::Console {
+            input: None,
+            output: console_err,
+        });
+
+        if !stdin_is_terminal && input_fd == STDIN_FILENO {
             ports.push(PortDescription::InputPipe {
                 name: "krun-stdin".into(),
                 input: port_io::stdin().unwrap(),
             })
         }
 
-        if !stdout_is_terminal {
+        if !stdout_is_terminal && output_fd == STDOUT_FILENO {
             ports.push(PortDescription::OutputPipe {
                 name: "krun-stdout".into(),
                 output: port_io::stdout().unwrap(),
             })
         };
 
-        if !stderr_is_terminal {
+        if !stderr_is_terminal && err_fd == STDERR_FILENO {
             ports.push(PortDescription::OutputPipe {
                 name: "krun-stderr".into(),
                 output: port_io::stderr().unwrap(),
@@ -1875,7 +1947,9 @@ fn attach_console_devices(
         .map_err(RegisterFsSigwinch)?;
 
     // The device mutex mustn't be locked here otherwise it will deadlock.
-    attach_mmio_device(vmm, "hvc0".to_string(), intc, console).map_err(RegisterConsoleDevice)?;
+    attach_mmio_device(vmm, format!("hvc{id_number}"), intc, console)
+        .map_err(RegisterConsoleDevice)?;
+
     Ok(())
 }
 

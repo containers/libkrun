@@ -39,32 +39,37 @@ type Result<T> = ::std::result::Result<T, Error>;
 /// The `LegacyDeviceManger` should be initialized only by using the constructor.
 pub struct PortIODeviceManager {
     pub io_bus: devices::Bus,
-    pub stdio_serial: Option<Arc<Mutex<devices::legacy::Serial>>>,
+    pub stdio_serial: Vec<Arc<Mutex<devices::legacy::Serial>>>,
     pub i8042: Arc<Mutex<devices::legacy::I8042Device>>,
 
-    pub com_evt_1_3: EventFd,
-    pub com_evt_2_4: EventFd,
+    pub com_evt_1: EventFd,
+    pub com_evt_2: EventFd,
+    pub com_evt_3: EventFd,
+    pub com_evt_4: EventFd,
     pub kbd_evt: EventFd,
 }
 
 impl PortIODeviceManager {
     /// Create a new DeviceManager handling legacy devices (uart, i8042).
     pub fn new(
-        stdio_serial: Option<Arc<Mutex<devices::legacy::Serial>>>,
+        stdio_serial: Vec<Arc<Mutex<devices::legacy::Serial>>>,
         i8042_reset_evfd: EventFd,
     ) -> Result<Self> {
         let io_bus = devices::Bus::new();
-        let com_evt_1_3 = if let Some(serial) = &stdio_serial {
-            serial
-                .lock()
-                .unwrap()
-                .interrupt_evt()
-                .try_clone()
-                .map_err(Error::EventFd)?
-        } else {
-            EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(Error::EventFd)?
-        };
-        let com_evt_2_4 = EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(Error::EventFd)?;
+        let mut evts: Vec<EventFd> = Vec::new();
+        for i in 0..4 {
+            let com_evt = match stdio_serial.get(i) {
+                Some(s) => s
+                    .lock()
+                    .unwrap()
+                    .interrupt_evt()
+                    .try_clone()
+                    .map_err(Error::EventFd)?,
+                None => EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(Error::EventFd)?,
+            };
+            evts.push(com_evt);
+        }
+
         let kbd_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(Error::EventFd)?;
 
         let i8042 = Arc::new(Mutex::new(devices::legacy::I8042Device::new(
@@ -76,42 +81,53 @@ impl PortIODeviceManager {
             io_bus,
             stdio_serial,
             i8042,
-            com_evt_1_3,
-            com_evt_2_4,
+            com_evt_1: evts[0].try_clone().map_err(Error::EventFd)?,
+            com_evt_2: evts[1].try_clone().map_err(Error::EventFd)?,
+            com_evt_3: evts[2].try_clone().map_err(Error::EventFd)?,
+            com_evt_4: evts[3].try_clone().map_err(Error::EventFd)?,
             kbd_evt,
         })
     }
 
     /// Register supported legacy devices.
     pub fn register_devices(&mut self) -> Result<()> {
-        if let Some(serial) = &self.stdio_serial {
+        if let Some(serial) = self.stdio_serial.first() {
             self.io_bus
                 .insert(serial.clone(), 0x3f8, 0x8)
                 .map_err(Error::BusError)?;
         }
         self.io_bus
             .insert(
-                Arc::new(Mutex::new(devices::legacy::Serial::new_sink(
-                    self.com_evt_2_4.try_clone().map_err(Error::EventFd)?,
-                ))),
+                self.stdio_serial
+                    .get(1)
+                    .unwrap_or(&Arc::new(Mutex::new(devices::legacy::Serial::new_sink(
+                        self.com_evt_2.try_clone().map_err(Error::EventFd)?,
+                    ))))
+                    .clone(),
                 0x2f8,
                 0x8,
             )
             .map_err(Error::BusError)?;
         self.io_bus
             .insert(
-                Arc::new(Mutex::new(devices::legacy::Serial::new_sink(
-                    self.com_evt_1_3.try_clone().map_err(Error::EventFd)?,
-                ))),
+                self.stdio_serial
+                    .get(2)
+                    .unwrap_or(&Arc::new(Mutex::new(devices::legacy::Serial::new_sink(
+                        self.com_evt_3.try_clone().map_err(Error::EventFd)?,
+                    ))))
+                    .clone(),
                 0x3e8,
                 0x8,
             )
             .map_err(Error::BusError)?;
         self.io_bus
             .insert(
-                Arc::new(Mutex::new(devices::legacy::Serial::new_sink(
-                    self.com_evt_2_4.try_clone().map_err(Error::EventFd)?,
-                ))),
+                self.stdio_serial
+                    .get(3)
+                    .unwrap_or(&Arc::new(Mutex::new(devices::legacy::Serial::new_sink(
+                        self.com_evt_4.try_clone().map_err(Error::EventFd)?,
+                    ))))
+                    .clone(),
                 0x2e8,
                 0x8,
             )
