@@ -3,10 +3,12 @@
 
 //#![deny(warnings)]
 
+use std::collections::HashMap;
 #[cfg(feature = "tee")]
 use std::fs::File;
 #[cfg(feature = "tee")]
 use std::io::BufReader;
+use std::os::fd::RawFd;
 use std::path::PathBuf;
 
 #[cfg(feature = "tee")]
@@ -80,6 +82,20 @@ impl Default for TeeConfig {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub enum ConsoleType {
+    Serial,
+    Virtio,
+}
+
+#[derive(Debug, Default)]
+pub struct ConsoleConfig {
+    pub output_path: Option<PathBuf>,
+    pub input_fd: RawFd,
+    pub output_fd: RawFd,
+    pub err_fd: RawFd,
+}
+
 /// A data structure that encapsulates the device configurations
 /// held in the Vmm.
 #[derive(Default)]
@@ -134,6 +150,8 @@ pub struct VmResources {
     pub disable_implicit_console: bool,
     /// The console id to use for console= in the kernel cmdline
     pub kernel_console: Option<String>,
+    /// Consoles to attach to the guest
+    pub consoles: HashMap<ConsoleType, Vec<ConsoleConfig>>,
 }
 
 impl VmResources {

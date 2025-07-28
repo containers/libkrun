@@ -39,7 +39,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use utils::eventfd::EventFd;
-use vmm::resources::VmResources;
+use vmm::resources::{ConsoleConfig, ConsoleType, VmResources};
 #[cfg(feature = "blk")]
 use vmm::vmm_config::block::{BlockDeviceConfig, BlockRootConfig};
 use vmm::vmm_config::boot_source::{BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
@@ -2088,6 +2088,61 @@ pub extern "C" fn krun_disable_implicit_console(ctx_id: u32) -> i32 {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             cfg.vmr.disable_implicit_console = true;
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_virtio_console_default(
+    ctx_id: u32,
+    input_fd: libc::c_int,
+    output_fd: libc::c_int,
+    err_fd: libc::c_int,
+) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.consoles.entry(ConsoleType::Virtio).or_default();
+
+            // safe to unwrap since we inserted an empty Vec if the key didn't exist
+            let consoles = cfg.vmr.consoles.get_mut(&ConsoleType::Virtio).unwrap();
+            consoles.push(ConsoleConfig {
+                output_path: None,
+                input_fd,
+                output_fd,
+                err_fd,
+            });
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_serial_console_default(
+    ctx_id: u32,
+    input_fd: libc::c_int,
+    output_fd: libc::c_int,
+) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.consoles.entry(ConsoleType::Serial).or_default();
+
+            // safe to unwrap since we inserted an empty Vec if the key didn't exist
+            let consoles = cfg.vmr.consoles.get_mut(&ConsoleType::Serial).unwrap();
+            consoles.push(ConsoleConfig {
+                output_path: None,
+                input_fd,
+                output_fd,
+                err_fd: -1,
+            });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
