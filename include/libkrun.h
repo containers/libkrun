@@ -800,6 +800,24 @@ int32_t krun_set_kernel_console(uint32_t ctx_id, const char *console_id);
  */
 int32_t krun_add_virtio_console_default(uint32_t ctx_id);
 
+/*
+ * Create a legacy serial console device and attach it to the guest.
+ *
+ * If the implicit console is enabled, it will have the ID of ttyS0.
+ * Any subsequent serial console devices added via this API will have
+ * the ID ttySn where n is the number of times this API has been called.
+ *
+ * If the implict console has been disabled, the first console created
+ * with this API will have the ID ttyS0.
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_serial_console_default(uint32_t ctx_id);
+
 /**
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
  * stdin/stdout to manage them on behalf of the process running inside the isolated environment,

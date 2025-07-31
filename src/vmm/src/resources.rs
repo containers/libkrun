@@ -77,7 +77,7 @@ impl Default for TeeConfig {
     }
 }
 
-#[derive(Debug, Eq, Hash, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ConsoleType {
     Serial,
     Virtio,

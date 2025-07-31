@@ -679,19 +679,21 @@ pub fn build_microvm(
         m
     };
 
+    let mut serial_devices = Vec::new();
+
     // On x86_64 always create a serial device,
     // while on aarch64 only create it if 'console=' is specified in the boot args.
-    let serial_device = if cfg!(feature = "efi") && !vm_resources.disable_implicit_console {
-        Some(setup_serial_device(
-            event_manager,
-            None,
-            None,
-            // Uncomment this to get EFI output when debugging EDK2.
-            //Some(Box::new(io::stdout())),
-        )?)
-    } else {
-        None
+    if cfg!(feature = "efi") && !vm_resources.disable_implicit_console {
+        serial_devices.push(setup_serial_device(event_manager, None, None)?);
     };
+
+    for _ in vm_resources
+        .consoles
+        .get(&ConsoleType::Serial)
+        .unwrap_or(&Vec::new())
+    {
+        serial_devices.push(setup_serial_device(event_manager, None, None)?);
+    }
 
     let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
         .map_err(Error::EventFd)
@@ -701,7 +703,7 @@ pub fn build_microvm(
     // Safe to unwrap 'serial_device' as it's always 'Some' on x86_64.
     // x86_64 uses the i8042 reset event as the Vmm exit event.
     let mut pio_device_manager = PortIODeviceManager::new(
-        serial_device,
+        serial_devices,
         exit_evt
             .try_clone()
             .map_err(Error::EventFd)
@@ -794,7 +796,7 @@ pub fn build_microvm(
             &vm,
             &mut mmio_device_manager,
             &mut kernel_cmdline,
-            serial_device,
+            serial_devices,
         )?;
     }
 
@@ -826,7 +828,7 @@ pub fn build_microvm(
             &mut mmio_device_manager,
             &mut kernel_cmdline,
             intc.clone(),
-            serial_device,
+            serial_devices,
             event_manager,
             _shutdown_efd,
         )?;
@@ -1515,8 +1517,10 @@ fn attach_legacy_devices(
         }};
     }
 
-    register_irqfd_evt!(com_evt_1_3, 4);
-    register_irqfd_evt!(com_evt_2_4, 3);
+    register_irqfd_evt!(com_evt_1, 4);
+    register_irqfd_evt!(com_evt_2, 3);
+    register_irqfd_evt!(com_evt_3, 4);
+    register_irqfd_evt!(com_evt_4, 3);
     register_irqfd_evt!(kbd_evt, 1);
     Ok(())
 }
@@ -1529,11 +1533,11 @@ fn attach_legacy_devices(
     vm: &Vm,
     mmio_device_manager: &mut MMIODeviceManager,
     kernel_cmdline: &mut kernel::cmdline::Cmdline,
-    serial: Option<Arc<Mutex<Serial>>>,
+    serial: Vec<Arc<Mutex<Serial>>>,
 ) -> std::result::Result<(), StartMicrovmError> {
-    if let Some(serial) = serial {
+    for s in serial {
         mmio_device_manager
-            .register_mmio_serial(vm.fd(), kernel_cmdline, serial)
+            .register_mmio_serial(vm.fd(), kernel_cmdline, s)
             .map_err(Error::RegisterMMIODevice)
             .map_err(StartMicrovmError::Internal)?;
     }
@@ -1553,13 +1557,13 @@ fn attach_legacy_devices(
     mmio_device_manager: &mut MMIODeviceManager,
     kernel_cmdline: &mut kernel::cmdline::Cmdline,
     intc: IrqChip,
-    serial: Option<Arc<Mutex<Serial>>>,
+    serial: Vec<Arc<Mutex<Serial>>>,
     event_manager: &mut EventManager,
     shutdown_efd: Option<EventFd>,
 ) -> Result<(), StartMicrovmError> {
-    if let Some(serial) = serial {
+    for s in serial {
         mmio_device_manager
-            .register_mmio_serial(vm, kernel_cmdline, intc.clone(), serial)
+            .register_mmio_serial(vm, kernel_cmdline, intc.clone(), s)
             .map_err(Error::RegisterMMIODevice)
             .map_err(StartMicrovmError::Internal)?;
     }

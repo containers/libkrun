@@ -1703,11 +1703,28 @@ pub unsafe extern "C" fn krun_add_virtio_console_default(ctx_id: u32) -> i32 {
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            cfg.vmr
-                .consoles
-                .entry(ConsoleType::Virtio)
-                .or_insert_with(Vec::new);
+            cfg.vmr.consoles.entry(ConsoleType::Virtio).or_default();
+
+            // safe to unwrap since we inserted an empty Vec if the key didn't exist
             let consoles = cfg.vmr.consoles.get_mut(&ConsoleType::Virtio).unwrap();
+            consoles.push(ConsoleConfig {});
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_serial_console_default(ctx_id: u32) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.consoles.entry(ConsoleType::Serial).or_default();
+
+            // safe to unwrap since we inserted an empty Vec if the key didn't exist
+            let consoles = cfg.vmr.consoles.get_mut(&ConsoleType::Serial).unwrap();
             consoles.push(ConsoleConfig {});
         }
         Entry::Vacant(_) => return -libc::ENOENT,
