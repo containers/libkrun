@@ -353,6 +353,8 @@ mod tests {
     use crate::vstate::VcpuConfig;
     use utils::tempfile::TempFile;
 
+    use std::collections::HashMap;
+
     fn default_boot_cfg() -> BootSourceConfig {
         BootSourceConfig {
             kernel_cmdline_prolog: None,
@@ -383,6 +385,9 @@ mod tests {
             smbios_oem_strings: None,
             nested_enabled: false,
             split_irqchip: false,
+            disable_implicit_console: false,
+            consoles: HashMap::new(),
+            kernel_console: None,
         }
     }
 
