@@ -148,7 +148,7 @@ mod tests {
         let serial =
             devices::legacy::Serial::new_sink(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap());
         let ldm = PortIODeviceManager::new(
-            Some(Arc::new(Mutex::new(serial))),
+            vec![Arc::new(Mutex::new(serial))],
             EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         );
         assert!(ldm.is_ok());
