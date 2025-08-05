@@ -27,11 +27,11 @@ use devices::virtio::net::device::VirtioNetBackend;
 #[cfg(feature = "blk")]
 use devices::virtio::CacheType;
 use env_logger::{Env, Target};
-use libc::c_char;
 #[cfg(feature = "net")]
 use libc::c_int;
 #[cfg(not(feature = "efi"))]
 use libc::size_t;
+use libc::{c_char, STDIN_FILENO, STDOUT_FILENO};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
 use utils::eventfd::EventFd;
@@ -1700,6 +1700,16 @@ pub extern "C" fn krun_disable_implicit_console(ctx_id: u32) -> i32 {
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_add_virtio_console_default(ctx_id: u32) -> i32 {
+    krun_add_virtio_console_inout(ctx_id, STDIN_FILENO, STDOUT_FILENO)
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_virtio_console_inout(
+    ctx_id: u32,
+    input_fd: RawFd,
+    output_fd: RawFd,
+) -> i32 {
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
@@ -1707,7 +1717,11 @@ pub unsafe extern "C" fn krun_add_virtio_console_default(ctx_id: u32) -> i32 {
 
             // safe to unwrap since we inserted an empty Vec if the key didn't exist
             let consoles = cfg.vmr.consoles.get_mut(&ConsoleType::Virtio).unwrap();
-            consoles.push(ConsoleConfig {});
+            consoles.push(ConsoleConfig {
+                output_path: None,
+                input_fd,
+                output_fd,
+            });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -1718,6 +1732,16 @@ pub unsafe extern "C" fn krun_add_virtio_console_default(ctx_id: u32) -> i32 {
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_add_serial_console_default(ctx_id: u32) -> i32 {
+    krun_add_serial_console_inout(ctx_id, -1, -1)
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_serial_console_inout(
+    ctx_id: u32,
+    input_fd: RawFd,
+    output_fd: RawFd,
+) -> i32 {
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
@@ -1725,7 +1749,11 @@ pub unsafe extern "C" fn krun_add_serial_console_default(ctx_id: u32) -> i32 {
 
             // safe to unwrap since we inserted an empty Vec if the key didn't exist
             let consoles = cfg.vmr.consoles.get_mut(&ConsoleType::Serial).unwrap();
-            consoles.push(ConsoleConfig {});
+            consoles.push(ConsoleConfig {
+                output_path: None,
+                input_fd,
+                output_fd,
+            });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }

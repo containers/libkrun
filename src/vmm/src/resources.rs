@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fs::File;
 #[cfg(feature = "tee")]
 use std::io::BufReader;
+use std::os::fd::RawFd;
 use std::path::PathBuf;
 
 #[cfg(feature = "tee")]
@@ -83,8 +84,12 @@ pub enum ConsoleType {
     Virtio,
 }
 
-#[derive(Debug)]
-pub struct ConsoleConfig {}
+#[derive(Debug, Default)]
+pub struct ConsoleConfig {
+    pub output_path: Option<PathBuf>,
+    pub input_fd: RawFd,
+    pub output_fd: RawFd,
+}
 
 /// A data structure that encapsulates the device configurations
 /// held in the Vmm.

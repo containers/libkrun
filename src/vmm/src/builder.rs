@@ -14,6 +14,7 @@ use std::fs::File;
 use std::io::{self, Read};
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
+use std::os::fd::FromRawFd;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
@@ -687,12 +688,24 @@ pub fn build_microvm(
         serial_devices.push(setup_serial_device(event_manager, None, None)?);
     };
 
-    for _ in vm_resources
+    for s in vm_resources
         .consoles
         .get(&ConsoleType::Serial)
         .unwrap_or(&Vec::new())
     {
-        serial_devices.push(setup_serial_device(event_manager, None, None)?);
+        let input: Option<Box<dyn devices::legacy::ReadableFd + Send>> = if s.input_fd >= 0 {
+            Some(Box::new(unsafe { File::from_raw_fd(s.input_fd) }))
+        } else {
+            None
+        };
+
+        let output: Option<Box<dyn io::Write + Send>> = if s.output_fd >= 0 {
+            Some(Box::new(unsafe { File::from_raw_fd(s.output_fd) }))
+        } else {
+            None
+        };
+
+        serial_devices.push(setup_serial_device(event_manager, input, output)?);
     }
 
     let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
@@ -1821,8 +1834,12 @@ fn attach_console_devices(
             output: Some(port_io::output_file(file).unwrap()),
         }]
     } else {
-        let stdin_is_terminal = isatty(STDIN_FILENO).unwrap_or(false);
-        let stdout_is_terminal = isatty(STDOUT_FILENO).unwrap_or(false);
+        let (input_fd, output_fd) = match cfg {
+            Some(c) => (c.input_fd, c.output_fd),
+            None => (STDIN_FILENO, STDOUT_FILENO),
+        };
+        let stdin_is_terminal = isatty(input_fd).unwrap_or(false);
+        let stdout_is_terminal = isatty(output_fd).unwrap_or(false);
         let stderr_is_terminal = isatty(STDERR_FILENO).unwrap_or(false);
 
         if let Err(e) = term_set_raw_mode(!stdin_is_terminal) {
@@ -1831,6 +1848,10 @@ fn attach_console_devices(
 
         let console_input = if stdin_is_terminal {
             Some(port_io::stdin().unwrap())
+        } else if input_fd < 0 {
+            Some(port_io::input_empty().unwrap())
+        } else if input_fd != STDIN_FILENO {
+            Some(port_io::input_to_raw_fd_dup(input_fd).unwrap())
         } else {
             #[cfg(target_os = "linux")]
             {
@@ -1845,6 +1866,8 @@ fn attach_console_devices(
 
         let console_output = if stdout_is_terminal {
             Some(port_io::stdout().unwrap())
+        } else if output_fd != STDOUT_FILENO && output_fd > 0 {
+            Some(port_io::output_to_raw_fd_dup(output_fd).unwrap())
         } else {
             Some(port_io::output_to_log_as_err())
         };
@@ -1854,14 +1877,14 @@ fn attach_console_devices(
             output: console_output,
         }];
 
-        if !stdin_is_terminal {
+        if !stdin_is_terminal && input_fd == STDIN_FILENO {
             ports.push(PortDescription::InputPipe {
                 name: "krun-stdin".into(),
                 input: port_io::stdin().unwrap(),
             })
         }
 
-        if !stdout_is_terminal {
+        if !stdout_is_terminal && output_fd == STDOUT_FILENO {
             ports.push(PortDescription::OutputPipe {
                 name: "krun-stdout".into(),
                 output: port_io::stdout().unwrap(),
