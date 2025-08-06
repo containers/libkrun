@@ -768,10 +768,6 @@ pub unsafe extern "C" fn krun_add_net_unixstream(
     features: u32,
     flags: u32,
 ) -> i32 {
-    if cfg!(not(feature = "net")) {
-        return -libc::ENOTSUP;
-    }
-
     let path = if !c_path.is_null() {
         match CStr::from_ptr(c_path).to_str() {
             Ok(path) => Some(PathBuf::from(path)),
@@ -828,10 +824,6 @@ pub unsafe extern "C" fn krun_add_net_unixgram(
     features: u32,
     flags: u32,
 ) -> i32 {
-    if cfg!(not(feature = "net")) {
-        return -libc::ENOTSUP;
-    }
-
     let path = if !c_path.is_null() {
         match CStr::from_ptr(c_path).to_str() {
             Ok(path) => Some(PathBuf::from(path)),
@@ -888,10 +880,6 @@ pub unsafe extern "C" fn krun_add_net_tap(
     features: u32,
     flags: u32,
 ) -> i32 {
-    if cfg!(not(feature = "net")) {
-        return -libc::ENOTSUP;
-    }
-
     let tap_name = match CStr::from_ptr(c_tap_name).to_str() {
         Ok(tap_name) => tap_name.to_string(),
         Err(e) => {
@@ -933,14 +921,23 @@ pub unsafe extern "C" fn krun_add_net_tap(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+#[cfg(all(not(target_os = "linux"), feature = "net"))]
+pub unsafe extern "C" fn krun_add_net_tap(
+    _ctx_id: u32,
+    _c_tap_name: *const c_char,
+    _c_mac: *const u8,
+    _features: u32,
+    _flags: u32,
+) -> i32 {
+    -libc::EINVAL
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
 #[cfg(feature = "net")]
 pub unsafe extern "C" fn krun_set_passt_fd(ctx_id: u32, fd: c_int) -> i32 {
     if fd < 0 {
         return -libc::EINVAL;
-    }
-
-    if cfg!(not(feature = "net")) {
-        return -libc::ENOTSUP;
     }
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
@@ -967,10 +964,6 @@ pub unsafe extern "C" fn krun_set_passt_fd(ctx_id: u32, fd: c_int) -> i32 {
 #[no_mangle]
 #[cfg(feature = "net")]
 pub unsafe extern "C" fn krun_set_gvproxy_path(ctx_id: u32, c_path: *const c_char) -> i32 {
-    if cfg!(not(feature = "net")) {
-        return -libc::ENOTSUP;
-    }
-
     let path_str = match CStr::from_ptr(c_path).to_str() {
         Ok(path) => path,
         Err(e) => {
