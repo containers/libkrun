@@ -503,6 +503,15 @@ impl VirtioGpu {
         Ok(OkDisplayInfo(display_info))
     }
 
+    pub fn get_edid(&self, scanout_id: u32) -> VirtioGpuResult {
+        let display = self
+            .displays
+            .get(scanout_id as usize)
+            .ok_or(ErrInvalidScanoutId)?;
+
+        Ok(OkEdid(display.edid_bytes()))
+    }
+
     /// Copies data to host resource from the attached iovecs. Can also be used to flush caches.
     pub fn transfer_write(
         &mut self,
