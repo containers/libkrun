@@ -64,9 +64,17 @@ use crate::vstate::MeasuredRegion;
 use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
 use arch::{ArchMemoryInfo, InitrdConfig};
 use device_manager::shm::ShmManager;
+#[cfg(feature = "gpu")]
+use devices::virtio::display::DisplayInfo;
+#[cfg(feature = "gpu")]
+use devices::virtio::display::NoopDisplayBackend;
 #[cfg(not(any(feature = "tee", feature = "nitro")))]
 use devices::virtio::{fs::ExportTable, VirtioShmRegion};
 use flate2::read::GzDecoder;
+#[cfg(feature = "gpu")]
+use krun_display::DisplayBackend;
+#[cfg(feature = "gpu")]
+use krun_display::IntoDisplayBackend;
 #[cfg(feature = "amd-sev")]
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
 use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
@@ -877,6 +885,10 @@ pub fn build_microvm(
 
     #[cfg(feature = "gpu")]
     if let Some(virgl_flags) = vm_resources.gpu_virgl_flags {
+        let display_backend = vm_resources
+            .display_backend
+            .unwrap_or_else(|| NoopDisplayBackend::into_display_backend(None));
+
         attach_gpu_device(
             &mut vmm,
             event_manager,
@@ -885,6 +897,8 @@ pub fn build_microvm(
             export_table.clone(),
             intc.clone(),
             virgl_flags,
+            Box::from(&vm_resources.displays[..]),
+            display_backend,
             #[cfg(target_os = "macos")]
             _sender.clone(),
         )?;
@@ -1938,6 +1952,7 @@ fn attach_rng_device(
 }
 
 #[cfg(feature = "gpu")]
+#[allow(clippy::too_many_arguments)]
 fn attach_gpu_device(
     vmm: &mut Vmm,
     event_manager: &mut EventManager,
@@ -1945,6 +1960,8 @@ fn attach_gpu_device(
     #[cfg(not(feature = "tee"))] mut export_table: Option<ExportTable>,
     intc: IrqChip,
     virgl_flags: u32,
+    displays: Box<[DisplayInfo]>,
+    display_backend: DisplayBackend<'static>,
     #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
@@ -1952,6 +1969,8 @@ fn attach_gpu_device(
     let gpu = Arc::new(Mutex::new(
         devices::virtio::Gpu::new(
             virgl_flags,
+            displays,
+            display_backend,
             #[cfg(target_os = "macos")]
             map_sender,
         )

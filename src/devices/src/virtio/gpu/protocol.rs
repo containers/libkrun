@@ -5,6 +5,10 @@
 #![allow(dead_code)]
 #![allow(non_camel_case_types)]
 
+use super::super::descriptor_utils::{Reader, Writer};
+#[cfg(feature = "gpu")]
+use krun_display::DisplayBackendError;
+use rutabaga_gfx::RutabagaError;
 use std::cmp::min;
 use std::convert::From;
 use std::fmt::Display;
@@ -13,13 +17,9 @@ use std::marker::PhantomData;
 use std::mem::{size_of, size_of_val};
 use std::str::from_utf8;
 use std::{fmt, io};
-
-use rutabaga_gfx::RutabagaError;
 use thiserror::Error;
 use vm_memory::ByteValued;
 use zerocopy::{AsBytes, FromBytes};
-
-use super::super::descriptor_utils::{Reader, Writer};
 
 pub const VIRTIO_GPU_UNDEFINED: u32 = 0x0;
 
@@ -183,6 +183,15 @@ pub struct virtio_gpu_rect {
 }
 unsafe impl ByteValued for virtio_gpu_rect {}
 
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[repr(C)]
+pub struct virtio_gpu_get_edid {
+    pub scanout: u32,
+    pub padding: u32,
+}
+
+unsafe impl ByteValued for virtio_gpu_get_edid {}
+
 /* VIRTIO_GPU_CMD_RESOURCE_UNREF */
 #[derive(Copy, Clone, Debug, Default, FromBytes, AsBytes)]
 #[repr(C)]
@@ -271,14 +280,27 @@ pub struct virtio_gpu_display_one {
 unsafe impl ByteValued for virtio_gpu_display_one {}
 
 /* VIRTIO_GPU_RESP_OK_DISPLAY_INFO */
-pub const VIRTIO_GPU_MAX_SCANOUTS: usize = 16;
+pub const VIRTIO_GPU_MAX_SCANOUTS: u32 = 16;
 #[derive(Copy, Clone, Debug, Default, FromBytes, AsBytes)]
 #[repr(C)]
 pub struct virtio_gpu_resp_display_info {
     pub hdr: virtio_gpu_ctrl_hdr,
-    pub pmodes: [virtio_gpu_display_one; VIRTIO_GPU_MAX_SCANOUTS],
+    pub pmodes: [virtio_gpu_display_one; VIRTIO_GPU_MAX_SCANOUTS as usize],
 }
 unsafe impl ByteValued for virtio_gpu_resp_display_info {}
+
+const EDID_BLOB_MAX_SIZE: usize = 1024;
+
+#[derive(Debug, Copy, Clone)]
+#[repr(C)]
+pub struct virtio_gpu_resp_edid {
+    pub hdr: virtio_gpu_ctrl_hdr,
+    pub size: u32,
+    pub padding: u32,
+    pub edid: [u8; EDID_BLOB_MAX_SIZE],
+}
+
+unsafe impl ByteValued for virtio_gpu_resp_edid {}
 
 /* data passed in the control vq, 3d related */
 
@@ -542,7 +564,8 @@ pub const VIRTIO_GPU_FORMAT_R8G8B8X8_UNORM: u32 = 134;
 /// A virtio gpu command and associated metadata specific to each command.
 #[derive(Copy, Clone)]
 pub enum GpuCommand {
-    GetDisplayInfo(virtio_gpu_ctrl_hdr),
+    GetDisplayInfo,
+    GetEdid(virtio_gpu_get_edid),
     ResourceCreate2d(virtio_gpu_resource_create_2d),
     ResourceUnref(virtio_gpu_resource_unref),
     SetScanout(virtio_gpu_set_scanout),
@@ -591,7 +614,8 @@ impl fmt::Debug for GpuCommand {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::GpuCommand::*;
         match self {
-            GetDisplayInfo(_info) => f.debug_struct("GetDisplayInfo").finish(),
+            GetDisplayInfo => f.debug_struct("GetDisplayInfo").finish(),
+            GetEdid(_info) => f.debug_struct("GetEdid").finish(),
             ResourceCreate2d(_info) => f.debug_struct("ResourceCreate2d").finish(),
             ResourceUnref(_info) => f.debug_struct("ResourceUnref").finish(),
             SetScanout(_info) => f.debug_struct("SetScanout").finish(),
@@ -628,7 +652,8 @@ impl GpuCommand {
         use self::GpuCommand::*;
         let hdr = cmd.read_obj::<virtio_gpu_ctrl_hdr>()?;
         let cmd = match hdr.type_ {
-            VIRTIO_GPU_CMD_GET_DISPLAY_INFO => GetDisplayInfo(cmd.read_obj()?),
+            VIRTIO_GPU_CMD_GET_DISPLAY_INFO => GetDisplayInfo,
+            VIRTIO_GPU_CMD_GET_EDID => GetEdid(cmd.read_obj()?),
             VIRTIO_GPU_CMD_RESOURCE_CREATE_2D => ResourceCreate2d(cmd.read_obj()?),
             VIRTIO_GPU_CMD_RESOURCE_UNREF => ResourceUnref(cmd.read_obj()?),
             VIRTIO_GPU_CMD_SET_SCANOUT => SetScanout(cmd.read_obj()?),
@@ -671,6 +696,7 @@ pub struct GpuResponsePlaneInfo {
 pub enum GpuResponse {
     OkNoData,
     OkDisplayInfo(Vec<(u32, u32, bool)>),
+    OkEdid(Box<[u8]>),
     OkCapsetInfo {
         capset_id: u32,
         version: u32,
@@ -704,6 +730,30 @@ impl From<RutabagaError> for GpuResponse {
         GpuResponse::ErrRutabaga(e)
     }
 }
+impl From<DisplayBackendError> for GpuResponse {
+    fn from(err: DisplayBackendError) -> GpuResponse {
+        match err {
+            DisplayBackendError::InternalError => {
+                error!("Unknown internal error occurred in display implementation");
+                GpuResponse::ErrUnspec
+            }
+            DisplayBackendError::MethodNotSupported => {
+                // This is likely an implementation error in the GPU device - using a display method
+                // that has not been negotiated using the feature flags.
+                error!("Display does not support used method for scanout");
+                GpuResponse::ErrUnspec
+            }
+            DisplayBackendError::OutOfBuffers => {
+                // We should never actually reach this, since we only ever use 1 buffer at a given
+                // moment.
+                error!("Display backend ran out of buffers");
+                GpuResponse::ErrUnspec
+            }
+            DisplayBackendError::InvalidScanoutId => GpuResponse::ErrInvalidScanoutId,
+            DisplayBackendError::InvalidParam => GpuResponse::ErrInvalidParameter,
+        }
+    }
+}
 
 impl Display for GpuResponse {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -722,6 +772,9 @@ pub enum GpuResponseEncodeError {
     /// An I/O error occurred.
     #[error("an I/O error occurred: {0}")]
     IO(io::Error),
+    /// Bigger EDID blob than valid in a`OkEdid`.
+    #[error("{0} bytes is too big for an EDID blob")]
+    EdidTooBig(usize),
     /// More displays than are valid were in a `OkDisplayInfo`.
     #[error("{0} is more displays than are valid")]
     TooManyDisplays(usize),
@@ -758,7 +811,7 @@ impl GpuResponse {
         };
         let len = match *self {
             GpuResponse::OkDisplayInfo(ref info) => {
-                if info.len() > VIRTIO_GPU_MAX_SCANOUTS {
+                if info.len() > VIRTIO_GPU_MAX_SCANOUTS as usize {
                     return Err(GpuResponseEncodeError::TooManyDisplays(info.len()));
                 }
                 let mut disp_info = virtio_gpu_resp_display_info {
@@ -773,6 +826,21 @@ impl GpuResponse {
                 }
                 resp.write_obj(disp_info)?;
                 size_of_val(&disp_info)
+            }
+            GpuResponse::OkEdid(ref blob) => {
+                if blob.len() > EDID_BLOB_MAX_SIZE {
+                    return Err(GpuResponseEncodeError::EdidTooBig(blob.len()));
+                };
+
+                let mut edid_info = virtio_gpu_resp_edid {
+                    hdr,
+                    size: blob.len() as u32,
+                    edid: [0; EDID_BLOB_MAX_SIZE],
+                    padding: Default::default(),
+                };
+                edid_info.edid[..blob.len()].copy_from_slice(blob);
+                resp.write_obj(edid_info)?;
+                size_of_val(&edid_info)
             }
             GpuResponse::OkCapsetInfo {
                 capset_id,
@@ -857,6 +925,7 @@ impl GpuResponse {
         match self {
             GpuResponse::OkNoData => VIRTIO_GPU_RESP_OK_NODATA,
             GpuResponse::OkDisplayInfo(_) => VIRTIO_GPU_RESP_OK_DISPLAY_INFO,
+            GpuResponse::OkEdid(_) => VIRTIO_GPU_RESP_OK_EDID,
             GpuResponse::OkCapsetInfo { .. } => VIRTIO_GPU_RESP_OK_CAPSET_INFO,
             GpuResponse::OkCapset(_) => VIRTIO_GPU_RESP_OK_CAPSET,
             GpuResponse::OkResourcePlaneInfo { .. } => VIRTIO_GPU_RESP_OK_RESOURCE_PLANE_INFO,

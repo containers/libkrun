@@ -1,5 +1,6 @@
 [workspace]
 members = ["src/libkrun"]
+exclude = ["examples/gtk_display"]
 resolver = "2"
 
 [profile.dev]
