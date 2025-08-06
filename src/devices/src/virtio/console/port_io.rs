@@ -30,6 +30,12 @@ pub fn stdin() -> Result<Box<dyn PortInput + Send>, nix::Error> {
     Ok(Box::new(PortInputFd(fd)))
 }
 
+pub fn input_to_raw_fd_dup(fd: RawFd) -> Result<Box<dyn PortInput + Send>, nix::Error> {
+    let fd = dup_raw_fd_into_owned(fd)?;
+    make_non_blocking(&fd)?;
+    Ok(Box::new(PortInputFd(fd)))
+}
+
 pub fn stdout() -> Result<Box<dyn PortOutput + Send>, nix::Error> {
     output_to_raw_fd_dup(STDOUT_FILENO)
 }

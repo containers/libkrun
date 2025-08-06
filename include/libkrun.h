@@ -755,6 +755,109 @@ int32_t krun_nitro_set_image(uint32_t ctx_id, const char *image_path,
  */
 int32_t krun_nitro_set_start_flags(uint32_t ctx_id, uint64_t start_flags);
 
+/*
+ * Do not create an implicit console device in the guest. By using this API,
+ * libkrun will create zero console devices on behalf of the user. Any
+ * console devices needed by the user must be added manually via other API
+ * calls.
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_disable_implicit_console(uint32_t ctx_id);
+
+/*
+ * Specify the value of `console=` in the kernel commandline.
+ *
+ * Arguments:
+ *  "ctx_id" - the confiugration context ID.
+ *  "console_id" - console identifier.
+ *
+ * Returns
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_kernel_console(uint32_t ctx_id, const char *console_id);
+
+/*
+ * Create a virtio-console device and attach it to the guest using
+ * the standard streams (STDIN, STDOUT, and STDERR).
+ *
+ * If the implicit console is enabled, it will have the ID of hvc0.
+ * Any subsequent virtio-console devices added via this API will have
+ * the ID hvcn where n is the number of times this API has been called.
+ *
+ * If the implict console has been disabled, the first console created
+ * with this API will have the ID hvc0.
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_virtio_console_default(uint32_t ctx_id);
+
+/*
+ * Create a virtio-console device and attach it to the guest.
+ *
+ * If the implicit console is enabled, it will have the ID hvc0. Any subsequent
+ * virtio-console devices added via this API will have the ID hvcn where n is the
+ * number of times this API has been called.
+ *
+ * If the implicit console has been disabled, the first console created with this
+ * API will have the ID hvc0.
+ *
+ * Arguments:
+ *  "ctx_id"    - the configuration context ID.
+ *  "input_fd"  - file descriptor to use as input for console.
+ *  "output_fd" - file descriptor to use as output for console.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_virtio_console_inout(uint32_t ctx_id, uint32_t input_fd, uint32_t output_fd);
+
+/*
+ * Create a legacy serial console device and attach it to the guest.
+ *
+ * If the implicit console is enabled, it will have the ID of ttyS0.
+ * Any subsequent serial console devices added via this API will have
+ * the ID ttySn where n is the number of times this API has been called.
+ *
+ * If the implict console has been disabled, the first console created
+ * with this API will have the ID ttyS0.
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_serial_console_default(uint32_t ctx_id);
+
+/*
+ * Create a legacy serial console device and attach it to the guest.
+ *
+ * If the implicit console is enabled, it will have the ID ttyS0. Any subsequent
+ * serial console devices added via this API will have the ID ttySn where n is the
+ * number of times this API has been called.
+ *
+ * If the implicit console has been disabled, the first console created with this
+ * API will have the ID ttyS0.
+ *
+ * Arguments:
+ *  "ctx_id"    - the configuration context ID.
+ *  "input_fd"  - file descriptor to use as input for console.
+ *  "output_fd" - file descriptor to use as output for console.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_serial_console_inout(uint32_t ctx_id, uint32_t input_fd, uint32_t output_fd);
+
 /**
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
  * stdin/stdout to manage them on behalf of the process running inside the isolated environment,
