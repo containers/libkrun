@@ -508,53 +508,6 @@ int32_t krun_set_gpu_options2(uint32_t ctx_id,
 int32_t krun_add_display(uint32_t ctx_id, uint32_t width, uint32_t height);
 
 /**
- * Configure refresh rate for a display
- *
- *
- * Arguments:
- *  "ctx_id"      - the configuration context ID.
- *  "display_id"  - the ID of the display (range: 0 to KRUN_MAX_DISPLAYS - 1)
- *  "refresh_rate" - refresh rate (in Hz)
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_display_set_refresh_rate(uint32_t ctx_id, uint32_t display_id, uint32_t refresh_rate);
-
-
-/**
- * Configure physical size of the display reported to the guest
- *
- * This overrides the DPI set by krun_set_display_dpi()
- *
- * Arguments:
- *  "ctx_id"      - the configuration context ID.
- *  "display_id"  - the ID of the display (range: 0 to KRUN_MAX_DISPLAYS - 1)
- *  "width_mm"    - width of the display in millimeters
- *  "height_mm"   - height of the display in millimeters
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_display_set_physical_size(uint32_t ctx_id, uint32_t display_id, uint16_t width_mm, uint16_t height_mm);
-
-
-/**
- * Configure DPI of the display reported to the guest
- *
- * This overrides the physical size of the display set by krun_set_display_physical_size()
- *
- * Arguments:
- *  "ctx_id"      - the configuration context ID.
- *  "display_id"  - the ID of the display (range: 0 to KRUN_MAX_DISPLAYS - 1)
- *  "dpi"         - DPI (PPI) dots/pixels per inch of the display
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_display_set_dpi(uint32_t ctx_id, uint32_t display_id, uint32_t dpi);
-
-/**
  * Configure a custom EDID blob for a display
  *
  * This replaces the generated EDID with a custom one. Configuring an EDID blob makes all display parameters except
@@ -572,6 +525,51 @@ int32_t krun_display_set_dpi(uint32_t ctx_id, uint32_t display_id, uint32_t dpi)
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_display_set_edid(uint32_t ctx_id, uint32_t display_id, const uint8_t* edid_blob, size_t blob_size);
+
+/**
+ * Configure DPI of the display reported to the guest
+ *
+ * This overrides the DPI set by krun_set_display_dpi()
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "display_id"  - the ID of the display (range: 0 to KRUN_MAX_DISPLAYS - 1)
+ *  "dpi"         - DPI (PPI) dots/pixels per inch of the display
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_display_set_dpi(uint32_t ctx_id, uint32_t display_id, uint32_t dpi);
+
+/**
+ * Configure physical size of the display reported to the guest
+ *
+ * This overrides the physical size of the display set by krun_set_display_physical_size()
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "display_id"  - the ID of the display (range: 0 to KRUN_MAX_DISPLAYS - 1)
+ *  "width_mm"    - width of the display in millimeters
+ *  "height_mm"   - height of the display in millimeters
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_display_set_physical_size(uint32_t ctx_id, uint32_t display_id, uint16_t width_mm, uint16_t height_mm);
+
+/**
+ * Configure refresh rate for a display
+ *
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "display_id"  - the ID of the display (range: 0 to KRUN_MAX_DISPLAYS - 1)
+ *  "refresh_rate" - refresh rate (in Hz)
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_display_set_refresh_rate(uint32_t ctx_id, uint32_t display_id, uint32_t refresh_rate);
 
 /**
  * Configures a krun_display_backend struct to be used for display output. (see libkrun_display.h)
