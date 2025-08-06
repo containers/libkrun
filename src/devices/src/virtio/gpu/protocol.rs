@@ -183,6 +183,15 @@ pub struct virtio_gpu_rect {
 }
 unsafe impl ByteValued for virtio_gpu_rect {}
 
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[repr(C)]
+pub struct virtio_gpu_get_edid {
+    pub scanout: u32,
+    pub padding: u32,
+}
+
+unsafe impl ByteValued for virtio_gpu_get_edid {}
+
 /* VIRTIO_GPU_CMD_RESOURCE_UNREF */
 #[derive(Copy, Clone, Debug, Default, FromBytes, AsBytes)]
 #[repr(C)]
@@ -279,6 +288,19 @@ pub struct virtio_gpu_resp_display_info {
     pub pmodes: [virtio_gpu_display_one; VIRTIO_GPU_MAX_SCANOUTS as usize],
 }
 unsafe impl ByteValued for virtio_gpu_resp_display_info {}
+
+const EDID_BLOB_MAX_SIZE: usize = 1024;
+
+#[derive(Debug, Copy, Clone)]
+#[repr(C)]
+pub struct virtio_gpu_resp_edid {
+    pub hdr: virtio_gpu_ctrl_hdr,
+    pub size: u32,
+    pub padding: u32,
+    pub edid: [u8; EDID_BLOB_MAX_SIZE],
+}
+
+unsafe impl ByteValued for virtio_gpu_resp_edid {}
 
 /* data passed in the control vq, 3d related */
 
@@ -543,6 +565,7 @@ pub const VIRTIO_GPU_FORMAT_R8G8B8X8_UNORM: u32 = 134;
 #[derive(Copy, Clone)]
 pub enum GpuCommand {
     GetDisplayInfo,
+    GetEdid(virtio_gpu_get_edid),
     ResourceCreate2d(virtio_gpu_resource_create_2d),
     ResourceUnref(virtio_gpu_resource_unref),
     SetScanout(virtio_gpu_set_scanout),
@@ -592,6 +615,7 @@ impl fmt::Debug for GpuCommand {
         use self::GpuCommand::*;
         match self {
             GetDisplayInfo => f.debug_struct("GetDisplayInfo").finish(),
+            GetEdid(_info) => f.debug_struct("GetEdid").finish(),
             ResourceCreate2d(_info) => f.debug_struct("ResourceCreate2d").finish(),
             ResourceUnref(_info) => f.debug_struct("ResourceUnref").finish(),
             SetScanout(_info) => f.debug_struct("SetScanout").finish(),
@@ -629,6 +653,7 @@ impl GpuCommand {
         let hdr = cmd.read_obj::<virtio_gpu_ctrl_hdr>()?;
         let cmd = match hdr.type_ {
             VIRTIO_GPU_CMD_GET_DISPLAY_INFO => GetDisplayInfo,
+            VIRTIO_GPU_CMD_GET_EDID => GetEdid(cmd.read_obj()?),
             VIRTIO_GPU_CMD_RESOURCE_CREATE_2D => ResourceCreate2d(cmd.read_obj()?),
             VIRTIO_GPU_CMD_RESOURCE_UNREF => ResourceUnref(cmd.read_obj()?),
             VIRTIO_GPU_CMD_SET_SCANOUT => SetScanout(cmd.read_obj()?),
@@ -671,6 +696,7 @@ pub struct GpuResponsePlaneInfo {
 pub enum GpuResponse {
     OkNoData,
     OkDisplayInfo(Vec<(u32, u32, bool)>),
+    OkEdid(Box<[u8]>),
     OkCapsetInfo {
         capset_id: u32,
         version: u32,
@@ -746,6 +772,9 @@ pub enum GpuResponseEncodeError {
     /// An I/O error occurred.
     #[error("an I/O error occurred: {0}")]
     IO(io::Error),
+    /// Bigger EDID blob than valid in a`OkEdid`.
+    #[error("{0} bytes is too big for an EDID blob")]
+    EdidTooBig(usize),
     /// More displays than are valid were in a `OkDisplayInfo`.
     #[error("{0} is more displays than are valid")]
     TooManyDisplays(usize),
@@ -797,6 +826,21 @@ impl GpuResponse {
                 }
                 resp.write_obj(disp_info)?;
                 size_of_val(&disp_info)
+            }
+            GpuResponse::OkEdid(ref blob) => {
+                if blob.len() > EDID_BLOB_MAX_SIZE {
+                    return Err(GpuResponseEncodeError::EdidTooBig(blob.len()));
+                };
+
+                let mut edid_info = virtio_gpu_resp_edid {
+                    hdr,
+                    size: blob.len() as u32,
+                    edid: [0; EDID_BLOB_MAX_SIZE],
+                    padding: Default::default(),
+                };
+                edid_info.edid[..blob.len()].copy_from_slice(blob);
+                resp.write_obj(edid_info)?;
+                size_of_val(&edid_info)
             }
             GpuResponse::OkCapsetInfo {
                 capset_id,
@@ -881,6 +925,7 @@ impl GpuResponse {
         match self {
             GpuResponse::OkNoData => VIRTIO_GPU_RESP_OK_NODATA,
             GpuResponse::OkDisplayInfo(_) => VIRTIO_GPU_RESP_OK_DISPLAY_INFO,
+            GpuResponse::OkEdid(_) => VIRTIO_GPU_RESP_OK_EDID,
             GpuResponse::OkCapsetInfo { .. } => VIRTIO_GPU_RESP_OK_CAPSET_INFO,
             GpuResponse::OkCapset(_) => VIRTIO_GPU_RESP_OK_CAPSET,
             GpuResponse::OkResourcePlaneInfo { .. } => VIRTIO_GPU_RESP_OK_RESOURCE_PLANE_INFO,
