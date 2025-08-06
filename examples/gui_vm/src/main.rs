@@ -4,31 +4,81 @@ use gtk_display::DisplayBackendHandle;
 use krun_sys::{
     VIRGLRENDERER_RENDER_SERVER, VIRGLRENDERER_THREAD_SYNC, VIRGLRENDERER_USE_ASYNC_FENCE_CB,
     VIRGLRENDERER_USE_EGL, VIRGLRENDERER_VENUS, krun_add_display, krun_create_ctx,
+    krun_display_set_dpi, krun_display_set_physical_size, krun_display_set_refresh_rate,
     krun_set_display_backend, krun_set_exec, krun_set_gpu_options, krun_set_log_level,
     krun_set_root, krun_start_enter,
 };
 use log::LevelFilter;
+use regex::{Captures, Regex};
 use std::ffi::{CString, c_void};
+use std::fmt::Display;
 use std::process::exit;
 use std::ptr::null;
+use std::str::FromStr;
+use std::sync::LazyLock;
 use std::thread;
 
 mod krun_utils;
+
+#[derive(Debug, Copy, Clone)]
+pub enum PhysicalSize {
+    Dpi(u32),
+    DimensionsMillimeters(u16, u16),
+}
 
 #[derive(Debug, Clone, Copy)]
 struct DisplayArg {
     width: u32,
     height: u32,
+    refresh_rate: Option<u32>,
+    physical_size: Option<PhysicalSize>,
 }
 
-fn parse_display(s: &str) -> Result<DisplayArg, String> {
-    let parts: Vec<&str> = s.split('x').collect();
-    if parts.len() != 2 {
-        return Err("Expected format: [width]x[height]".to_string());
+/// Parses a display settings string.
+/// The expected format is "WIDTHxHEIGHT[@FPS][:DPIdpi|:PHYSICAL_WIDTHxPHYSICAL_HEIGHTmm]".
+fn parse_display(display_string: &str) -> Result<DisplayArg, String> {
+    static RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"^(?P<width>\d+)x(?P<height>\d+)(?:@(?P<refresh_rate>\d+))?(?::(?P<dpi>\d+)dpi|:(?P<width_mm>\d+)x(?P<height_mm>\d+)mm)?$",
+        ).unwrap()
+    });
+
+    let captures = RE.captures(display_string).ok_or_else(|| {
+        format!("Invalid display string '{s}' format. Examples of valid values:\n '1920x1080', '1920x1080@60', '1920x1080:162x91mm', '1920x1080:300dpi', '1920x1080@90:300dpi'")
+    })?;
+
+    fn parse_group<T: FromStr>(captures: &Captures, name: &str) -> Result<Option<T>, String>
+    where
+        T::Err: Display,
+    {
+        captures
+            .name(name)
+            .map(|match_| {
+                match_
+                    .as_str()
+                    .parse::<T>()
+                    .map_err(|e| format!("Failed to parse {name}: {e}"))
+            })
+            .transpose()
     }
-    let width = parts[0].parse().map_err(|_| "Invalid width")?;
-    let height = parts[1].parse().map_err(|_| "Invalid height")?;
-    Ok(DisplayArg { width, height })
+
+    Ok(DisplayArg {
+        width: parse_group(&captures, "width")?.expect("regex bug"),
+        height: parse_group(&captures, "height")?.expect("regex bug"),
+        refresh_rate: parse_group(&captures, "refresh_rate")?,
+        physical_size: match (
+            parse_group(&captures, "dpi")?,
+            parse_group(&captures, "width_mm")?,
+            parse_group(&captures, "height_mm")?,
+        ) {
+            (Some(dpi), None, None) => Some(PhysicalSize::Dpi(dpi)),
+            (None, Some(width_mm), Some(height_mm)) => {
+                Some(PhysicalSize::DimensionsMillimeters(width_mm, height_mm))
+            }
+            (None, None, None) => None,
+            _ => unreachable!("regex bug"),
+        },
+    })
 }
 
 #[derive(Parser, Debug)]
@@ -38,6 +88,7 @@ struct Args {
 
     executable: Option<CString>,
     argv: Vec<CString>,
+    // Display specifications in the format WIDTHxHEIGHT[@FPS][:DPIdpi|:PHYSICAL_WIDTHxPHYSICAL_HEIGHTmm]
     #[clap(long, value_parser = parse_display)]
     display: Vec<DisplayArg>,
 }
@@ -71,7 +122,21 @@ fn krun_thread(args: &Args, display_backend_handle: DisplayBackendHandle) -> any
         }
 
         for display in &args.display {
-            krun_call!(krun_add_display(ctx, display.width, display.height))?;
+            let display_id = krun_call_u32!(krun_add_display(ctx, display.width, display.height))?;
+            if let Some(refresh_rate) = display.refresh_rate {
+                krun_call!(krun_display_set_refresh_rate(ctx, display_id, refresh_rate))?;
+            }
+            match display.physical_size {
+                None => (),
+                Some(PhysicalSize::Dpi(dpi)) => {
+                    krun_call!(krun_display_set_dpi(ctx, display_id, dpi))?;
+                }
+                Some(PhysicalSize::DimensionsMillimeters(width_mm, height_mm)) => {
+                    krun_call!(krun_display_set_physical_size(
+                        ctx, display_id, width_mm, height_mm
+                    ))?;
+                }
+            };
         }
         let display_backend = display_backend_handle.get();
         krun_call!(krun_set_display_backend(

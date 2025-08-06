@@ -622,6 +622,7 @@ dependencies = [
  "gtk_display",
  "krun-sys",
  "log",
+ "regex",
 ]
 
 [[package]]
