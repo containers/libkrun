@@ -10,6 +10,7 @@ use std::{
 use crate::virtio::net::backend::ConnectError;
 
 use super::backend::{NetBackend, ReadError, WriteError};
+use super::write_virtio_net_hdr;
 
 /// Each frame the network proxy is prepended by a 4 byte "header".
 /// It is interpreted as a big-endian u32 integer and is the length of the following ethernet frame.
@@ -158,11 +159,13 @@ impl NetBackend for Unixstream {
             };
         }
 
+        let hdr_len = write_virtio_net_hdr(buf);
+        let buf = &mut buf[hdr_len..];
         let frame_length = self.expecting_frame_length as usize;
         self.read_loop(&mut buf[..frame_length], false)?;
         self.expecting_frame_length = 0;
         log::trace!("Read eth frame from network proxy: {frame_length} bytes");
-        Ok(frame_length)
+        Ok(hdr_len + frame_length)
     }
 
     /// Try to write a frame to the proxy.

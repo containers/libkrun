@@ -1,3 +1,4 @@
+use std::io;
 use std::os::fd::RawFd;
 
 #[allow(dead_code)]
@@ -7,6 +8,11 @@ pub enum ConnectError {
     CreateSocket(nix::Error),
     Binding(nix::Error),
     SendingMagic(nix::Error),
+    // Tap backend errors.
+    OpenNetTun(nix::Error),
+    TunSetIff(io::Error),
+    TunSetVnetHdrSz(io::Error),
+    TunSetOffload(io::Error),
 }
 
 #[allow(dead_code)]
