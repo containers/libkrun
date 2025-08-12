@@ -36,13 +36,13 @@ pub trait DisplayBackendBasicFramebuffer {
 }
 
 pub trait IntoDisplayBackend<T: Sync> {
-    fn into_display_backend(userdata: Option<&T>) -> DisplayBackend;
+    fn into_display_backend(userdata: Option<&T>) -> DisplayBackend<'_>;
 }
 
 impl<T: Sync, I: DisplayBackendBasicFramebuffer + DisplayBackendNew<T>> IntoDisplayBackend<T>
     for I
 {
-    fn into_display_backend(userdata: Option<&T>) -> DisplayBackend {
+    fn into_display_backend(userdata: Option<&T>) -> DisplayBackend<'_> {
         extern "C" fn create_fn<T: Sync, I: DisplayBackendNew<T>>(
             instance: *mut *mut c_void,
             userdata: *const c_void,
