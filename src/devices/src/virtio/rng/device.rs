@@ -14,10 +14,6 @@ pub(crate) const REQ_INDEX: usize = 0;
 // Supported features.
 pub(crate) const AVAIL_FEATURES: u64 = 1 << uapi::VIRTIO_F_VERSION_1 as u64;
 
-#[derive(Copy, Clone, Debug, Default)]
-#[repr(C, packed)]
-pub struct VirtioRng {}
-
 pub struct Rng {
     pub(crate) queues: Vec<VirtQueue>,
     pub(crate) queue_events: Vec<EventFd>,

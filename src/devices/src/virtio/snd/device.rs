@@ -15,10 +15,6 @@ use crate::virtio::{DeviceState, InterruptTransport};
 // Supported features.
 pub(crate) const AVAIL_FEATURES: u64 = 1 << uapi::VIRTIO_F_VERSION_1 as u64;
 
-#[derive(Copy, Clone, Debug, Default)]
-#[repr(C, packed)]
-pub struct VirtioSnd {}
-
 pub struct Snd {
     pub(crate) queues: Vec<VirtQueue>,
     pub(crate) queue_events: Vec<EventFd>,
