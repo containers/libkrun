@@ -501,7 +501,7 @@ pub fn create_descriptor_chain(
     mut buffers_start_addr: GuestAddress,
     descriptors: Vec<(DescriptorType, u32)>,
     spaces_between_regions: u32,
-) -> Result<DescriptorChain> {
+) -> Result<DescriptorChain<'_>> {
     let descriptors_len = descriptors.len();
     for (index, (type_, size)) in descriptors.into_iter().enumerate() {
         let mut flags = 0;

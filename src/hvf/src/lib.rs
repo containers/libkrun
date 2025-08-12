@@ -523,7 +523,7 @@ impl HvfVcpu<'_> {
         }
     }
 
-    fn handle_psci_request(&self) -> Result<VcpuExit, Error> {
+    fn handle_psci_request(&self) -> Result<VcpuExit<'_>, Error> {
         match self.read_reg(hv_reg_t_HV_REG_X0)? {
             0x8400_0000 /* QEMU_PSCI_0_2_FN_PSCI_VERSION */ => {
                 self.write_reg(hv_reg_t_HV_REG_X0, 2)?;
@@ -550,7 +550,7 @@ impl HvfVcpu<'_> {
         }
     }
 
-    pub fn run(&mut self, vcpu_list: Arc<dyn Vcpus>) -> Result<VcpuExit, Error> {
+    pub fn run(&mut self, vcpu_list: Arc<dyn Vcpus>) -> Result<VcpuExit<'_>, Error> {
         let pending_irq = vcpu_list.has_pending_irq(self.vcpuid);
 
         if let Some(mmio_read) = self.pending_mmio_read.take() {
