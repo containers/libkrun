@@ -138,6 +138,7 @@ impl From<File> for SafeDescriptor {
 ///
 /// Note that with the exception of the last use-case (which requires proper error checking against
 /// the descriptor being closed), the `Descriptor` instance would be very short-lived.
+#[allow(unused)]
 #[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct Descriptor(pub RawDescriptor);
