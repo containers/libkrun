@@ -1203,6 +1203,13 @@ impl Vcpu {
             kvi.features[0] |= 1 << kvm_bindings::KVM_ARM_VCPU_POWER_OFF;
         }
 
+        if vm_fd.check_extension(kvm_ioctls::Cap::ArmPtrAuthAddress) {
+            kvi.features[0] |= 1 << kvm_bindings::KVM_ARM_VCPU_PTRAUTH_ADDRESS;
+        }
+        if vm_fd.check_extension(kvm_ioctls::Cap::ArmPtrAuthGeneric) {
+            kvi.features[0] |= 1 << kvm_bindings::KVM_ARM_VCPU_PTRAUTH_GENERIC;
+        }
+
         self.fd.vcpu_init(&kvi).map_err(Error::VcpuArmInit)?;
         arch::aarch64::regs::setup_regs(&self.fd, self.id, kernel_load_addr.raw_value(), guest_mem)
             .map_err(Error::REGSConfiguration)?;
