@@ -39,7 +39,7 @@ use libc::size_t;
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
 use utils::eventfd::EventFd;
-use vmm::resources::VmResources;
+use vmm::resources::{ConsoleConfig, ConsoleType, VmResources};
 #[cfg(feature = "blk")]
 use vmm::vmm_config::block::BlockDeviceConfig;
 use vmm::vmm_config::boot_source::{BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
@@ -1752,6 +1752,92 @@ pub unsafe extern "C" fn krun_nitro_set_start_flags(ctx_id: u32, start_flags: u6
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             cfg.set_nitro_start_flags(flags);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn krun_disable_implicit_console(ctx_id: u32) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.disable_implicit_console = true;
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_virtio_console_default(
+    ctx_id: u32,
+    input_fd: libc::c_int,
+    output_fd: libc::c_int,
+    err_fd: libc::c_int,
+) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.consoles.entry(ConsoleType::Virtio).or_default();
+
+            // safe to unwrap since we inserted an empty Vec if the key didn't exist
+            let consoles = cfg.vmr.consoles.get_mut(&ConsoleType::Virtio).unwrap();
+            consoles.push(ConsoleConfig {
+                output_path: None,
+                input_fd,
+                output_fd,
+                err_fd,
+            });
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_serial_console_default(
+    ctx_id: u32,
+    input_fd: libc::c_int,
+    output_fd: libc::c_int,
+) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.consoles.entry(ConsoleType::Serial).or_default();
+
+            // safe to unwrap since we inserted an empty Vec if the key didn't exist
+            let consoles = cfg.vmr.consoles.get_mut(&ConsoleType::Serial).unwrap();
+            consoles.push(ConsoleConfig {
+                output_path: None,
+                input_fd,
+                output_fd,
+                err_fd: -1,
+            });
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_kernel_console(ctx_id: u32, console_id: *const c_char) -> i32 {
+    let console_id = match CStr::from_ptr(console_id).to_str() {
+        Ok(id) => id.to_string(),
+        Err(_) => return -libc::EINVAL,
+    };
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.kernel_console = Some(console_id);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
