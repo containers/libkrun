@@ -352,6 +352,14 @@ enum FileOrLink {
     Link(CString),
 }
 
+fn sanitize_name_at(inode: Inode, name: &CStr) -> &CStr {
+    if inode == fuse::ROOT_ID && name == c".." {
+        c"."
+    } else {
+        name
+    }
+}
+
 impl PassthroughFs {
     pub fn new(cfg: Config) -> io::Result<PassthroughFs> {
         let fd = if let Some(fd) = cfg.proc_sfd_rawfd {
@@ -491,6 +499,7 @@ impl PassthroughFs {
     }
 
     fn do_lookup(&self, parent: Inode, name: &CStr) -> io::Result<Entry> {
+        let name = sanitize_name_at(parent, name);
         let p = self
             .inodes
             .read()
@@ -761,6 +770,8 @@ impl PassthroughFs {
     }
 
     fn do_unlink(&self, parent: Inode, name: &CStr, flags: libc::c_int) -> io::Result<()> {
+        let name = sanitize_name_at(parent, name);
+
         let data = self
             .inodes
             .read()
@@ -1003,6 +1014,7 @@ impl FileSystem for PassthroughFs {
         umask: u32,
         extensions: Extensions,
     ) -> io::Result<Entry> {
+        let name = sanitize_name_at(parent, name);
         if extensions.secctx.is_some() {
             unimplemented!("SECURITY_CTX is not supported and should not be used by the guest");
         }
@@ -1026,6 +1038,7 @@ impl FileSystem for PassthroughFs {
     }
 
     fn rmdir(&self, _ctx: Context, parent: Inode, name: &CStr) -> io::Result<()> {
+        let name = sanitize_name_at(parent, name);
         self.do_unlink(parent, name, libc::AT_REMOVEDIR)
     }
 
@@ -1106,6 +1119,7 @@ impl FileSystem for PassthroughFs {
         umask: u32,
         extensions: Extensions,
     ) -> io::Result<(Entry, Option<Handle>, OpenOptions)> {
+        let name = sanitize_name_at(parent, name);
         if extensions.secctx.is_some() {
             unimplemented!("SECURITY_CTX is not supported and should not be used by the guest");
         }
@@ -1396,6 +1410,9 @@ impl FileSystem for PassthroughFs {
         newname: &CStr,
         flags: u32,
     ) -> io::Result<()> {
+        let oldname = sanitize_name_at(olddir, oldname);
+        let newname = sanitize_name_at(newdir, newname);
+
         let old_inode = self
             .inodes
             .read()
@@ -1441,6 +1458,7 @@ impl FileSystem for PassthroughFs {
         umask: u32,
         extensions: Extensions,
     ) -> io::Result<Entry> {
+        let name = sanitize_name_at(parent, name);
         if extensions.secctx.is_some() {
             unimplemented!("SECURITY_CTX is not supported and should not be used by the guest");
         }
@@ -1478,6 +1496,8 @@ impl FileSystem for PassthroughFs {
         newparent: Inode,
         newname: &CStr,
     ) -> io::Result<Entry> {
+        let newname = sanitize_name_at(newparent, newname);
+
         let data = self
             .inodes
             .read()
@@ -1521,6 +1541,8 @@ impl FileSystem for PassthroughFs {
         name: &CStr,
         extensions: Extensions,
     ) -> io::Result<Entry> {
+        let name = sanitize_name_at(parent, name);
+
         // Set security context on symlink.
         if extensions.secctx.is_some() {
             unimplemented!("SECURITY_CTX is not supported and should not be used by the guest");
@@ -1704,6 +1726,7 @@ impl FileSystem for PassthroughFs {
         value: &[u8],
         flags: u32,
     ) -> io::Result<()> {
+        let name = sanitize_name_at(inode, name);
         if !self.cfg.xattr {
             return Err(io::Error::from_raw_os_error(libc::ENOSYS));
         }
@@ -1752,6 +1775,7 @@ impl FileSystem for PassthroughFs {
         name: &CStr,
         size: u32,
     ) -> io::Result<GetxattrReply> {
+        let name = sanitize_name_at(inode, name);
         if !self.cfg.xattr {
             return Err(io::Error::from_raw_os_error(libc::ENOSYS));
         }
@@ -1844,6 +1868,7 @@ impl FileSystem for PassthroughFs {
     }
 
     fn removexattr(&self, _ctx: Context, inode: Inode, name: &CStr) -> io::Result<()> {
+        let name = sanitize_name_at(inode, name);
         if !self.cfg.xattr {
             return Err(io::Error::from_raw_os_error(libc::ENOSYS));
         }
