@@ -38,6 +38,8 @@ use libc::c_int;
 use libc::size_t;
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
+#[cfg(all(feature = "blk", not(feature = "tee")))]
+use rand::distr::{Alphanumeric, SampleString};
 use utils::eventfd::EventFd;
 use vmm::resources::VmResources;
 #[cfg(feature = "blk")]
@@ -140,6 +142,8 @@ struct ContextConfig {
     root_block_cfg: Option<BlockDeviceConfig>,
     #[cfg(feature = "blk")]
     data_block_cfg: Option<BlockDeviceConfig>,
+    #[cfg(feature = "blk")]
+    block_root: Option<String>,
     #[cfg(feature = "tee")]
     tee_config_file: Option<PathBuf>,
     unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
@@ -177,6 +181,21 @@ impl ContextConfig {
             Some(exec_path) => format!("KRUN_INIT={exec_path}"),
             None => "".to_string(),
         }
+    }
+
+    #[cfg(all(feature = "blk", not(feature = "tee")))]
+    fn set_block_root(&mut self, block_root: String) {
+        self.block_root = Some(block_root);
+    }
+
+    fn get_block_root(&self) -> String {
+        #[cfg(feature = "blk")]
+        match &self.block_root {
+            Some(block_root) => format!("KRUN_BLOCK_ROOT={block_root}"),
+            None => "".to_string(),
+        }
+        #[cfg(not(feature = "blk"))]
+        "".to_string()
     }
 
     fn set_env(&mut self, env: String) {
@@ -1808,6 +1827,33 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         }
     }
 
+    // If krun_set_root() was not called but there is at least one block device,
+    // use it as the block root. To boot from a filesystem other than virtiofs,
+    // we need to setup a temporary root from which init.krun can be executed.
+    // Otherwise, it would have to be copied to the target filesystem beforehand.
+    // Instead, init.krun will run from virtiofs and then switch to the real root.
+    #[cfg(all(feature = "blk", not(feature = "tee")))]
+    if !ctx_cfg.vmr.fs.iter().any(|fs| fs.fs_id == "/dev/root")
+        && !ctx_cfg.vmr.block.list.is_empty()
+    {
+        let root_dir_suffix = Alphanumeric.sample_string(&mut rand::rng(), 6);
+        let empty_root = env::temp_dir().join(format!("krun-empty-root-{root_dir_suffix}"));
+
+        if let Err(e) = std::fs::create_dir_all(&empty_root) {
+            error!("Failed to create empty root directory: {e:?}");
+            return -libc::EINVAL;
+        }
+
+        ctx_cfg.vmr.add_fs_device(FsDeviceConfig {
+            fs_id: "/dev/root".into(),
+            shared_dir: empty_root.to_string_lossy().into(),
+            // Default to a conservative 512 MB window.
+            shm_size: Some(1 << 29),
+        });
+
+        ctx_cfg.set_block_root("/dev/vda".to_string());
+    }
+
     /*
      * Before krun_start_enter() is called in an encrypted context, the TEE
      * config must have been set via krun_set_tee_config_file(). If the TEE
@@ -1827,11 +1873,12 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     let boot_source = BootSourceConfig {
         kernel_cmdline_prolog: Some(format!(
-            "{} init={} {} {} {} {}",
+            "{} init={} {} {} {} {} {}",
             DEFAULT_KERNEL_CMDLINE,
             INIT_PATH,
             ctx_cfg.get_exec_path(),
             ctx_cfg.get_workdir(),
+            ctx_cfg.get_block_root(),
             ctx_cfg.get_rlimits(),
             ctx_cfg.get_env(),
         )),
