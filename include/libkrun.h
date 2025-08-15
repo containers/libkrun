@@ -372,6 +372,36 @@ int32_t krun_add_net_unixgram(uint32_t ctx_id,
                               uint32_t flags);
 
 /**
+ * Adds an independent virtio-net device with the tap backend.
+ * Call to this function disables TSI backend.
+
+ * The "krun_add_net_*" functions can be called multiple times for
+ * adding multiple virtio-net devices. In the guest the interfaces
+ * will appear in the same order as they are added (that is, the
+ * first added interface will be "eth0", the second "eth1"...)
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "c_tap_name"  - a null-terminated string representing the tap
+ *                  device name.
+ *  "c_mac"       - MAC address as an array of 6 uint8_t entries.
+ *  "features"    - virtio-net features for the network interface.
+ *  "flags"       - generic flags for the network interface.
+ *
+ * Notes:
+ * If no network devices are added, networking uses the TSI backend.
+ * This function should be called before krun_set_port_map.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_net_tap(uint32_t ctx_id,
+                         char *c_tap_name,
+                         uint8_t *const c_mac,
+                         uint32_t features,
+                         uint32_t flags);
+
+/**
  * DEPRECATED. Use krun_add_net_unixstream instead.
  *
  * Configures the networking to use passt.
