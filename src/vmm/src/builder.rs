@@ -555,6 +555,10 @@ pub fn build_microvm(
         kernel_cmdline.insert_str(DEFAULT_KERNEL_CMDLINE).unwrap();
     }
 
+    if let Some(cmdline) = &vm_resources.boot_config.kernel_cmdline_krun_env {
+        kernel_cmdline.insert_str(cmdline.as_str()).unwrap();
+    }
+
     #[cfg(not(feature = "tee"))]
     #[allow(unused_mut)]
     let mut vm = setup_vm(&guest_memory, vm_resources.nested_enabled)?;
