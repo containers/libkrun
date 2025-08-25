@@ -2120,10 +2120,9 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     }
 
     let boot_source = BootSourceConfig {
-        kernel_cmdline_prolog: Some(format!(
-            "{} init={} {} {} {} {} {}",
-            DEFAULT_KERNEL_CMDLINE,
-            INIT_PATH,
+        kernel_cmdline_prolog: Some(format!("{} init={}", DEFAULT_KERNEL_CMDLINE, INIT_PATH)),
+        kernel_cmdline_krun_env: Some(format!(
+            " {} {} {} {} {}",
             ctx_cfg.get_exec_path(),
             ctx_cfg.get_workdir(),
             ctx_cfg.get_block_root(),

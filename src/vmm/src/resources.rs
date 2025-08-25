@@ -334,6 +334,7 @@ mod tests {
     fn default_boot_cfg() -> BootSourceConfig {
         BootSourceConfig {
             kernel_cmdline_prolog: None,
+            kernel_cmdline_krun_env: None,
             kernel_cmdline_epilog: None,
         }
     }
