@@ -14,11 +14,15 @@ use std::ops::Range;
 
 use std::os::unix::io::RawFd;
 
+#[cfg(target_arch = "x86_64")]
+use std::env;
 use std::result;
 use std::sync::atomic::{fence, Ordering};
 #[cfg(not(test))]
 use std::sync::Barrier;
 use std::thread;
+#[cfg(target_arch = "x86_64")]
+use std::time::Duration;
 
 use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 
@@ -914,6 +918,8 @@ pub struct Vcpu {
     cpuid: CpuId,
     #[cfg(target_arch = "x86_64")]
     msr_list: MsrList,
+    #[cfg(target_arch = "x86_64")]
+    kernel_enomem_workaround: bool,
 
     #[cfg(target_arch = "aarch64")]
     mpidr: u64,
@@ -1038,6 +1044,13 @@ impl Vcpu {
         let (event_sender, event_receiver) = unbounded();
         let (response_sender, response_receiver) = unbounded();
 
+        let kernel_enomem_workaround = if env::var_os("KRUN_ENOMEM_WORKAROUND").is_some() {
+            debug!("Enabling ENOMEM workaround");
+            true
+        } else {
+            false
+        };
+
         // Initially the cpuid per vCPU is the one supported by this VM.
         Ok(Vcpu {
             fd: kvm_vcpu,
@@ -1047,6 +1060,7 @@ impl Vcpu {
             io_bus,
             cpuid,
             msr_list,
+            kernel_enomem_workaround,
             event_receiver,
             event_sender: Some(event_sender),
             response_receiver: Some(response_receiver),
@@ -1391,6 +1405,16 @@ impl Vcpu {
     ///
     /// Returns error or enum specifying whether emulation was handled or interrupted.
     fn run_emulation(&mut self) -> Result<VcpuEmulation> {
+        // This is a workaround for a kernel bug in the Linux
+        // kernel (6.12 and 6.13).
+        // https://github.com/containers/libkrun/issues/314#issuecomment-2818154193
+        #[cfg(target_arch = "x86_64")]
+        {
+            if self.kernel_enomem_workaround {
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+
         match self.fd.run() {
             Ok(run) => match run {
                 #[cfg(feature = "tee")]
