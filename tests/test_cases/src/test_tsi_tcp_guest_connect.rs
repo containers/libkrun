@@ -30,6 +30,7 @@ mod host {
             let listener = self.tcp_tester.create_server_socket();
             thread::spawn(move || self.tcp_tester.run_server(listener));
             unsafe {
+                krun_call!(krun_set_log_level(KRUN_LOG_LEVEL_WARN))?;
                 let ctx = krun_call_u32!(krun_create_ctx())?;
                 krun_call!(krun_set_vm_config(ctx, 1, 512))?;
                 setup_fs_and_enter(ctx, test_setup)?;
