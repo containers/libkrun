@@ -95,4 +95,4 @@ jobs:
         run: curl -L -o /tmp/libkrunfw-4.9.0-x86_64.tgz https://github.com/containers/libkrunfw/releases/download/v4.9.0/libkrunfw-4.9.0-x86_64.tgz && mkdir tmp && tar xf /tmp/libkrunfw-4.9.0-x86_64.tgz -C tmp && sudo mv tmp/lib64/* /lib/x86_64-linux-gnu
 
       - name: Integration tests
-        run: KRUN_ENOMEM_WORKAROUND=1 KRUN_NO_UNSHARE=1 make test
+        run: RUST_LOG=trace KRUN_ENOMEM_WORKAROUND=1 KRUN_NO_UNSHARE=1 make test
