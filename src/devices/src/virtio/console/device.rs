@@ -47,7 +47,12 @@ pub(crate) fn get_win_size() -> (u16, u16) {
     let ret = unsafe { tiocgwinsz(0, &mut ws) };
 
     if let Err(err) = ret {
-        error!("Couldn't get terminal dimensions: {err}");
+        match err {
+            // If the port isn't a TTY, this is expected to fail. Avoid logging
+            // an error in that case.
+            nix::errno::Errno::ENOTTY => {}
+            _ => error!("Couldn't get terminal dimensions: {err}"),
+        }
         (0, 0)
     } else {
         (ws.cols, ws.rows)
