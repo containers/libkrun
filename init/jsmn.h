@@ -191,9 +191,8 @@ found:
 /**
  * Fills next token with JSON string.
  */
-static int jsmn_parse_string(jsmn_parser *parser, const char *js,
-                             const size_t len, jsmntok_t *tokens,
-                             const size_t num_tokens)
+static int jsmn_parse_string(jsmn_parser *parser, char *js, const size_t len,
+                             jsmntok_t *tokens, const size_t num_tokens)
 {
     jsmntok_t *token;
 
@@ -239,6 +238,9 @@ static int jsmn_parse_string(jsmn_parser *parser, const char *js,
                 break;
             /* Allows escaped symbol \uXXXX */
             case 'u':
+                char unicode[5];
+                long ascii;
+
                 parser->pos++;
                 for (i = 0;
                      i < 4 && parser->pos < len && js[parser->pos] != '\0';
@@ -253,9 +255,20 @@ static int jsmn_parse_string(jsmn_parser *parser, const char *js,
                         parser->pos = start;
                         return JSMN_ERROR_INVAL;
                     }
+                    unicode[i] = js[parser->pos];
                     parser->pos++;
                 }
+
+                unicode[4] = '\0';
+                ascii = strtol(&unicode[0], NULL, 16);
+                if (ascii < 0 || ascii > 127) {
+                    /* This unicode char doesn't translate directly to ASCII */
+                    parser->pos = start;
+                    return JSMN_ERROR_INVAL;
+                }
+
                 parser->pos--;
+                js[parser->pos] = (char)ascii;
                 break;
             /* Unexpected symbol */
             default:
@@ -366,7 +379,7 @@ JSMN_API int jsmn_parse(jsmn_parser *parser, const char *js, const size_t len,
 #endif
             break;
         case '\"':
-            r = jsmn_parse_string(parser, js, len, tokens, num_tokens);
+            r = jsmn_parse_string(parser, (char *)js, len, tokens, num_tokens);
             if (r < 0) {
                 return r;
             }
