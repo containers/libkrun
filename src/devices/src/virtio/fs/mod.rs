@@ -61,6 +61,8 @@ pub enum FsError {
     /// A C string parameter is invalid.
     InvalidCString(FromBytesWithNulError),
     InvalidCString2(FromVecWithNulError),
+    /// Given string is not a valid filename
+    InvalidFilename,
     /// The `len` field of the header is too small.
     InvalidHeaderLength,
     /// The `size` field of the `SetxattrIn` message does not match the length
