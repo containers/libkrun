@@ -19,35 +19,7 @@ pub struct Unixgram {
 impl Unixgram {
     /// Create the backend with a pre-established connection to the userspace network proxy.
     pub fn new(fd: RawFd) -> Self {
-        Self { fd }
-    }
-
-    /// Create the backend opening a connection to the userspace network proxy.
-    pub fn open(path: PathBuf, send_vfkit_magic: bool) -> Result<Self, ConnectError> {
-        let fd = socket(
-            AddressFamily::Unix,
-            SockType::Datagram,
-            SockFlag::empty(),
-            None,
-        )
-        .map_err(ConnectError::CreateSocket)?;
-        let peer_addr = UnixAddr::new(&path).map_err(ConnectError::InvalidAddress)?;
-        let local_addr = UnixAddr::new(&PathBuf::from(format!("{}-krun.sock", path.display())))
-            .map_err(ConnectError::InvalidAddress)?;
-        if let Some(path) = local_addr.path() {
-            _ = unlink(path);
-        }
-        bind(fd, &local_addr).map_err(ConnectError::Binding)?;
-
-        // Connect so we don't need to use the peer address again. This also
-        // allows the server to remove the socket after the connection.
-        connect(fd, &peer_addr).map_err(ConnectError::Binding)?;
-
-        if send_vfkit_magic {
-            send(fd, &VFKIT_MAGIC, MsgFlags::empty()).map_err(ConnectError::SendingMagic)?;
-        }
-
-        // macOS forces us to do this here instead of just using SockFlag::SOCK_NONBLOCK above.
+        // Ensure the socket is in non-blocking mode.
         match fcntl(fd, FcntlArg::F_GETFL) {
             Ok(flags) => match OFlag::from_bits(flags) {
                 Some(flags) => {
@@ -73,6 +45,35 @@ impl Unixgram {
                     std::mem::size_of_val(&option_value) as libc::socklen_t,
                 )
             };
+        }
+
+        Self { fd }
+    }
+
+    /// Create the backend opening a connection to the userspace network proxy.
+    pub fn open(path: PathBuf, send_vfkit_magic: bool) -> Result<Self, ConnectError> {
+        // We cannot create a non-blocking socket on macOS here. This is done later in new().
+        let fd = socket(
+            AddressFamily::Unix,
+            SockType::Datagram,
+            SockFlag::empty(),
+            None,
+        )
+        .map_err(ConnectError::CreateSocket)?;
+        let peer_addr = UnixAddr::new(&path).map_err(ConnectError::InvalidAddress)?;
+        let local_addr = UnixAddr::new(&PathBuf::from(format!("{}-krun.sock", path.display())))
+            .map_err(ConnectError::InvalidAddress)?;
+        if let Some(path) = local_addr.path() {
+            _ = unlink(path);
+        }
+        bind(fd, &local_addr).map_err(ConnectError::Binding)?;
+
+        // Connect so we don't need to use the peer address again. This also
+        // allows the server to remove the socket after the connection.
+        connect(fd, &peer_addr).map_err(ConnectError::Binding)?;
+
+        if send_vfkit_magic {
+            send(fd, &VFKIT_MAGIC, MsgFlags::empty()).map_err(ConnectError::SendingMagic)?;
         }
 
         if let Err(e) = setsockopt(fd, sockopt::SndBuf, &(7 * 1024 * 1024)) {
