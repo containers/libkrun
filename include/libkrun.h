@@ -901,6 +901,18 @@ int32_t krun_nitro_set_start_flags(uint32_t ctx_id, uint64_t start_flags);
 int32_t krun_set_root_disk_remount(uint32_t ctx_id, const char *device, const char *fstype, const char *options);
 
 /**
+ * Configure the pidfile path.
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *  "path" - path to the pidfile.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_pidfile(uint32_t ctx_id, const char *path);
+
+/**
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
  * stdin/stdout to manage them on behalf of the process running inside the isolated environment,
  * simulating that the latter has direct control of the terminal.

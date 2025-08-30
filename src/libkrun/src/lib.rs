@@ -166,6 +166,7 @@ struct ContextConfig {
     nitro_image_path: Option<PathBuf>,
     #[cfg(feature = "nitro")]
     nitro_start_flags: StartFlags,
+    pidfile: Option<PathBuf>,
 }
 
 impl ContextConfig {
@@ -2220,6 +2221,14 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         }
     };
 
+    if let Some(pidfile) = &ctx_cfg.pidfile {
+        let pid = std::process::id();
+        if let Err(e) = std::fs::write(pidfile, pid.to_string().as_bytes()) {
+            error!("Writing PID to {:?}: {e:?}", pidfile.to_str());
+            return -libc::EINVAL;
+        }
+    }
+
     #[cfg(target_os = "macos")]
     if ctx_cfg.gpu_virgl_flags.is_some() {
         vmm::worker::start_worker_thread(_vmm.clone(), _receiver).unwrap();
@@ -2258,11 +2267,40 @@ fn krun_start_enter_nitro(ctx_id: u32) -> i32 {
 
     // Return enclave CID if successfully ran.
     match enclave.run() {
-        Ok(cid) => cid.try_into().unwrap(), // Safe to unwrap.
+        Ok(cid) => {
+            if let Some(pidfile) = &ctx_cfg.pidfile {
+                let pid = std::process::id();
+                if let Err(e) = std::fs::write(pidfile, pid.to_string().as_bytes()) {
+                    error!("Writing PID to {:?}: {e:?}", pidfile.to_str());
+                    return -libc::EINVAL;
+                }
+            }
+
+            cid.try_into().unwrap()
+        } // Safe to unwrap.
         Err(e) => {
             error!("Error running nitro enclave: {e}");
 
             -libc::EINVAL
         }
     }
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe fn krun_set_pidfile(ctx_id: u32, c_path: *const c_char) -> i32 {
+    let path = match CStr::from_ptr(c_path).to_str() {
+        Ok(path) => Some(PathBuf::from(path)),
+        Err(_) => return -libc::EINVAL,
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.pidfile = path;
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
 }
