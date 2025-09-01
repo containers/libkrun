@@ -1,6 +1,6 @@
 [package]
 name = "libkrun"
-version = "1.15.0"
+version = "1.15.1"
 authors = ["The libkrun Authors"]
 edition = "2021"
 build = "build.rs"
