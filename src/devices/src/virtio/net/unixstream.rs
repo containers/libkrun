@@ -3,7 +3,7 @@ use nix::sys::socket::{
     SockFlag, SockType, UnixAddr,
 };
 use std::{
-    os::fd::{AsRawFd, RawFd},
+    os::fd::{AsRawFd, OwnedFd, RawFd},
     path::PathBuf,
 };
 
@@ -17,7 +17,7 @@ use super::write_virtio_net_hdr;
 const FRAME_HEADER_LEN: usize = 4;
 
 pub struct Unixstream {
-    fd: RawFd,
+    fd: OwnedFd,
     // 0 when a frame length has not been read
     expecting_frame_length: u32,
     // 0 if last write is fully complete, otherwise the length that was written
@@ -26,15 +26,15 @@ pub struct Unixstream {
 
 impl Unixstream {
     /// Create the backend with a pre-established connection to the userspace network proxy.
-    pub fn new(fd: RawFd) -> Self {
-        if let Err(e) = setsockopt(fd, sockopt::SndBuf, &(16 * 1024 * 1024)) {
+    pub fn new(fd: OwnedFd) -> Self {
+        if let Err(e) = setsockopt(&fd, sockopt::SndBuf, &(16 * 1024 * 1024)) {
             log::warn!("Failed to increase SO_SNDBUF (performance may be decreased): {e}");
         }
 
         log::debug!(
-            "network proxy socket (fd {fd}) buffer sizes: SndBuf={:?} RcvBuf={:?}",
-            getsockopt(fd, sockopt::SndBuf),
-            getsockopt(fd, sockopt::RcvBuf)
+            "network proxy socket (fd {fd:?}) buffer sizes: SndBuf={:?} RcvBuf={:?}",
+            getsockopt(&fd, sockopt::SndBuf),
+            getsockopt(&fd, sockopt::RcvBuf)
         );
 
         Self {
@@ -54,16 +54,16 @@ impl Unixstream {
         )
         .map_err(ConnectError::CreateSocket)?;
         let peer_addr = UnixAddr::new(&path).map_err(ConnectError::InvalidAddress)?;
-        connect(fd, &peer_addr).map_err(ConnectError::Binding)?;
+        connect(fd.as_raw_fd(), &peer_addr).map_err(ConnectError::Binding)?;
 
-        if let Err(e) = setsockopt(fd, sockopt::SndBuf, &(16 * 1024 * 1024)) {
+        if let Err(e) = setsockopt(&fd, sockopt::SndBuf, &(16 * 1024 * 1024)) {
             log::warn!("Failed to increase SO_SNDBUF (performance may be decreased): {e}");
         }
 
         log::debug!(
-            "network socket (fd {fd}) buffer sizes: SndBuf={:?} RcvBuf={:?}",
-            getsockopt(fd, sockopt::SndBuf),
-            getsockopt(fd, sockopt::RcvBuf)
+            "network socket (fd {fd:?}) buffer sizes: SndBuf={:?} RcvBuf={:?}",
+            getsockopt(&fd, sockopt::SndBuf),
+            getsockopt(&fd, sockopt::RcvBuf)
         );
 
         Ok(Self {
@@ -82,7 +82,7 @@ impl Unixstream {
         let flags = MsgFlags::MSG_DONTWAIT;
 
         if !block_until_has_data {
-            match recv(self.fd, buf, flags) {
+            match recv(self.fd.as_raw_fd(), buf, flags) {
                 Ok(size) => bytes_read += size,
                 #[allow(unreachable_patterns)]
                 Err(nix::Error::EAGAIN | nix::Error::EWOULDBLOCK) => {
@@ -98,7 +98,7 @@ impl Unixstream {
         let flags = MsgFlags::MSG_WAITALL;
 
         while bytes_read < buf.len() {
-            match recv(self.fd, &mut buf[bytes_read..], flags) {
+            match recv(self.fd.as_raw_fd(), &mut buf[bytes_read..], flags) {
                 #[allow(unreachable_patterns)]
                 Err(nix::Error::EAGAIN | nix::Error::EWOULDBLOCK) => {
                     log::warn!("read_loop: unexpected EAGAIN/EWOULDBLOCK on blocking socket");
@@ -124,7 +124,7 @@ impl Unixstream {
         let flags = MsgFlags::MSG_DONTWAIT;
 
         while bytes_send < buf.len() {
-            match send(self.fd, &buf[bytes_send..], flags) {
+            match send(self.fd.as_raw_fd(), &buf[bytes_send..], flags) {
                 Ok(size) => bytes_send += size,
                 #[allow(unreachable_patterns)]
                 Err(nix::Error::EAGAIN | nix::Error::EWOULDBLOCK) => {
