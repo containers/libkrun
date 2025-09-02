@@ -5,11 +5,11 @@ use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
     Device,
 };
-use nix::poll::{poll, PollFd, PollFlags};
+use nix::poll::{poll, PollFd, PollFlags, PollTimeout as NixPollTimeout};
 use std::{
     fs::File,
     io::{Read, Write},
-    os::fd::AsRawFd,
+    os::fd::AsFd,
 };
 use vsock::{VsockAddr, VsockListener};
 
@@ -67,8 +67,8 @@ impl NitroEnclave {
 }
 
 fn enclave_check(listener: VsockListener, poll_timeout_ms: libc::c_int, cid: u32) -> Result<()> {
-    let mut poll_fds = [PollFd::new(listener.as_raw_fd(), PollFlags::POLLIN)];
-    let result = poll(&mut poll_fds, poll_timeout_ms);
+    let mut poll_fds = [PollFd::new(listener.as_fd(), PollFlags::POLLIN)];
+    let result = poll(&mut poll_fds, NixPollTimeout::from(poll_timeout_ms as u16));
     if result == Ok(0) {
         return Err(NitroError::PollNoSelectedEvents);
     } else if result != Ok(1) {
