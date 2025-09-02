@@ -14,7 +14,7 @@ use crate::virtio::vsock::defs;
 use crate::virtio::vsock::unix::{UnixAcceptorProxy, UnixProxy};
 use crate::virtio::InterruptTransport;
 use crossbeam_channel::Sender;
-use rand::{rngs::ThreadRng, thread_rng, Rng};
+use rand::{rng, rngs::ThreadRng, Rng};
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 use vm_memory::GuestMemoryMmap;
 
@@ -107,7 +107,7 @@ impl MuxerThread {
         let mut should_signal = update.signal_queue;
 
         if let Some((peer_port, accept_fd, proxy_type)) = update.new_proxy {
-            let local_port: u32 = thread_rng.gen_range(1024..u32::MAX);
+            let local_port: u32 = thread_rng.random_range(1024..u32::MAX);
             let new_id: u64 = ((peer_port as u64) << 32) | (local_port as u64);
             let new_proxy: Box<dyn Proxy> = match proxy_type {
                 NewProxyType::Tcp => Box::new(TcpProxy::new_reverse(
@@ -172,7 +172,7 @@ impl MuxerThread {
     }
 
     fn work(self) {
-        let mut thread_rng = thread_rng();
+        let mut thread_rng = rng();
         self.create_lisening_ipc_sockets();
         loop {
             let mut epoll_events = vec![EpollEvent::new(EventSet::empty(), 0); 32];
