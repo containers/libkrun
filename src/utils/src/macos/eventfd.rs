@@ -6,10 +6,13 @@
 
 //! Structure and wrapper functions emulating eventfd using a pipe.
 
+use std::os::fd::OwnedFd;
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::{io, mem, result};
+use std::{io, result};
 
-use libc::{c_void, dup, fcntl, pipe, read, write, F_GETFL, F_SETFL, O_NONBLOCK};
+use nix::errno::Errno;
+use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use nix::unistd::{dup, pipe, read, write};
 
 pub const EFD_NONBLOCK: i32 = 1;
 
@@ -17,104 +20,61 @@ pub const EFD_NONBLOCK: i32 = 1;
 //       return the correct value from read().
 pub const EFD_SEMAPHORE: i32 = 2;
 
-fn set_nonblock(fd: RawFd) -> result::Result<(), io::Error> {
-    let flags = unsafe { fcntl(fd, F_GETFL) };
-    if flags < 0 {
-        return Err(io::Error::last_os_error());
-    }
-
-    let ret = unsafe { fcntl(fd, F_SETFL, flags | O_NONBLOCK) };
-    if ret < 0 {
-        return Err(io::Error::last_os_error());
-    }
+fn set_nonblock(fd: &OwnedFd) -> result::Result<(), io::Error> {
+    let flags = fcntl(fd, FcntlArg::F_GETFL)?;
+    let flags = OFlag::from_bits(flags).ok_or(io::ErrorKind::InvalidData)?;
+    fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK))?;
 
     Ok(())
 }
 
 #[derive(Debug)]
 pub struct EventFd {
-    read_fd: RawFd,
-    write_fd: RawFd,
+    read_fd: OwnedFd,
+    write_fd: OwnedFd,
 }
 
 impl EventFd {
     pub fn new(flag: i32) -> result::Result<EventFd, io::Error> {
-        let mut fds: [RawFd; 2] = [0, 0];
-        let ret = unsafe { pipe(&mut fds[0]) };
-        if ret < 0 {
-            return Err(io::Error::last_os_error());
-        }
+        let (read_fd, write_fd) = pipe()?;
 
         if flag == EFD_NONBLOCK {
-            set_nonblock(fds[0])?;
-            set_nonblock(fds[1])?;
-        }
-
-        Ok(EventFd {
-            read_fd: fds[0],
-            write_fd: fds[1],
-        })
-    }
-
-    pub fn write(&self, v: u64) -> result::Result<(), io::Error> {
-        let ret = unsafe {
-            write(
-                self.write_fd,
-                &v as *const u64 as *const c_void,
-                mem::size_of::<u64>(),
-            )
-        };
-        if ret <= 0 {
-            let error = io::Error::last_os_error();
-            match error.kind() {
-                // We may get EAGAIN if the eventfd is overstimulated, but we can safely
-                // ignore it as we can be sure the subscriber will get notified.
-                io::ErrorKind::WouldBlock => Ok(()),
-                _ => Err(error),
-            }
-        } else {
-            Ok(())
-        }
-    }
-
-    pub fn read(&self) -> result::Result<u64, io::Error> {
-        let mut buf: u64 = 0;
-        let ret = unsafe {
-            read(
-                self.read_fd,
-                &mut buf as *mut u64 as *mut c_void,
-                mem::size_of::<u64>(),
-            )
-        };
-        if ret < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(buf)
-        }
-    }
-
-    pub fn try_clone(&self) -> result::Result<EventFd, io::Error> {
-        let read_fd = unsafe { dup(self.read_fd) };
-        if read_fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        let write_fd = unsafe { dup(self.write_fd) };
-        if write_fd < 0 {
-            return Err(io::Error::last_os_error());
+            set_nonblock(&read_fd)?;
+            set_nonblock(&write_fd)?;
         }
 
         Ok(EventFd { read_fd, write_fd })
     }
 
+    pub fn write(&self, v: u64) -> result::Result<(), io::Error> {
+        match write(&self.write_fd, &v.to_le_bytes()) {
+            // We may get EAGAIN if the eventfd is overstimulated, but we can safely
+            // ignore it as we can be sure the subscriber will get notified.
+            Ok(_) | Err(Errno::EAGAIN) => Ok(()),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    pub fn read(&self) -> result::Result<u64, io::Error> {
+        let mut buf: [u8; 8] = [0; 8];
+        read(&self.read_fd, &mut buf)?;
+        Ok(u64::from_le_bytes(buf))
+    }
+
+    pub fn try_clone(&self) -> result::Result<EventFd, io::Error> {
+        let read_fd = dup(&self.read_fd)?;
+        let write_fd = dup(&self.write_fd)?;
+        Ok(EventFd { read_fd, write_fd })
+    }
+
     pub fn get_write_fd(&self) -> RawFd {
-        self.write_fd
+        self.write_fd.as_raw_fd()
     }
 }
 
 impl AsRawFd for EventFd {
     fn as_raw_fd(&self) -> RawFd {
-        self.read_fd
+        self.read_fd.as_raw_fd()
     }
 }
 
