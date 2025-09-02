@@ -4,7 +4,7 @@ use nix::sys::socket::{
     SockFlag, SockType, UnixAddr,
 };
 use nix::unistd::unlink;
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::path::PathBuf;
 
 use super::backend::{ConnectError, NetBackend, ReadError, WriteError};
@@ -13,23 +13,23 @@ use super::write_virtio_net_hdr;
 const VFKIT_MAGIC: [u8; 4] = *b"VFKT";
 
 pub struct Unixgram {
-    fd: RawFd,
+    fd: OwnedFd,
 }
 
 impl Unixgram {
     /// Create the backend with a pre-established connection to the userspace network proxy.
-    pub fn new(fd: RawFd) -> Self {
+    pub fn new(fd: OwnedFd) -> Self {
         // Ensure the socket is in non-blocking mode.
-        match fcntl(fd, FcntlArg::F_GETFL) {
+        match fcntl(&fd, FcntlArg::F_GETFL) {
             Ok(flags) => match OFlag::from_bits(flags) {
                 Some(flags) => {
-                    if let Err(e) = fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)) {
-                        warn!("error switching to non-blocking: id={fd}, err={e}");
+                    if let Err(e) = fcntl(&fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)) {
+                        warn!("error switching to non-blocking: id={fd:?}, err={e}");
                     }
                 }
-                None => error!("invalid fd flags id={fd}"),
+                None => error!("invalid fd flags id={fd:?}"),
             },
-            Err(e) => error!("couldn't obtain fd flags id={fd}, err={e}"),
+            Err(e) => error!("couldn't obtain fd flags id={fd:?}, err={e}"),
         };
 
         #[cfg(target_os = "macos")]
@@ -38,7 +38,7 @@ impl Unixgram {
             let option_value: libc::c_int = 1;
             unsafe {
                 libc::setsockopt(
-                    fd,
+                    fd.as_raw_fd(),
                     libc::SOL_SOCKET,
                     libc::SO_NOSIGPIPE,
                     &option_value as *const _ as *const libc::c_void,
@@ -66,27 +66,28 @@ impl Unixgram {
         if let Some(path) = local_addr.path() {
             _ = unlink(path);
         }
-        bind(fd, &local_addr).map_err(ConnectError::Binding)?;
+        bind(fd.as_raw_fd(), &local_addr).map_err(ConnectError::Binding)?;
 
         // Connect so we don't need to use the peer address again. This also
         // allows the server to remove the socket after the connection.
-        connect(fd, &peer_addr).map_err(ConnectError::Binding)?;
+        connect(fd.as_raw_fd(), &peer_addr).map_err(ConnectError::Binding)?;
 
         if send_vfkit_magic {
-            send(fd, &VFKIT_MAGIC, MsgFlags::empty()).map_err(ConnectError::SendingMagic)?;
+            send(fd.as_raw_fd(), &VFKIT_MAGIC, MsgFlags::empty())
+                .map_err(ConnectError::SendingMagic)?;
         }
 
-        if let Err(e) = setsockopt(fd, sockopt::SndBuf, &(7 * 1024 * 1024)) {
+        if let Err(e) = setsockopt(&fd, sockopt::SndBuf, &(7 * 1024 * 1024)) {
             log::warn!("Failed to increase SO_SNDBUF (performance may be decreased): {e}");
         }
-        if let Err(e) = setsockopt(fd, sockopt::RcvBuf, &(7 * 1024 * 1024)) {
+        if let Err(e) = setsockopt(&fd, sockopt::RcvBuf, &(7 * 1024 * 1024)) {
             log::warn!("Failed to increase SO_SNDBUF (performance may be decreased): {e}");
         }
 
         log::debug!(
-            "network proxy socket (fd {fd}) buffer sizes: SndBuf={:?} RcvBuf={:?}",
-            getsockopt(fd, sockopt::SndBuf),
-            getsockopt(fd, sockopt::RcvBuf)
+            "network proxy socket (fd {fd:?}) buffer sizes: SndBuf={:?} RcvBuf={:?}",
+            getsockopt(&fd, sockopt::SndBuf),
+            getsockopt(&fd, sockopt::RcvBuf)
         );
 
         Ok(Self::new(fd))
@@ -97,7 +98,7 @@ impl NetBackend for Unixgram {
     /// Try to read a frame the proxy. If no bytes are available reports ReadError::NothingRead
     fn read_frame(&mut self, buf: &mut [u8]) -> Result<usize, ReadError> {
         let hdr_len = write_virtio_net_hdr(buf);
-        let frame_length = match recv(self.fd, &mut buf[hdr_len..], MsgFlags::empty()) {
+        let frame_length = match recv(self.fd.as_raw_fd(), &mut buf[hdr_len..], MsgFlags::empty()) {
             Ok(f) => f,
             #[allow(unreachable_patterns)]
             Err(nix::Error::EAGAIN | nix::Error::EWOULDBLOCK) => {
@@ -113,8 +114,8 @@ impl NetBackend for Unixgram {
 
     /// Try to write a frame to the proxy.
     fn write_frame(&mut self, hdr_len: usize, buf: &mut [u8]) -> Result<(), WriteError> {
-        let ret =
-            send(self.fd, &buf[hdr_len..], MsgFlags::empty()).map_err(WriteError::Internal)?;
+        let ret = send(self.fd.as_raw_fd(), &buf[hdr_len..], MsgFlags::empty())
+            .map_err(WriteError::Internal)?;
         debug!(
             "Written frame size={}, written={}",
             buf.len() - hdr_len,
