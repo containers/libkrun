@@ -981,7 +981,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "nitro-enclaves",
- "nix 0.26.4",
+ "nix 0.30.1",
  "vsock",
 ]
 
