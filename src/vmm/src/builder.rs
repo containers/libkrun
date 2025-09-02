@@ -14,6 +14,7 @@ use std::fs::File;
 use std::io::{self, Read};
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
+use std::os::fd::BorrowedFd;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
@@ -1784,9 +1785,12 @@ fn attach_console_devices(
             output: Some(port_io::output_file(file).unwrap()),
         }]
     } else {
-        let stdin_is_terminal = isatty(STDIN_FILENO).unwrap_or(false);
-        let stdout_is_terminal = isatty(STDOUT_FILENO).unwrap_or(false);
-        let stderr_is_terminal = isatty(STDERR_FILENO).unwrap_or(false);
+        let stdin_is_terminal =
+            isatty(unsafe { BorrowedFd::borrow_raw(STDIN_FILENO) }).unwrap_or(false);
+        let stdout_is_terminal =
+            isatty(unsafe { BorrowedFd::borrow_raw(STDOUT_FILENO) }).unwrap_or(false);
+        let stderr_is_terminal =
+            isatty(unsafe { BorrowedFd::borrow_raw(STDERR_FILENO) }).unwrap_or(false);
 
         if let Err(e) = term_set_raw_mode(!stdin_is_terminal) {
             log::error!("Failed to set terminal to raw mode: {e}")
