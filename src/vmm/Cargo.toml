@@ -21,6 +21,7 @@ flate2 = "1.0.35"
 libc = ">=0.2.39"
 linux-loader = { version = "0.13.0", features = ["bzimage", "elf", "pe"] }
 log = "0.4.0"
+nix = { version = "0.30.1", features = ["fs", "term"] }
 vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
 vmm-sys-util = ">=0.14"
 krun_display = { path = "../krun_display", optional = true, features = ["bindgen_clang_runtime"] }
@@ -37,7 +38,6 @@ kbs-types = { version = "0.11.0", features = ["tee-snp"], optional = true }
 serde = { version = "1.0.125", optional = true }
 serde_json = { version = "1.0.64", optional = true }
 sev = { version = "6.0.0", features = ["openssl"], optional = true }
-nix = "0.24.1"
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 bzip2 = "0.5"

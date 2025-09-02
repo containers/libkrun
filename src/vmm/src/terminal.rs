@@ -1,7 +1,7 @@
 use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 use nix::sys::termios::{tcgetattr, tcsetattr, LocalFlags, SetArg};
 use nix::unistd::isatty;
-use std::os::fd::RawFd;
+use std::os::fd::BorrowedFd;
 
 pub fn term_set_raw_mode(handle_signals_by_terminal: bool) -> Result<(), nix::Error> {
     if let Some(fd) = get_connected_term_fd() {
@@ -20,7 +20,7 @@ pub fn term_set_canonical_mode() -> Result<(), nix::Error> {
 }
 
 pub fn term_fd_set_raw_mode(
-    term: RawFd,
+    term: BorrowedFd,
     handle_signals_by_terminal: bool,
 ) -> Result<(), nix::Error> {
     let mut termios = tcgetattr(term)?;
@@ -35,20 +35,28 @@ pub fn term_fd_set_raw_mode(
     Ok(())
 }
 
-pub fn term_fd_set_canonical_mode(term: RawFd) -> Result<(), nix::Error> {
+pub fn term_fd_set_canonical_mode(term: BorrowedFd) -> Result<(), nix::Error> {
     let mut termios = tcgetattr(term)?;
     termios.local_flags |= LocalFlags::ECHO | LocalFlags::ICANON | LocalFlags::ISIG;
     tcsetattr(term, SetArg::TCSANOW, &termios)?;
     Ok(())
 }
 
-pub fn get_connected_term_fd() -> Option<RawFd> {
-    if isatty(STDIN_FILENO).unwrap_or(false) {
-        Some(STDIN_FILENO)
-    } else if isatty(STDOUT_FILENO).unwrap_or(false) {
-        Some(STDOUT_FILENO)
-    } else if isatty(STDERR_FILENO).unwrap_or(false) {
-        Some(STDERR_FILENO)
+pub fn get_connected_term_fd() -> Option<BorrowedFd<'static>> {
+    let (stdin, stdout, stderr) = unsafe {
+        (
+            BorrowedFd::borrow_raw(STDIN_FILENO),
+            BorrowedFd::borrow_raw(STDOUT_FILENO),
+            BorrowedFd::borrow_raw(STDERR_FILENO),
+        )
+    };
+
+    if isatty(stdin).unwrap_or(false) {
+        Some(stdin)
+    } else if isatty(stdout).unwrap_or(false) {
+        Some(stdout)
+    } else if isatty(stderr).unwrap_or(false) {
+        Some(stderr)
     } else {
         None
     }
