@@ -1,11 +1,11 @@
 use std::fs::File;
 use std::io::{self, ErrorKind};
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
 
 use libc::{fcntl, F_GETFL, F_SETFL, O_NONBLOCK, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 use log::Level;
 use nix::errno::Errno;
-use nix::poll::{poll, PollFd, PollFlags};
+use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use nix::unistd::dup;
 use utils::eventfd::EventFd;
 use utils::eventfd::EFD_NONBLOCK;
@@ -96,11 +96,13 @@ impl PortInput for PortInputFd {
 
     fn wait_until_readable(&self, stopfd: Option<&EventFd>) {
         let mut poll_fds = Vec::new();
-        poll_fds.push(PollFd::new(self.as_raw_fd(), PollFlags::POLLIN));
+        poll_fds.push(PollFd::new(self.0.as_fd(), PollFlags::POLLIN));
         if let Some(stopfd) = stopfd {
-            poll_fds.push(PollFd::new(stopfd.as_raw_fd(), PollFlags::POLLIN));
+            // SAFETY: we trust stopfd won't go away to avoid a dup call here.
+            let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stopfd.as_raw_fd()) };
+            poll_fds.push(PollFd::new(borrowed_fd, PollFlags::POLLIN));
         }
-        poll(&mut poll_fds, -1).expect("Failed to poll");
+        poll(&mut poll_fds, PollTimeout::NONE).expect("Failed to poll");
     }
 }
 
@@ -124,15 +126,16 @@ impl PortOutput for PortOutputFd {
     }
 
     fn wait_until_writable(&self) {
-        let mut poll_fds = [PollFd::new(self.as_raw_fd(), PollFlags::POLLOUT)];
-        poll(&mut poll_fds, -1).expect("Failed to poll");
+        let mut poll_fds = [PollFd::new(self.0.as_fd(), PollFlags::POLLOUT)];
+        poll(&mut poll_fds, PollTimeout::NONE).expect("Failed to poll");
     }
 }
 
 fn dup_raw_fd_into_owned(raw_fd: RawFd) -> Result<OwnedFd, nix::Error> {
-    let fd = dup(raw_fd)?;
-    // SAFETY: the fd is valid because dup succeeded
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    // SAFETY: if raw_fd is invalid the `dup` call below will fail
+    let borrowed_fd = unsafe { BorrowedFd::borrow_raw(raw_fd) };
+    let fd = dup(borrowed_fd)?;
+    Ok(fd)
 }
 
 fn make_non_blocking(as_rw_fd: &impl AsRawFd) -> Result<(), nix::Error> {
@@ -226,12 +229,16 @@ impl PortInput for PortInputSigInt {
 
     fn wait_until_readable(&self, stopfd: Option<&EventFd>) {
         let mut poll_fds = Vec::with_capacity(2);
-        poll_fds.push(PollFd::new(self.sigint_evt.as_raw_fd(), PollFlags::POLLIN));
+        // SAFETY: we trust sigint_evt won't go away to avoid a dup call here.
+        let sigint_bfd = unsafe { BorrowedFd::borrow_raw(self.sigint_evt.as_raw_fd()) };
+        poll_fds.push(PollFd::new(sigint_bfd, PollFlags::POLLIN));
         if let Some(stopfd) = stopfd {
-            poll_fds.push(PollFd::new(stopfd.as_raw_fd(), PollFlags::POLLIN));
+            // SAFETY: we trust stopfd won't go away to avoid a dup call here.
+            let stop_bfd = unsafe { BorrowedFd::borrow_raw(stopfd.as_raw_fd()) };
+            poll_fds.push(PollFd::new(stop_bfd, PollFlags::POLLIN));
         }
 
-        poll(&mut poll_fds, -1).expect("Failed to poll");
+        poll(&mut poll_fds, PollTimeout::NONE).expect("Failed to poll");
     }
 }
 
@@ -256,8 +263,10 @@ impl PortInput for PortInputEmpty {
 
     fn wait_until_readable(&self, stopfd: Option<&EventFd>) {
         if let Some(stopfd) = stopfd {
-            let mut poll_fds = [PollFd::new(stopfd.as_raw_fd(), PollFlags::POLLIN)];
-            poll(&mut poll_fds, -1).expect("Failed to poll");
+            // SAFETY: we trust stopfd won't go away to avoid a dup call here.
+            let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stopfd.as_raw_fd()) };
+            let mut poll_fds = [PollFd::new(borrowed_fd, PollFlags::POLLIN)];
+            poll(&mut poll_fds, PollTimeout::NONE).expect("Failed to poll");
         } else {
             std::thread::sleep(std::time::Duration::MAX);
         }

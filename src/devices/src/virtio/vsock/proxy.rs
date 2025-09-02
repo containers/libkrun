@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::os::fd::OwnedFd;
 use std::os::unix::io::{AsRawFd, RawFd};
 
 use super::muxer::MuxerRx;
@@ -53,7 +54,7 @@ pub struct ProxyUpdate {
     pub signal_queue: bool,
     pub remove_proxy: ProxyRemoval,
     pub polling: Option<(u64, RawFd, EventSet)>,
-    pub new_proxy: Option<(u32, RawFd, NewProxyType)>,
+    pub new_proxy: Option<(u32, OwnedFd, NewProxyType)>,
     pub push_accept: Option<(u64, u64)>,
     pub push_credit_req: Option<MuxerRx>,
 }

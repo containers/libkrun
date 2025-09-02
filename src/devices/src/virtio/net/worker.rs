@@ -10,7 +10,7 @@ use super::backend::{NetBackend, ReadError, WriteError};
 use super::device::{FrontendError, RxError, TxError, VirtioNetBackend};
 use super::vnet_hdr_len;
 
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::thread;
 use std::{cmp, result};
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
@@ -46,13 +46,19 @@ impl NetWorker {
     ) -> Result<Self, ConnectError> {
         let backend = match cfg_backend {
             VirtioNetBackend::UnixstreamFd(fd) => {
-                Box::new(Unixstream::new(fd)) as Box<dyn NetBackend + Send>
+                // SAFETY: we need to trust that the library user has configured
+                // the backend with a healthy file descriptor.
+                let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+                Box::new(Unixstream::new(owned_fd)) as Box<dyn NetBackend + Send>
             }
             VirtioNetBackend::UnixstreamPath(path) => {
                 Box::new(Unixstream::open(path)?) as Box<dyn NetBackend + Send>
             }
             VirtioNetBackend::UnixgramFd(fd) => {
-                Box::new(Unixgram::new(fd)) as Box<dyn NetBackend + Send>
+                // SAFETY: we need to trust that the library user has configured
+                // the backend with a healthy file descriptor.
+                let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+                Box::new(Unixgram::new(owned_fd)) as Box<dyn NetBackend + Send>
             }
             VirtioNetBackend::UnixgramPath(path, vfkit_magic) => {
                 Box::new(Unixgram::open(path, vfkit_magic)?) as Box<dyn NetBackend + Send>

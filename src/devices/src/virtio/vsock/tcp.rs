@@ -1,15 +1,16 @@
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::num::Wrapping;
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 
+use nix::errno::Errno;
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
     accept, bind, connect, getpeername, listen, recv, send, setsockopt, shutdown, socket, sockopt,
-    AddressFamily, MsgFlags, Shutdown, SockFlag, SockType, SockaddrIn,
+    AddressFamily, Backlog, MsgFlags, Shutdown, SockFlag, SockType, SockaddrIn,
 };
-use nix::unistd::close;
 
 #[cfg(target_os = "macos")]
 use super::super::linux_errno::linux_errno_raw;
@@ -35,7 +36,7 @@ pub struct TcpProxy {
     local_port: u32,
     peer_port: u32,
     control_port: u32,
-    fd: RawFd,
+    fd: OwnedFd,
     pub status: ProxyStatus,
     mem: GuestMemoryMmap,
     queue: Arc<Mutex<VirtQueue>>,
@@ -70,10 +71,10 @@ impl TcpProxy {
         .map_err(ProxyError::CreatingSocket)?;
 
         // macOS forces us to do this here instead of just using SockFlag::SOCK_NONBLOCK above.
-        match fcntl(fd, FcntlArg::F_GETFL) {
+        match fcntl(&fd, FcntlArg::F_GETFL) {
             Ok(flags) => match OFlag::from_bits(flags) {
                 Some(flags) => {
-                    if let Err(e) = fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)) {
+                    if let Err(e) = fcntl(&fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK)) {
                         warn!("error switching to non-blocking: id={id}, err={e}");
                     }
                 }
@@ -82,14 +83,14 @@ impl TcpProxy {
             Err(e) => error!("couldn't obtain fd flags id={id}, err={e}"),
         };
 
-        setsockopt(fd, sockopt::ReusePort, &true).map_err(ProxyError::SettingReusePort)?;
+        setsockopt(&fd, sockopt::ReusePort, &true).map_err(ProxyError::SettingReusePort)?;
         #[cfg(target_os = "macos")]
         {
             // nix doesn't provide an abstraction for SO_NOSIGPIPE, fall back to libc.
             let option_value: libc::c_int = 1;
             unsafe {
                 libc::setsockopt(
-                    fd,
+                    fd.as_raw_fd(),
                     libc::SOL_SOCKET,
                     libc::SO_NOSIGPIPE,
                     &option_value as *const _ as *const libc::c_void,
@@ -127,7 +128,7 @@ impl TcpProxy {
         parent_id: u64,
         local_port: u32,
         peer_port: u32,
-        fd: RawFd,
+        fd: OwnedFd,
         mem: GuestMemoryMmap,
         queue: Arc<Mutex<VirtQueue>>,
         rxq: Arc<Mutex<MuxerRxQ>>,
@@ -186,16 +187,26 @@ impl TcpProxy {
         };
 
         match bind(
-            self.fd,
+            self.fd.as_raw_fd(),
             &SockaddrIn::from(SocketAddrV4::new(req.addr, port)),
         ) {
             Ok(_) => {
                 debug!("tcp bind: id={}", self.id);
-                match listen(self.fd, req.backlog as usize) {
-                    Ok(_) => {
-                        debug!("tcp: proxy: id={}", self.id);
-                        0
-                    }
+                match Backlog::new(req.backlog) {
+                    Ok(backlog) => match listen(&self.fd, backlog) {
+                        Ok(_) => {
+                            debug!("tcp: proxy: id={}", self.id);
+                            0
+                        }
+                        Err(e) => {
+                            warn!("tcp: proxy: id={} err={}", self.id, e);
+                            #[cfg(target_os = "macos")]
+                            let errno = -linux_errno_raw(e as i32);
+                            #[cfg(target_os = "linux")]
+                            let errno = -(e as i32);
+                            errno
+                        }
+                    },
                     Err(e) => {
                         warn!("tcp: proxy: id={} err={}", self.id, e);
                         #[cfg(target_os = "macos")]
@@ -237,7 +248,11 @@ impl TcpProxy {
                 return RecvPkt::WaitForCredit;
             }
 
-            match recv(self.fd, &mut buf[..max_len], MsgFlags::MSG_DONTWAIT) {
+            match recv(
+                self.fd.as_raw_fd(),
+                &mut buf[..max_len],
+                MsgFlags::MSG_DONTWAIT,
+            ) {
                 Ok(cnt) => {
                     debug!("vsock: tcp: recv cnt={cnt}");
                     if cnt > 0 {
@@ -339,10 +354,10 @@ impl TcpProxy {
 
     fn switch_to_connected(&mut self) {
         self.status = ProxyStatus::Connected;
-        match fcntl(self.fd, FcntlArg::F_GETFL) {
+        match fcntl(&self.fd, FcntlArg::F_GETFL) {
             Ok(flags) => match OFlag::from_bits(flags) {
                 Some(flags) => {
-                    if let Err(e) = fcntl(self.fd, FcntlArg::F_SETFL(flags & !OFlag::O_NONBLOCK)) {
+                    if let Err(e) = fcntl(&self.fd, FcntlArg::F_SETFL(flags & !OFlag::O_NONBLOCK)) {
                         warn!("error switching to blocking: id={}, err={}", self.id, e);
                     }
                 }
@@ -366,7 +381,7 @@ impl Proxy for TcpProxy {
         let mut update = ProxyUpdate::default();
 
         let result = match connect(
-            self.fd,
+            self.fd.as_raw_fd(),
             &SockaddrIn::from(SocketAddrV4::new(req.addr, req.port)),
         ) {
             Ok(()) => {
@@ -382,18 +397,18 @@ impl Proxy for TcpProxy {
             Err(e) => {
                 debug!("vsock: TcpProxy: Error connecting: {e}");
                 #[cfg(target_os = "macos")]
-                let errno = -linux_errno_raw(nix::errno::errno());
+                let errno = -linux_errno_raw(Errno::last_raw());
                 #[cfg(target_os = "linux")]
-                let errno = -nix::errno::errno();
+                let errno = -Errno::last_raw();
                 errno
             }
         };
 
         if self.status == ProxyStatus::Connecting {
-            update.polling = Some((self.id, self.fd, EventSet::OUT));
+            update.polling = Some((self.id, self.fd.as_raw_fd(), EventSet::OUT));
         } else {
             if self.status == ProxyStatus::Connected {
-                update.polling = Some((self.id, self.fd, EventSet::IN));
+                update.polling = Some((self.id, self.fd.as_raw_fd(), EventSet::IN));
             }
             self.push_connect_rsp(result);
         }
@@ -426,7 +441,7 @@ impl Proxy for TcpProxy {
         // Now that the vsock transport is fully established, start listening
         // for events in the TCP socket again.
         Some(ProxyUpdate {
-            polling: Some((self.id, self.fd, EventSet::IN)),
+            polling: Some((self.id, self.fd.as_raw_fd(), EventSet::IN)),
             ..Default::default()
         })
     }
@@ -434,9 +449,9 @@ impl Proxy for TcpProxy {
     fn getpeername(&mut self, pkt: &VsockPacket) {
         debug!("getpeername: id={}", self.id);
 
-        let (result, addr, port) = match getpeername::<SockaddrIn>(self.fd) {
+        let (result, addr, port) = match getpeername::<SockaddrIn>(self.fd.as_raw_fd()) {
             Ok(name) => {
-                let addr = Ipv4Addr::from(name.ip());
+                let addr = name.ip();
                 (0, addr, name.port())
             }
             Err(e) => {
@@ -472,7 +487,7 @@ impl Proxy for TcpProxy {
             #[cfg(target_os = "linux")]
             let flags = MsgFlags::MSG_NOSIGNAL;
 
-            match send(self.fd, buf, flags) {
+            match send(self.fd.as_raw_fd(), buf, flags) {
                 Ok(sent) => {
                     if sent != buf.len() {
                         error!("couldn't set everything: buf={}, sent={}", buf.len(), sent);
@@ -543,7 +558,7 @@ impl Proxy for TcpProxy {
         if result == 0 {
             self.peer_port = req.vm_port;
             self.status = ProxyStatus::Listening;
-            update.polling = Some((self.id, self.fd, EventSet::IN));
+            update.polling = Some((self.id, self.fd.as_raw_fd(), EventSet::IN));
         }
 
         update
@@ -581,7 +596,7 @@ impl Proxy for TcpProxy {
         self.status = ProxyStatus::Connected;
 
         ProxyUpdate {
-            polling: Some((self.id, self.fd, EventSet::IN)),
+            polling: Some((self.id, self.fd.as_raw_fd(), EventSet::IN)),
             ..Default::default()
         }
     }
@@ -614,7 +629,7 @@ impl Proxy for TcpProxy {
         self.switch_to_connected();
 
         ProxyUpdate {
-            polling: Some((self.id, self.fd, EventSet::IN)),
+            polling: Some((self.id, self.fd.as_raw_fd(), EventSet::IN)),
             push_accept: Some((self.id, self.parent_id)),
             ..Default::default()
         }
@@ -658,7 +673,7 @@ impl Proxy for TcpProxy {
             Shutdown::Write
         };
 
-        if let Err(e) = shutdown(self.fd, how) {
+        if let Err(e) = shutdown(self.fd.as_raw_fd(), how) {
             warn!("error sending shutdown to socket: {e}");
         }
     }
@@ -691,7 +706,7 @@ impl Proxy for TcpProxy {
             }
 
             self.status = ProxyStatus::Closed;
-            update.polling = Some((self.id, self.fd, EventSet::empty()));
+            update.polling = Some((self.id, self.fd.as_raw_fd(), EventSet::empty()));
             update.signal_queue = true;
             update.remove_proxy = if self.status == ProxyStatus::Listening {
                 ProxyRemoval::Immediate
@@ -724,18 +739,20 @@ impl Proxy for TcpProxy {
                     );
                     self.push_reset();
                     update.signal_queue = true;
-                    update.polling = Some((self.id(), self.fd, EventSet::empty()));
+                    update.polling = Some((self.id(), self.fd.as_raw_fd(), EventSet::empty()));
                     return update;
                 } else if self.status == ProxyStatus::WaitingCreditUpdate {
                     debug!("process_event: WaitingCreditUpdate");
-                    update.polling = Some((self.id(), self.fd, EventSet::empty()));
+                    update.polling = Some((self.id(), self.fd.as_raw_fd(), EventSet::empty()));
                 }
             } else if self.status == ProxyStatus::Listening
                 || self.status == ProxyStatus::WaitingOnAccept
             {
-                match accept(self.fd) {
+                match accept(self.fd.as_raw_fd()) {
                     Ok(accept_fd) => {
-                        update.new_proxy = Some((self.peer_port, accept_fd, NewProxyType::Tcp));
+                        // Safe because we've just obtained the FD from the `accept` call above.
+                        let new_fd = unsafe { OwnedFd::from_raw_fd(accept_fd) };
+                        update.new_proxy = Some((self.peer_port, new_fd, NewProxyType::Tcp));
                     }
                     Err(e) => warn!("error accepting connection: id={}, err={}", self.id, e),
                 };
@@ -757,7 +774,7 @@ impl Proxy for TcpProxy {
                 update.signal_queue = true;
                 // Stop listening for events in the TCP socket until we receive
                 // OP_REQUEST and the vsock transport is fully established.
-                update.polling = Some((self.id(), self.fd, EventSet::empty()));
+                update.polling = Some((self.id(), self.fd.as_raw_fd(), EventSet::empty()));
             } else {
                 error!("vsock::tcp: EventSet::OUT while not connecting");
             }
@@ -769,14 +786,6 @@ impl Proxy for TcpProxy {
 
 impl AsRawFd for TcpProxy {
     fn as_raw_fd(&self) -> RawFd {
-        self.fd
-    }
-}
-
-impl Drop for TcpProxy {
-    fn drop(&mut self) {
-        if let Err(e) = close(self.fd) {
-            warn!("error closing proxy fd: {e}");
-        }
+        self.fd.as_raw_fd()
     }
 }
