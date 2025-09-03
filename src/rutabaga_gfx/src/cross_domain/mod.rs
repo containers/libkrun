@@ -20,9 +20,11 @@ use std::ffi::c_void;
 use std::fs::{read_link, File};
 use std::io::{Seek, SeekFrom};
 use std::mem::size_of;
+use std::os::fd::AsFd;
 use std::os::fd::AsRawFd;
 #[cfg(feature = "x")]
 use std::ptr;
+use std::ptr::NonNull;
 use std::sync::atomic::AtomicBool;
 #[cfg(feature = "x")]
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -49,11 +51,11 @@ use crate::rutabaga_core::RutabagaContext;
 use crate::rutabaga_core::RutabagaResource;
 use crate::rutabaga_os::SafeDescriptor;
 use crate::rutabaga_utils::*;
+use crate::DrmFormat;
 use crate::ImageAllocationInfo;
 use crate::ImageMemoryRequirements;
 use crate::RutabagaGralloc;
 use crate::RutabagaGrallocFlags;
-use crate::{AsRawDescriptor, DrmFormat};
 
 mod cross_domain_protocol;
 mod sys;
@@ -147,7 +149,7 @@ struct CrossDomainWorker {
 }
 
 #[allow(dead_code)] // Never used on macOS
-struct FutexPtr(*mut c_void);
+struct FutexPtr(NonNull<c_void>);
 unsafe impl Send for FutexPtr {}
 
 #[allow(dead_code)] // Never used on macOS
@@ -172,7 +174,7 @@ impl CrossDomainFutex {
         let uaddr2 = ptr::null::<()>();
         let val3 = 1u32;
         let address = address.0;
-        let atomic_val = unsafe { AtomicU32::from_ptr(address as *mut u32) };
+        let atomic_val = unsafe { AtomicU32::from_ptr(address.as_ptr() as *mut u32) };
         // The goal of this code is to ensure that the other side observes at least
         // the latest wake event along with the value that the futex had when that
         // wake event was signaled.
@@ -210,7 +212,7 @@ impl CrossDomainFutex {
 
     fn shutdown(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
-        let atomic_val = unsafe { AtomicU32::from_ptr(self.address.0 as *mut u32) };
+        let atomic_val = unsafe { AtomicU32::from_ptr(self.address.0.as_ptr() as *mut u32) };
         let v = atomic_val.load(Ordering::SeqCst);
         atomic_val.store(!v, Ordering::SeqCst);
         unsafe {
@@ -609,7 +611,7 @@ impl CrossDomainWorker {
                     add_item(&self.item_state, CrossDomainItem::ShmBlob(file.into()))
                 };
             } else {
-                let flags = fcntl(file.as_raw_descriptor(), FcntlArg::F_GETFL)?;
+                let flags = fcntl(&file, FcntlArg::F_GETFL)?;
                 *identifier_type = match flags & O_ACCMODE {
                     O_WRONLY => CROSS_DOMAIN_ID_TYPE_WRITE_PIPE,
                     _ => return Err(RutabagaError::InvalidCrossDomainItemType),
@@ -895,7 +897,7 @@ impl CrossDomainContext {
                 4.try_into().unwrap(),
                 ProtFlags::PROT_WRITE | ProtFlags::PROT_READ,
                 MapFlags::MAP_SHARED,
-                handle.as_raw_fd(),
+                handle.as_fd(),
                 0,
             )?
         };
@@ -916,7 +918,7 @@ impl CrossDomainContext {
         let shutdown2 = shutdown.clone();
         let fptr = FutexPtr(address);
         let initial_value =
-            unsafe { AtomicU32::from_ptr(address as *mut u32) }.load(Ordering::SeqCst);
+            unsafe { AtomicU32::from_ptr(address.as_ptr() as *mut u32) }.load(Ordering::SeqCst);
         let watcher_thread = Some(
             thread::Builder::new()
                 .name(format!("futexw {}", cmd_futex_new.id))
@@ -1147,7 +1149,7 @@ impl RutabagaContext for CrossDomainContext {
             }
             CrossDomainItem::DmaBuf(descriptor) => {
                 let mut access = RUTABAGA_MAP_ACCESS_READ;
-                if fcntl(descriptor.as_raw_fd(), FcntlArg::F_GETFL)? & libc::O_WRONLY != 0 {
+                if fcntl(descriptor.as_fd(), FcntlArg::F_GETFL)? & libc::O_WRONLY != 0 {
                     access |= RUTABAGA_MAP_ACCESS_WRITE;
                 }
 

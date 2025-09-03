@@ -1384,7 +1384,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "log",
- "nix 0.26.4",
+ "nix 0.30.1",
  "pkg-config",
  "remain",
  "thiserror 1.0.69",

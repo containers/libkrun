@@ -4,6 +4,8 @@
 
 use std::convert::TryFrom;
 use std::fs::File;
+use std::os::fd::AsFd;
+use std::os::fd::BorrowedFd;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::FromRawFd;
 use std::os::unix::io::IntoRawFd;
@@ -82,6 +84,14 @@ impl From<SafeDescriptor> for File {
 impl AsRawFd for Descriptor {
     fn as_raw_fd(&self) -> RawFd {
         self.0
+    }
+}
+
+impl AsFd for SafeDescriptor {
+    fn as_fd(&self) -> BorrowedFd {
+        // SAFETY: the `BorrowedFd` we return lives no longer than this `SafeDescriptor`, so the
+        // descriptor will remain open.
+        unsafe { BorrowedFd::borrow_raw(self.descriptor) }
     }
 }
 

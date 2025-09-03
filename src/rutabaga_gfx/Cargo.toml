@@ -29,7 +29,7 @@ log = "0.4"
 vmm-sys-util = ">=0.14"
 
 [target.'cfg(unix)'.dependencies]
-nix = "0.26.1"
+nix = { version = "0.30.1", features = ["event", "feature", "fs", "mman", "socket", "uio", "ioctl"] }
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3"
