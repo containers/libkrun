@@ -88,7 +88,7 @@ impl AsRawFd for Descriptor {
 }
 
 impl AsFd for SafeDescriptor {
-    fn as_fd(&self) -> BorrowedFd {
+    fn as_fd(&self) -> BorrowedFd<'_> {
         // SAFETY: the `BorrowedFd` we return lives no longer than this `SafeDescriptor`, so the
         // descriptor will remain open.
         unsafe { BorrowedFd::borrow_raw(self.descriptor) }
