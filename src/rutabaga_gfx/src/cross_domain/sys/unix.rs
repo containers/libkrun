@@ -6,14 +6,13 @@ use std::fs::File;
 use std::io::IoSlice;
 use std::io::IoSliceMut;
 use std::os::unix::io::AsRawFd;
-use std::os::unix::io::FromRawFd;
 use std::os::unix::prelude::AsFd;
 
 use nix::cmsg_space;
 use nix::sys::epoll::EpollCreateFlags;
 use nix::sys::epoll::EpollFlags;
-use nix::sys::eventfd::eventfd;
 use nix::sys::eventfd::EfdFlags;
+use nix::sys::eventfd::EventFd;
 use nix::sys::socket::connect;
 use nix::sys::socket::recvmsg;
 use nix::sys::socket::sendmsg;
@@ -88,7 +87,7 @@ impl CrossDomainState {
             )?;
             let len = r.bytes;
 
-            let files = match r.cmsgs().next() {
+            let files = match r.cmsgs()?.next() {
                 Some(ControlMessageOwned::ScmRights(fds)) => {
                     fds.into_iter()
                         .map(|fd| {
@@ -131,8 +130,8 @@ impl CrossDomainContext {
         )?;
 
         let unix_addr = UnixAddr::new(base_channel)?;
-        connect(socket_fd, &unix_addr)?;
-        let stream = unsafe { File::from_raw_fd(socket_fd) };
+        connect(socket_fd.as_raw_fd(), &unix_addr)?;
+        let stream = socket_fd.into();
         Ok(Some(stream))
     }
 
@@ -180,8 +179,8 @@ impl CrossDomainContext {
                 }
 
                 let (raw_read_pipe, raw_write_pipe) = pipe()?;
-                let read_pipe = unsafe { File::from_raw_descriptor(raw_read_pipe) };
-                let write_pipe = unsafe { File::from_raw_descriptor(raw_write_pipe) };
+                let read_pipe = File::from(raw_read_pipe);
+                let write_pipe = File::from(raw_write_pipe);
 
                 *descriptor = write_pipe.as_raw_descriptor();
                 let read_pipe_id: u32 = add_item(
@@ -228,32 +227,32 @@ impl CrossDomainContext {
     }
 }
 
-pub type Sender = File;
+pub type Sender = EventFd;
 pub type Receiver = File;
 
 pub fn channel_signal(sender: &Sender) -> RutabagaResult<()> {
-    write(sender.as_raw_fd(), &1u64.to_ne_bytes())?;
+    sender.write(1)?;
     Ok(())
 }
 
 pub fn channel_wait(receiver: &Receiver) -> RutabagaResult<()> {
-    read(receiver.as_raw_fd(), &mut 1u64.to_ne_bytes())?;
+    read(receiver, &mut 1u64.to_ne_bytes())?;
     Ok(())
 }
 
 pub fn read_volatile(file: &File, opaque_data: &mut [u8]) -> RutabagaResult<usize> {
-    let bytes_read = read(file.as_raw_fd(), opaque_data)?;
+    let bytes_read = read(file, opaque_data)?;
     Ok(bytes_read)
 }
 
 pub fn write_volatile(file: &File, opaque_data: &[u8]) -> RutabagaResult<()> {
-    write(file.as_raw_fd(), opaque_data)?;
+    write(file, opaque_data)?;
     Ok(())
 }
 
 pub fn channel() -> RutabagaResult<(Sender, Receiver)> {
-    let sender = unsafe { File::from_raw_fd(eventfd(0, EfdFlags::empty())?) };
-    let receiver = sender.try_clone()?;
+    let sender = EventFd::from_flags(EfdFlags::empty())?;
+    let receiver = sender.as_fd().try_clone_to_owned()?.into();
     Ok((sender, receiver))
 }
 

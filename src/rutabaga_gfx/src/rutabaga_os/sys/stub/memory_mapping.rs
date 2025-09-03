@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+use std::ptr::NonNull;
+
 use libc::c_void;
 
 use crate::rutabaga_os::SafeDescriptor;
@@ -12,7 +14,7 @@ use crate::rutabaga_utils::RutabagaResult;
 /// RAII semantics including munmap when no longer needed.
 #[derive(Debug)]
 pub struct MemoryMapping {
-    pub addr: *mut c_void,
+    pub addr: NonNull<c_void>,
     pub size: usize,
 }
 

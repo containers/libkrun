@@ -23,7 +23,7 @@ impl MemoryMapping {
 
     pub fn as_rutabaga_mapping(&self) -> RutabagaMapping {
         RutabagaMapping {
-            ptr: self.mapping.addr as u64,
+            ptr: self.mapping.addr.as_ptr() as u64,
             size: self.mapping.size as u64,
         }
     }
