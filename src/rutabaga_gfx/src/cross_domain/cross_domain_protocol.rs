@@ -7,8 +7,9 @@
 
 #![allow(dead_code)]
 
-use zerocopy::AsBytes;
 use zerocopy::FromBytes;
+use zerocopy::Immutable;
+use zerocopy::IntoBytes;
 
 /// Cross-domain commands (only a maximum of 255 supported)
 pub const CROSS_DOMAIN_CMD_INIT: u8 = 1;
@@ -60,7 +61,7 @@ pub const CROSS_DOMAIN_CHANNEL_RING: u32 = 1;
 pub const CROSS_DOMAIN_PIPE_READ_START: u32 = 0x80000000;
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, AsBytes, FromBytes)]
+#[derive(Copy, Clone, Default, IntoBytes, Immutable, FromBytes)]
 pub struct CrossDomainCapabilities {
     pub version: u32,
     pub supported_channels: u32,
@@ -69,7 +70,7 @@ pub struct CrossDomainCapabilities {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, AsBytes, FromBytes)]
+#[derive(Copy, Clone, Default, IntoBytes, Immutable, FromBytes)]
 pub struct CrossDomainImageRequirements {
     pub strides: [u32; 4],
     pub offsets: [u32; 4],
@@ -82,7 +83,7 @@ pub struct CrossDomainImageRequirements {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, AsBytes, FromBytes)]
+#[derive(Copy, Clone, Default, IntoBytes, Immutable, FromBytes)]
 pub struct CrossDomainHeader {
     pub cmd: u8,
     pub ring_idx: u8,
@@ -91,7 +92,7 @@ pub struct CrossDomainHeader {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, AsBytes, FromBytes)]
+#[derive(Copy, Clone, Default, IntoBytes, Immutable, FromBytes)]
 pub struct CrossDomainInitV1 {
     pub hdr: CrossDomainHeader,
     pub query_ring_id: u32,
@@ -101,7 +102,7 @@ pub struct CrossDomainInitV1 {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, AsBytes, FromBytes)]
+#[derive(Copy, Clone, Default, IntoBytes, Immutable, FromBytes)]
 pub struct CrossDomainInitV0 {
     pub hdr: CrossDomainHeader,
     pub query_ring_id: u32,
@@ -122,7 +123,7 @@ impl CrossDomainInitV0 {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, AsBytes, FromBytes)]
+#[derive(Copy, Clone, Default, IntoBytes, Immutable, FromBytes)]
 pub struct CrossDomainGetImageRequirements {
     pub hdr: CrossDomainHeader,
     pub width: u32,
@@ -131,7 +132,9 @@ pub struct CrossDomainGetImageRequirements {
     pub flags: u32,
 }
 
-pub trait CrossDomainSendReceiveBase: Copy + Clone + Default + AsBytes + FromBytes {
+pub trait CrossDomainSendReceiveBase:
+    Copy + Clone + Default + IntoBytes + Immutable + FromBytes
+{
     const MAX_IDENTIFIERS: usize;
     fn hdr_mut(&mut self) -> &mut CrossDomainHeader;
     fn num_identifiers_mut(&mut self) -> &mut u32;
@@ -140,7 +143,7 @@ pub trait CrossDomainSendReceiveBase: Copy + Clone + Default + AsBytes + FromByt
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, AsBytes, FromBytes)]
+#[derive(Copy, Clone, Default, IntoBytes, Immutable, FromBytes)]
 pub struct CrossDomainSendReceive {
     pub hdr: CrossDomainHeader,
     pub num_identifiers: u32,
@@ -171,7 +174,7 @@ impl CrossDomainSendReceiveBase for CrossDomainSendReceive {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, AsBytes, FromBytes)]
+#[derive(Copy, Clone, Default, IntoBytes, Immutable, FromBytes)]
 pub struct CrossDomainSendReceiveV2 {
     pub hdr: CrossDomainHeader,
     pub num_identifiers: u32,
@@ -203,7 +206,7 @@ impl CrossDomainSendReceiveBase for CrossDomainSendReceiveV2 {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, AsBytes, FromBytes)]
+#[derive(Copy, Clone, Default, IntoBytes, Immutable, FromBytes)]
 pub struct CrossDomainReadWrite {
     pub hdr: CrossDomainHeader,
     pub identifier: u32,
@@ -214,7 +217,7 @@ pub struct CrossDomainReadWrite {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, AsBytes, FromBytes)]
+#[derive(Copy, Clone, Default, IntoBytes, Immutable, FromBytes)]
 pub struct CrossDomainFutexNew {
     pub hdr: CrossDomainHeader,
     pub fs_id: u64,
@@ -224,7 +227,7 @@ pub struct CrossDomainFutexNew {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, AsBytes, FromBytes)]
+#[derive(Copy, Clone, Default, IntoBytes, Immutable, FromBytes)]
 pub struct CrossDomainFutexSignal {
     pub hdr: CrossDomainHeader,
     pub id: u32,
@@ -232,7 +235,7 @@ pub struct CrossDomainFutexSignal {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, AsBytes, FromBytes)]
+#[derive(Copy, Clone, Default, IntoBytes, Immutable, FromBytes)]
 pub struct CrossDomainFutexDestroy {
     pub hdr: CrossDomainHeader,
     pub id: u32,
@@ -240,7 +243,7 @@ pub struct CrossDomainFutexDestroy {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, AsBytes, FromBytes)]
+#[derive(Copy, Clone, Default, IntoBytes, Immutable, FromBytes)]
 pub struct CrossDomainReadEventfdNew {
     pub hdr: CrossDomainHeader,
     pub id: u32,
