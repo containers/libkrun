@@ -24,7 +24,7 @@ cfg-if = "1.0.0"
 libc = "0.2.116"
 remain = "0.2"
 thiserror = "1.0.23"
-zerocopy = "0.6"
+zerocopy = { version = "0.8.26", features = ["derive"] }
 log = "0.4"
 vmm-sys-util = ">=0.14"
 

@@ -32,8 +32,9 @@ use std::sync::Arc;
 use std::sync::Condvar;
 use std::sync::Mutex;
 use std::thread;
-use zerocopy::AsBytes;
 use zerocopy::FromBytes;
+use zerocopy::Immutable;
+use zerocopy::IntoBytes;
 
 use crate::cross_domain::cross_domain_protocol::*;
 use crate::cross_domain::sys::channel;
@@ -345,7 +346,7 @@ impl CrossDomainState {
 
     fn write_to_ring<T>(&self, mut ring_write: RingWrite<T>, ring_id: u32) -> RutabagaResult<usize>
     where
-        T: FromBytes + AsBytes,
+        T: FromBytes + IntoBytes + Immutable,
     {
         let mut context_resources = self.context_resources.lock().unwrap();
         let mut bytes_read: usize = 0;
@@ -999,8 +1000,8 @@ impl CrossDomainContext {
         commands: &mut [u8],
     ) -> RutabagaResult<()> {
         let opaque_data_offset = size_of::<T>();
-        let mut cmd_send =
-            T::read_from_prefix(commands.as_bytes()).ok_or(RutabagaError::InvalidCommandBuffer)?;
+        let (mut cmd_send, _) = T::read_from_prefix(commands.as_bytes())
+            .map_err(|_| RutabagaError::InvalidCommandBuffer)?;
 
         let opaque_data = commands
             .get_mut(
@@ -1038,7 +1039,7 @@ impl Drop for CrossDomainContext {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Default, AsBytes, FromBytes)]
+#[derive(Copy, Clone, Default, IntoBytes, Immutable, FromBytes)]
 struct CrossDomainInitVMinus1 {
     hdr: CrossDomainHeader,
     query_ring_id: u32,
@@ -1186,27 +1187,28 @@ impl RutabagaContext for CrossDomainContext {
         }
 
         while !commands.is_empty() {
-            let hdr = CrossDomainHeader::read_from_prefix(commands.as_bytes())
-                .ok_or(RutabagaError::InvalidCommandBuffer)?;
+            let (hdr, _) = CrossDomainHeader::read_from_prefix(commands)
+                .map_err(|_e| RutabagaError::InvalidCommandBuffer)?;
 
             match hdr.cmd {
                 CROSS_DOMAIN_CMD_INIT => {
                     let cmd_init = CrossDomainInitV1::read_from_prefix(commands.as_bytes())
-                        .or_else(|| {
+                        .map(|(x, _)| x)
+                        .or_else(|_| {
                             CrossDomainInitV0::read_from_prefix(commands.as_bytes())
-                                .map(|x| x.upgrade())
+                                .map(|(x, _)| x.upgrade())
                         })
-                        .or_else(|| {
+                        .or_else(|_| {
                             CrossDomainInitVMinus1::read_from_prefix(commands.as_bytes())
-                                .map(|x| x.upgrade())
+                                .map(|(x, _)| x.upgrade())
                         })
-                        .ok_or(RutabagaError::InvalidCommandBuffer)?;
+                        .map_err(|_| RutabagaError::InvalidCommandBuffer)?;
                     self.initialize(&cmd_init)?;
                 }
                 CROSS_DOMAIN_CMD_GET_IMAGE_REQUIREMENTS => {
-                    let cmd_get_reqs =
+                    let (cmd_get_reqs, _) =
                         CrossDomainGetImageRequirements::read_from_prefix(commands.as_bytes())
-                            .ok_or(RutabagaError::InvalidCommandBuffer)?;
+                            .map_err(|_| RutabagaError::InvalidCommandBuffer)?;
 
                     self.get_image_requirements(&cmd_get_reqs)?;
                 }
@@ -1222,8 +1224,9 @@ impl RutabagaContext for CrossDomainContext {
                 }
                 CROSS_DOMAIN_CMD_WRITE => {
                     let opaque_data_offset = size_of::<CrossDomainReadWrite>();
-                    let cmd_write = CrossDomainReadWrite::read_from_prefix(commands.as_bytes())
-                        .ok_or(RutabagaError::InvalidCommandBuffer)?;
+                    let (cmd_write, _) =
+                        CrossDomainReadWrite::read_from_prefix(commands.as_bytes())
+                            .map_err(|_| RutabagaError::InvalidCommandBuffer)?;
 
                     let opaque_data = commands
                         .get_mut(
@@ -1238,28 +1241,29 @@ impl RutabagaContext for CrossDomainContext {
                 }
                 #[cfg(feature = "x")]
                 CROSS_DOMAIN_CMD_FUTEX_NEW => {
-                    let cmd_new_futex = CrossDomainFutexNew::read_from_prefix(commands.as_bytes())
-                        .ok_or(RutabagaError::InvalidCommandBuffer)?;
+                    let (cmd_new_futex, _) =
+                        CrossDomainFutexNew::read_from_prefix(commands.as_bytes())
+                            .map_err(|_| RutabagaError::InvalidCommandBuffer)?;
                     self.futex_new(&cmd_new_futex)?;
                 }
                 #[cfg(feature = "x")]
                 CROSS_DOMAIN_CMD_FUTEX_SIGNAL => {
-                    let cmd_futex_signal =
+                    let (cmd_futex_signal, _) =
                         CrossDomainFutexSignal::read_from_prefix(commands.as_bytes())
-                            .ok_or(RutabagaError::InvalidCommandBuffer)?;
+                            .map_err(|_| RutabagaError::InvalidCommandBuffer)?;
                     self.futex_signal(&cmd_futex_signal)?;
                 }
                 #[cfg(feature = "x")]
                 CROSS_DOMAIN_CMD_FUTEX_DESTROY => {
-                    let cmd_futex_destroy =
+                    let (cmd_futex_destroy, _) =
                         CrossDomainFutexDestroy::read_from_prefix(commands.as_bytes())
-                            .ok_or(RutabagaError::InvalidCommandBuffer)?;
+                            .map_err(|_| RutabagaError::InvalidCommandBuffer)?;
                     self.futex_destroy(&cmd_futex_destroy)?;
                 }
                 CROSS_DOMAIN_CMD_READ_EVENTFD_NEW => {
-                    let cmd_new_efd =
+                    let (cmd_new_efd, _) =
                         CrossDomainReadEventfdNew::read_from_prefix(commands.as_bytes())
-                            .ok_or(RutabagaError::InvalidCommandBuffer)?;
+                            .map_err(|_| RutabagaError::InvalidCommandBuffer)?;
                     self.read_eventfd_new(&cmd_new_efd)?;
                 }
                 _ => return Err(RutabagaError::SpecViolation("invalid cross domain command")),
