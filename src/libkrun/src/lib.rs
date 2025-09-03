@@ -206,10 +206,10 @@ impl ContextConfig {
             Some(block_root) => {
                 let mut res = format!("KRUN_BLOCK_ROOT_DEVICE={}", block_root.device);
                 if let Some(fstype) = &block_root.fstype {
-                    res += &format!(" KRUN_BLOCK_ROOT_FSTYPE={}", fstype);
+                    res += &format!(" KRUN_BLOCK_ROOT_FSTYPE={fstype}");
                 }
                 if let Some(options) = &block_root.options {
-                    res += &format!(" KRUN_BLOCK_ROOT_OPTIONS={}", options);
+                    res += &format!(" KRUN_BLOCK_ROOT_OPTIONS={options}");
                 }
                 res
             }
@@ -2149,7 +2149,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     }
 
     let boot_source = BootSourceConfig {
-        kernel_cmdline_prolog: Some(format!("{} init={}", DEFAULT_KERNEL_CMDLINE, INIT_PATH)),
+        kernel_cmdline_prolog: Some(format!("{DEFAULT_KERNEL_CMDLINE} init={INIT_PATH}")),
         kernel_cmdline_krun_env: Some(format!(
             " {} {} {} {} {}",
             ctx_cfg.get_exec_path(),
