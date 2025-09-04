@@ -39,6 +39,7 @@ type Result<T> = ::std::result::Result<T, Error>;
 /// The `LegacyDeviceManger` should be initialized only by using the constructor.
 pub struct PortIODeviceManager {
     pub io_bus: devices::Bus,
+    pub cmos: Arc<Mutex<devices::legacy::Cmos>>,
     pub stdio_serial: Vec<Arc<Mutex<devices::legacy::Serial>>>,
     pub i8042: Arc<Mutex<devices::legacy::I8042Device>>,
 
@@ -52,6 +53,7 @@ pub struct PortIODeviceManager {
 impl PortIODeviceManager {
     /// Create a new DeviceManager handling legacy devices (uart, i8042).
     pub fn new(
+        cmos: Arc<Mutex<devices::legacy::Cmos>>,
         stdio_serial: Vec<Arc<Mutex<devices::legacy::Serial>>>,
         i8042_reset_evfd: EventFd,
     ) -> Result<Self> {
@@ -79,6 +81,7 @@ impl PortIODeviceManager {
 
         Ok(PortIODeviceManager {
             io_bus,
+            cmos,
             stdio_serial,
             i8042,
             com_evt_1: evts[0].try_clone().map_err(Error::EventFd)?,
@@ -91,6 +94,10 @@ impl PortIODeviceManager {
 
     /// Register supported legacy devices.
     pub fn register_devices(&mut self) -> Result<()> {
+        self.io_bus
+            .insert(self.cmos.clone(), 0x70, 0x8)
+            .map_err(Error::BusError)?;
+
         if let Some(serial) = self.stdio_serial.first() {
             self.io_bus
                 .insert(serial.clone(), 0x3f8, 0x8)
@@ -147,7 +154,9 @@ mod tests {
     fn test_register_legacy_devices() {
         let serial =
             devices::legacy::Serial::new_sink(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap());
+        let cmos = devices::legacy::Cmos::new(0, 0);
         let ldm = PortIODeviceManager::new(
+            Arc::new(Mutex::new(cmos)),
             vec![Arc::new(Mutex::new(serial))],
             EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         );

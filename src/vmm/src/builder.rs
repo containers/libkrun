@@ -29,6 +29,8 @@ use crate::resources::{
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(feature = "net")]
 use crate::vmm_config::net::NetBuilder;
+#[cfg(target_arch = "x86_64")]
+use devices::legacy::Cmos;
 #[cfg(all(target_os = "linux", target_arch = "riscv64"))]
 use devices::legacy::KvmAia;
 #[cfg(target_arch = "x86_64")]
@@ -757,6 +759,10 @@ pub fn build_microvm(
     // Safe to unwrap 'serial_device' as it's always 'Some' on x86_64.
     // x86_64 uses the i8042 reset event as the Vmm exit event.
     let mut pio_device_manager = PortIODeviceManager::new(
+        Arc::new(Mutex::new(Cmos::new(
+            arch_memory_info.ram_below_gap,
+            arch_memory_info.ram_above_gap,
+        ))),
         serial_devices,
         exit_evt
             .try_clone()
