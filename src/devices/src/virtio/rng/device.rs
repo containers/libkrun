@@ -1,4 +1,4 @@
-use rand::{rngs::OsRng, RngCore};
+use rand::{rngs::OsRng, TryRngCore};
 use utils::eventfd::EventFd;
 use vm_memory::{Bytes, GuestMemoryMmap};
 
@@ -68,7 +68,11 @@ impl Rng {
             let mut written = 0;
             for desc in head.into_iter() {
                 let mut rand_bytes = vec![0u8; desc.len as usize];
-                OsRng.fill_bytes(&mut rand_bytes);
+                if let Err(e) = OsRng.try_fill_bytes(&mut rand_bytes) {
+                    error!("Failed to fill buffer with random data: {e:?}");
+                    self.queues[REQ_INDEX].go_to_previous_position();
+                    break;
+                }
                 if let Err(e) = mem.write_slice(&rand_bytes[..], desc.addr) {
                     error!("Failed to write slice: {e:?}");
                     self.queues[REQ_INDEX].go_to_previous_position();

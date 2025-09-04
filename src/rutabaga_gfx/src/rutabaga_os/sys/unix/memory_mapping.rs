@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 use std::num::NonZeroUsize;
+use std::os::fd::AsFd;
+use std::ptr::NonNull;
 
 use libc::c_void;
 use nix::sys::mman::mmap;
@@ -10,7 +12,6 @@ use nix::sys::mman::munmap;
 use nix::sys::mman::MapFlags;
 use nix::sys::mman::ProtFlags;
 
-use crate::rutabaga_os::descriptor::AsRawDescriptor;
 use crate::rutabaga_os::descriptor::SafeDescriptor;
 use crate::rutabaga_utils::RutabagaError;
 use crate::rutabaga_utils::RutabagaResult;
@@ -24,7 +25,7 @@ use crate::rutabaga_utils::RUTABAGA_MAP_ACCESS_WRITE;
 /// RAII semantics including munmap when no longer needed.
 #[derive(Debug)]
 pub struct MemoryMapping {
-    pub addr: *mut c_void,
+    pub addr: NonNull<c_void>,
     pub size: usize,
 }
 
@@ -59,7 +60,7 @@ impl MemoryMapping {
                     non_zero_size,
                     prot,
                     MapFlags::MAP_SHARED,
-                    descriptor.as_raw_descriptor(),
+                    descriptor.as_fd(),
                     0,
                 )?
             };

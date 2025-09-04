@@ -6,7 +6,7 @@ use nix::fcntl::{fcntl, open, FcntlArg, OFlag};
 use nix::sys::stat::Mode;
 use nix::unistd::{read, write};
 use nix::{ioctl_write_int, ioctl_write_ptr};
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::{io, mem, ptr};
 use virtio_bindings::virtio_net::{
     VIRTIO_NET_F_GUEST_CSUM, VIRTIO_NET_F_GUEST_TSO4, VIRTIO_NET_F_GUEST_TSO6,
@@ -20,7 +20,7 @@ ioctl_write_int!(tunsetoffload, b'T', 208);
 ioctl_write_ptr!(tunsetvnethdrsz, b'T', 216, c_int);
 
 pub struct Tap {
-    fd: RawFd,
+    fd: OwnedFd,
 }
 
 impl Tap {
@@ -58,30 +58,30 @@ impl Tap {
         }
 
         unsafe {
-            if let Err(err) = tunsetiff(fd, &mut req as *mut _ as *mut _) {
+            if let Err(err) = tunsetiff(fd.as_raw_fd(), &mut req as *mut _ as *mut _) {
                 return Err(ConnectError::TunSetIff(io::Error::from(err)));
             }
 
             // TODO(slp): replace hardcoded vnet size with cons
-            if let Err(err) = tunsetvnethdrsz(fd, &12) {
+            if let Err(err) = tunsetvnethdrsz(fd.as_raw_fd(), &12) {
                 return Err(ConnectError::TunSetVnetHdrSz(io::Error::from(err)));
             }
 
-            if let Err(err) = tunsetoffload(fd, offload_flags) {
+            if let Err(err) = tunsetoffload(fd.as_raw_fd(), offload_flags) {
                 return Err(ConnectError::TunSetOffload(io::Error::from(err)));
             }
         }
 
-        match fcntl(fd, FcntlArg::F_GETFL) {
+        match fcntl(&fd, FcntlArg::F_GETFL) {
             Ok(flags) => {
                 if let Err(e) = fcntl(
-                    fd,
+                    &fd,
                     FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags) | OFlag::O_NONBLOCK),
                 ) {
-                    warn!("error switching to non-blocking: id={fd}, err={e}");
+                    warn!("error switching to non-blocking: id={fd:?}, err={e}");
                 }
             }
-            Err(e) => error!("couldn't obtain fd flags id={fd}, err={e}"),
+            Err(e) => error!("couldn't obtain fd flags id={fd:?}, err={e}"),
         };
 
         Ok(Self { fd })
@@ -92,7 +92,7 @@ impl NetBackend for Tap {
     /// Try to read a frame from the tap devie. If no bytes are available reports
     /// ReadError::NothingRead.
     fn read_frame(&mut self, buf: &mut [u8]) -> Result<usize, ReadError> {
-        let frame_length = match read(self.fd, buf) {
+        let frame_length = match read(&self.fd, buf) {
             Ok(f) => f,
             #[allow(unreachable_patterns)]
             Err(nix::Error::EAGAIN | nix::Error::EWOULDBLOCK) => {
@@ -108,7 +108,7 @@ impl NetBackend for Tap {
 
     /// Try to write a frame to the tap device.
     fn write_frame(&mut self, _hdr_len: usize, buf: &mut [u8]) -> Result<(), WriteError> {
-        let ret = write(self.fd, buf).map_err(WriteError::Internal)?;
+        let ret = write(&self.fd, buf).map_err(WriteError::Internal)?;
         debug!("Written frame size={}, written={}", buf.len(), ret);
         Ok(())
     }
