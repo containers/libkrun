@@ -1125,6 +1125,13 @@ impl RutabagaContext for CrossDomainContext {
         // Items that are removed from the table after one usage.
         match item {
             CrossDomainItem::ShmBlob(descriptor) => {
+                #[allow(unused_mut)]
+                let mut access = RUTABAGA_MAP_ACCESS_RW;
+                #[cfg(target_os = "linux")]
+                if fcntl(&descriptor, FcntlArg::F_GET_SEALS)? & libc::F_SEAL_WRITE != 0 {
+                    access &= !RUTABAGA_MAP_ACCESS_WRITE;
+                };
+
                 let hnd = RutabagaHandle {
                     os_handle: descriptor,
                     handle_type: RUTABAGA_MEM_HANDLE_TYPE_SHM,
@@ -1136,7 +1143,7 @@ impl RutabagaContext for CrossDomainContext {
                     blob: true,
                     blob_mem: resource_create_blob.blob_mem,
                     blob_flags: resource_create_blob.blob_flags,
-                    map_info: Some(RUTABAGA_MAP_CACHE_CACHED | RUTABAGA_MAP_ACCESS_RW),
+                    map_info: Some(RUTABAGA_MAP_CACHE_CACHED | access),
                     #[cfg(target_os = "macos")]
                     map_ptr: None,
                     info_2d: None,
