@@ -1638,6 +1638,39 @@ pub unsafe extern "C" fn krun_check_nested_virt() -> i32 {
     -libc::EOPNOTSUPP
 }
 
+/// Gets the maximum number of vCPUs supported by the hypervisor.
+///
+/// Returns the maximum number of vCPUs that can be created by this hypervisor,
+/// or a negative error code on failure.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[no_mangle]
+pub extern "C" fn krun_get_max_vcpus() -> i32 {
+    #[cfg(target_os = "macos")]
+    {
+        use hvf::bindings::{hv_vm_get_max_vcpu_count, HV_SUCCESS};
+        let mut max_vcpu_count: u32 = 0;
+        let ret = unsafe { hv_vm_get_max_vcpu_count(&mut max_vcpu_count as *mut u32) };
+        if ret == HV_SUCCESS {
+            max_vcpu_count as i32
+        } else {
+            error!("Error retrieving max vcpu count: {ret:?}");
+            -libc::EINVAL
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use kvm_ioctls::Kvm;
+        match Kvm::new() {
+            Ok(kvm) => kvm.get_max_vcpus() as i32,
+            Err(e) => {
+                error!("Error retrieving max vcpu count: {e:?}");
+                -libc::EINVAL
+            }
+        }
+    }
+}
+
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub extern "C" fn krun_split_irqchip(ctx_id: u32, enable: bool) -> i32 {

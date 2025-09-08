@@ -847,6 +847,14 @@ int32_t krun_set_nested_virt(uint32_t ctx_id, bool enabled);
 int32_t krun_check_nested_virt(void);
 
 /**
+ * Get the maximum number of vCPUs supported by the hypervisor.
+ *
+ * Returns:
+ *  The maximum number of vCPUs that can be created, or a negative error number on failure.
+ */
+int32_t krun_get_max_vcpus(void);
+
+/**
  * Specify whether to split IRQCHIP responsibilities between the host and the guest.
  *
  * Arguments:
