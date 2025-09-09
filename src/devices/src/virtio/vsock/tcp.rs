@@ -1,15 +1,20 @@
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddrV4, SocketAddrV6};
 use std::num::Wrapping;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 
+use libc::AF_INET;
+#[cfg(target_os = "linux")]
+use libc::EINVAL;
+#[cfg(target_os = "macos")]
+use libc::EINVAL;
 use nix::errno::Errno;
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
     accept, bind, connect, getpeername, listen, recv, send, setsockopt, shutdown, socket, sockopt,
-    AddressFamily, Backlog, MsgFlags, Shutdown, SockFlag, SockType, SockaddrIn,
+    AddressFamily, Backlog, MsgFlags, Shutdown, SockFlag, SockType, SockaddrLike, SockaddrStorage,
 };
 
 #[cfg(target_os = "macos")]
@@ -33,6 +38,7 @@ pub struct TcpProxy {
     id: u64,
     cid: u64,
     parent_id: u64,
+    family: AddressFamily,
     local_port: u32,
     peer_port: u32,
     control_port: u32,
@@ -55,6 +61,7 @@ impl TcpProxy {
     pub fn new(
         id: u64,
         cid: u64,
+        family: u16,
         local_port: u32,
         peer_port: u32,
         control_port: u32,
@@ -62,13 +69,12 @@ impl TcpProxy {
         queue: Arc<Mutex<VirtQueue>>,
         rxq: Arc<Mutex<MuxerRxQ>>,
     ) -> Result<Self, ProxyError> {
-        let fd = socket(
-            AddressFamily::Inet,
-            SockType::Stream,
-            SockFlag::empty(),
-            None,
-        )
-        .map_err(ProxyError::CreatingSocket)?;
+        let family = match family as i32 {
+            AF_INET => AddressFamily::Inet,
+            _ => return Err(ProxyError::InvalidFamily),
+        };
+        let fd = socket(family, SockType::Stream, SockFlag::empty(), None)
+            .map_err(ProxyError::CreatingSocket)?;
 
         // macOS forces us to do this here instead of just using SockFlag::SOCK_NONBLOCK above.
         match fcntl(&fd, FcntlArg::F_GETFL) {
@@ -83,7 +89,12 @@ impl TcpProxy {
             Err(e) => error!("couldn't obtain fd flags id={id}, err={e}"),
         };
 
-        setsockopt(&fd, sockopt::ReusePort, &true).map_err(ProxyError::SettingReusePort)?;
+        if family == AddressFamily::Unix {
+            setsockopt(&fd, sockopt::ReuseAddr, &true).map_err(ProxyError::SettingReuseAddr)?;
+        } else {
+            setsockopt(&fd, sockopt::ReusePort, &true).map_err(ProxyError::SettingReusePort)?;
+        }
+
         #[cfg(target_os = "macos")]
         {
             // nix doesn't provide an abstraction for SO_NOSIGPIPE, fall back to libc.
@@ -103,6 +114,7 @@ impl TcpProxy {
             id,
             cid,
             parent_id: 0,
+            family,
             local_port,
             peer_port,
             control_port,
@@ -126,6 +138,7 @@ impl TcpProxy {
         id: u64,
         cid: u64,
         parent_id: u64,
+        family: AddressFamily,
         local_port: u32,
         peer_port: u32,
         fd: OwnedFd,
@@ -138,6 +151,7 @@ impl TcpProxy {
             id,
             cid,
             parent_id,
+            family,
             local_port,
             peer_port,
             control_port: 0,
@@ -176,20 +190,29 @@ impl TcpProxy {
             return 0;
         }
 
-        let port = if let Some(port_map) = host_port_map {
-            if let Some(port) = port_map.get(&req.port) {
-                *port
+        let addr: SockaddrStorage = if let Some(port_map) = host_port_map {
+            if let Some(sin) = req.addr.as_sockaddr_in() {
+                debug!("sockaddr is ipv4");
+                if let Some(port) = port_map.get(&sin.port()) {
+                    SocketAddrV4::new(sin.ip(), *port).into()
+                } else {
+                    req.addr
+                }
+            } else if let Some(sin6) = req.addr.as_sockaddr_in6() {
+                debug!("sockaddr is ipv4");
+                if let Some(port) = port_map.get(&sin6.port()) {
+                    SocketAddrV6::new(sin6.ip(), *port, sin6.flowinfo(), sin6.flowinfo()).into()
+                } else {
+                    req.addr
+                }
             } else {
-                return -libc::EPERM;
+                return -libc::EINVAL;
             }
         } else {
-            req.port
+            req.addr
         };
 
-        match bind(
-            self.fd.as_raw_fd(),
-            &SockaddrIn::from(SocketAddrV4::new(req.addr, port)),
-        ) {
+        match bind(self.fd.as_raw_fd(), &addr) {
             Ok(_) => {
                 debug!("tcp bind: id={}", self.id);
                 match Backlog::new(req.backlog) {
@@ -366,6 +389,15 @@ impl TcpProxy {
             Err(e) => error!("couldn't obtain fd flags id={}, err={}", self.id, e),
         };
     }
+
+    fn get_addr_len(&self, addr: &SockaddrStorage) -> Option<u32> {
+        let addr_len = match self.family {
+            AddressFamily::Inet => addr.as_sockaddr_in()?.len(),
+            _ => 0,
+        };
+
+        Some(addr_len)
+    }
 }
 
 impl Proxy for TcpProxy {
@@ -380,10 +412,7 @@ impl Proxy for TcpProxy {
     fn connect(&mut self, _pkt: &VsockPacket, req: TsiConnectReq) -> ProxyUpdate {
         let mut update = ProxyUpdate::default();
 
-        let result = match connect(
-            self.fd.as_raw_fd(),
-            &SockaddrIn::from(SocketAddrV4::new(req.addr, req.port)),
-        ) {
+        let result = match connect(self.fd.as_raw_fd(), &req.addr) {
             Ok(()) => {
                 debug!("vsock: connect: Connected");
                 self.switch_to_connected();
@@ -449,21 +478,37 @@ impl Proxy for TcpProxy {
     fn getpeername(&mut self, pkt: &VsockPacket) {
         debug!("getpeername: id={}", self.id);
 
-        let (result, addr, port) = match getpeername::<SockaddrIn>(self.fd.as_raw_fd()) {
-            Ok(name) => {
-                let addr = name.ip();
-                (0, addr, name.port())
-            }
-            Err(e) => {
-                #[cfg(target_os = "macos")]
-                let errno = -linux_errno_raw(e as i32);
-                #[cfg(target_os = "linux")]
-                let errno = -(e as i32);
-                (errno, Ipv4Addr::new(0, 0, 0, 0), 0)
-            }
-        };
+        let (result, addr_len, addr): (i32, u32, SockaddrStorage) =
+            match getpeername(self.fd.as_raw_fd()) {
+                Ok(addr) => {
+                    if let Some(addr_len) = self.get_addr_len(&addr) {
+                        (0, addr_len, addr)
+                    } else {
+                        #[cfg(target_os = "macos")]
+                        let errno = -linux_errno_raw(EINVAL);
+                        #[cfg(target_os = "linux")]
+                        let errno = -EINVAL;
+                        (errno, 0, addr)
+                    }
+                }
+                Err(e) => {
+                    #[cfg(target_os = "macos")]
+                    let errno = -linux_errno_raw(e as i32);
+                    #[cfg(target_os = "linux")]
+                    let errno = -(e as i32);
+                    (
+                        errno,
+                        0,
+                        SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0).into(),
+                    )
+                }
+            };
 
-        let data = TsiGetnameRsp { addr, port, result };
+        let data = TsiGetnameRsp {
+            result,
+            addr_len,
+            addr,
+        };
 
         debug!("getpeername: reply={data:?}");
 
@@ -540,8 +585,8 @@ impl Proxy for TcpProxy {
         host_port_map: &Option<HashMap<u16, u16>>,
     ) -> ProxyUpdate {
         debug!(
-            "listen: id={} addr={}, port={}, vm_port={} backlog={}",
-            self.id, req.addr, req.port, req.vm_port, req.backlog
+            "listen: id={} addr={}, vm_port={} backlog={}",
+            self.id, req.addr, req.vm_port, req.backlog
         );
         let mut update = ProxyUpdate::default();
 
@@ -752,7 +797,8 @@ impl Proxy for TcpProxy {
                     Ok(accept_fd) => {
                         // Safe because we've just obtained the FD from the `accept` call above.
                         let new_fd = unsafe { OwnedFd::from_raw_fd(accept_fd) };
-                        update.new_proxy = Some((self.peer_port, new_fd, NewProxyType::Tcp));
+                        update.new_proxy =
+                            Some((self.peer_port, new_fd, self.family, NewProxyType::Tcp));
                     }
                     Err(e) => warn!("error accepting connection: id={}, err={}", self.id, e),
                 };

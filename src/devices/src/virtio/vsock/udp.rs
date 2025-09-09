@@ -1,14 +1,15 @@
 use std::collections::HashMap;
-use std::net::SocketAddrV4;
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::num::Wrapping;
 use std::os::fd::OwnedFd;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 
+use libc::AF_INET;
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
     bind, connect, getpeername, recv, send, sendto, socket, AddressFamily, MsgFlags, SockFlag,
-    SockType, SockaddrIn,
+    SockType, SockaddrIn, SockaddrLike, SockaddrStorage,
 };
 
 #[cfg(target_os = "macos")]
@@ -33,7 +34,7 @@ pub struct UdpProxy {
     peer_port: u32,
     fd: OwnedFd,
     pub status: ProxyStatus,
-    sendto_addr: Option<SockaddrIn>,
+    sendto_addr: Option<SockaddrStorage>,
     listening: bool,
     mem: GuestMemoryMmap,
     queue: Arc<Mutex<VirtQueue>>,
@@ -48,18 +49,19 @@ impl UdpProxy {
     pub fn new(
         id: u64,
         cid: u64,
+        family: u16,
         peer_port: u32,
         mem: GuestMemoryMmap,
         queue: Arc<Mutex<VirtQueue>>,
         rxq: Arc<Mutex<MuxerRxQ>>,
     ) -> Result<Self, ProxyError> {
-        let fd = socket(
-            AddressFamily::Inet,
-            SockType::Datagram,
-            SockFlag::empty(),
-            None,
-        )
-        .map_err(ProxyError::CreatingSocket)?;
+        let family = match family as i32 {
+            AF_INET => AddressFamily::Inet,
+            _ => return Err(ProxyError::InvalidFamily),
+        };
+
+        let fd = socket(family, SockType::Datagram, SockFlag::empty(), None)
+            .map_err(ProxyError::CreatingSocket)?;
 
         // macOS forces us to do this here instead of just using SockFlag::SOCK_NONBLOCK above.
         match fcntl(&fd, FcntlArg::F_GETFL) {
@@ -236,11 +238,8 @@ impl Proxy for UdpProxy {
     }
 
     fn connect(&mut self, pkt: &VsockPacket, req: TsiConnectReq) -> ProxyUpdate {
-        debug!("vsock: udp: connect: addr={}, port={}", req.addr, req.port);
-        let res = match connect(
-            self.fd.as_raw_fd(),
-            &SockaddrIn::from(SocketAddrV4::new(req.addr, req.port)),
-        ) {
+        debug!("vsock: udp: connect: addr={}", req.addr);
+        let res = match connect(self.fd.as_raw_fd(), &req.addr) {
             Ok(()) => {
                 debug!("vsock: connect: Connected");
                 self.status = ProxyStatus::Connected;
@@ -277,12 +276,24 @@ impl Proxy for UdpProxy {
     fn getpeername(&mut self, pkt: &VsockPacket) {
         debug!("vsock: udp: process_getpeername");
 
-        let name = getpeername::<SockaddrIn>(self.fd.as_raw_fd()).unwrap();
-        let addr = name.ip();
+        let (result, addr): (i32, SockaddrStorage) = match getpeername(self.fd.as_raw_fd()) {
+            Ok(name) => (0, name),
+            Err(e) => {
+                #[cfg(target_os = "macos")]
+                let errno = -linux_errno_raw(e as i32);
+                #[cfg(target_os = "linux")]
+                let errno = -(e as i32);
+                (
+                    errno,
+                    SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0).into(),
+                )
+            }
+        };
+
         let data = TsiGetnameRsp {
+            result,
+            addr_len: addr.len(),
             addr,
-            port: name.port(),
-            result: 0,
         };
 
         // This response goes to the connection.
@@ -320,14 +331,11 @@ impl Proxy for UdpProxy {
     }
 
     fn sendto_addr(&mut self, req: TsiSendtoAddr) -> ProxyUpdate {
-        debug!(
-            "vsock: udp_proxy: sendto_addr: addr={}, port={}",
-            req.addr, req.port
-        );
+        debug!("vsock: udp_proxy: sendto_addr: addr={}", req.addr);
 
         let mut update = ProxyUpdate::default();
 
-        self.sendto_addr = Some(SockaddrIn::from(SocketAddrV4::new(req.addr, req.port)));
+        self.sendto_addr = Some(req.addr);
         if !self.listening {
             match bind(self.fd.as_raw_fd(), &SockaddrIn::new(0, 0, 0, 0, 0)) {
                 Ok(_) => {
