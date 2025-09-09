@@ -17,10 +17,11 @@
 /// to temporary buffers, before passing it on to the vsock backend.
 use std::convert::TryInto;
 use std::ffi::CStr;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::os::raw::c_char;
 use std::result;
 
+use nix::sys::socket::{sockaddr, AddressFamily, SockaddrLike, SockaddrStorage};
 use utils::byte_order;
 use vm_memory::{self, Address, GuestAddress, GuestMemory, GuestMemoryError};
 
@@ -96,14 +97,14 @@ const HDROFF_FWD_CNT: usize = 40;
 #[repr(C)]
 pub struct TsiProxyCreate {
     pub peer_port: u32,
+    pub family: u16,
     pub _type: u16,
 }
 
 #[repr(C)]
 pub struct TsiConnectReq {
     pub peer_port: u32,
-    pub addr: Ipv4Addr,
-    pub port: u16,
+    pub addr: SockaddrStorage,
 }
 
 #[repr(C)]
@@ -121,17 +122,19 @@ pub struct TsiGetnameReq {
 #[repr(C)]
 #[derive(Debug)]
 pub struct TsiGetnameRsp {
-    pub addr: Ipv4Addr,
-    pub port: u16,
     pub result: i32,
+    pub addr_len: u32,
+    pub addr: SockaddrStorage,
 }
 
 impl Default for TsiGetnameRsp {
     fn default() -> Self {
+        let addr: SockaddrStorage = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0).into();
         TsiGetnameRsp {
-            addr: Ipv4Addr::new(0, 0, 0, 0),
-            port: 0,
             result: -1,
+            // It's fine to unwrap here sice we've just created the SocketAddrV4 above.
+            addr_len: addr.as_sockaddr_in().unwrap().len(),
+            addr,
         }
     }
 }
@@ -140,18 +143,16 @@ impl Default for TsiGetnameRsp {
 #[derive(Debug)]
 pub struct TsiSendtoAddr {
     pub peer_port: u32,
-    pub addr: Ipv4Addr,
-    pub port: u16,
+    pub addr: SockaddrStorage,
 }
 
 #[repr(C)]
 #[derive(Debug)]
 pub struct TsiListenReq {
     pub peer_port: u32,
-    pub addr: Ipv4Addr,
-    pub port: u16,
     pub vm_port: u32,
     pub backlog: i32,
+    pub addr: SockaddrStorage,
 }
 
 #[repr(C)]
@@ -479,31 +480,50 @@ impl VsockPacket {
         }
     }
 
+    fn parse_address(buf: &[u8], addr_len: u32) -> Option<SockaddrStorage> {
+        let sockaddr: SockaddrStorage = unsafe {
+            SockaddrStorage::from_raw(&buf[0] as *const _ as *const sockaddr, Some(addr_len))?
+        };
+
+        match sockaddr.family() {
+            Some(AddressFamily::Inet) => debug!("parse_address: AF_INET"),
+            _ => {
+                if let Some(family) = sockaddr.family() {
+                    warn!("parse_address: unsupported family {family:?}");
+                } else {
+                    warn!("parse_address: error parsing family");
+                }
+                return None;
+            }
+        }
+
+        Some(sockaddr)
+    }
+
     pub fn read_proxy_create(&self) -> Option<TsiProxyCreate> {
         if self.buf_size >= 6 {
             let peer_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[0..]);
-            let _type: u16 = byte_order::read_le_u16(&self.buf().unwrap()[4..]);
+            let family: u16 = byte_order::read_le_u16(&self.buf().unwrap()[4..]);
+            let _type: u16 = byte_order::read_le_u16(&self.buf().unwrap()[6..]);
 
-            Some(TsiProxyCreate { peer_port, _type })
+            Some(TsiProxyCreate {
+                peer_port,
+                family,
+                _type,
+            })
         } else {
             None
         }
     }
 
     pub fn read_connect_req(&self) -> Option<TsiConnectReq> {
-        if self.buf_size >= 10 {
-            let peer_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[0..]);
-            let port: u16 = byte_order::read_be_u16(&self.buf().unwrap()[8..]);
+        if self.buf_size >= 4 {
+            let buf = self.buf().unwrap();
+            let peer_port: u32 = byte_order::read_le_u32(&buf[0..]);
+            let addr_len: u32 = byte_order::read_le_u32(&buf[4..]);
+            let addr = Self::parse_address(&buf[8..], addr_len)?;
 
-            let ptr = &self.buf().unwrap()[4];
-            let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, 4) };
-            let addr = Ipv4Addr::new(slice[0], slice[1], slice[2], slice[3]);
-
-            Some(TsiConnectReq {
-                peer_port,
-                addr,
-                port,
-            })
+            Some(TsiConnectReq { peer_port, addr })
         } else {
             None
         }
@@ -533,54 +553,46 @@ impl VsockPacket {
     }
 
     pub fn write_getname_rsp(&mut self, rsp: TsiGetnameRsp) {
-        if self.buf_size >= 10 {
+        if self.buf_size >= 132 {
             if let Some(buf) = self.buf_mut() {
-                for (i, b) in rsp.addr.octets().iter().enumerate() {
-                    buf[i] = *b;
-                }
-                byte_order::write_be_u16(&mut buf[4..], rsp.port);
-                byte_order::write_le_u32(&mut buf[6..], rsp.result as u32);
+                byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
+                byte_order::write_le_u32(&mut buf[4..], rsp.addr_len);
+                let addr_ptr = rsp.addr.as_ptr();
+                let slice = unsafe {
+                    std::slice::from_raw_parts(addr_ptr as *const u8, rsp.addr.len() as usize)
+                };
+                buf[8..(rsp.addr.len() + 8) as usize].copy_from_slice(slice);
             }
         }
     }
 
     pub fn read_sendto_addr(&self) -> Option<TsiSendtoAddr> {
-        if self.buf_size >= 10 {
-            let peer_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[0..]);
-            let port: u16 = byte_order::read_be_u16(&self.buf().unwrap()[8..]);
+        if self.buf_size >= 4 {
+            let buf = self.buf().unwrap();
+            let peer_port: u32 = byte_order::read_le_u32(&buf[0..]);
+            let addr_len: u32 = byte_order::read_le_u32(&buf[4..]);
+            let addr = Self::parse_address(&buf[8..], addr_len)?;
 
-            let ptr = &self.buf().unwrap()[4];
-            let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, 4) };
-            let addr = Ipv4Addr::new(slice[0], slice[1], slice[2], slice[3]);
-
-            Some(TsiSendtoAddr {
-                peer_port,
-                addr,
-                port,
-            })
+            Some(TsiSendtoAddr { peer_port, addr })
         } else {
             None
         }
     }
 
     pub fn read_listen_req(&self) -> Option<TsiListenReq> {
-        if self.buf_size >= 18 {
-            let peer_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[0..]);
-
-            let ptr = &self.buf().unwrap()[4];
-            let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, 4) };
-            let addr = Ipv4Addr::new(slice[0], slice[1], slice[2], slice[3]);
-
-            let port: u16 = byte_order::read_be_u16(&self.buf().unwrap()[8..]);
-            let vm_port: u32 = byte_order::read_le_u32(&self.buf().unwrap()[10..]);
-            let backlog: u32 = byte_order::read_le_u32(&self.buf().unwrap()[14..]);
+        if self.buf_size >= 12 {
+            let buf = self.buf().unwrap();
+            let peer_port: u32 = byte_order::read_le_u32(&buf[0..]);
+            let vm_port: u32 = byte_order::read_le_u32(&buf[4..]);
+            let backlog: u32 = byte_order::read_le_u32(&buf[8..]);
+            let addr_len: u32 = byte_order::read_le_u32(&buf[12..]);
+            let addr = Self::parse_address(&buf[16..], addr_len)?;
 
             Some(TsiListenReq {
                 peer_port,
-                addr,
-                port,
                 vm_port,
                 backlog: backlog as i32,
+                addr,
             })
         } else {
             None
