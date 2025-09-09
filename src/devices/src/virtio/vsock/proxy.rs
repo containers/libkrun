@@ -5,6 +5,7 @@ use std::os::unix::io::{AsRawFd, RawFd};
 
 use super::muxer::MuxerRx;
 use super::packet::{TsiAcceptReq, TsiConnectReq, TsiListenReq, TsiSendtoAddr, VsockPacket};
+use nix::sys::socket::AddressFamily;
 use utils::epoll::EventSet;
 
 #[derive(Debug)]
@@ -19,6 +20,8 @@ pub enum RecvPkt {
 #[derive(Debug)]
 pub enum ProxyError {
     CreatingSocket(nix::errno::Errno),
+    InvalidFamily,
+    SettingReuseAddr(nix::errno::Errno),
     SettingReusePort(nix::errno::Errno),
 }
 
@@ -54,7 +57,7 @@ pub struct ProxyUpdate {
     pub signal_queue: bool,
     pub remove_proxy: ProxyRemoval,
     pub polling: Option<(u64, RawFd, EventSet)>,
-    pub new_proxy: Option<(u32, OwnedFd, NewProxyType)>,
+    pub new_proxy: Option<(u32, OwnedFd, AddressFamily, NewProxyType)>,
     pub push_accept: Option<(u64, u64)>,
     pub push_credit_req: Option<MuxerRx>,
 }

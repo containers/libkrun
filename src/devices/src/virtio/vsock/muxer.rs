@@ -22,7 +22,7 @@ use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 use vm_memory::GuestMemoryMmap;
 
 use crate::virtio::InterruptTransport;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddrV4};
 
 pub type ProxyMap = Arc<RwLock<HashMap<u64, Mutex<Box<dyn Proxy>>>>>;
 
@@ -250,6 +250,7 @@ impl VsockMuxer {
                     match TcpProxy::new(
                         id,
                         self.cid,
+                        req.family,
                         defs::TSI_PROXY_PORT,
                         req.peer_port,
                         pkt.src_port(),
@@ -272,6 +273,7 @@ impl VsockMuxer {
                     match UdpProxy::new(
                         id,
                         self.cid,
+                        req.family,
                         req.peer_port,
                         mem.clone(),
                         queue.clone(),
@@ -502,8 +504,7 @@ impl VsockMuxer {
                 .unwrap();
                 let tsi = TsiConnectReq {
                     peer_port: 0,
-                    addr: Ipv4Addr::new(0, 0, 0, 0),
-                    port: 0,
+                    addr: SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0).into(),
                 };
                 let update = unix.connect(pkt, tsi);
                 unix.confirm_connect(pkt);
