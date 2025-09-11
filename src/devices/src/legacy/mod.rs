@@ -71,6 +71,8 @@ pub use self::vcpu::VcpuList;
 /// Trait that composes the `std::io::Read` and `std::os::unix::io::AsRawFd` traits.
 pub trait ReadableFd: std::io::Read + std::os::fd::AsRawFd {}
 
+impl ReadableFd for std::fs::File {}
+
 #[cfg(target_os = "linux")]
 #[derive(Clone)]
 pub struct GicV3 {}
