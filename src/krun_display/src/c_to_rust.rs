@@ -142,7 +142,7 @@ pub struct DisplayBackend<'userdata> {
     pub vtable: DisplayVtable,
 }
 
-impl<'a> DisplayBackend<'a> {
+impl DisplayBackend<'_> {
     /// Create a DisplayBackendInstance, the caller is responsible for only calling this on a
     /// properly constructed DisplayBackend struct.
     pub fn create_instance(&self) -> Result<DisplayBackendInstance, DisplayBackendError> {
@@ -191,4 +191,4 @@ impl<'a> DisplayBackend<'a> {
     }
 }
 
-unsafe impl<'a> Send for DisplayBackend<'a> {}
+unsafe impl Send for DisplayBackend<'_> {}
