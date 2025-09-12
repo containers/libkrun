@@ -1,15 +1,19 @@
 use std::collections::HashMap;
+use std::fs;
 use std::net::{Ipv4Addr, SocketAddrV4, SocketAddrV6};
 use std::num::Wrapping;
 use std::os::fd::{FromRawFd, OwnedFd};
+use std::os::unix::fs::FileTypeExt;
 use std::os::unix::io::{AsRawFd, RawFd};
+use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use libc::AF_INET;
 #[cfg(target_os = "linux")]
 use libc::EINVAL;
 #[cfg(target_os = "macos")]
 use libc::EINVAL;
+use libc::{AF_INET, AF_INET6, AF_UNIX};
 use nix::errno::Errno;
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
@@ -54,6 +58,7 @@ pub struct TcpProxy {
     peer_fwd_cnt: Wrapping<u32>,
     push_cnt: Wrapping<u32>,
     pending_accepts: u64,
+    unixsock_path: Option<PathBuf>,
 }
 
 impl TcpProxy {
@@ -71,6 +76,8 @@ impl TcpProxy {
     ) -> Result<Self, ProxyError> {
         let family = match family as i32 {
             AF_INET => AddressFamily::Inet,
+            AF_INET6 => AddressFamily::Inet6,
+            AF_UNIX => AddressFamily::Unix,
             _ => return Err(ProxyError::InvalidFamily),
         };
         let fd = socket(family, SockType::Stream, SockFlag::empty(), None)
@@ -130,6 +137,7 @@ impl TcpProxy {
             peer_fwd_cnt: Wrapping(0),
             push_cnt: Wrapping(0),
             pending_accepts: 0,
+            unixsock_path: None,
         })
     }
 
@@ -167,6 +175,7 @@ impl TcpProxy {
             peer_fwd_cnt: Wrapping(0),
             push_cnt: Wrapping(0),
             pending_accepts: 0,
+            unixsock_path: None,
         }
     }
 
@@ -199,12 +208,15 @@ impl TcpProxy {
                     req.addr
                 }
             } else if let Some(sin6) = req.addr.as_sockaddr_in6() {
-                debug!("sockaddr is ipv4");
+                debug!("sockaddr is ipv6");
                 if let Some(port) = port_map.get(&sin6.port()) {
                     SocketAddrV6::new(sin6.ip(), *port, sin6.flowinfo(), sin6.flowinfo()).into()
                 } else {
                     req.addr
                 }
+            } else if req.addr.as_unix_addr().is_some() {
+                debug!("sockaddr is unix");
+                req.addr
             } else {
                 return -libc::EINVAL;
             }
@@ -212,9 +224,23 @@ impl TcpProxy {
             req.addr
         };
 
+        let unixsock_path = self.get_unixsock_path(&addr);
+        // If the userspace process in the guest has already created the socket,
+        // we need to unlink it to take ownership of the node in the filesystem.
+        if let Some(path) = &unixsock_path {
+            if let Err(e) = fs::remove_file(path) {
+                debug!("error removing socket: {e}");
+            }
+        }
+
         match bind(self.fd.as_raw_fd(), &addr) {
             Ok(_) => {
                 debug!("tcp bind: id={}", self.id);
+
+                // For unix sockets we need to unlink the path on Drop, since
+                // it's possible the userspace application can't do it itself.
+                self.unixsock_path = unixsock_path;
+
                 match Backlog::new(req.backlog) {
                     Ok(backlog) => match listen(&self.fd, backlog) {
                         Ok(_) => {
@@ -393,10 +419,38 @@ impl TcpProxy {
     fn get_addr_len(&self, addr: &SockaddrStorage) -> Option<u32> {
         let addr_len = match self.family {
             AddressFamily::Inet => addr.as_sockaddr_in()?.len(),
+            AddressFamily::Inet6 => addr.as_sockaddr_in6()?.len(),
+            AddressFamily::Unix => addr.as_unix_addr()?.len(),
             _ => 0,
         };
 
         Some(addr_len)
+    }
+
+    fn get_unixsock_path(&self, addr: &SockaddrStorage) -> Option<PathBuf> {
+        if let Some(addr) = addr.as_unix_addr() {
+            if let Some(path) = addr.path() {
+                // SockaddrStorage doesn't clean up NULLs. This is fine when
+                // using addr with other nix methods, but we need to clean them
+                // up to be able to treat it as a path with other Rust crates.
+                let path_str = path.to_str()?.replace("\0", "");
+                debug!("unix socket path_str={path_str}");
+
+                match fs::metadata(&path_str) {
+                    Ok(metadata) => {
+                        if metadata.file_type().is_socket() {
+                            debug!("unix socket path is socket");
+                            return PathBuf::from_str(&path_str).ok();
+                        } else {
+                            debug!("unix socket path is NOT a socket");
+                        }
+                    }
+                    Err(e) => debug!("metadata failed with {e}"),
+                }
+            }
+        }
+
+        None
     }
 }
 
@@ -833,5 +887,13 @@ impl Proxy for TcpProxy {
 impl AsRawFd for TcpProxy {
     fn as_raw_fd(&self) -> RawFd {
         self.fd.as_raw_fd()
+    }
+}
+
+impl Drop for TcpProxy {
+    fn drop(&mut self) {
+        if let Some(path) = &self.unixsock_path {
+            _ = fs::remove_file(path);
+        }
     }
 }
