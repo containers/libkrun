@@ -31,10 +31,8 @@ pub const CROSS_DOMAIN_CHANNEL_TYPE_CAMERA: u32 = 0x0002;
 pub const CROSS_DOMAIN_CHANNEL_TYPE_PW: u32 = 0x0010;
 pub const CROSS_DOMAIN_CHANNEL_TYPE_X11: u32 = 0x0011;
 
-/// The maximum number of identifiers (value inspired by wp_linux_dmabuf)
-pub const CROSS_DOMAIN_MAX_IDENTIFIERS: usize = 4;
-/// As above, but inspired by sommelier
-pub const CROSS_DOMAIN_MAX_IDENTIFIERS_V2: usize = 28;
+/// The maximum number of identifiers (must match what sommelier expects)
+pub const CROSS_DOMAIN_MAX_IDENTIFIERS: usize = 28;
 
 /// virtgpu memory resource ID.  Also works with non-blob memory resources, despite the name.
 pub const CROSS_DOMAIN_ID_TYPE_VIRTGPU_BLOB: u32 = 1;
@@ -179,14 +177,14 @@ pub struct CrossDomainSendReceiveV2 {
     pub hdr: CrossDomainHeader,
     pub num_identifiers: u32,
     pub opaque_data_size: u32,
-    pub identifiers: [u32; CROSS_DOMAIN_MAX_IDENTIFIERS_V2],
-    pub identifier_types: [u32; CROSS_DOMAIN_MAX_IDENTIFIERS_V2],
-    pub identifier_sizes: [u32; CROSS_DOMAIN_MAX_IDENTIFIERS_V2],
+    pub identifiers: [u32; CROSS_DOMAIN_MAX_IDENTIFIERS],
+    pub identifier_types: [u32; CROSS_DOMAIN_MAX_IDENTIFIERS],
+    pub identifier_sizes: [u32; CROSS_DOMAIN_MAX_IDENTIFIERS],
     // Data of size "opaque data size follows"
 }
 
 impl CrossDomainSendReceiveBase for CrossDomainSendReceiveV2 {
-    const MAX_IDENTIFIERS: usize = CROSS_DOMAIN_MAX_IDENTIFIERS_V2;
+    const MAX_IDENTIFIERS: usize = CROSS_DOMAIN_MAX_IDENTIFIERS;
     fn hdr_mut(&mut self) -> &mut CrossDomainHeader {
         &mut self.hdr
     }
