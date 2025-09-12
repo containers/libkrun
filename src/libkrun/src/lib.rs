@@ -76,13 +76,13 @@ const MAX_ARGS: usize = 4096;
 
 // krunfw library name for each context
 #[cfg(all(target_os = "linux", not(feature = "tee")))]
-const KRUNFW_NAME: &str = "libkrunfw.so.4";
+const KRUNFW_NAME: &str = "libkrunfw.so.5";
 #[cfg(all(target_os = "linux", feature = "amd-sev"))]
-const KRUNFW_NAME: &str = "libkrunfw-sev.so.4";
+const KRUNFW_NAME: &str = "libkrunfw-sev.so.5";
 #[cfg(all(target_os = "linux", feature = "tdx"))]
-const KRUNFW_NAME: &str = "libkrunfw-tdx.so.4";
+const KRUNFW_NAME: &str = "libkrunfw-tdx.so.5";
 #[cfg(target_os = "macos")]
-const KRUNFW_NAME: &str = "libkrunfw.4.dylib";
+const KRUNFW_NAME: &str = "libkrunfw.5.dylib";
 
 // Path to the init binary to be executed inside the VM.
 const INIT_PATH: &str = "/init.krun";
