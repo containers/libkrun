@@ -5,11 +5,11 @@ use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 
-use libc::AF_INET;
 #[cfg(target_os = "linux")]
 use libc::EINVAL;
 #[cfg(target_os = "macos")]
 use libc::EINVAL;
+use libc::{AF_INET, AF_INET6, AF_UNIX};
 use nix::errno::Errno;
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
@@ -71,6 +71,8 @@ impl TcpProxy {
     ) -> Result<Self, ProxyError> {
         let family = match family as i32 {
             AF_INET => AddressFamily::Inet,
+            AF_INET6 => AddressFamily::Inet6,
+            AF_UNIX => AddressFamily::Unix,
             _ => return Err(ProxyError::InvalidFamily),
         };
         let fd = socket(family, SockType::Stream, SockFlag::empty(), None)
@@ -393,6 +395,8 @@ impl TcpProxy {
     fn get_addr_len(&self, addr: &SockaddrStorage) -> Option<u32> {
         let addr_len = match self.family {
             AddressFamily::Inet => addr.as_sockaddr_in()?.len(),
+            AddressFamily::Inet6 => addr.as_sockaddr_in6()?.len(),
+            AddressFamily::Unix => addr.as_unix_addr()?.len(),
             _ => 0,
         };
 
