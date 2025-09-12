@@ -5,7 +5,7 @@ use std::os::fd::OwnedFd;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 
-use libc::AF_INET;
+use libc::{AF_INET, AF_INET6, AF_UNIX};
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
     bind, connect, getpeername, recv, send, sendto, socket, AddressFamily, MsgFlags, SockFlag,
@@ -57,6 +57,8 @@ impl UdpProxy {
     ) -> Result<Self, ProxyError> {
         let family = match family as i32 {
             AF_INET => AddressFamily::Inet,
+            AF_INET6 => AddressFamily::Inet6,
+            AF_UNIX => AddressFamily::Unix,
             _ => return Err(ProxyError::InvalidFamily),
         };
 

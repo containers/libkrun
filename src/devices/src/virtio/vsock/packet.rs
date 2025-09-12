@@ -487,6 +487,8 @@ impl VsockPacket {
 
         match sockaddr.family() {
             Some(AddressFamily::Inet) => debug!("parse_address: AF_INET"),
+            Some(AddressFamily::Inet6) => debug!("parse_address: AF_INET6"),
+            Some(AddressFamily::Unix) => debug!("parse_address: AF_UNIX"),
             _ => {
                 if let Some(family) = sockaddr.family() {
                     warn!("parse_address: unsupported family {family:?}");
