@@ -42,6 +42,8 @@ pub struct VsockDeviceConfig {
     pub unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
     /// Whether to enable TSI
     pub enable_tsi: bool,
+    /// Whether to enable TSI for AF_UNIX
+    pub enable_tsi_unix: bool,
 }
 
 struct VsockWrapper {
@@ -81,6 +83,7 @@ impl VsockBuilder {
             cfg.host_port_map,
             cfg.unix_ipc_port_map,
             cfg.enable_tsi,
+            cfg.enable_tsi_unix,
         )
         .map_err(VsockConfigError::CreateVsockDevice)
     }
@@ -119,6 +122,7 @@ pub(crate) mod tests {
             host_port_map: None,
             unix_ipc_port_map: None,
             enable_tsi: false,
+            enable_tsi_unix: false,
         }
     }
 
