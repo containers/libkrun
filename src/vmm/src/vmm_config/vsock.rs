@@ -40,6 +40,8 @@ pub struct VsockDeviceConfig {
     pub host_port_map: Option<HashMap<u16, u16>>,
     /// An optional map of guest port to host UNIX domain sockets for IPC.
     pub unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
+    /// Whether to enable TSI
+    pub enable_tsi: bool,
 }
 
 struct VsockWrapper {
@@ -78,6 +80,7 @@ impl VsockBuilder {
             u64::from(cfg.guest_cid),
             cfg.host_port_map,
             cfg.unix_ipc_port_map,
+            cfg.enable_tsi,
         )
         .map_err(VsockConfigError::CreateVsockDevice)
     }
@@ -115,6 +118,7 @@ pub(crate) mod tests {
             guest_cid: 3,
             host_port_map: None,
             unix_ipc_port_map: None,
+            enable_tsi: false,
         }
     }
 

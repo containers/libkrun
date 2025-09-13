@@ -2384,16 +2384,19 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         guest_cid: 3,
         host_port_map: None,
         unix_ipc_port_map: None,
+        enable_tsi: false,
     };
 
     #[cfg(feature = "net")]
     if ctx_cfg.vmr.net.list.is_empty() && ctx_cfg.legacy_net_cfg.is_none() {
         vsock_config.host_port_map = ctx_cfg.tsi_port_map;
+        vsock_config.enable_tsi = true;
         vsock_set = true;
     }
     #[cfg(not(feature = "net"))]
     {
         vsock_config.host_port_map = ctx_cfg.tsi_port_map;
+        vsock_config.enable_tsi = true;
         vsock_set = true;
     }
 
