@@ -107,6 +107,7 @@ pub struct VsockMuxer {
     reaper_sender: Option<Sender<u64>>,
     unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
     enable_tsi: bool,
+    enable_tsi_unix: bool,
 }
 
 impl VsockMuxer {
@@ -115,6 +116,7 @@ impl VsockMuxer {
         host_port_map: Option<HashMap<u16, u16>>,
         unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
         enable_tsi: bool,
+        enable_tsi_unix: bool,
     ) -> Self {
         VsockMuxer {
             cid,
@@ -128,6 +130,7 @@ impl VsockMuxer {
             reaper_sender: None,
             unix_ipc_port_map,
             enable_tsi,
+            enable_tsi_unix,
         }
     }
 
@@ -282,6 +285,10 @@ impl VsockMuxer {
                 defs::SOCK_STREAM => {
                     debug!("vsock: proxy create stream");
                     let id = ((req.peer_port as u64) << 32) | (defs::TSI_PROXY_PORT as u64);
+                    if req.family as i32 == libc::AF_UNIX && !self.enable_tsi_unix {
+                        warn!("vsock: rejecting tcp unix proxy because tsi_unix is disabled");
+                        return;
+                    }
                     match TcpProxy::new(
                         id,
                         self.cid,
@@ -305,6 +312,10 @@ impl VsockMuxer {
                 defs::SOCK_DGRAM => {
                     debug!("vsock: proxy create dgram");
                     let id = ((req.peer_port as u64) << 32) | (defs::TSI_PROXY_PORT as u64);
+                    if req.family as i32 == libc::AF_UNIX && !self.enable_tsi_unix {
+                        warn!("vsock: rejecting udp unix proxy because tsi_unix is disabled");
+                        return;
+                    }
                     match UdpProxy::new(
                         id,
                         self.cid,

@@ -2385,6 +2385,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         host_port_map: None,
         unix_ipc_port_map: None,
         enable_tsi: false,
+        enable_tsi_unix: false,
     };
 
     #[cfg(feature = "net")]
@@ -2406,6 +2407,15 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     }
 
     if vsock_set {
+        if vsock_config.enable_tsi {
+            // We only support using TSI for AF_UNIX in a containerized context,
+            // so only enable it when we have a single virtio-fs device pointing
+            // to root.
+            #[cfg(not(feature = "tee"))]
+            if ctx_cfg.vmr.fs.len() == 1 && ctx_cfg.vmr.fs[0].shared_dir == "/" {
+                vsock_config.enable_tsi_unix = true;
+            }
+        }
         ctx_cfg.vmr.set_vsock_device(vsock_config).unwrap();
     }
 
