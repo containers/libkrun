@@ -53,6 +53,7 @@ impl Vsock {
         queues: Vec<VirtQueue>,
         unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
         enable_tsi: bool,
+        enable_tsi_unix: bool,
     ) -> super::Result<Vsock> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
@@ -65,7 +66,13 @@ impl Vsock {
 
         Ok(Vsock {
             cid,
-            muxer: VsockMuxer::new(cid, host_port_map, unix_ipc_port_map, enable_tsi),
+            muxer: VsockMuxer::new(
+                cid,
+                host_port_map,
+                unix_ipc_port_map,
+                enable_tsi,
+                enable_tsi_unix,
+            ),
             queue_rx,
             queue_tx,
             queues,
@@ -84,12 +91,20 @@ impl Vsock {
         host_port_map: Option<HashMap<u16, u16>>,
         unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
         enable_tsi: bool,
+        enable_tsi_unix: bool,
     ) -> super::Result<Vsock> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
             .iter()
             .map(|&max_size| VirtQueue::new(max_size))
             .collect();
-        Self::with_queues(cid, host_port_map, queues, unix_ipc_port_map, enable_tsi)
+        Self::with_queues(
+            cid,
+            host_port_map,
+            queues,
+            unix_ipc_port_map,
+            enable_tsi,
+            enable_tsi_unix,
+        )
     }
 
     pub fn id(&self) -> &str {
