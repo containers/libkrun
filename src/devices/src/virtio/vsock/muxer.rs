@@ -106,6 +106,7 @@ pub struct VsockMuxer {
     proxy_map: ProxyMap,
     reaper_sender: Option<Sender<u64>>,
     unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
+    enable_tsi: bool,
 }
 
 impl VsockMuxer {
@@ -113,6 +114,7 @@ impl VsockMuxer {
         cid: u64,
         host_port_map: Option<HashMap<u16, u16>>,
         unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
+        enable_tsi: bool,
     ) -> Self {
         VsockMuxer {
             cid,
@@ -125,6 +127,7 @@ impl VsockMuxer {
             proxy_map: Arc::new(RwLock::new(HashMap::new())),
             reaper_sender: None,
             unix_ipc_port_map,
+            enable_tsi,
         }
     }
 
@@ -447,14 +450,14 @@ impl VsockMuxer {
         }
 
         match pkt.dst_port() {
-            defs::TSI_PROXY_CREATE => self.process_proxy_create(pkt),
-            defs::TSI_CONNECT => self.process_connect(pkt),
-            defs::TSI_GETNAME => self.process_getname(pkt),
-            defs::TSI_SENDTO_ADDR => self.process_sendto_addr(pkt),
-            defs::TSI_SENDTO_DATA => self.process_sendto_data(pkt),
-            defs::TSI_LISTEN => self.process_listen_request(pkt),
-            defs::TSI_ACCEPT => self.process_accept_request(pkt),
-            defs::TSI_PROXY_RELEASE => self.process_proxy_release(pkt),
+            defs::TSI_PROXY_CREATE if self.enable_tsi => self.process_proxy_create(pkt),
+            defs::TSI_CONNECT if self.enable_tsi => self.process_connect(pkt),
+            defs::TSI_GETNAME if self.enable_tsi => self.process_getname(pkt),
+            defs::TSI_SENDTO_ADDR if self.enable_tsi => self.process_sendto_addr(pkt),
+            defs::TSI_SENDTO_DATA if self.enable_tsi => self.process_sendto_data(pkt),
+            defs::TSI_LISTEN if self.enable_tsi => self.process_listen_request(pkt),
+            defs::TSI_ACCEPT if self.enable_tsi => self.process_accept_request(pkt),
+            defs::TSI_PROXY_RELEASE if self.enable_tsi => self.process_proxy_release(pkt),
             _ => {
                 if pkt.op() == uapi::VSOCK_OP_RW {
                     self.process_dgram_rw(pkt);
