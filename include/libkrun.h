@@ -684,6 +684,19 @@ int32_t krun_set_exec(uint32_t ctx_id,
                       const char *const argv[],
                       const char *const envp[]);
 
+/**
+ * Sets the path to the firmware to be loaded into the microVM.
+ *
+ * Arguments:
+ *  "ctx_id"        - the configuration context ID.
+ *  "firmware_path" - the path to the firmware, relative to the host's filesystem.
+ *
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_firmware(uint32_t ctx_id, const char *firmware_path);
+
 #define KRUN_KERNEL_FORMAT_RAW 0
 #define KRUN_KERNEL_FORMAT_ELF 1
 #define KRUN_KERNEL_FORMAT_PE_GZ 2

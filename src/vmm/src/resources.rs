@@ -251,6 +251,10 @@ impl VmResources {
         self.external_kernel = Some(external_kernel);
     }
 
+    pub fn set_firmware_config(&mut self, firmware_config: FirmwareConfig) {
+        self.firmware_config = Some(firmware_config);
+    }
+
     #[cfg(feature = "tee")]
     pub fn qboot_bundle(&self) -> Option<&QbootBundle> {
         self.qboot_bundle.as_ref()
