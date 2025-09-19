@@ -653,9 +653,9 @@ pub fn build_microvm(
 
         vec![
             MeasuredRegion {
-                guest_addr: arch::BIOS_START,
+                guest_addr: arch::FIRMWARE_START,
                 host_addr: guest_memory
-                    .get_host_address(GuestAddress(arch::BIOS_START))
+                    .get_host_address(GuestAddress(arch::FIRMWARE_START))
                     .unwrap() as u64,
                 size: qboot_size,
             },
@@ -696,9 +696,9 @@ pub fn build_microvm(
                 size: 0x8000_0000,
             },
             MeasuredRegion {
-                guest_addr: arch::BIOS_START,
+                guest_addr: arch::FIRMWARE_START,
                 host_addr: guest_memory
-                    .get_host_address(GuestAddress(arch::BIOS_START))
+                    .get_host_address(GuestAddress(arch::FIRMWARE_START))
                     .unwrap() as u64,
                 size: qboot_size,
             },
@@ -1325,7 +1325,7 @@ fn load_payload(
             let qboot_data =
                 unsafe { std::slice::from_raw_parts(qboot_host_addr as *mut u8, qboot_size) };
             guest_mem
-                .write(qboot_data, GuestAddress(arch::BIOS_START))
+                .write(qboot_data, GuestAddress(arch::FIRMWARE_START))
                 .unwrap();
 
             let (initrd_host_addr, initrd_size) =

@@ -80,7 +80,7 @@ pub fn setup_regs(vcpu: &VcpuFd, boot_ip: u64, id: u8) -> Result<()> {
     } else {
         kvm_regs {
             rflags: 0x0000_0000_0000_0002u64,
-            rip: super::RESET_VECTOR_SEV_AP,
+            rip: super::layout::RESET_VECTOR_SEV_AP,
             ..Default::default()
         }
     };
