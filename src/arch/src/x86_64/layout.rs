@@ -43,3 +43,24 @@ pub const SNP_CPUID_START: u64 = 0x6000;
 /// SNP: FW stack and initial page tables
 pub const SNP_FWDATA_START: u64 = 0x8000;
 pub const SNP_FWDATA_SIZE: usize = 0x7000;
+
+// Where BIOS/VGA magic would live on a real PC.
+pub const EBDA_START: u64 = 0x9fc00;
+
+/// Where the PC register will point after a reset.
+#[cfg(not(feature = "tdx"))]
+pub const RESET_VECTOR: u64 = 0xfff0;
+#[cfg(feature = "tdx")]
+pub const RESET_VECTOR: u64 = 0xffff_fff0;
+pub const RESET_VECTOR_SEV_AP: u64 = 0xfff3;
+
+/// The address to load the firmware, if present.
+pub const FIRMWARE_START: u64 = 0xffff_0000;
+
+/// The size of the firmware.
+pub const FIRMWARE_SIZE: u64 = 65536;
+
+/// The start of the memory area reserved for MMIO devices.
+pub const FIRST_ADDR_PAST_32BITS: u64 = 1 << 32;
+pub const MEM_32BIT_GAP_SIZE: u64 = 768 << 20;
+pub const MMIO_MEM_START: u64 = FIRST_ADDR_PAST_32BITS - MEM_32BIT_GAP_SIZE;

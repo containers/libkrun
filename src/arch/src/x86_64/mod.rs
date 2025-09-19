@@ -18,6 +18,9 @@ pub mod msr;
 pub mod regs;
 
 use crate::{ArchMemoryInfo, InitrdConfig};
+use crate::x86_64::layout::{MMIO_MEM_START, FIRST_ADDR_PAST_32BITS, EBDA_START};
+#[cfg(feature = "tee")]
+use crate::x86_64::layout::{FIRMWARE_START, FIRMWARE_SIZE};
 use arch_gen::x86::bootparam::{boot_params, E820_RAM};
 use vm_memory::Bytes;
 use vm_memory::{
@@ -49,20 +52,6 @@ pub enum Error {
     /// Failed to compute initrd address.
     InitrdAddress,
 }
-
-// Where BIOS/VGA magic would live on a real PC.
-const EBDA_START: u64 = 0x9fc00;
-#[cfg(not(feature = "tdx"))]
-pub const RESET_VECTOR: u64 = 0xfff0;
-#[cfg(feature = "tdx")]
-pub const RESET_VECTOR: u64 = 0xffff_fff0;
-pub const RESET_VECTOR_SEV_AP: u64 = 0xfff3;
-pub const BIOS_START: u64 = 0xffff_0000;
-pub const BIOS_SIZE: usize = 65536;
-const FIRST_ADDR_PAST_32BITS: u64 = 1 << 32;
-const MEM_32BIT_GAP_SIZE: u64 = 768 << 20;
-/// The start of the memory area reserved for MMIO devices.
-pub const MMIO_MEM_START: u64 = FIRST_ADDR_PAST_32BITS - MEM_32BIT_GAP_SIZE;
 
 /// Returns a Vec of the valid memory addresses.
 /// These should be used to configure the GuestMemoryMmap structure for the platform.
@@ -179,7 +168,7 @@ pub fn arch_memory_regions(
                 shm_start_addr,
                 vec![
                     (GuestAddress(0), size),
-                    (GuestAddress(BIOS_START), BIOS_SIZE),
+                    (GuestAddress(FIRMWARE_START), FIRMWARE_SIZE as usize),
                 ],
             )
         }
@@ -192,7 +181,7 @@ pub fn arch_memory_regions(
                 shm_start_addr,
                 vec![
                     (GuestAddress(0), MMIO_MEM_START as usize),
-                    (GuestAddress(BIOS_START), BIOS_SIZE),
+                    (GuestAddress(FIRMWARE_START), FIRMWARE_SIZE as usize),
                     (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
                 ],
             )
