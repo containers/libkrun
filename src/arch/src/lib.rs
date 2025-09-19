@@ -44,8 +44,8 @@ pub mod x86_64;
 #[cfg(target_arch = "x86_64")]
 pub use crate::x86_64::{
     arch_memory_regions, configure_system, get_kernel_start, initrd_load_addr,
-    layout::CMDLINE_MAX_SIZE, layout::IRQ_BASE, layout::IRQ_MAX, Error, layout::FIRMWARE_SIZE, layout::FIRMWARE_START,
-    layout::MMIO_MEM_START, layout::RESET_VECTOR,
+    layout::CMDLINE_MAX_SIZE, layout::FIRMWARE_SIZE, layout::FIRMWARE_START, layout::IRQ_BASE,
+    layout::IRQ_MAX, layout::MMIO_MEM_START, layout::RESET_VECTOR, Error,
 };
 
 /// Type for returning public functions outcome.

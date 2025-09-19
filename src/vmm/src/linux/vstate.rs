@@ -1153,6 +1153,7 @@ impl Vcpu {
         guest_mem: &GuestMemoryMmap,
         kernel_start_addr: GuestAddress,
         vcpu_config: &VcpuConfig,
+        kernel_boot: bool,
     ) -> Result<()> {
         let cpuid_vm_spec = VmSpec::new(self.id, vcpu_config.vcpu_count, vcpu_config.ht_enabled)
             .map_err(Error::CpuId)?;
@@ -1177,8 +1178,7 @@ impl Vcpu {
             .set_cpuid2(&self.cpuid)
             .map_err(Error::VcpuSetCpuid)?;
 
-        #[cfg(not(feature = "tdx"))]
-        {
+        if kernel_boot {
             arch::x86_64::msr::setup_msrs(&self.fd).map_err(Error::MSRSConfiguration)?;
             arch::x86_64::regs::setup_regs(&self.fd, kernel_start_addr.raw_value(), self.id)
                 .map_err(Error::REGSConfiguration)?;
@@ -1874,19 +1874,19 @@ mod tests {
         };
 
         assert!(vcpu
-            .configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config)
+            .configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config, true)
             .is_ok());
 
         // Test configure while using the T2 template.
         vcpu_config.cpu_template = Some(CpuFeaturesTemplate::T2);
         assert!(vcpu
-            .configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config)
+            .configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config, true)
             .is_ok());
 
         // Test configure while using the C3 template.
         vcpu_config.cpu_template = Some(CpuFeaturesTemplate::C3);
         assert!(vcpu
-            .configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config)
+            .configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config, true)
             .is_ok());
     }
 
