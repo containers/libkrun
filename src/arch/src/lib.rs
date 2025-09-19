@@ -12,6 +12,7 @@ pub struct ArchMemoryInfo {
     pub shm_start_addr: u64,
     pub page_size: usize,
     pub initrd_addr: u64,
+    pub firmware_addr: u64,
 }
 
 /// Module for aarch64 related functionality.
@@ -21,7 +22,8 @@ pub mod aarch64;
 #[cfg(target_arch = "aarch64")]
 pub use aarch64::{
     arch_memory_regions, configure_system, get_kernel_start, initrd_load_addr,
-    layout::CMDLINE_MAX_SIZE, layout::IRQ_BASE, layout::IRQ_MAX, Error, MMIO_MEM_START,
+    layout::CMDLINE_MAX_SIZE, layout::IRQ_BASE, layout::IRQ_MAX, layout::RESET_VECTOR, Error,
+    MMIO_MEM_START,
 };
 
 /// Module for riscv64 related functionality.
@@ -31,7 +33,8 @@ pub mod riscv64;
 #[cfg(target_arch = "riscv64")]
 pub use riscv64::{
     arch_memory_regions, configure_system, get_kernel_start, initrd_load_addr,
-    layout::CMDLINE_MAX_SIZE, layout::IRQ_BASE, layout::IRQ_MAX, Error, MMIO_MEM_START,
+    layout::CMDLINE_MAX_SIZE, layout::IRQ_BASE, layout::IRQ_MAX, layout::RESET_VECTOR, Error,
+    MMIO_MEM_START,
 };
 
 /// Module for x86_64 related functionality.

@@ -141,6 +141,7 @@ pub fn arch_memory_regions(
         shm_start_addr,
         page_size,
         initrd_addr: ram_last_addr - initrd_size,
+        firmware_addr: 0,
     };
     (info, regions)
 }
@@ -202,6 +203,7 @@ pub fn arch_memory_regions(
         shm_start_addr,
         page_size,
         initrd_addr: layout::INITRD_SEV_START,
+        firmware_addr: 0,
     };
     (info, regions)
 }
