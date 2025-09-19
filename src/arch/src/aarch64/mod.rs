@@ -17,11 +17,10 @@ pub use self::macos::*;
 
 use std::fmt::Debug;
 
-use crate::ArchMemoryInfo;
+use crate::{aarch64::layout::FIRMWARE_START, ArchMemoryInfo};
 use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMmap};
 use vmm_sys_util::align_upwards;
 
-#[cfg(feature = "efi")]
 use smbios;
 
 /// Errors thrown while configuring aarch64 system.
@@ -30,7 +29,6 @@ pub enum Error {
     /// Failed to compute the initrd address.
     InitrdAddress,
 
-    #[cfg(feature = "efi")]
     /// SMBIOS Error
     Smbios(smbios::Error),
 }
@@ -43,6 +41,7 @@ pub const MMIO_MEM_START: u64 = layout::MAPPED_IO_START;
 pub fn arch_memory_regions(
     size: usize,
     initrd_size: u64,
+    firmware_size: Option<usize>,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
     let dram_size = align_upwards!(size, page_size);
@@ -54,11 +53,12 @@ pub fn arch_memory_regions(
         shm_start_addr,
         page_size,
         initrd_addr: ram_last_addr - layout::FDT_MAX_SIZE as u64 - initrd_size,
+        firmware_addr: FIRMWARE_START,
     };
-    let regions = if cfg!(feature = "efi") {
+    let regions = if let Some(firmware_size) = firmware_size {
         vec![
-            // Space for loading EDK2 and its variables
-            (GuestAddress(0u64), 0x800_0000),
+            // Space for loading the firmware
+            (GuestAddress(0u64), align_upwards!(firmware_size, page_size)),
             (GuestAddress(layout::DRAM_MEM_START), dram_size),
         ]
     } else {
@@ -84,7 +84,6 @@ pub fn configure_system(
     _guest_mem: &GuestMemoryMmap,
     _smbios_oem_strings: &Option<Vec<String>>,
 ) -> super::Result<()> {
-    #[cfg(feature = "efi")]
     smbios::setup_smbios(_guest_mem, layout::SMBIOS_START, _smbios_oem_strings)
         .map_err(Error::Smbios)?;
 
@@ -114,20 +113,7 @@ pub fn initrd_load_addr(guest_mem: &GuestMemoryMmap, initrd_size: usize) -> supe
 
 // Auxiliary function to get the address where the device tree blob is loaded.
 pub fn get_fdt_addr(_mem: &GuestMemoryMmap) -> u64 {
-    // If the memory allocated is smaller than the size allocated for the FDT,
-    // we return the start of the DRAM so that
-    // we allow the code to try and load the FDT.
-
-    #[cfg(not(feature = "efi"))]
-    if let Some(addr) = _mem
-        .last_addr()
-        .checked_sub(layout::FDT_MAX_SIZE as u64 - 1)
-    {
-        if _mem.address_in_range(addr) {
-            return addr.raw_value();
-        }
-    }
-
+    // Put FDT at the beginning of the DRAM
     layout::DRAM_MEM_START
 }
 

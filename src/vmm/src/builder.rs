@@ -26,7 +26,6 @@ use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
 use crate::resources::{ConsoleType, VmResources};
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
-use crate::vmm_config::firmware::FirmwareConfig;
 #[cfg(feature = "net")]
 use crate::vmm_config::net::NetBuilder;
 #[cfg(all(target_os = "linux", target_arch = "riscv64"))]
@@ -97,7 +96,8 @@ use vm_memory::GuestMemory;
 use vm_memory::GuestRegionMmap;
 use vm_memory::{GuestAddress, GuestMemoryMmap};
 
-#[cfg(feature = "efi")]
+#[cfg(target_arch = "aarch64")]
+#[allow(dead_code)]
 static EDK2_BINARY: &[u8] = include_bytes!("../../../edk2/KRUN_EFI.silent.fd");
 
 /// Errors associated with starting the instance.
@@ -118,7 +118,7 @@ pub enum StartMicrovmError {
     /// Cannot load the kernel into the VM.
     ElfLoadKernel(linux_loader::loader::Error),
     /// The firmware can't be loaded into the provided memory address.
-    FirmwareInvalidAddress,
+    FirmwareInvalidAddress(vm_memory::GuestMemoryError),
     /// Cannot read firmware contents from file.
     FirmwareRead(io::Error),
     /// Memory regions are overlapping or mmap fails.
@@ -248,10 +248,10 @@ impl Display for StartMicrovmError {
             ElfLoadKernel(ref err) => {
                 write!(f, "Cannot load the kernel into the VM: {err}")
             }
-            FirmwareInvalidAddress => {
+            FirmwareInvalidAddress(ref err) => {
                 write!(
                     f,
-                    "The firmware can't be loaded into the provided memory address."
+                    "The firmware can't be loaded into the guest memory: {err}"
                 )
             }
             FirmwareRead(ref err) => {
@@ -505,7 +505,7 @@ enum Payload {
     ExternalKernel(ExternalKernel),
     #[cfg(test)]
     Empty,
-    Efi,
+    Firmware,
     #[cfg(feature = "tee")]
     Tee,
 }
@@ -527,31 +527,11 @@ fn choose_payload(vm_resources: &VmResources) -> Result<Payload, StartMicrovmErr
         return Ok(Payload::KernelCopy);
     } else if let Some(external_kernel) = vm_resources.external_kernel() {
         Ok(Payload::ExternalKernel(external_kernel.clone()))
-    } else if cfg!(feature = "efi") {
-        Ok(Payload::Efi)
+    } else if cfg!(feature = "efi") || vm_resources.firmware_config.is_some() {
+        Ok(Payload::Firmware)
     } else {
         Err(StartMicrovmError::MissingKernelConfig)
     }
-}
-
-fn load_firmware(
-    firmware: &FirmwareConfig,
-    guest_mem: &GuestMemoryMmap,
-) -> Result<(), StartMicrovmError> {
-    if !guest_mem.address_in_range(GuestAddress(firmware.guest_addr))
-        || !guest_mem.address_in_range(GuestAddress(firmware.guest_addr + firmware.size))
-    {
-        return Err(StartMicrovmError::FirmwareInvalidAddress);
-    }
-
-    let data: Vec<u8> =
-        std::fs::read(firmware.path.clone()).map_err(StartMicrovmError::FirmwareRead)?;
-
-    guest_mem
-        .write(&data, GuestAddress(firmware.guest_addr))
-        .unwrap();
-
-    Ok(())
 }
 
 /// Builds and starts a microVM based on the current Firecracker VmResources configuration.
@@ -577,10 +557,6 @@ pub fn build_microvm(
         vm_resources,
         &payload,
     )?;
-
-    if let Some(firmware) = &vm_resources.firmware_config {
-        load_firmware(firmware, &guest_memory)?;
-    }
 
     let vcpu_config = vm_resources.vcpu_config();
 
@@ -733,10 +709,17 @@ pub fn build_microvm(
 
     let mut serial_devices = Vec::new();
 
-    // On x86_64 always create a serial device,
-    // while on aarch64 only create it if 'console=' is specified in the boot args.
-    if cfg!(feature = "efi") && !vm_resources.disable_implicit_console {
-        serial_devices.push(setup_serial_device(event_manager, None, None)?);
+    // Create the legacy serial device if we're booting from a firmware
+    if (cfg!(feature = "efi") || vm_resources.firmware_config.is_some())
+        && !vm_resources.disable_implicit_console
+    {
+        serial_devices.push(setup_serial_device(
+            event_manager,
+            None,
+            None,
+            // Uncomment this to get EFI output when debugging EDK2.
+            //Some(Box::new(io::stdout())),
+        )?);
     };
 
     for s in vm_resources
@@ -1369,15 +1352,7 @@ fn load_payload(
                 None,
             ))
         }
-        #[cfg(feature = "efi")]
-        Payload::Efi => {
-            guest_mem.write(EDK2_BINARY, GuestAddress(0u64)).unwrap();
-            Ok((guest_mem, GuestAddress(0), None, None))
-        }
-        #[cfg(not(feature = "efi"))]
-        Payload::Efi => {
-            unreachable!("EFI support was not built in")
-        }
+        Payload::Firmware => Ok((guest_mem, GuestAddress(arch::RESET_VECTOR), None, None)),
     }
 }
 
@@ -1396,6 +1371,17 @@ fn create_guest_memory(
     StartMicrovmError,
 > {
     let mem_size = mem_size << 20;
+
+    #[cfg(not(feature = "efi"))]
+    let (firmware_data, firmware_size) = if let Some(firmware) = &vm_resources.firmware_config {
+        let data = std::fs::read(firmware.path.clone()).map_err(StartMicrovmError::FirmwareRead)?;
+        let len = data.len();
+        (Some(data), Some(len))
+    } else {
+        (None, None)
+    };
+    #[cfg(feature = "efi")]
+    let (firmware_data, firmware_size) = (Some(EDK2_BINARY), Some(EDK2_BINARY.len()));
 
     #[cfg(target_arch = "x86_64")]
     let (arch_mem_info, mut arch_mem_regions) = match payload {
@@ -1424,14 +1410,14 @@ fn create_guest_memory(
         }
         #[cfg(test)]
         Payload::Empty => arch::arch_memory_regions(mem_size, None, 0, 0),
-        Payload::Efi => unreachable!(),
+        Payload::Firmware => unreachable!(),
     };
     #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
     let (arch_mem_info, mut arch_mem_regions) = match payload {
         Payload::ExternalKernel(external_kernel) => {
-            arch::arch_memory_regions(mem_size, external_kernel.initramfs_size)
+            arch::arch_memory_regions(mem_size, external_kernel.initramfs_size, None)
         }
-        _ => arch::arch_memory_regions(mem_size, 0),
+        _ => arch::arch_memory_regions(mem_size, 0, firmware_size),
     };
 
     let mut shm_manager = ShmManager::new(&arch_mem_info);
@@ -1458,6 +1444,12 @@ fn create_guest_memory(
 
     let (guest_mem, entry_addr, initrd_config, cmdline) =
         load_payload(vm_resources, guest_mem, &arch_mem_info, payload)?;
+
+    if let Some(firmware_data) = firmware_data.as_ref() {
+        guest_mem
+            .write(firmware_data, GuestAddress(arch_mem_info.firmware_addr))
+            .map_err(StartMicrovmError::FirmwareInvalidAddress)?;
+    }
 
     let payload_config = PayloadConfig {
         entry_addr,

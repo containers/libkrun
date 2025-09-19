@@ -8,9 +8,7 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
-#[cfg(not(feature = "efi"))]
-use std::mem;
-use std::mem::MaybeUninit;
+use std::mem::{self, MaybeUninit};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::ptr::null_mut;
 use std::str::FromStr;
@@ -37,7 +35,6 @@ const XATTR_KEY: &[u8] = b"user.containers.override_stat\0";
 
 const UID_MAX: u32 = u32::MAX - 1;
 
-#[cfg(not(feature = "efi"))]
 static INIT_BINARY: &[u8] = include_bytes!("../../../../../../init/init");
 
 type Inode = u64;
@@ -976,7 +973,6 @@ impl FileSystem for PassthroughFs {
         debug!("lookup: {name:?}");
         let _init_name = unsafe { CStr::from_bytes_with_nul_unchecked(INIT_CSTR) };
 
-        #[cfg(not(feature = "efi"))]
         if self.init_inode != 0 && name == _init_name {
             let mut st: bindings::stat64 = unsafe { mem::zeroed() };
             st.st_size = INIT_BINARY.len() as i64;
@@ -994,8 +990,6 @@ impl FileSystem for PassthroughFs {
         } else {
             self.do_lookup(parent, name)
         }
-        #[cfg(feature = "efi")]
-        self.do_lookup(parent, name)
     }
 
     fn forget(&self, _ctx: Context, inode: Inode, count: u64) {
@@ -1236,7 +1230,6 @@ impl FileSystem for PassthroughFs {
         _flags: u32,
     ) -> io::Result<usize> {
         debug!("read: {inode:?}");
-        #[cfg(not(feature = "efi"))]
         if inode == self.init_inode {
             let off: usize = offset
                 .try_into()
