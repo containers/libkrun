@@ -798,6 +798,8 @@ pub fn build_microvm(
             Some(intc.clone()),
         )?;
 
+        let kernel_boot = vm_resources.firmware_config.is_none() && !cfg!(feature = "tee");
+
         vcpus = create_vcpus_x86_64(
             &vm,
             &vcpu_config,
@@ -805,6 +807,7 @@ pub fn build_microvm(
             payload_config.entry_addr,
             &pio_device_manager.io_bus,
             &exit_evt,
+            kernel_boot,
             #[cfg(feature = "tee")]
             _sender,
         )
@@ -1393,10 +1396,10 @@ fn create_guest_memory(
                 } else {
                     return Err(StartMicrovmError::MissingKernelConfig);
                 };
-            arch::arch_memory_regions(mem_size, Some(kernel_guest_addr), kernel_size, 0)
+            arch::arch_memory_regions(mem_size, Some(kernel_guest_addr), kernel_size, 0, None)
         }
         Payload::ExternalKernel(external_kernel) => {
-            arch::arch_memory_regions(mem_size, None, 0, external_kernel.initramfs_size)
+            arch::arch_memory_regions(mem_size, None, 0, external_kernel.initramfs_size, None)
         }
         #[cfg(feature = "tee")]
         Payload::Tee => {
@@ -1406,11 +1409,11 @@ fn create_guest_memory(
                 } else {
                     return Err(StartMicrovmError::MissingKernelConfig);
                 };
-            arch::arch_memory_regions(mem_size, Some(kernel_guest_addr), kernel_size, 0)
+            arch::arch_memory_regions(mem_size, Some(kernel_guest_addr), kernel_size, 0, None)
         }
         #[cfg(test)]
-        Payload::Empty => arch::arch_memory_regions(mem_size, None, 0, 0),
-        Payload::Firmware => unreachable!(),
+        Payload::Empty => arch::arch_memory_regions(mem_size, None, 0, 0, None),
+        Payload::Firmware => arch::arch_memory_regions(mem_size, None, 0, 0, firmware_size),
     };
     #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
     let (arch_mem_info, mut arch_mem_regions) = match payload {
@@ -1651,6 +1654,7 @@ fn attach_legacy_devices(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[allow(clippy::too_many_arguments)]
 fn create_vcpus_x86_64(
     vm: &Vm,
     vcpu_config: &VcpuConfig,
@@ -1658,6 +1662,7 @@ fn create_vcpus_x86_64(
     entry_addr: GuestAddress,
     io_bus: &devices::Bus,
     exit_evt: &EventFd,
+    kernel_boot: bool,
     #[cfg(feature = "tee")] pm_sender: Sender<WorkerMessage>,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
@@ -1674,7 +1679,7 @@ fn create_vcpus_x86_64(
         )
         .map_err(Error::Vcpu)?;
 
-        vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config)
+        vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config, kernel_boot)
             .map_err(Error::Vcpu)?;
 
         vcpus.push(vcpu);
@@ -2196,6 +2201,7 @@ pub mod tests {
             entry_addr,
             &bus,
             &EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+            true,
         )
         .unwrap();
         assert_eq!(vcpu_vec.len(), vcpu_count as usize);
