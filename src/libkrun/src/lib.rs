@@ -35,7 +35,6 @@ use std::os::fd::{FromRawFd, RawFd};
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
-#[cfg(not(feature = "efi"))]
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use utils::eventfd::EventFd;
@@ -46,7 +45,6 @@ use vmm::vmm_config::block::{BlockDeviceConfig, BlockRootConfig};
 use vmm::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(not(feature = "tee"))]
 use vmm::vmm_config::fs::FsDeviceConfig;
-#[cfg(not(feature = "efi"))]
 use vmm::vmm_config::kernel_bundle::KernelBundle;
 #[cfg(feature = "tee")]
 use vmm::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
@@ -76,17 +74,15 @@ const KRUNFW_NAME: &str = "libkrunfw.so.4";
 const KRUNFW_NAME: &str = "libkrunfw-sev.so.4";
 #[cfg(all(target_os = "linux", feature = "tdx"))]
 const KRUNFW_NAME: &str = "libkrunfw-tdx.so.4";
-#[cfg(all(target_os = "macos", not(feature = "efi")))]
+#[cfg(target_os = "macos")]
 const KRUNFW_NAME: &str = "libkrunfw.4.dylib";
 
 // Path to the init binary to be executed inside the VM.
 const INIT_PATH: &str = "/init.krun";
 
-#[cfg(not(feature = "efi"))]
 static KRUNFW: LazyLock<Option<libloading::Library>> =
     LazyLock::new(|| unsafe { libloading::Library::new(KRUNFW_NAME).ok() });
 
-#[cfg(not(feature = "efi"))]
 pub struct KrunfwBindings {
     get_kernel: libloading::Symbol<
         'static,
@@ -98,7 +94,6 @@ pub struct KrunfwBindings {
     get_qboot: libloading::Symbol<'static, unsafe extern "C" fn(*mut size_t) -> *mut c_char>,
 }
 
-#[cfg(not(feature = "efi"))]
 impl KrunfwBindings {
     fn load_bindings() -> Result<KrunfwBindings, libloading::Error> {
         let krunfw = match KRUNFW.as_ref() {
@@ -130,7 +125,6 @@ enum LegacyNetworkConfig {
 
 #[derive(Default)]
 struct ContextConfig {
-    #[cfg(not(feature = "efi"))]
     krunfw: Option<KrunfwBindings>,
     vmr: VmResources,
     workdir: Option<String>,
@@ -464,16 +458,9 @@ pub unsafe extern "C" fn krun_init_log(target: RawFd, level: u32, style: u32, op
 #[no_mangle]
 pub extern "C" fn krun_create_ctx() -> i32 {
     let ctx_cfg = {
-        let shutdown_efd = if cfg!(feature = "efi") {
-            Some(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap())
-        } else {
-            None
-        };
-
         ContextConfig {
-            #[cfg(not(feature = "efi"))]
             krunfw: KrunfwBindings::new(),
-            shutdown_efd,
+            shutdown_efd: Some(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap()),
             ..Default::default()
         }
     };
@@ -1879,7 +1866,6 @@ pub unsafe extern "C" fn krun_set_kernel(
     KRUN_SUCCESS
 }
 
-#[cfg(not(feature = "efi"))]
 unsafe fn load_krunfw_payload(
     krunfw: &KrunfwBindings,
     vmr: &mut VmResources,
@@ -2196,8 +2182,11 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         None => return -libc::ENOENT,
     };
 
-    #[cfg(not(feature = "efi"))]
-    if ctx_cfg.vmr.external_kernel.is_none() && ctx_cfg.vmr.kernel_bundle.is_none() {
+    if ctx_cfg.vmr.external_kernel.is_none()
+        && ctx_cfg.vmr.kernel_bundle.is_none()
+        && ctx_cfg.vmr.firmware_config.is_none()
+        && cfg!(not(feature = "efi"))
+    {
         if let Some(ref krunfw) = ctx_cfg.krunfw {
             if let Err(err) = unsafe { load_krunfw_payload(krunfw, &mut ctx_cfg.vmr) } {
                 eprintln!("Can't load libkrunfw symbols: {err}");

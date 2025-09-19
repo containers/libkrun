@@ -11,7 +11,7 @@ pub use self::linux::*;
 
 use std::fmt::Debug;
 
-use crate::ArchMemoryInfo;
+use crate::{riscv64::layout::FIRMWARE_START, ArchMemoryInfo};
 use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMmap};
 use vmm_sys_util::align_upwards;
 
@@ -30,6 +30,7 @@ pub const MMIO_MEM_START: u64 = layout::MAPPED_IO_START;
 pub fn arch_memory_regions(
     size: usize,
     initrd_size: u64,
+    _firmware_size: Option<usize>,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
     let dram_size = align_upwards!(size, page_size);
@@ -41,6 +42,7 @@ pub fn arch_memory_regions(
         shm_start_addr,
         page_size,
         initrd_addr: ram_last_addr - layout::FDT_MAX_SIZE as u64 - initrd_size,
+        firmware_addr: FIRMWARE_START,
     };
     let regions = vec![(GuestAddress(layout::DRAM_MEM_START), dram_size)];
 
