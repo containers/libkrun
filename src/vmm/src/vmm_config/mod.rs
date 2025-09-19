@@ -5,6 +5,9 @@
 #[cfg(feature = "blk")]
 pub mod block;
 
+/// Wrapper for configuring the firmware.
+pub mod firmware;
+
 /// Wrapper for configuring the kernel command line.
 pub mod kernel_cmdline;
 
