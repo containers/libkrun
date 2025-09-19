@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "blk")]
 use crate::vmm_config::block::{BlockBuilder, BlockConfigError, BlockDeviceConfig};
 use crate::vmm_config::external_kernel::ExternalKernel;
+use crate::vmm_config::firmware::FirmwareConfig;
 #[cfg(not(feature = "tee"))]
 use crate::vmm_config::fs::*;
 #[cfg(feature = "tee")]
@@ -102,6 +103,8 @@ pub struct ConsoleConfig {
 pub struct VmResources {
     /// The vCpu and memory configuration for this microVM.
     vm_config: VmConfig,
+    /// The firmware to be loaded into the microVM.
+    pub firmware_config: Option<FirmwareConfig>,
     /// The kernel command line for this microVM.
     pub kernel_cmdline: KernelCmdlineConfig,
     /// The parameters for the kernel bundle to be loaded in this microVM.
@@ -365,6 +368,7 @@ mod tests {
     fn default_vm_resources() -> VmResources {
         VmResources {
             vm_config: VmConfig::default(),
+            firmware_config: None,
             kernel_cmdline: default_kernel_cmdline(),
             kernel_bundle: Default::default(),
             external_kernel: None,

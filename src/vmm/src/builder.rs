@@ -26,6 +26,7 @@ use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
 use crate::resources::{ConsoleType, VmResources};
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
+use crate::vmm_config::firmware::FirmwareConfig;
 #[cfg(feature = "net")]
 use crate::vmm_config::net::NetBuilder;
 #[cfg(all(target_os = "linux", target_arch = "riscv64"))]
@@ -116,6 +117,10 @@ pub enum StartMicrovmError {
     ElfOpenKernel(io::Error),
     /// Cannot load the kernel into the VM.
     ElfLoadKernel(linux_loader::loader::Error),
+    /// The firmware can't be loaded into the provided memory address.
+    FirmwareInvalidAddress,
+    /// Cannot read firmware contents from file.
+    FirmwareRead(io::Error),
     /// Memory regions are overlapping or mmap fails.
     GuestMemoryMmap(vm_memory::Error),
     /// The BZIP2 decoder couldn't decompress the kernel.
@@ -242,6 +247,15 @@ impl Display for StartMicrovmError {
             }
             ElfLoadKernel(ref err) => {
                 write!(f, "Cannot load the kernel into the VM: {err}")
+            }
+            FirmwareInvalidAddress => {
+                write!(
+                    f,
+                    "The firmware can't be loaded into the provided memory address."
+                )
+            }
+            FirmwareRead(ref err) => {
+                write!(f, "Cannot read firmware contents from file: {err}")
             }
             GuestMemoryMmap(ref err) => {
                 // Remove imbricated quotes from error message.
@@ -520,6 +534,26 @@ fn choose_payload(vm_resources: &VmResources) -> Result<Payload, StartMicrovmErr
     }
 }
 
+fn load_firmware(
+    firmware: &FirmwareConfig,
+    guest_mem: &GuestMemoryMmap,
+) -> Result<(), StartMicrovmError> {
+    if !guest_mem.address_in_range(GuestAddress(firmware.guest_addr))
+        || !guest_mem.address_in_range(GuestAddress(firmware.guest_addr + firmware.size))
+    {
+        return Err(StartMicrovmError::FirmwareInvalidAddress);
+    }
+
+    let data: Vec<u8> =
+        std::fs::read(firmware.path.clone()).map_err(StartMicrovmError::FirmwareRead)?;
+
+    guest_mem
+        .write(&data, GuestAddress(firmware.guest_addr))
+        .unwrap();
+
+    Ok(())
+}
+
 /// Builds and starts a microVM based on the current Firecracker VmResources configuration.
 ///
 /// This is the default build recipe, one could build other microVM flavors by using the
@@ -543,6 +577,10 @@ pub fn build_microvm(
         vm_resources,
         &payload,
     )?;
+
+    if let Some(firmware) = &vm_resources.firmware_config {
+        load_firmware(firmware, &guest_memory)?;
+    }
 
     let vcpu_config = vm_resources.vcpu_config();
 
