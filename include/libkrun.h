@@ -6,8 +6,8 @@ extern "C" {
 #endif
 
 #include <inttypes.h>
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <unistd.h>
 
 /**
@@ -26,7 +26,6 @@ extern "C" {
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_set_log_level(uint32_t level);
-
 
 #define KRUN_LOG_TARGET_DEFAULT -1
 
@@ -47,23 +46,27 @@ int32_t krun_set_log_level(uint32_t level);
  * Initializes logging for the library.
  *
  * Arguments:
- *  "target_fd" - File descriptor to write log to. Note that using a file descriptor pointing to a regular file on
- *                filesystem might slow down the VM.
- *                Use KRUN_LOG_TARGET_DEFAULT to use the default target for log output (stderr).
+ *  "target_fd" - File descriptor to write log to. Note that using a file
+ * descriptor pointing to a regular file on filesystem might slow down the VM.
+ *                Use KRUN_LOG_TARGET_DEFAULT to use the default target for log
+ * output (stderr).
  *
- *  "level"     - Level is an integer specifying the level of verbosity, higher number means more verbose log.
- *                The log levels are described by the constants: KRUN_LOG_LEVEL_{OFF, ERROR, WARN, INFO, DEBUG, TRACE}
+ *  "level"     - Level is an integer specifying the level of verbosity, higher
+ * number means more verbose log. The log levels are described by the constants:
+ * KRUN_LOG_LEVEL_{OFF, ERROR, WARN, INFO, DEBUG, TRACE}
  *
- *  "style"     - Enable/disable usage of terminal escape sequences (to display colors)
- *                One of: KRUN_LOG_STYLE_{AUTO, ALWAYS, NEVER}.
+ *  "style"     - Enable/disable usage of terminal escape sequences (to display
+ * colors) One of: KRUN_LOG_STYLE_{AUTO, ALWAYS, NEVER}.
  *
  *  "options"   - Bitmask of logging options, use 0 for default options.
- *                KRUN_LOG_OPTION_NO_ENV to disallow environment variables to override these settings.
+ *                KRUN_LOG_OPTION_NO_ENV to disallow environment variables to
+ * override these settings.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_init_log(int target_fd, uint32_t level, uint32_t style, uint32_t options);
+int32_t krun_init_log(int target_fd, uint32_t level, uint32_t style,
+                      uint32_t options);
 
 /**
  * Creates a configuration context.
@@ -95,14 +98,17 @@ int32_t krun_free_ctx(uint32_t ctx_id);
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus, uint32_t ram_mib);
+int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus,
+                           uint32_t ram_mib);
 
 /**
- * Sets the path to be use as root for the microVM. Not available in libkrun-SEV.
+ * Sets the path to be use as root for the microVM. Not available in
+ * libkrun-SEV.
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
- *  "root_path" - a null-terminated string representing the path to be used as root.
+ *  "root_path" - a null-terminated string representing the path to be used as
+ * root.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
@@ -112,13 +118,13 @@ int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
 /**
  * DEPRECATED. Use krun_add_disk instead.
  *
- * Sets the path to the disk image that contains the file-system to be used as root for the microVM.
- * The only supported image format is "raw".
+ * Sets the path to the disk image that contains the file-system to be used as
+ * root for the microVM. The only supported image format is "raw".
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
- *  "disk_path" - a null-terminated string representing the path leading to the disk image that
- *                contains the root file-system.
+ *  "disk_path" - a null-terminated string representing the path leading to the
+ * disk image that contains the root file-system.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
@@ -133,8 +139,8 @@ int32_t krun_set_root_disk(uint32_t ctx_id, const char *disk_path);
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
- *  "disk_path" - a null-terminated string representing the path leading to the disk image that
- *                contains the root file-system.
+ *  "disk_path" - a null-terminated string representing the path leading to the
+ * disk image that contains the root file-system.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
@@ -142,129 +148,138 @@ int32_t krun_set_root_disk(uint32_t ctx_id, const char *disk_path);
 int32_t krun_set_data_disk(uint32_t ctx_id, const char *disk_path);
 
 /**
- * Adds a disk image to be used as a general partition for the microVM. The only supported image
- * format is "raw".
+ * Adds a disk image to be used as a general partition for the microVM. The only
+ * supported image format is "raw".
  *
  * This API is mutually exclusive with the deprecated krun_set_root_disk and
  * krun_set_data_disk methods and must not be used together.
  *
- * This function deliberately only handles images in the Raw format, because it doesn't allow
- * specifying an image format, and probing an image's format is dangerous. For more information,
- * see the security note on `krun_add_disk2`, which allows opening non-Raw images.
+ * This function deliberately only handles images in the Raw format, because it
+ * doesn't allow specifying an image format, and probing an image's format is
+ * dangerous. For more information, see the security note on `krun_add_disk2`,
+ * which allows opening non-Raw images.
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
  *  "block_id"  - a null-terminated string representing the partition.
- *  "disk_path" - a null-terminated string representing the path leading to the disk image.
- *  "read_only" - whether the mount should be read-only. Required if the caller does not have
- *                write permissions (for disk images in /usr/share).
+ *  "disk_path" - a null-terminated string representing the path leading to the
+ * disk image. "read_only" - whether the mount should be read-only. Required if
+ * the caller does not have write permissions (for disk images in /usr/share).
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_add_disk(uint32_t ctx_id, const char *block_id, const char *disk_path, bool read_only);
+int32_t krun_add_disk(uint32_t ctx_id, const char *block_id,
+                      const char *disk_path, bool read_only);
 
 /* Supported disk image formats */
 #define KRUN_DISK_FORMAT_RAW 0
 #define KRUN_DISK_FORMAT_QCOW2 1
 /**
- * Adds a disk image to be used as a general partition for the microVM. The supported
- * image formats are: "raw" and "qcow2".
+ * Adds a disk image to be used as a general partition for the microVM. The
+ * supported image formats are: "raw" and "qcow2".
  *
  * This API is mutually exclusive with the deprecated krun_set_root_disk and
  * krun_set_data_disk methods and must not be used together.
  *
  * SECURITY NOTE:
- * Non-Raw images can reference other files, which libkrun will automatically open, and to which the
- * guest will have access. Libkrun should therefore never be asked to open an image in a non-Raw
- * format when it doesn't come from a fully trustworthy source.
+ * Non-Raw images can reference other files, which libkrun will automatically
+ * open, and to which the guest will have access. Libkrun should therefore never
+ * be asked to open an image in a non-Raw format when it doesn't come from a
+ * fully trustworthy source.
  *
- * Consequently, probing an image's format is quite dangerous and to be avoided if at all possible,
- * which is why libkrun provides no facilities for doing so. If it's not clear what format an image
- * has, it may also not be clear whether it can be trusted to not reference files to which the guest
- * shouldn't have access.
+ * Consequently, probing an image's format is quite dangerous and to be avoided
+ * if at all possible, which is why libkrun provides no facilities for doing so.
+ * If it's not clear what format an image has, it may also not be clear whether
+ * it can be trusted to not reference files to which the guest shouldn't have
+ * access.
  *
- * If probing absolutely can't be avoided, it must only be done on images that are fully trusted, i.e.
- * before a potentially untrusted guest had write access to it. Specifically, consider that a guest has
- * full access to all of a Raw image, and can therefore turn it into a file in an arbitrary format, for
- * example, into a Qcow2 image, referencing and granting a malicious guest access to arbitrary files.
- * To hand a Raw image to an untrusted and potentially malicious guest, and then to re-probe it after
- * the guest was able to write to it (when it can no longer be trusted), would therefore be a severe
- * security vulnerability.
+ * If probing absolutely can't be avoided, it must only be done on images that
+ * are fully trusted, i.e. before a potentially untrusted guest had write access
+ * to it. Specifically, consider that a guest has full access to all of a Raw
+ * image, and can therefore turn it into a file in an arbitrary format, for
+ * example, into a Qcow2 image, referencing and granting a malicious guest
+ * access to arbitrary files. To hand a Raw image to an untrusted and
+ * potentially malicious guest, and then to re-probe it after the guest was able
+ * to write to it (when it can no longer be trusted), would therefore be a
+ * severe security vulnerability.
  *
- * Therefore, after having probed a yet fully trusted image once, the result must be remembered so the
- * image will from then on always be opened in the format that was detected originally. When adhering
- * to this, a guest can write anything they want to a Raw image, it's always going to be opened as a
- * Raw image, preventing the security vulnerability outlined above.
+ * Therefore, after having probed a yet fully trusted image once, the result
+ * must be remembered so the image will from then on always be opened in the
+ * format that was detected originally. When adhering to this, a guest can write
+ * anything they want to a Raw image, it's always going to be opened as a Raw
+ * image, preventing the security vulnerability outlined above.
  *
- * However, if at all possible, the image format should be explicitly selected based on knowledge
- * obtained separately from the pure image data, for example by the user.
+ * However, if at all possible, the image format should be explicitly selected
+ * based on knowledge obtained separately from the pure image data, for example
+ * by the user.
  *
  * Arguments:
  *  "ctx_id"      - the configuration context ID.
  *  "block_id"    - a null-terminated string representing the partition.
- *  "disk_path"   - a null-terminated string representing the path leading to the disk image.
- *  "disk_format" - the disk image format (i.e. KRUN_DISK_FORMAT_{RAW, QCOW2})
- *  "read_only"   - whether the mount should be read-only. Required if the caller does not have
- *                  write permissions (for disk images in /usr/share).
+ *  "disk_path"   - a null-terminated string representing the path leading to
+ * the disk image. "disk_format" - the disk image format (i.e.
+ * KRUN_DISK_FORMAT_{RAW, QCOW2}) "read_only"   - whether the mount should be
+ * read-only. Required if the caller does not have write permissions (for disk
+ * images in /usr/share).
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_add_disk2(uint32_t ctx_id,
-                       const char *block_id,
-                       const char *disk_path,
-                       uint32_t disk_format,
+int32_t krun_add_disk2(uint32_t ctx_id, const char *block_id,
+                       const char *disk_path, uint32_t disk_format,
                        bool read_only);
 
 /**
  * NO LONGER SUPPORTED. DO NOT USE.
  *
- * Configures the mapped volumes for the microVM. Only supported on macOS, on Linux use
- * user_namespaces and bind-mounts instead. Not available in libkrun-SEV.
+ * Configures the mapped volumes for the microVM. Only supported on macOS, on
+ * Linux use user_namespaces and bind-mounts instead. Not available in
+ * libkrun-SEV.
  *
  * Arguments:
  *  "ctx_id"         - the configuration context ID.
- *  "mapped_volumes" - an array of string pointers with format "host_path:guest_path" representing
- *                     the volumes to be mapped inside the microVM
+ *  "mapped_volumes" - an array of string pointers with format
+ * "host_path:guest_path" representing the volumes to be mapped inside the
+ * microVM
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_set_mapped_volumes(uint32_t ctx_id, const char *const mapped_volumes[]);
+int32_t krun_set_mapped_volumes(uint32_t ctx_id,
+                                const char *const mapped_volumes[]);
 
 /**
- * Adds an independent virtio-fs device pointing to a host's directory with a tag.
+ * Adds an independent virtio-fs device pointing to a host's directory with a
+ * tag.
  *
  * Arguments:
  *  "ctx_id"         - the configuration context ID.
  *  "c_tag"          - tag to identify the filesystem in the guest.
- *  "c_path"         - full path to the directory in the host to be exposed to the guest.
+ *  "c_path"         - full path to the directory in the host to be exposed to
+ * the guest.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_add_virtiofs(uint32_t ctx_id,
-                          const char *c_tag,
+int32_t krun_add_virtiofs(uint32_t ctx_id, const char *c_tag,
                           const char *c_path);
 
 /**
- * Adds an independent virtio-fs device pointing to a host's directory with a tag. This
- * variant allows specifying the size of the DAX window.
+ * Adds an independent virtio-fs device pointing to a host's directory with a
+ * tag. This variant allows specifying the size of the DAX window.
  *
  * Arguments:
  *  "ctx_id"         - the configuration context ID.
  *  "c_tag"          - tag to identify the filesystem in the guest.
- *  "c_path"         - full path to the directory in the host to be exposed to the guest.
- *  "shm_size"       - size of the DAX SHM window in bytes.
+ *  "c_path"         - full path to the directory in the host to be exposed to
+ * the guest. "shm_size"       - size of the DAX SHM window in bytes.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_add_virtiofs2(uint32_t ctx_id,
-                           const char *c_tag,
-                           const char *c_path,
-                           uint64_t shm_size);
+int32_t krun_add_virtiofs2(uint32_t ctx_id, const char *c_tag,
+                           const char *c_path, uint64_t shm_size);
 
 /* Send the VFKIT magic after establishing the connection,
    as required by gvproxy in vfkit mode. */
@@ -280,10 +295,11 @@ int32_t krun_add_virtiofs2(uint32_t ctx_id,
 #define NET_FEATURE_HOST_TSO6 1 << 12
 #define NET_FEATURE_HOST_UFO 1 << 14
 
-/* These are the features enabled by krun_set_passt_fd and krun_set_gvproxy_path. */
-#define COMPAT_NET_FEATURES NET_FEATURE_CSUM | NET_FEATURE_GUEST_CSUM | \
-                            NET_FEATURE_GUEST_TSO4 | NET_FEATURE_GUEST_UFO | \
-                            NET_FEATURE_HOST_TSO4 | NET_FEATURE_HOST_UFO
+/* These are the features enabled by krun_set_passt_fd and
+ * krun_set_gvproxy_path. */
+#define COMPAT_NET_FEATURES                                                    \
+    NET_FEATURE_CSUM | NET_FEATURE_GUEST_CSUM | NET_FEATURE_GUEST_TSO4 |       \
+        NET_FEATURE_GUEST_UFO | NET_FEATURE_HOST_TSO4 | NET_FEATURE_HOST_UFO
 /**
  * Adds an independent virtio-net device connected to a
  * unixstream-based userspace network proxy, such as passt or
@@ -320,11 +336,8 @@ int32_t krun_add_virtiofs2(uint32_t ctx_id,
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_add_net_unixstream(uint32_t ctx_id,
-                                const char *c_path,
-                                int fd,
-                                uint8_t *const c_mac,
-                                uint32_t features,
+int32_t krun_add_net_unixstream(uint32_t ctx_id, const char *c_path, int fd,
+                                uint8_t *const c_mac, uint32_t features,
                                 uint32_t flags);
 
 /**
@@ -364,11 +377,8 @@ int32_t krun_add_net_unixstream(uint32_t ctx_id,
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_add_net_unixgram(uint32_t ctx_id,
-                              const char *c_path,
-                              int fd,
-                              uint8_t *const c_mac,
-                              uint32_t features,
+int32_t krun_add_net_unixgram(uint32_t ctx_id, const char *c_path, int fd,
+                              uint8_t *const c_mac, uint32_t features,
                               uint32_t flags);
 
 /**
@@ -395,10 +405,8 @@ int32_t krun_add_net_unixgram(uint32_t ctx_id,
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_add_net_tap(uint32_t ctx_id,
-                         char *c_tap_name,
-                         uint8_t *const c_mac,
-                         uint32_t features,
+int32_t krun_add_net_tap(uint32_t ctx_id, char *c_tap_name,
+                         uint8_t *const c_mac, uint32_t features,
                          uint32_t flags);
 
 /**
@@ -465,17 +473,18 @@ int32_t krun_set_net_mac(uint32_t ctx_id, uint8_t *const c_mac);
  *       -ENOTSUP when passt networking is used
  *
  * Notes:
- *  Passing NULL (or not calling this function) as "port_map" has a different meaning than
- *  passing an empty array. The first one will instruct libkrun to attempt to expose all
- *  listening ports in the guest to the host, while the second means that no port from
- *  the guest will be exposed to host.
+ *  Passing NULL (or not calling this function) as "port_map" has a different
+ * meaning than passing an empty array. The first one will instruct libkrun to
+ * attempt to expose all listening ports in the guest to the host, while the
+ * second means that no port from the guest will be exposed to host.
  *
- *  Exposed ports will only become accessible by their "host_port" in the guest too. This
- *  means that for a map such as "8080:80", applications running inside the guest will also
- *  need to access the service through the "8080" port.
+ *  Exposed ports will only become accessible by their "host_port" in the guest
+ * too. This means that for a map such as "8080:80", applications running inside
+ * the guest will also need to access the service through the "8080" port.
  *
- * If past networking mode is used (krun_set_passt_fd was called), port mapping is not supported
- * as an API of libkrun (but you can still do port mapping using command line arguments of passt)
+ * If past networking mode is used (krun_set_passt_fd was called), port mapping
+ * is not supported as an API of libkrun (but you can still do port mapping
+ * using command line arguments of passt)
  */
 int32_t krun_set_port_map(uint32_t ctx_id, const char *const port_map[]);
 
@@ -515,17 +524,18 @@ int32_t krun_set_gpu_options(uint32_t ctx_id, uint32_t virgl_flags);
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_set_gpu_options2(uint32_t ctx_id,
-                              uint32_t virgl_flags,
+int32_t krun_set_gpu_options2(uint32_t ctx_id, uint32_t virgl_flags,
                               uint64_t shm_size);
 
-/* Maximum number of displays. Same as VIRTIO_GPU_MAX_SCANOUTS defined in the virtio-gpu spec */
+/* Maximum number of displays. Same as VIRTIO_GPU_MAX_SCANOUTS defined in the
+ * virtio-gpu spec */
 #define KRUN_MAX_DISPLAYS 16
 
 /**
  * Configure a display output for the VM.
  *
- * Note that to have display output a display backend must also be set (see krun_set_display_backend).
+ * Note that to have display output a display backend must also be set (see
+ * krun_set_display_backend).
  *
  * Arguments:
  *  "ctx_id"      - the configuration context ID.
@@ -533,17 +543,19 @@ int32_t krun_set_gpu_options2(uint32_t ctx_id,
  *  "height"      - the height of the window/display
  *
  * Returns:
- *  The id of the display (0 to KRUN_MAX_DISPLAYS - 1) on success or a negative error number on failure.
+ *  The id of the display (0 to KRUN_MAX_DISPLAYS - 1) on success or a negative
+ * error number on failure.
  */
 int32_t krun_add_display(uint32_t ctx_id, uint32_t width, uint32_t height);
 
 /**
  * Configure a custom EDID blob for a display
  *
- * This replaces the generated EDID with a custom one. Configuring an EDID blob makes all display parameters except
- * width and height ignored.
+ * This replaces the generated EDID with a custom one. Configuring an EDID blob
+ * makes all display parameters except width and height ignored.
  *
- * Note that libkrun doesn't do any checks if the EDID matches the width/height specified in krun_add_display().
+ * Note that libkrun doesn't do any checks if the EDID matches the width/height
+ * specified in krun_add_display().
  *
  * Arguments:
  *  "ctx_id"      - the configuration context ID.
@@ -554,7 +566,8 @@ int32_t krun_add_display(uint32_t ctx_id, uint32_t width, uint32_t height);
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_display_set_edid(uint32_t ctx_id, uint32_t display_id, const uint8_t* edid_blob, size_t blob_size);
+int32_t krun_display_set_edid(uint32_t ctx_id, uint32_t display_id,
+                              const uint8_t *edid_blob, size_t blob_size);
 
 /**
  * Configure DPI of the display reported to the guest
@@ -569,12 +582,14 @@ int32_t krun_display_set_edid(uint32_t ctx_id, uint32_t display_id, const uint8_
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_display_set_dpi(uint32_t ctx_id, uint32_t display_id, uint32_t dpi);
+int32_t krun_display_set_dpi(uint32_t ctx_id, uint32_t display_id,
+                             uint32_t dpi);
 
 /**
  * Configure physical size of the display reported to the guest
  *
- * This overrides the physical size of the display set by krun_set_display_physical_size()
+ * This overrides the physical size of the display set by
+ * krun_set_display_physical_size()
  *
  * Arguments:
  *  "ctx_id"      - the configuration context ID.
@@ -585,7 +600,8 @@ int32_t krun_display_set_dpi(uint32_t ctx_id, uint32_t display_id, uint32_t dpi)
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_display_set_physical_size(uint32_t ctx_id, uint32_t display_id, uint16_t width_mm, uint16_t height_mm);
+int32_t krun_display_set_physical_size(uint32_t ctx_id, uint32_t display_id,
+                                       uint16_t width_mm, uint16_t height_mm);
 
 /**
  * Configure refresh rate for a display
@@ -599,10 +615,12 @@ int32_t krun_display_set_physical_size(uint32_t ctx_id, uint32_t display_id, uin
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_display_set_refresh_rate(uint32_t ctx_id, uint32_t display_id, uint32_t refresh_rate);
+int32_t krun_display_set_refresh_rate(uint32_t ctx_id, uint32_t display_id,
+                                      uint32_t refresh_rate);
 
 /**
- * Configures a krun_display_backend struct to be used for display output. (see libkrun_display.h)
+ * Configures a krun_display_backend struct to be used for display output. (see
+ * libkrun_display.h)
  *
  * Arguments:
  *  "ctx_id"          - the configuration context ID
@@ -612,14 +630,16 @@ int32_t krun_display_set_refresh_rate(uint32_t ctx_id, uint32_t display_id, uint
  * Returns:
  *  Zero on success or a negative error number (errno) on failure.
  */
-int32_t krun_set_display_backend(uint32_t ctx_id, const void *display_backend, size_t backend_size);
+int32_t krun_set_display_backend(uint32_t ctx_id, const void *display_backend,
+                                 size_t backend_size);
 
 /**
  * Enables or disables a virtio-snd device.
  *
  * Arguments:
  *  "ctx_id" - the configuration context ID.
- *  "enable" - boolean indicating whether virtio-snd should be enabled or disabled.
+ *  "enable" - boolean indicating whether virtio-snd should be enabled or
+ * disabled.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
@@ -627,11 +647,13 @@ int32_t krun_set_display_backend(uint32_t ctx_id, const void *display_backend, s
 int32_t krun_set_snd_device(uint32_t ctx_id, bool enable);
 
 /**
- * Configures a map of rlimits to be set in the guest before starting the isolated binary.
+ * Configures a map of rlimits to be set in the guest before starting the
+ * isolated binary.
  *
  * Arguments:
  *  "ctx_id"  - the configuration context ID.
- *  "rlimits" - an array of string pointers with format "RESOURCE=RLIM_CUR:RLIM_MAX".
+ *  "rlimits" - an array of string pointers with format
+ * "RESOURCE=RLIM_CUR:RLIM_MAX".
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
@@ -643,46 +665,47 @@ int32_t krun_set_rlimits(uint32_t ctx_id, const char *const rlimits[]);
  *
  * Arguments:
  *  "ctx_id"      - the configuration context ID.
- *  "oem_strings" - an array of string pointers. Must be terminated with an additional NULL pointer.
+ *  "oem_strings" - an array of string pointers. Must be terminated with an
+ * additional NULL pointer.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_set_smbios_oem_strings(uint32_t ctx_id, const char *const oem_strings[]);
+int32_t krun_set_smbios_oem_strings(uint32_t ctx_id,
+                                    const char *const oem_strings[]);
 
 /**
  * Sets the working directory for the executable to be run inside the microVM.
  *
  * Arguments:
  *  "ctx_id"        - the configuration context ID.
- *  "workdir_path"  - the path to the working directory, relative to the root configured with
- *                    "krun_set_root".
+ *  "workdir_path"  - the path to the working directory, relative to the root
+ * configured with "krun_set_root".
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_set_workdir(uint32_t ctx_id,
-                         const char *workdir_path);
+int32_t krun_set_workdir(uint32_t ctx_id, const char *workdir_path);
 
 /**
- * Sets the path to the executable to be run inside the microVM, the arguments to be passed to the
- * executable, and the environment variables to be configured in the context of the executable.
+ * Sets the path to the executable to be run inside the microVM, the arguments
+ * to be passed to the executable, and the environment variables to be
+ * configured in the context of the executable.
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
- *  "exec_path" - the path to the executable, relative to the root configured with "krun_set_root".
- *  "argv"      - an array of string pointers to be passed as arguments.
- *  "envp"      - an array of string pointers to be injected as environment variables into the
- *                context of the executable. If NULL, it will auto-generate an array collecting the
- *                the variables currently present in the environment.
+ *  "exec_path" - the path to the executable, relative to the root configured
+ * with "krun_set_root". "argv"      - an array of string pointers to be passed
+ * as arguments. "envp"      - an array of string pointers to be injected as
+ * environment variables into the context of the executable. If NULL, it will
+ * auto-generate an array collecting the the variables currently present in the
+ * environment.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_set_exec(uint32_t ctx_id,
-                      const char *exec_path,
-                      const char *const argv[],
-                      const char *const envp[]);
+int32_t krun_set_exec(uint32_t ctx_id, const char *exec_path,
+                      const char *const argv[], const char *const envp[]);
 
 #define KRUN_KERNEL_FORMAT_RAW 0
 #define KRUN_KERNEL_FORMAT_ELF 1
@@ -697,16 +720,43 @@ int32_t krun_set_exec(uint32_t ctx_id,
  *  "ctx_id"        - the configuration context ID.
  *  "kernel_path"   - the path to the kernel, relative to the host's filesystem.
  *  "kernel_format" - the kernel format.
- *  "initramfs"     - the path to the initramfs, relative to the host's filesystem.
- *  "cmdline"       - the kernel command line.
+ *  "initramfs"     - the path to the initramfs, relative to the host's
+ * filesystem. "cmdline"       - the kernel command line.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
-int32_t krun_set_kernel(uint32_t ctx_id,
-                        const char *kernel_path,
-                        uint32_t kernel_format,
-                        const char *initramfs,
+int32_t krun_set_kernel(uint32_t ctx_id, const char *kernel_path,
+                        uint32_t kernel_format, const char *initramfs,
+                        const char *cmdline);
+
+/**
+ * Sets the path to the firmware to be loaded into the microVM.
+ *
+ * Arguments:
+ *  "ctx_id"        - the configuration context ID.
+ *  "kernel_path"   - the path to the firmware, relative to the host's filesystem.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_firmware(uint32_t ctx_id, const char *kernel_path);
+
+/**
+ * Sets the path to the firmware to be loaded into the microVM.
+ *
+ * Arguments:
+ *  "ctx_id"        - the configuration context ID.
+ *  "kernel_path"   - the path to the kernel, relative to the host's filesystem.
+ *  "kernel_format" - the kernel format.
+ *  "initramfs"     - the path to the initramfs, relative to the host's
+ * filesystem. "cmdline"       - the kernel command line.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_kernel(uint32_t ctx_id, const char *kernel_path,
+                        uint32_t kernel_format, const char *initramfs,
                         const char *cmdline);
 
 /**
@@ -714,9 +764,9 @@ int32_t krun_set_kernel(uint32_t ctx_id,
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
- *  "envp"      - an array of string pointers to be injected as environment variables into the
- *                context of the executable. If NULL, it will auto-generate an array collecting the
- *                the variables currently present in the environment.
+ *  "envp"      - an array of string pointers to be injected as environment
+ * variables into the context of the executable. If NULL, it will auto-generate
+ * an array collecting the the variables currently present in the environment.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
@@ -724,11 +774,13 @@ int32_t krun_set_kernel(uint32_t ctx_id,
 int32_t krun_set_env(uint32_t ctx_id, const char *const envp[]);
 
 /**
- * Sets the file path to the TEE configuration file. Only available in libkrun-sev.
+ * Sets the file path to the TEE configuration file. Only available in
+ * libkrun-sev.
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
- *  "filepath"  - a null-terminated string representing file path to the TEE config file.
+ *  "filepath"  - a null-terminated string representing file path to the TEE
+ * config file.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
@@ -744,8 +796,7 @@ int32_t krun_set_tee_config_file(uint32_t ctx_id, const char *filepath);
  *  "filepath"  - a null-terminated string representing the path of the UNIX
  *                socket in the host.
  */
-int32_t krun_add_vsock_port(uint32_t ctx_id,
-                            uint32_t port,
+int32_t krun_add_vsock_port(uint32_t ctx_id, uint32_t port,
                             const char *c_filepath);
 
 /**
@@ -756,15 +807,15 @@ int32_t krun_add_vsock_port(uint32_t ctx_id,
  *  "port"      - a vsock port that the guest will connect to for IPC.
  *  "filepath"  - a null-terminated string representing the path of the UNIX
  *                socket in the host.
- *  "listen"    - true if guest expects connections to be initiated from host side
+ *  "listen"    - true if guest expects connections to be initiated from host
+ * side
  */
-int32_t krun_add_vsock_port2(uint32_t ctx_id,
-                             uint32_t port,
-                             const char *c_filepath,
-                             bool listen);
+int32_t krun_add_vsock_port2(uint32_t ctx_id, uint32_t port,
+                             const char *c_filepath, bool listen);
 /**
- * Returns the eventfd file descriptor to signal the guest to shut down orderly. This must be
- * called before starting the microVM with "krun_start_event". Only available in libkrun-efi.
+ * Returns the eventfd file descriptor to signal the guest to shut down orderly.
+ * This must be called before starting the microVM with "krun_start_event". Only
+ * available in libkrun-efi.
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
@@ -775,12 +826,13 @@ int32_t krun_add_vsock_port2(uint32_t ctx_id,
 int32_t krun_get_shutdown_eventfd(uint32_t ctx_id);
 
 /**
- * Configures the console device to ignore stdin and write the output to "c_filepath".
+ * Configures the console device to ignore stdin and write the output to
+ * "c_filepath".
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
- *  "filepath"  - a null-terminated string representing the path of the file to write the
- *                console output.
+ *  "filepath"  - a null-terminated string representing the path of the file to
+ * write the console output.
  */
 int32_t krun_set_console_output(uint32_t ctx_id, const char *c_filepath);
 
@@ -827,9 +879,9 @@ int32_t krun_setgid(uint32_t ctx_id, gid_t gid);
  *  This feature is only supported on macOS.
  *
  * Returns:
- *  Zero on success or a negative error number on failure. Success doesn't imply that
- *  Nested Virtualization is supported on the system, only that it's going to be requested
- *  when the microVM is created after calling "krun_start_enter".
+ *  Zero on success or a negative error number on failure. Success doesn't imply
+ * that Nested Virtualization is supported on the system, only that it's going
+ * to be requested when the microVM is created after calling "krun_start_enter".
  */
 int32_t krun_set_nested_virt(uint32_t ctx_id, bool enabled);
 
@@ -850,12 +902,14 @@ int32_t krun_check_nested_virt(void);
  * Get the maximum number of vCPUs supported by the hypervisor.
  *
  * Returns:
- *  The maximum number of vCPUs that can be created, or a negative error number on failure.
+ *  The maximum number of vCPUs that can be created, or a negative error number
+ * on failure.
  */
 int32_t krun_get_max_vcpus(void);
 
 /**
- * Specify whether to split IRQCHIP responsibilities between the host and the guest.
+ * Specify whether to split IRQCHIP responsibilities between the host and the
+ * guest.
  *
  * Arguments:
  *  "ctx_id" - the configuration context ID.
@@ -863,7 +917,7 @@ int32_t krun_get_max_vcpus(void);
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
-*/
+ */
 int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
 
 #define KRUN_NITRO_IMG_TYPE_EIF 1
@@ -895,23 +949,29 @@ int32_t krun_nitro_set_start_flags(uint32_t ctx_id, uint64_t start_flags);
  * Arguments:
  *  "ctx_id" - the configuration context ID.
  *  "device" - a null-terminated string specifying the root device
- *             (e.g. "/dev/vda1", must refer to a previously configured block device)
- *  "fstype" - a null-terminated string specifying the filesystem type (e.g. "ext4", can be set to "auto" or NULL)
- *  "options" - a null-terminated string with a comma-separated list of mount options (can be NULL)
+ *             (e.g. "/dev/vda1", must refer to a previously configured block
+ * device) "fstype" - a null-terminated string specifying the filesystem type
+ * (e.g. "ext4", can be set to "auto" or NULL) "options" - a null-terminated
+ * string with a comma-separated list of mount options (can be NULL)
  *
  * Notes:
- *  This function can be used if you want a root filesystem backed by a block device instead of a virtiofs path.
- *  Because libkrun uses its own built-in init process (implemented as a virtual file in the virtiofs driver),
- *  you'd normally have to copy the executable into every filesystem image (or partition) you intend to boot from.
- *  This is obviously difficult to maintain, so instead we can create a dummy virtiofs root behind the scenes,
- *  execute init from it as usual and then switch to the actual root configured by this function.
+ *  This function can be used if you want a root filesystem backed by a block
+ * device instead of a virtiofs path. Because libkrun uses its own built-in init
+ * process (implemented as a virtual file in the virtiofs driver), you'd
+ * normally have to copy the executable into every filesystem image (or
+ * partition) you intend to boot from. This is obviously difficult to maintain,
+ * so instead we can create a dummy virtiofs root behind the scenes, execute
+ * init from it as usual and then switch to the actual root configured by this
+ * function.
  */
-int32_t krun_set_root_disk_remount(uint32_t ctx_id, const char *device, const char *fstype, const char *options);
+int32_t krun_set_root_disk_remount(uint32_t ctx_id, const char *device,
+                                   const char *fstype, const char *options);
 
 /**
- * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
- * stdin/stdout to manage them on behalf of the process running inside the isolated environment,
- * simulating that the latter has direct control of the terminal.
+ * Starts and enters the microVM with the configured parameters. The VMM will
+ * attempt to take over stdin/stdout to manage them on behalf of the process
+ * running inside the isolated environment, simulating that the latter has
+ * direct control of the terminal.
  *
  * This function consumes the configuration pointed by the context ID.
  *
@@ -919,18 +979,20 @@ int32_t krun_set_root_disk_remount(uint32_t ctx_id, const char *device, const ch
  *  "ctx_id" - the configuration context ID.
  *
  * Notes:
- *  This function only returns if an error happens before starting the microVM. Otherwise, the
- *  VMM assumes it has full control of the process, and will call to exit() with the workload's exit
- *  code once the microVM shuts down. If an error occurred before running the workload the process
- *  will exit() with an error exit code.
+ *  This function only returns if an error happens before starting the microVM.
+ * Otherwise, the VMM assumes it has full control of the process, and will call
+ * to exit() with the workload's exit code once the microVM shuts down. If an
+ * error occurred before running the workload the process will exit() with an
+ * error exit code.
  *
- *  In the nitro flavor, this function always returns. Upon success, this function will return the
- *  CID of the nitro enclave that was started.
+ *  In the nitro flavor, this function always returns. Upon success, this
+ * function will return the CID of the nitro enclave that was started.
  *
  * Error exit codes:
  *  125     - "init" cannot set up the environment inside the microVM.
- *  126     - "init" can find the executable to be run inside the microVM but cannot execute it.
- *  127     - "init" cannot find the executable to be run inside the microVM.
+ *  126     - "init" can find the executable to be run inside the microVM but
+ * cannot execute it. 127     - "init" cannot find the executable to be run
+ * inside the microVM.
  *
  * Returns:
  *  -EINVAL - The VMM has detected an error in the microVM configuration.
