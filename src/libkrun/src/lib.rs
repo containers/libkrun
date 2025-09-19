@@ -43,6 +43,7 @@ use vmm::resources::{ConsoleConfig, ConsoleType, VmResources};
 use vmm::vmm_config::block::{BlockDeviceConfig, BlockRootConfig};
 #[cfg(not(feature = "tee"))]
 use vmm::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
+use vmm::vmm_config::firmware::FirmwareConfig;
 #[cfg(not(feature = "tee"))]
 use vmm::vmm_config::fs::FsDeviceConfig;
 use vmm::vmm_config::kernel_bundle::KernelBundle;
@@ -1860,6 +1861,29 @@ pub unsafe extern "C" fn krun_set_kernel(
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => ctx_cfg.get_mut().vmr.set_external_kernel(external_kernel),
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[cfg(not(feature = "tee"))]
+#[allow(clippy::format_collect)]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_set_firmware(ctx_id: u32, c_firmware_path: *const c_char) -> i32 {
+    let path = match CStr::from_ptr(c_firmware_path).to_str() {
+        Ok(path) => PathBuf::from(path),
+        Err(e) => {
+            error!("Error parsing firmware_path: {e:?}");
+            return -libc::EINVAL;
+        }
+    };
+
+    let firmware_config = FirmwareConfig { path };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => ctx_cfg.get_mut().vmr.set_firmware_config(firmware_config),
         Entry::Vacant(_) => return -libc::ENOENT,
     }
 
