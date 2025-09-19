@@ -14,13 +14,14 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "blk")]
 use crate::vmm_config::block::{BlockBuilder, BlockConfigError, BlockDeviceConfig};
-use crate::vmm_config::boot_source::{BootSourceConfig, BootSourceConfigError};
 use crate::vmm_config::external_kernel::ExternalKernel;
+use crate::vmm_config::firmware::FirmwareConfig;
 #[cfg(not(feature = "tee"))]
 use crate::vmm_config::fs::*;
 #[cfg(feature = "tee")]
 use crate::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle, QbootBundleError};
 use crate::vmm_config::kernel_bundle::{KernelBundle, KernelBundleError};
+use crate::vmm_config::kernel_cmdline::{KernelCmdlineConfig, KernelCmdlineConfigError};
 use crate::vmm_config::machine_config::{VmConfig, VmConfigError};
 #[cfg(feature = "net")]
 use crate::vmm_config::net::{NetBuilder, NetworkInterfaceConfig, NetworkInterfaceError};
@@ -42,7 +43,7 @@ pub enum Error {
     /// JSON is invalid.
     InvalidJson,
     /// Boot source configuration error.
-    BootSource(BootSourceConfigError),
+    KernelCmdline(KernelCmdlineConfigError),
     /// Error opening TEE config file.
     #[cfg(feature = "tee")]
     OpenTeeConfig(std::io::Error),
@@ -86,8 +87,10 @@ impl Default for TeeConfig {
 pub struct VmResources {
     /// The vCpu and memory configuration for this microVM.
     vm_config: VmConfig,
-    /// The boot configuration for this microVM.
-    pub boot_config: BootSourceConfig,
+    /// The firmware to be loaded into the microVM.
+    pub firmware_config: Option<FirmwareConfig>,
+    /// The kernel command line for this microVM.
+    pub kernel_cmdline: KernelCmdlineConfig,
     /// The parameters for the kernel bundle to be loaded in this microVM.
     pub kernel_bundle: Option<KernelBundle>,
     /// The path to an external kernel, as an alternative to KernelBundle.
@@ -188,12 +191,12 @@ impl VmResources {
         Ok(())
     }
 
-    /// Set the guest boot source configuration.
-    pub fn set_boot_source(
+    /// Set the guest kernel cmdline configuration.
+    pub fn set_kernel_cmdline(
         &mut self,
-        boot_source_cfg: BootSourceConfig,
-    ) -> Result<BootSourceConfigError> {
-        self.boot_config = boot_source_cfg;
+        kernel_cmdline_cfg: KernelCmdlineConfig,
+    ) -> Result<KernelCmdlineConfigError> {
+        self.kernel_cmdline = kernel_cmdline_cfg;
         Ok(())
     }
 
@@ -224,6 +227,10 @@ impl VmResources {
 
     pub fn set_external_kernel(&mut self, external_kernel: ExternalKernel) {
         self.external_kernel = Some(external_kernel);
+    }
+
+    pub fn set_firmware_config(&mut self, firmware_config: FirmwareConfig) {
+        self.firmware_config = Some(firmware_config);
     }
 
     #[cfg(feature = "tee")]
@@ -325,24 +332,25 @@ mod tests {
     #[cfg(feature = "gpu")]
     use crate::resources::DisplayBackendConfig;
     use crate::resources::VmResources;
-    use crate::vmm_config::boot_source::BootSourceConfig;
+    use crate::vmm_config::kernel_cmdline::KernelCmdlineConfig;
     use crate::vmm_config::machine_config::{CpuFeaturesTemplate, VmConfig, VmConfigError};
     use crate::vmm_config::vsock::tests::{default_config, TempSockFile};
     use crate::vstate::VcpuConfig;
     use utils::tempfile::TempFile;
 
-    fn default_boot_cfg() -> BootSourceConfig {
-        BootSourceConfig {
-            kernel_cmdline_prolog: None,
-            kernel_cmdline_krun_env: None,
-            kernel_cmdline_epilog: None,
+    fn default_kernel_cmdline() -> KernelCmdlineConfig {
+        KernelCmdlineConfig {
+            prolog: None,
+            krun_env: None,
+            epilog: None,
         }
     }
 
     fn default_vm_resources() -> VmResources {
         VmResources {
             vm_config: VmConfig::default(),
-            boot_config: default_boot_cfg(),
+            firmware_config: None,
+            kernel_cmdline: default_kernel_cmdline(),
             kernel_bundle: Default::default(),
             external_kernel: None,
             fs: Default::default(),

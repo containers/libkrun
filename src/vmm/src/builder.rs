@@ -55,9 +55,9 @@ use crate::signal_handler::register_sigwinch_handler;
 use crate::terminal::term_set_raw_mode;
 #[cfg(feature = "blk")]
 use crate::vmm_config::block::BlockBuilder;
-use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
 #[cfg(not(any(feature = "tee", feature = "nitro")))]
 use crate::vmm_config::fs::FsDeviceConfig;
+use crate::vmm_config::kernel_cmdline::DEFAULT_KERNEL_CMDLINE;
 #[cfg(target_os = "linux")]
 use crate::vstate::KvmContext;
 #[cfg(all(target_os = "linux", feature = "tee"))]
@@ -96,7 +96,8 @@ use vm_memory::GuestMemory;
 use vm_memory::GuestRegionMmap;
 use vm_memory::{GuestAddress, GuestMemoryMmap};
 
-#[cfg(feature = "efi")]
+#[cfg(target_arch = "aarch64")]
+#[allow(dead_code)]
 static EDK2_BINARY: &[u8] = include_bytes!("../../../edk2/KRUN_EFI.silent.fd");
 
 /// Errors associated with starting the instance.
@@ -116,6 +117,10 @@ pub enum StartMicrovmError {
     ElfOpenKernel(io::Error),
     /// Cannot load the kernel into the VM.
     ElfLoadKernel(linux_loader::loader::Error),
+    /// The firmware can't be loaded into the provided memory address.
+    FirmwareInvalidAddress(vm_memory::GuestMemoryError),
+    /// Cannot read firmware contents from file.
+    FirmwareRead(io::Error),
     /// Memory regions are overlapping or mmap fails.
     GuestMemoryMmap(vm_memory::Error),
     /// The BZIP2 decoder couldn't decompress the kernel.
@@ -242,6 +247,15 @@ impl Display for StartMicrovmError {
             }
             ElfLoadKernel(ref err) => {
                 write!(f, "Cannot load the kernel into the VM: {err}")
+            }
+            FirmwareInvalidAddress(ref err) => {
+                write!(
+                    f,
+                    "The firmware can't be loaded into the guest memory: {err}"
+                )
+            }
+            FirmwareRead(ref err) => {
+                write!(f, "Cannot read firmware contents from file: {err}")
             }
             GuestMemoryMmap(ref err) => {
                 // Remove imbricated quotes from error message.
@@ -491,7 +505,7 @@ enum Payload {
     ExternalKernel(ExternalKernel),
     #[cfg(test)]
     Empty,
-    Efi,
+    Firmware,
     #[cfg(feature = "tee")]
     Tee,
 }
@@ -513,8 +527,8 @@ fn choose_payload(vm_resources: &VmResources) -> Result<Payload, StartMicrovmErr
         return Ok(Payload::KernelCopy);
     } else if let Some(external_kernel) = vm_resources.external_kernel() {
         Ok(Payload::ExternalKernel(external_kernel.clone()))
-    } else if cfg!(feature = "efi") {
-        Ok(Payload::Efi)
+    } else if cfg!(feature = "efi") || vm_resources.firmware_config.is_some() {
+        Ok(Payload::Firmware)
     } else {
         Err(StartMicrovmError::MissingKernelConfig)
     }
@@ -543,6 +557,7 @@ pub fn build_microvm(
         vm_resources,
         &payload,
     )?;
+
     let vcpu_config = vm_resources.vcpu_config();
 
     // Clone the command-line so that a failed boot doesn't pollute the original.
@@ -550,13 +565,13 @@ pub fn build_microvm(
     let mut kernel_cmdline = Cmdline::new(arch::CMDLINE_MAX_SIZE);
     if let Some(cmdline) = payload_config.kernel_cmdline {
         kernel_cmdline.insert_str(cmdline.as_str()).unwrap();
-    } else if let Some(cmdline) = &vm_resources.boot_config.kernel_cmdline_prolog {
+    } else if let Some(cmdline) = &vm_resources.kernel_cmdline.prolog {
         kernel_cmdline.insert_str(cmdline).unwrap();
     } else {
         kernel_cmdline.insert_str(DEFAULT_KERNEL_CMDLINE).unwrap();
     }
 
-    if let Some(cmdline) = &vm_resources.boot_config.kernel_cmdline_krun_env {
+    if let Some(cmdline) = &vm_resources.kernel_cmdline.krun_env {
         kernel_cmdline.insert_str(cmdline.as_str()).unwrap();
     }
 
@@ -623,9 +638,9 @@ pub fn build_microvm(
 
         vec![
             MeasuredRegion {
-                guest_addr: arch::BIOS_START,
+                guest_addr: arch::FIRMWARE_START,
                 host_addr: guest_memory
-                    .get_host_address(GuestAddress(arch::BIOS_START))
+                    .get_host_address(GuestAddress(arch::FIRMWARE_START))
                     .unwrap() as u64,
                 size: qboot_size,
             },
@@ -666,9 +681,9 @@ pub fn build_microvm(
                 size: 0x8000_0000,
             },
             MeasuredRegion {
-                guest_addr: arch::BIOS_START,
+                guest_addr: arch::FIRMWARE_START,
                 host_addr: guest_memory
-                    .get_host_address(GuestAddress(arch::BIOS_START))
+                    .get_host_address(GuestAddress(arch::FIRMWARE_START))
                     .unwrap() as u64,
                 size: qboot_size,
             },
@@ -677,15 +692,14 @@ pub fn build_microvm(
         m
     };
 
-    // On x86_64 always create a serial device,
-    // while on aarch64 only create it if 'console=' is specified in the boot args.
-    let serial_device = if cfg!(feature = "efi") {
+    // Create the legacy serial device if we're booting from a firmware
+    let serial_device = if cfg!(feature = "efi") || vm_resources.firmware_config.is_some() {
         Some(setup_serial_device(
             event_manager,
             None,
-            None,
+            //None,
             // Uncomment this to get EFI output when debugging EDK2.
-            //Some(Box::new(io::stdout())),
+            Some(Box::new(io::stdout())),
         )?)
     } else {
         None
@@ -747,6 +761,8 @@ pub fn build_microvm(
             Some(intc.clone()),
         )?;
 
+        let kernel_boot = vm_resources.firmware_config.is_none() && !cfg!(feature = "tee");
+
         vcpus = create_vcpus_x86_64(
             &vm,
             &vcpu_config,
@@ -754,6 +770,7 @@ pub fn build_microvm(
             payload_config.entry_addr,
             &pio_device_manager.io_bus,
             &exit_evt,
+            kernel_boot,
             #[cfg(feature = "tee")]
             _sender,
         )
@@ -939,7 +956,7 @@ pub fn build_microvm(
         attach_snd_device(&mut vmm, intc.clone())?;
     }
 
-    if let Some(s) = &vm_resources.boot_config.kernel_cmdline_epilog {
+    if let Some(s) = &vm_resources.kernel_cmdline.epilog {
         vmm.kernel_cmdline.insert_str(s).unwrap();
     };
 
@@ -1251,7 +1268,7 @@ fn load_payload(
             let qboot_data =
                 unsafe { std::slice::from_raw_parts(qboot_host_addr as *mut u8, qboot_size) };
             guest_mem
-                .write(qboot_data, GuestAddress(arch::BIOS_START))
+                .write(qboot_data, GuestAddress(arch::FIRMWARE_START))
                 .unwrap();
 
             let (initrd_host_addr, initrd_size) =
@@ -1278,15 +1295,7 @@ fn load_payload(
                 None,
             ))
         }
-        #[cfg(feature = "efi")]
-        Payload::Efi => {
-            guest_mem.write(EDK2_BINARY, GuestAddress(0u64)).unwrap();
-            Ok((guest_mem, GuestAddress(0), None, None))
-        }
-        #[cfg(not(feature = "efi"))]
-        Payload::Efi => {
-            unreachable!("EFI support was not built in")
-        }
+        Payload::Firmware => Ok((guest_mem, GuestAddress(arch::RESET_VECTOR), None, None)),
     }
 }
 
@@ -1306,6 +1315,17 @@ fn create_guest_memory(
 > {
     let mem_size = mem_size << 20;
 
+    #[cfg(not(feature = "efi"))]
+    let (firmware_data, firmware_size) = if let Some(firmware) = &vm_resources.firmware_config {
+        let data = std::fs::read(firmware.path.clone()).map_err(StartMicrovmError::FirmwareRead)?;
+        let len = data.len();
+        (Some(data), Some(len))
+    } else {
+        (None, None)
+    };
+    #[cfg(feature = "efi")]
+    let (firmware_data, firmware_size) = (Some(EDK2_BINARY), Some(EDK2_BINARY.len()));
+
     #[cfg(target_arch = "x86_64")]
     let (arch_mem_info, mut arch_mem_regions) = match payload {
         #[cfg(not(feature = "tee"))]
@@ -1316,10 +1336,10 @@ fn create_guest_memory(
                 } else {
                     return Err(StartMicrovmError::MissingKernelConfig);
                 };
-            arch::arch_memory_regions(mem_size, Some(kernel_guest_addr), kernel_size, 0)
+            arch::arch_memory_regions(mem_size, Some(kernel_guest_addr), kernel_size, 0, None)
         }
         Payload::ExternalKernel(external_kernel) => {
-            arch::arch_memory_regions(mem_size, None, 0, external_kernel.initramfs_size)
+            arch::arch_memory_regions(mem_size, None, 0, external_kernel.initramfs_size, None)
         }
         #[cfg(feature = "tee")]
         Payload::Tee => {
@@ -1329,18 +1349,18 @@ fn create_guest_memory(
                 } else {
                     return Err(StartMicrovmError::MissingKernelConfig);
                 };
-            arch::arch_memory_regions(mem_size, Some(kernel_guest_addr), kernel_size, 0)
+            arch::arch_memory_regions(mem_size, Some(kernel_guest_addr), kernel_size, 0, None)
         }
         #[cfg(test)]
-        Payload::Empty => arch::arch_memory_regions(mem_size, None, 0, 0),
-        Payload::Efi => unreachable!(),
+        Payload::Empty => arch::arch_memory_regions(mem_size, None, 0, 0, None),
+        Payload::Firmware => arch::arch_memory_regions(mem_size, None, 0, 0, firmware_size),
     };
     #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
     let (arch_mem_info, mut arch_mem_regions) = match payload {
         Payload::ExternalKernel(external_kernel) => {
-            arch::arch_memory_regions(mem_size, external_kernel.initramfs_size)
+            arch::arch_memory_regions(mem_size, external_kernel.initramfs_size, None)
         }
-        _ => arch::arch_memory_regions(mem_size, 0),
+        _ => arch::arch_memory_regions(mem_size, 0, firmware_size),
     };
 
     let mut shm_manager = ShmManager::new(&arch_mem_info);
@@ -1367,6 +1387,12 @@ fn create_guest_memory(
 
     let (guest_mem, entry_addr, initrd_config, cmdline) =
         load_payload(vm_resources, guest_mem, &arch_mem_info, payload)?;
+
+    if let Some(firmware_data) = firmware_data {
+        guest_mem
+            .write(&firmware_data, GuestAddress(arch_mem_info.firmware_addr))
+            .map_err(StartMicrovmError::FirmwareInvalidAddress)?;
+    }
 
     let payload_config = PayloadConfig {
         entry_addr,
@@ -1566,6 +1592,7 @@ fn attach_legacy_devices(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[allow(clippy::too_many_arguments)]
 fn create_vcpus_x86_64(
     vm: &Vm,
     vcpu_config: &VcpuConfig,
@@ -1573,6 +1600,7 @@ fn create_vcpus_x86_64(
     entry_addr: GuestAddress,
     io_bus: &devices::Bus,
     exit_evt: &EventFd,
+    kernel_boot: bool,
     #[cfg(feature = "tee")] pm_sender: Sender<WorkerMessage>,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
@@ -1589,7 +1617,7 @@ fn create_vcpus_x86_64(
         )
         .map_err(Error::Vcpu)?;
 
-        vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config)
+        vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config, kernel_boot)
             .map_err(Error::Vcpu)?;
 
         vcpus.push(vcpu);
@@ -2074,6 +2102,7 @@ pub mod tests {
             entry_addr,
             &bus,
             &EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+            true,
         )
         .unwrap();
         assert_eq!(vcpu_vec.len(), vcpu_count as usize);

@@ -208,7 +208,7 @@ impl BlockWorker {
         match request_header.request_type {
             VIRTIO_BLK_T_IN => {
                 let data_len = writer.available_bytes() - 1;
-                if data_len % 512 != 0 {
+                if !data_len.is_multiple_of(512) {
                     Err(RequestError::InvalidDataLength)
                 } else {
                     writer
@@ -218,7 +218,7 @@ impl BlockWorker {
             }
             VIRTIO_BLK_T_OUT => {
                 let data_len = reader.available_bytes();
-                if data_len % 512 != 0 {
+                if !data_len.is_multiple_of(512) {
                     Err(RequestError::InvalidDataLength)
                 } else {
                     reader
