@@ -55,9 +55,9 @@ use crate::signal_handler::register_sigwinch_handler;
 use crate::terminal::term_set_raw_mode;
 #[cfg(feature = "blk")]
 use crate::vmm_config::block::BlockBuilder;
-use crate::vmm_config::boot_source::DEFAULT_KERNEL_CMDLINE;
 #[cfg(not(any(feature = "tee", feature = "nitro")))]
 use crate::vmm_config::fs::FsDeviceConfig;
+use crate::vmm_config::kernel_cmdline::DEFAULT_KERNEL_CMDLINE;
 #[cfg(target_os = "linux")]
 use crate::vstate::KvmContext;
 #[cfg(all(target_os = "linux", feature = "tee"))]
@@ -543,6 +543,7 @@ pub fn build_microvm(
         vm_resources,
         &payload,
     )?;
+
     let vcpu_config = vm_resources.vcpu_config();
 
     // Clone the command-line so that a failed boot doesn't pollute the original.
@@ -550,13 +551,13 @@ pub fn build_microvm(
     let mut kernel_cmdline = Cmdline::new(arch::CMDLINE_MAX_SIZE);
     if let Some(cmdline) = payload_config.kernel_cmdline {
         kernel_cmdline.insert_str(cmdline.as_str()).unwrap();
-    } else if let Some(cmdline) = &vm_resources.boot_config.kernel_cmdline_prolog {
+    } else if let Some(cmdline) = &vm_resources.kernel_cmdline.prolog {
         kernel_cmdline.insert_str(cmdline).unwrap();
     } else {
         kernel_cmdline.insert_str(DEFAULT_KERNEL_CMDLINE).unwrap();
     }
 
-    if let Some(cmdline) = &vm_resources.boot_config.kernel_cmdline_krun_env {
+    if let Some(cmdline) = &vm_resources.kernel_cmdline.krun_env {
         kernel_cmdline.insert_str(cmdline.as_str()).unwrap();
     }
 
@@ -991,7 +992,7 @@ pub fn build_microvm(
         attach_snd_device(&mut vmm, intc.clone())?;
     }
 
-    if let Some(s) = &vm_resources.boot_config.kernel_cmdline_epilog {
+    if let Some(s) = &vm_resources.kernel_cmdline.epilog {
         vmm.kernel_cmdline.insert_str(s).unwrap();
     };
 
