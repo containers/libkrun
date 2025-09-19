@@ -42,7 +42,6 @@ use utils::eventfd::EventFd;
 use vmm::resources::{ConsoleConfig, ConsoleType, VmResources};
 #[cfg(feature = "blk")]
 use vmm::vmm_config::block::{BlockDeviceConfig, BlockRootConfig};
-use vmm::vmm_config::boot_source::{BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
 #[cfg(not(feature = "tee"))]
 use vmm::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(not(feature = "tee"))]
@@ -51,6 +50,7 @@ use vmm::vmm_config::fs::FsDeviceConfig;
 use vmm::vmm_config::kernel_bundle::KernelBundle;
 #[cfg(feature = "tee")]
 use vmm::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
+use vmm::vmm_config::kernel_cmdline::{KernelCmdlineConfig, DEFAULT_KERNEL_CMDLINE};
 use vmm::vmm_config::machine_config::VmConfig;
 #[cfg(feature = "net")]
 use vmm::vmm_config::net::NetworkInterfaceConfig;
@@ -2234,9 +2234,9 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         return -libc::EINVAL;
     }
 
-    let boot_source = BootSourceConfig {
-        kernel_cmdline_prolog: Some(format!("{DEFAULT_KERNEL_CMDLINE} init={INIT_PATH}")),
-        kernel_cmdline_krun_env: Some(format!(
+    let kernel_cmdline = KernelCmdlineConfig {
+        prolog: Some(format!("{DEFAULT_KERNEL_CMDLINE} init={INIT_PATH}")),
+        krun_env: Some(format!(
             " {} {} {} {} {}",
             ctx_cfg.get_exec_path(),
             ctx_cfg.get_workdir(),
@@ -2244,10 +2244,10 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             ctx_cfg.get_rlimits(),
             ctx_cfg.get_env(),
         )),
-        kernel_cmdline_epilog: Some(format!(" -- {}", ctx_cfg.get_args())),
+        epilog: Some(format!(" -- {}", ctx_cfg.get_args())),
     };
 
-    if ctx_cfg.vmr.set_boot_source(boot_source).is_err() {
+    if ctx_cfg.vmr.set_kernel_cmdline(kernel_cmdline).is_err() {
         return -libc::EINVAL;
     }
 
