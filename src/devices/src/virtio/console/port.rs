@@ -55,8 +55,8 @@ impl Port {
                 name: "".into(),
                 represents_console: true,
                 state: PortState::Inactive,
-                input: Some(Arc::new(Mutex::new(input.unwrap()))),
-                output: Some(Arc::new(Mutex::new(output.unwrap()))),
+                input: input.map(|input| Arc::new(Mutex::new(input))),
+                output: output.map(|output| Arc::new(Mutex::new(output))),
             },
             PortDescription::InputPipe { name, input } => Self {
                 port_id,
