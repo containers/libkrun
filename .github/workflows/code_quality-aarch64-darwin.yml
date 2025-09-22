@@ -22,6 +22,9 @@ jobs:
       - name: Install dependencies
         run: brew tap slp/krunkit && brew install virglrenderer clang-format llvm
 
+      - name: Create a fake init
+        run: touch init/init
+
       - name: Formatting (clang-format)
         run: find init -iname '*.h' -o -iname '*.c' | xargs clang-format -n -Werror
 
