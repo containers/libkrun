@@ -71,13 +71,13 @@ const MAX_ARGS: usize = 4096;
 
 // krunfw library name for each context
 #[cfg(all(target_os = "linux", not(feature = "tee")))]
-const KRUNFW_NAME: &str = "libkrunfw.so.4";
+const KRUNFW_NAME: &str = "libkrunfw.so.5";
 #[cfg(all(target_os = "linux", feature = "amd-sev"))]
-const KRUNFW_NAME: &str = "libkrunfw-sev.so.4";
+const KRUNFW_NAME: &str = "libkrunfw-sev.so.5";
 #[cfg(all(target_os = "linux", feature = "tdx"))]
-const KRUNFW_NAME: &str = "libkrunfw-tdx.so.4";
+const KRUNFW_NAME: &str = "libkrunfw-tdx.so.5";
 #[cfg(all(target_os = "macos", not(feature = "efi")))]
-const KRUNFW_NAME: &str = "libkrunfw.4.dylib";
+const KRUNFW_NAME: &str = "libkrunfw.5.dylib";
 
 // Path to the init binary to be executed inside the VM.
 const INIT_PATH: &str = "/init.krun";
@@ -2274,16 +2274,20 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         guest_cid: 3,
         host_port_map: None,
         unix_ipc_port_map: None,
+        enable_tsi: false,
+        enable_tsi_unix: false,
     };
 
     #[cfg(feature = "net")]
     if ctx_cfg.vmr.net.list.is_empty() && ctx_cfg.legacy_net_cfg.is_none() {
         vsock_config.host_port_map = ctx_cfg.tsi_port_map;
+        vsock_config.enable_tsi = true;
         vsock_set = true;
     }
     #[cfg(not(feature = "net"))]
     {
         vsock_config.host_port_map = ctx_cfg.tsi_port_map;
+        vsock_config.enable_tsi = true;
         vsock_set = true;
     }
 
@@ -2293,6 +2297,15 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     }
 
     if vsock_set {
+        if vsock_config.enable_tsi {
+            // We only support using TSI for AF_UNIX in a containerized context,
+            // so only enable it when we have a single virtio-fs device pointing
+            // to root.
+            #[cfg(not(feature = "tee"))]
+            if ctx_cfg.vmr.fs.len() == 1 && ctx_cfg.vmr.fs[0].shared_dir == "/" {
+                vsock_config.enable_tsi_unix = true;
+            }
+        }
         ctx_cfg.vmr.set_vsock_device(vsock_config).unwrap();
     }
 
