@@ -53,7 +53,7 @@ impl<T: Send> PollableChannelReciever<T> {
             Err(e) => return Err(e),
         }
 
-        Ok(data_lock.pop_back())
+        Ok(data_lock.pop_front())
     }
 
     pub fn len(&self) -> usize {
