@@ -614,6 +614,23 @@ int32_t krun_display_set_refresh_rate(uint32_t ctx_id, uint32_t display_id, uint
  */
 int32_t krun_set_display_backend(uint32_t ctx_id, const void *display_backend, size_t backend_size);
 
+
+/**
+ * Adds an input device with separate config and events objects.
+ *
+ * Arguments:
+ *  "ctx_id"               - the configuration context ID
+ *  "config_backend"       - Pointer to a krun_input_config struct
+ *  "config_backend_size"  - sizeof() the krun_input_config struct
+ *  "events_backend"       - Pointer to a krun_input_event_provider struct
+ *  "events_backend_size"  - sizeof() the krun_input_event_provider struct
+ *
+ * Returns:
+ *  Zero on success or a negative error code otherwise.
+ */
+int krun_add_input_device(uint32_t ctx_id, const void *config_backend, size_t config_backend_size,
+                            const void *events_backend, size_t events_backend_size);
+
 /**
  * Enables or disables a virtio-snd device.
  *
