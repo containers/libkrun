@@ -632,6 +632,19 @@ int krun_add_input_device(uint32_t ctx_id, const void *config_backend, size_t co
                             const void *events_backend, size_t events_backend_size);
 
 /**
+ * Creates a passthrough input device from a host /dev/input/* file descriptor.
+ * The device configuration will be automatically queried from the host device using ioctls.
+ * 
+ * Arguments:
+ *  "ctx_id"  - The krun context
+ *  "input_fd" - File descriptor to a /dev/input/* device on the host
+ *
+ * Returns:
+ *  Zero on success or a negative error code otherwise.
+ */
+int krun_add_input_device_fd(uint32_t ctx_id, int input_fd);
+
+/**
  * Enables or disables a virtio-snd device.
  *
  * Arguments:
