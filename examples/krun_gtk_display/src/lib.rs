@@ -14,7 +14,7 @@ pub struct DisplayBackendHandle {
 }
 
 impl DisplayBackendHandle {
-    pub fn get(&self) -> DisplayBackend {
+    pub fn get(&self) -> DisplayBackend<'_> {
         GtkDisplayBackend::into_display_backend(Some(&self.tx))
     }
 }
