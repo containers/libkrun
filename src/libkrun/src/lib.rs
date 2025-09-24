@@ -32,6 +32,8 @@ use std::ffi::{c_void, CStr};
 use std::fs::File;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
+#[cfg(feature = "input")]
+use std::os::fd::BorrowedFd;
 use std::os::fd::{FromRawFd, RawFd};
 use std::path::PathBuf;
 use std::slice;
@@ -1415,6 +1417,36 @@ pub extern "C" fn krun_add_input_device(
 #[cfg(feature = "input")]
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+pub extern "C" fn krun_add_input_device_fd(ctx_id: u32, input_fd: i32) -> i32 {
+    use devices::virtio::input::passthrough::PassthroughInputBackend;
+    use krun_input::{IntoInputConfig, IntoInputEvents};
+
+    if input_fd < 0 {
+        return -libc::EINVAL;
+    }
+    // TODO: currently we let the fd (and it's Box allocation) live forever, we should eventually fix
+    //       this
+    let input_fd = unsafe {
+        // SAFETY: The user provided fd should be valid. Its lifetime is 'static because it will
+        //         exist until libkrun _exits the process
+        BorrowedFd::borrow_raw(input_fd)
+    };
+    let borrowed_fd: &'static BorrowedFd<'static> = Box::leak(Box::new(input_fd));
+
+    let config_backend = PassthroughInputBackend::into_input_config(Some(borrowed_fd));
+    let events_backend = PassthroughInputBackend::into_input_events(Some(borrowed_fd));
+
+    with_cfg(ctx_id, |cfg| {
+        cfg.vmr
+            .input_backends
+            .push((config_backend, events_backend));
+        KRUN_SUCCESS
+    })
+}
+
+#[cfg(feature = "input")]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
 pub unsafe extern "C" fn krun_add_input_device(
     ctx_id: u32,
     config_backend: *const InputConfigBackend<'static>,
@@ -1445,6 +1477,13 @@ pub unsafe extern "C" fn krun_add_input_device(
             .push((config_backend, events_backend));
         KRUN_SUCCESS
     })
+}
+
+#[cfg(not(feature = "input"))]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_input_device_fd(_ctx_id: u32, _input_fd: i32) -> i32 {
+    -libc::ENOTSUP
 }
 
 #[cfg(feature = "gpu")]
