@@ -431,6 +431,7 @@ dependencies = [
  "hvf",
  "imago",
  "krun_display",
+ "krun_input",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
@@ -851,6 +852,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "krun_input"
+version = "0.1.0"
+dependencies = [
+ "bindgen 0.72.0",
+ "bitflags 2.9.1",
+ "libc",
+ "log",
+ "static_assertions",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "kvm-bindings"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -898,6 +911,7 @@ dependencies = [
  "env_logger",
  "hvf",
  "krun_display",
+ "krun_input",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
@@ -1884,6 +1898,7 @@ dependencies = [
  "kbs-types",
  "kernel",
  "krun_display",
+ "krun_input",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",

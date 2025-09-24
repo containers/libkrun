@@ -1,5 +1,6 @@
 LIBRARY_HEADER = include/libkrun.h
 LIBRARY_HEADER_DISPLAY = include/libkrun_display.h
+LIBRARY_HEADER_INPUT = include/libkrun_input.h
 
 ABI_VERSION=1
 FULL_VERSION=1.15.1
@@ -57,6 +58,9 @@ ifeq ($(GPU),1)
 endif
 ifeq ($(SND),1)
     FEATURE_FLAGS += --features snd
+endif
+ifeq ($(INPUT),1)
+    FEATURE_FLAGS += --features input
 endif
 ifeq ($(NITRO),1)
 	VARIANT = -nitro
@@ -147,6 +151,7 @@ install: libkrun.pc
 	install -d $(DESTDIR)$(PREFIX)/include
 	install -m 644 $(LIBRARY_HEADER) $(DESTDIR)$(PREFIX)/include
 	install -m 644 $(LIBRARY_HEADER_DISPLAY) $(DESTDIR)$(PREFIX)/include
+	install -m 644 $(LIBRARY_HEADER_INPUT) $(DESTDIR)$(PREFIX)/include
 	install -m 644 libkrun.pc $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/pkgconfig
 	install -m 755 $(LIBRARY_RELEASE_$(OS)) $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/
 	cd $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/ ; ln -sf $(KRUN_BINARY_$(OS)) $(KRUN_SONAME_$(OS)) ; ln -sf $(KRUN_SONAME_$(OS)) $(KRUN_BASE_$(OS))

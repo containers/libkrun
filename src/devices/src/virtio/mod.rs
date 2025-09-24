@@ -25,6 +25,8 @@ pub mod file_traits;
 pub mod fs;
 #[cfg(feature = "gpu")]
 pub mod gpu;
+#[cfg(feature = "input")]
+pub mod input;
 pub mod linux_errno;
 mod mmio;
 #[cfg(feature = "net")]
