@@ -13,6 +13,7 @@ use devices::virtio::CacheType;
 use env_logger::{Env, Target};
 #[cfg(feature = "gpu")]
 use krun_display::DisplayBackend;
+
 use libc::c_char;
 #[cfg(feature = "net")]
 use libc::c_int;
@@ -61,6 +62,8 @@ use nitro::enclaves::NitroEnclave;
 
 #[cfg(feature = "gpu")]
 use devices::virtio::display::{DisplayInfoEdid, PhysicalSize, MAX_DISPLAYS};
+#[cfg(feature = "input")]
+use krun_input::{InputConfigBackend, InputEventProviderBackend};
 #[cfg(feature = "nitro")]
 use nitro_enclaves::launch::StartFlags;
 
@@ -1394,6 +1397,54 @@ pub extern "C" fn krun_set_display_backend(
     }
 
     KRUN_SUCCESS
+}
+
+#[cfg(not(feature = "input"))]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub extern "C" fn krun_add_input_device(
+    _ctx_id: u32,
+    _config_backend: *const c_void,
+    _config_backend_size: size_t,
+    _event_provider_backend: *const c_void,
+    _event_provider_backend_size: size_t,
+) -> i32 {
+    -libc::ENOTSUP
+}
+
+#[cfg(feature = "input")]
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_input_device(
+    ctx_id: u32,
+    config_backend: *const InputConfigBackend<'static>,
+    config_backend_size: size_t,
+    event_provider_backend: *const InputEventProviderBackend<'static>,
+    event_provider_backend_size: size_t,
+) -> i32 {
+    if config_backend.is_null() || event_provider_backend.is_null() {
+        return -libc::EINVAL;
+    }
+
+    if config_backend_size < size_of::<InputConfigBackend>()
+        || event_provider_backend_size < size_of::<InputEventProviderBackend>()
+    {
+        return -libc::EINVAL;
+    }
+
+    let config_backend = unsafe { *config_backend };
+    let events_backend = unsafe { *event_provider_backend };
+
+    if !config_backend.verify() || !events_backend.verify() {
+        return -libc::EINVAL;
+    }
+
+    with_cfg(ctx_id, |cfg| {
+        cfg.vmr
+            .input_backends
+            .push((config_backend, events_backend));
+        KRUN_SUCCESS
+    })
 }
 
 #[cfg(feature = "gpu")]

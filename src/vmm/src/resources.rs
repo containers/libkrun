@@ -138,6 +138,11 @@ pub struct VmResources {
     pub display_backend: Option<DisplayBackend<'static>>,
     #[cfg(feature = "gpu")]
     pub displays: Vec<DisplayInfo>,
+    #[cfg(feature = "input")]
+    pub input_backends: Vec<(
+        krun_input::InputConfigBackend<'static>,
+        krun_input::InputEventProviderBackend<'static>,
+    )>,
     #[cfg(feature = "snd")]
     /// Enable the virtio-snd device.
     pub snd_device: bool,
@@ -383,11 +388,13 @@ mod tests {
             gpu_virgl_flags: None,
             gpu_shm_size: None,
             #[cfg(feature = "gpu")]
-            display_backend: DisplayBackendConfig::Noop,
+            display_backend: None,
             #[cfg(feature = "gpu")]
             displays: Vec::new(),
+            #[cfg(feature = "input")]
+            input_backends: Vec::new(),
             #[cfg(feature = "snd")]
-            enable_snd: False,
+            snd_device: false,
             console_output: None,
             smbios_oem_strings: None,
             nested_enabled: false,
