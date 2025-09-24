@@ -1,4 +1,5 @@
 mod device;
+pub mod passthrough;
 mod worker;
 
 pub use self::defs::uapi::VIRTIO_ID_INPUT as TYPE_INPUT;
