@@ -618,6 +618,7 @@ dependencies = [
  "crossbeam-channel",
  "gtk4",
  "krun_display",
+ "krun_input",
  "libc",
  "log",
  "utils",
@@ -633,6 +634,7 @@ dependencies = [
  "env_logger",
  "gtk_display",
  "krun-sys",
+ "krun_input",
  "log",
  "regex",
 ]
@@ -712,6 +714,18 @@ version = "0.1.0"
 dependencies = [
  "bindgen 0.72.0",
  "bitflags 2.9.1",
+ "log",
+ "static_assertions",
+ "thiserror",
+]
+
+[[package]]
+name = "krun_input"
+version = "0.1.0"
+dependencies = [
+ "bindgen 0.72.0",
+ "bitflags 2.9.1",
+ "libc",
  "log",
  "static_assertions",
  "thiserror",
