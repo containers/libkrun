@@ -28,7 +28,7 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Clippy (default features)
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --locked -- -D warnings
 
       - name: Clippy (net+blk+gpu+snd features)
-        run: cargo clippy --features net,blk,gpu,snd -- -D warnings
+        run: cargo clippy --locked --features net,blk,gpu,snd -- -D warnings

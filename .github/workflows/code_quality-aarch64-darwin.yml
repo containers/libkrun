@@ -32,4 +32,4 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Clippy (efi+gpu features)
-        run: LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib cargo clippy --features efi,gpu -- -D warnings
+        run: LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib cargo clippy --locked --features efi,gpu -- -D warnings

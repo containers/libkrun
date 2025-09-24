@@ -28,16 +28,16 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Clippy (default features)
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --locked -- -D warnings
 
       - name: Clippy (amd-sev feature)
-        run: cargo clippy --features amd-sev -- -D warnings
+        run: cargo clippy --locked --features amd-sev -- -D warnings
 
       - name: Clippy (tdx feature)
-        run: cargo clippy --features tdx -- -D warnings
+        run: cargo clippy --locked --features tdx -- -D warnings
 
       - name: Clippy (net+blk+gpu+snd features)
-        run: cargo clippy --features net,blk,gpu,snd -- -D warnings
+        run: cargo clippy --locked --features net,blk,gpu,snd -- -D warnings
 
   unit:
     if: github.event_name == 'pull_request'
