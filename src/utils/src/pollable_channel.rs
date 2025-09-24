@@ -38,6 +38,16 @@ impl<T: Send> PollableChannelSender<T> {
         self.inner.eventfd.write(1)?;
         Ok(())
     }
+
+    pub fn send_many<I: IntoIterator<Item = T>>(&self, msg_iterator: I) -> io::Result<()> {
+        let msg_iterator = msg_iterator.into_iter();
+        let mut data_lock = self.inner.queue.lock().unwrap();
+        let old_len = data_lock.len();
+        data_lock.extend(msg_iterator);
+        let num_added_items = data_lock.len() - old_len;
+        self.inner.eventfd.write(num_added_items as u64)?;
+        Ok(())
+    }
 }
 
 pub struct PollableChannelReciever<T: Send> {
