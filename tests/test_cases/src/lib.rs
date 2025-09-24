@@ -28,7 +28,10 @@ pub fn test_cases() -> Vec<TestCase> {
             }),
         ),
         TestCase::new("vsock-guest-connect", Box::new(TestVsockGuestConnect)),
-        TestCase::new("tsi-tcp-guest-connect", Box::new(TestTsiTcpGuestConnect::new())),
+        TestCase::new(
+            "tsi-tcp-guest-connect",
+            Box::new(TestTsiTcpGuestConnect::new()),
+        ),
         TestCase::new(
             "tsi-tcp-guest-listen",
             Box::new(TestTsiTcpGuestListen::new()),
