@@ -44,7 +44,7 @@ fn parse_display(display_string: &str) -> Result<DisplayArg, String> {
     });
 
     let captures = RE.captures(display_string).ok_or_else(|| {
-        format!("Invalid display string '{s}' format. Examples of valid values:\n '1920x1080', '1920x1080@60', '1920x1080:162x91mm', '1920x1080:300dpi', '1920x1080@90:300dpi'")
+        format!("Invalid display string '{display_string}' format. Examples of valid values:\n '1920x1080', '1920x1080@60', '1920x1080:162x91mm', '1920x1080:300dpi', '1920x1080@90:300dpi'")
     })?;
 
     fn parse_group<T: FromStr>(captures: &Captures, name: &str) -> Result<Option<T>, String>
