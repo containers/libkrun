@@ -13,6 +13,7 @@ blk = []
 efi = ["blk", "net"]
 gpu = ["rutabaga_gfx", "thiserror", "zerocopy", "krun_display"]
 snd = ["pw", "thiserror"]
+input = ["zerocopy", "krun_input"]
 virgl_resource_map2 = []
 nitro = []
 test_utils = []
@@ -31,6 +32,7 @@ virtio-bindings = "0.2.0"
 vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
 zerocopy = { version = "0.8.26", optional = true, features = ["derive"] }
 krun_display = { path = "../krun_display", optional = true, features = ["bindgen_clang_runtime"] }
+krun_input = { path = "../krun_input", features = ["bindgen_clang_runtime"], optional = true }
 
 arch = { path = "../arch" }
 utils = { path = "../utils" }

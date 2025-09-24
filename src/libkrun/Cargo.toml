@@ -14,6 +14,7 @@ blk = []
 efi = [ "blk", "net" ]
 gpu = ["krun_display"]
 snd = []
+input = ["krun_input", "vmm/input", "devices/input"]
 virgl_resource_map2 = []
 nitro = [ "dep:nitro", "dep:nitro-enclaves" ]
 
@@ -25,6 +26,7 @@ libloading = "0.8"
 log = "0.4.0"
 once_cell = "1.4.1"
 krun_display = { path = "../krun_display", optional = true, features = ["bindgen_clang_runtime"] }
+krun_input = { path = "../krun_input", optional = true, features = ["bindgen_clang_runtime"] }
 
 devices = { path = "../devices" }
 polly = { path = "../polly" }
