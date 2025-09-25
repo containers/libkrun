@@ -177,6 +177,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cfg-if"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fd1289c04a9ea8cb22300a459a72a385d7c73d3259e2ed7dcb2af674838cfa9"
+
+[[package]]
+name = "cfg_aliases"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
+
+[[package]]
 name = "clang-sys"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -603,9 +615,9 @@ name = "gtk_display"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "crossbeam-channel",
  "gtk4",
  "krun_display",
+ "krun_input",
  "libc",
  "log",
  "utils",
@@ -621,6 +633,7 @@ dependencies = [
  "env_logger",
  "gtk_display",
  "krun-sys",
+ "krun_input",
  "log",
  "regex",
 ]
@@ -706,6 +719,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "krun_input"
+version = "0.1.0"
+dependencies = [
+ "bindgen 0.72.0",
+ "bitflags 2.9.1",
+ "libc",
+ "log",
+ "static_assertions",
+ "thiserror",
+]
+
+[[package]]
 name = "kvm-bindings"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -758,6 +783,18 @@ name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
+
+[[package]]
+name = "nix"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
+dependencies = [
+ "bitflags 2.9.1",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
 
 [[package]]
 name = "nom"
@@ -1073,6 +1110,7 @@ dependencies = [
  "kvm-bindings",
  "libc",
  "log",
+ "nix",
  "vmm-sys-util",
 ]
 

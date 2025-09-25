@@ -1,18 +1,17 @@
-use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use gtk::{gdk::MemoryFormat, glib::Bytes};
 use krun_display::{
     DisplayBackendBasicFramebuffer, DisplayBackendError, DisplayBackendNew, MAX_DISPLAYS, Rect,
     ResourceFormat,
 };
-use log::error;
 use std::mem;
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use utils::pollable_channel::PollableChannelSender;
 
 // We try to push the maximum amount of data to the GTK thread. Currently, we want the display thread
 // deal with dropping the frames if they are coming too quickly to render. If we set this to a lower
 // number could slow down the libkrun thread, by making it wait for the display thread when calling
 // DisplayBackendBasicFramebuffer::alloc_frame.
-const MAX_DISPLAY_BUFFERS: usize = 4;
+const MAX_DISPLAY_BUFFERS: usize = 32;
 const _: () = {
     if MAX_DISPLAY_BUFFERS < 2 {
         panic!("At least 2 buffers are required")
@@ -74,7 +73,7 @@ impl DisplayBackendBasicFramebuffer for GtkDisplayBackend {
         if let Some(ref mut scanout) = self.scanouts[scanout_id as usize] {
             scanout.required_buffer_size = required_buffer_size;
         } else {
-            let (buffer_tx, buffer_rx) = bounded(MAX_DISPLAY_BUFFERS);
+            let (buffer_tx, buffer_rx) = sync_channel(MAX_DISPLAY_BUFFERS);
 
             for _ in 0..MAX_DISPLAY_BUFFERS {
                 // We initialize the buffers as empty in case we don't end up using them, the buffers
@@ -171,7 +170,7 @@ fn resource_format_into_gdk(format: ResourceFormat) -> MemoryFormat {
 }
 
 struct Scanout {
-    buffer_tx: Sender<Vec<u8>>,
+    buffer_tx: SyncSender<Vec<u8>>,
     buffer_rx: Receiver<Vec<u8>>,
     required_buffer_size: usize,
     current_buffer: Vec<u8>,
@@ -187,7 +186,7 @@ impl Scanout {
 }
 
 struct BufferReturner {
-    return_tx: Sender<Vec<u8>>,
+    return_tx: SyncSender<Vec<u8>>,
     buf: Vec<u8>,
 }
 
@@ -199,14 +198,11 @@ impl AsRef<[u8]> for BufferReturner {
 
 impl Drop for BufferReturner {
     fn drop(&mut self) {
-        match self.return_tx.try_send(mem::take(&mut self.buf)) {
+        match self.return_tx.send(mem::take(&mut self.buf)) {
             Ok(_) => (),
             // We can just drop the buffer if the other party doesn't exist anymore.
-            Err(TrySendError::Disconnected(_)) => (),
-            Err(TrySendError::Full(_)) => {
-                error!(
-                    "Either the channel is too small or we have more than MAX_DISPLAY_BUFFERS buffers!?"
-                );
+            Err(_) => {
+                // If send fails, it's because the receiver is gone, so just drop the buffer
             }
         }
     }

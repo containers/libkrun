@@ -614,6 +614,33 @@ int32_t krun_display_set_refresh_rate(uint32_t ctx_id, uint32_t display_id, uint
  */
 int32_t krun_set_display_backend(uint32_t ctx_id, const void *display_backend, size_t backend_size);
 
+
+/**
+ * Adds an input device with separate config and events objects.
+ *
+ * Arguments:
+ *  "ctx_id"  - The krun context
+ *  "config"  - Pointer to config object
+ *  "events"  - Pointer to events object
+ *
+ * Returns:
+ *  Zero on success or a negative error code otherwise.
+ */
+int krun_add_input_device(uint32_t ctx_id, const void *config_backend, const void *event_backend);
+
+/**
+ * Creates a passthrough input device from a host /dev/input/* file descriptor.
+ * The device configuration will be automatically queried from the host device using ioctls.
+ * 
+ * Arguments:
+ *  "ctx_id"  - The krun context
+ *  "input_fd" - File descriptor to a /dev/input/* device on the host
+ *
+ * Returns:
+ *  Zero on success or a negative error code otherwise.
+ */
+int krun_add_input_device_fd(uint32_t ctx_id, int input_fd);
+
 /**
  * Enables or disables a virtio-snd device.
  *

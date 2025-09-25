@@ -55,10 +55,11 @@ impl ScanoutPaintable {
         let old_texture = imp.texture.replace(Some(builder.build()));
 
         self.invalidate_contents();
-        if let Some(old_texture) = old_texture {
-            if old_texture.width() != width && old_texture.height() != height {
-                self.invalidate_size();
-            }
+        if let Some(old_texture) = old_texture
+            && old_texture.width() != width
+            && old_texture.height() != height
+        {
+            self.invalidate_size();
         }
     }
 }
