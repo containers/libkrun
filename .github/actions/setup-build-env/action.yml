@@ -1,0 +1,42 @@
+name: 'Setup Build Environment'
+description: 'Common setup for Rust builds with all required packages (Linux & macOS)'
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Rust toolchain
+      shell: bash
+      run: |
+        rustup update stable
+        rustup default stable
+        rustup component add rustfmt clippy
+
+    - name: Cache Cargo dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Set up Homebrew (macOS)
+      if: runner.os == 'macOS'
+      uses: Homebrew/actions/setup-homebrew@master
+
+    - name: Install packages (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: brew tap slp/krunkit && brew install virglrenderer clang-format llvm
+
+    - name: Install packages (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libvirglrenderer-dev \
+          libepoxy-dev \
+          libdrm-dev \
+          libpipewire-0.3-dev \
+          clang-format \
+          libclang-dev
