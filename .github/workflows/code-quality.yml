@@ -1,0 +1,60 @@
+name: Code Quality
+on: [pull_request]
+
+jobs:
+  code-quality-linux-x86_64:
+    name: Linux x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+      
+      - name: Create a fake init
+        run: touch init/init
+      
+      - name: Clippy (default)
+        run: cargo clippy -- -D warnings
+      
+      - name: Clippy (amd-sev)
+        run: cargo clippy --features amd-sev -- -D warnings
+      
+      - name: Clippy (tdx)
+        run: cargo clippy --features tdx -- -D warnings
+      
+      - name: Clippy (net+blk+gpu+snd)
+        run: cargo clippy --features net,blk,gpu,snd -- -D warnings
+
+  code-quality-linux-aarch64:
+    name: Linux aarch64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+      
+      - name: Create a fake init
+        run: touch init/init
+      
+      - name: Clippy (default)
+        run: cargo clippy -- -D warnings
+      
+      - name: Clippy (net+blk+gpu+snd)
+        run: cargo clippy --features net,blk,gpu,snd -- -D warnings
+
+  code-quality-macos:
+    name: macOS aarch64
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+      
+      - name: Create a fake init
+        run: touch init/init
+      
+      - name: Clippy (efi+gpu)
+        run: cargo clippy --features efi,gpu -- -D warnings

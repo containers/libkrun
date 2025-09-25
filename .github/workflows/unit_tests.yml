@@ -1,0 +1,26 @@
+name: Tests
+on: [pull_request]
+
+jobs:
+  unit-tests:
+    name: Unit tests (${{ matrix.name }})
+    runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+      
+      - name: Create a fake init
+        run: touch init/init
+      
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo usermod -a -G kvm $USER
+
+      - name: Unit tests
+        run: cargo test
