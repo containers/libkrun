@@ -12,7 +12,7 @@ CFLAGS = -O2 -g -I../include
 ROOTFS_DISTRO := fedora
 ROOTFS_DIR = rootfs_$(ROOTFS_DISTRO)
 
-.PHONY: clean rootfs
+.PHONY: clean rootfs krun_gtk_display gui_vm libkrun_prefix_for_gui
 
 EXAMPLES := chroot_vm external_kernel
 ifeq ($(SEV),1)
@@ -63,5 +63,18 @@ rootfs:
 	podman export libkrun_chroot_vm | tar xpf - -C $(ROOTFS_DIR)
 	podman rm libkrun_chroot_vm
 
+libkrun_prefix_for_gui:
+	mkdir -p libkrun_prefix_for_gui
+	PREFIX="$$(realpath libkrun_prefix_for_gui)" GPU=1 NET=1 INPUT=1 make -C ..
+	PREFIX="$$(realpath libkrun_prefix_for_gui)" GPU=1 NET=1 INPUT=1 make -C .. install
+
+krun_gtk_display: libkrun_prefix_for_gui
+	PKG_CONFIG_PATH="$$(realpath libkrun_prefix_for_gui/lib64/pkgconfig/)" cargo build --package gtk_display
+
+gui_vm: krun_gtk_display
+	PKG_CONFIG_PATH="$$(realpath libkrun_prefix_for_gui/lib64/pkgconfig/)" cargo build --package gui_vm
+
 clean:
 	rm -rf chroot_vm $(ROOTFS_DIR) launch-tee boot_efi external_kernel nitro
+	rm -rf libkrun_prefix_for_gui
+	cargo clean

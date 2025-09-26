@@ -1,0 +1,17 @@
+name: Code Formatting
+on: [pull_request]
+
+jobs:
+  formatting:
+    name: clang-format + cargo fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+      - name: Create a fake init
+        run: touch init/init
+      - name: clang-format
+        run: find init -iname '*.h' -o -iname '*.c' | xargs clang-format -n -Werror
+      - name: rustfmt
+        run: cargo fmt -- --check

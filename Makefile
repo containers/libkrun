@@ -157,7 +157,9 @@ clean:
 	rm -rf test-prefix
 	cd tests; cargo clean
 
-test: $(LIBRARY_RELEASE_$(OS))
+test-prefix: $(LIBRARY_RELEASE_$(OS))
 	mkdir -p test-prefix
 	PREFIX="$$(realpath test-prefix)" make install
+
+test: test-prefix
 	cd tests; LD_LIBRARY_PATH="$$(realpath ../test-prefix/lib64/)" PKG_CONFIG_PATH="$$(realpath ../test-prefix/lib64/pkgconfig/)" ./run.sh

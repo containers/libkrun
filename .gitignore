@@ -10,3 +10,4 @@ __pycache__
 init/init
 examples/chroot_vm
 test-prefix
+examples/libkrun_prefix_for_gui
