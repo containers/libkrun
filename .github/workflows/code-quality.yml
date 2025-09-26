@@ -56,13 +56,68 @@ jobs:
           - name: "Examples (Linux aarch64)"
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    container: ubuntu:25.04
     steps:
       - uses: actions/checkout@v4
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
-      - name: Install GTK dependencies
-        run: apt-get install -yqq --no-install-recommends libgtk-4-dev glib-2.0-dev
+      - name: Cache GLib 2.82 + GTK 4.16 build
+        uses: actions/cache@v4
+        id: gtk-cache
+        with:
+          path: ~/gtk-prefix
+          key: ${{ runner.os }}-${{ runner.arch }}-glib-2.82.2-gtk-4.16.0
+      - name: Build and install GLib 2.82 + GTK 4.16 from source
+        if: steps.gtk-cache.outputs.cache-hit != 'true'
+        run: |
+          # Install build dependencies
+          sudo apt-get update
+          sudo apt-get install -yqq --no-install-recommends \
+            build-essential \
+            meson \
+            ninja-build \
+            libffi-dev \
+            libmount-dev \
+            libpcre2-dev \
+            zlib1g-dev \
+            libcairo2-dev \
+            libpango1.0-dev \
+            libgdk-pixbuf-2.0-dev \
+            libgraphene-1.0-dev \
+            libepoxy-dev \
+            libxkbcommon-dev \
+            wayland-protocols \
+            libwayland-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libxext-dev \
+            libxfixes-dev
+          
+          
+          # Build GLib first
+          cd /tmp
+          curl -L -o glib-2.82.2.tar.xz https://download.gnome.org/sources/glib/2.82/glib-2.82.2.tar.xz
+          tar -xf glib-2.82.2.tar.xz
+          cd glib-2.82.2
+          meson setup builddir --prefix=$HOME/gtk-prefix --buildtype=release
+          meson compile -C builddir
+          meson install -C builddir
+          
+          export PKG_CONFIG_PATH="$HOME/gtk-prefix/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export LD_LIBRARY_PATH="$HOME/gtk-prefix/lib:$LD_LIBRARY_PATH"
+          
+          # Now build GTK against the GLib
+          cd /tmp
+          curl -L -o gtk-4.16.0.tar.xz https://download.gnome.org/sources/gtk/4.16/gtk-4.16.0.tar.xz
+          tar -xf gtk-4.16.0.tar.xz
+          cd gtk-4.16.0
+          meson setup builddir --prefix=$HOME/gtk-prefix --buildtype=release
+          meson compile -C builddir
+          meson install -C builddir
+      - name: Setup GLib + GTK environment
+        run: |
+          echo "PKG_CONFIG_PATH=$HOME/gtk-prefix/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$HOME/gtk-prefix/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
       - name: Create a fake init
         run: touch init/init
       - name: Build and install libkrun to local prefix
