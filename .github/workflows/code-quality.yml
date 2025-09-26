@@ -3,7 +3,7 @@ on: [pull_request]
 
 jobs:
   code-quality-linux-x86_64:
-    name: Linux x86_64
+    name: libkrun (Linux x86_64)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,7 +21,7 @@ jobs:
         run: cargo clippy --locked --features net,blk,gpu,snd -- -D warnings
 
   code-quality-linux-aarch64:
-    name: Linux aarch64
+    name: libkrun (Linux aarch64)
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +35,7 @@ jobs:
         run: cargo clippy --locked --features net,blk,gpu,snd -- -D warnings
 
   code-quality-macos:
-    name: macOS aarch64
+    name: libkrun (macOS aarch64)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,3 +45,36 @@ jobs:
         run: touch init/init
       - name: Clippy (efi+gpu)
         run: cargo clippy --locked --features efi,gpu -- -D warnings
+
+  code-quality-examples:
+    name: ${{ matrix.name }}
+    strategy:
+      matrix:
+        include:
+          - name: "Examples (Linux x86_64)"
+            runner: ubuntu-latest
+          - name: "Examples (Linux aarch64)"
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: ubuntu:25.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+      - name: Install GTK dependencies
+        run: apt-get install -yqq --no-install-recommends libgtk-4-dev glib-2.0-dev
+      - name: Create a fake init
+        run: touch init/init
+      - name: Build and install libkrun to local prefix
+        run: |
+          mkdir -p $HOME/local
+          make PREFIX=$HOME/local install-dev
+      - name: Setup environment for examples
+        run: |
+          echo "PKG_CONFIG_PATH=$HOME/local/lib64/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$HOME/local/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+      - name: Clippy (examples workspace)
+        run: |
+          cd examples
+          cargo clippy --locked -- -D warnings
+
