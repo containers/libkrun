@@ -5,7 +5,6 @@ jobs:
   unit-tests:
     name: Unit tests (${{ matrix.name }})
     strategy:
-      fail-fast: false
       matrix:
         include:
           - name: "Linux x86_64"

@@ -86,12 +86,7 @@ jobs:
             libepoxy-dev \
             libxkbcommon-dev \
             wayland-protocols \
-            libwayland-dev \
-            libx11-dev \
-            libxrandr-dev \
-            libxi-dev \
-            libxext-dev \
-            libxfixes-dev
+            libwayland-dev
           
           
           # Build GLib first
@@ -111,25 +106,28 @@ jobs:
           curl -L -o gtk-4.16.0.tar.xz https://download.gnome.org/sources/gtk/4.16/gtk-4.16.0.tar.xz
           tar -xf gtk-4.16.0.tar.xz
           cd gtk-4.16.0
-          meson setup builddir --prefix=$HOME/gtk-prefix --buildtype=release
+          meson setup builddir --prefix=$HOME/gtk-prefix --buildtype=release \
+            -Dmedia-gstreamer=disabled \
+            -Dintrospection=disabled \
+            -Dx11-backend=false \
+            -Dprint-cups=disabled \
+            -Dcloudproviders=disabled \
+            -Dtracker=disabled \
+            -Dcolord=disabled \
+            -Dsysprof=disabled \
+            -Dvulkan=disabled
           meson compile -C builddir
           meson install -C builddir
       - name: Setup GLib + GTK environment
         run: |
           echo "PKG_CONFIG_PATH=$HOME/gtk-prefix/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=$HOME/gtk-prefix/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-      - name: Create a fake init
-        run: touch init/init
       - name: Build and install libkrun to local prefix
         run: |
-          mkdir -p $HOME/local
-          make PREFIX=$HOME/local install-dev
-      - name: Setup environment for examples
-        run: |
-          echo "PKG_CONFIG_PATH=$HOME/local/lib64/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=$HOME/local/lib64:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          mkdir -p $HOME/libkrun-prefix
+          GPU=1 NET=1 INPUT=1 PREFIX=$HOME/libkrun-prefix make && PREFIX=$HOME/libkrun-prefix make install
       - name: Clippy (examples workspace)
         run: |
           cd examples
-          cargo clippy --locked -- -D warnings
+          PKG_CONFIG_PATH=$HOME/libkrun-prefix/lib64/pkgconfig:$PKG_CONFIG_PATH LD_LIBRARY_PATH=$HOME/libkrun-prefix/lib64:$LD_LIBRARY_PATH cargo clippy --locked -- -D warnings
 
