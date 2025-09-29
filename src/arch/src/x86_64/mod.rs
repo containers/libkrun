@@ -71,78 +71,94 @@ pub fn arch_memory_regions(
 
     // It's safe to cast MMIO_MEM_START to usize because it fits in a u32 variable
     // (It points to an address in the 32 bit space).
-    let (ram_last_addr, shm_start_addr, regions, firmware_addr) = match size
-        .checked_sub(MMIO_MEM_START as usize)
-    {
-        // case1: guest memory fits before the gap
-        None | Some(0) => {
-            let shm_start_addr = FIRST_ADDR_PAST_32BITS;
+    let (ram_below_gap, ram_above_gap, ram_last_addr, shm_start_addr, regions, firmware_addr) =
+        match size.checked_sub(MMIO_MEM_START as usize) {
+            // case1: guest memory fits before the gap
+            None | Some(0) => {
+                let shm_start_addr = FIRST_ADDR_PAST_32BITS;
 
-            let (ram_last_addr, mut regions) = if let Some(kernel_load_addr) = kernel_load_addr {
-                if size < (kernel_load_addr + kernel_size as u64) as usize {
-                    panic!("Kernel doesn't fit in RAM");
-                }
+                let (ram_last_addr, mut regions) = if let Some(kernel_load_addr) = kernel_load_addr
+                {
+                    if size < (kernel_load_addr + kernel_size as u64) as usize {
+                        panic!("Kernel doesn't fit in RAM");
+                    }
 
-                let ram_last_addr = kernel_load_addr + kernel_size as u64 + size as u64;
+                    let ram_last_addr = kernel_load_addr + kernel_size as u64 + size as u64;
+                    (
+                        ram_last_addr,
+                        vec![
+                            (GuestAddress(0), kernel_load_addr as usize),
+                            (GuestAddress(kernel_load_addr + kernel_size as u64), size),
+                        ],
+                    )
+                } else {
+                    let ram_last_addr = size as u64;
+                    (ram_last_addr, vec![(GuestAddress(0), size)])
+                };
+
+                let firmware_addr = if let Some(firmware_size) = firmware_size {
+                    let firmware_start = layout::FIRST_ADDR_PAST_32BITS - firmware_size as u64;
+                    regions.push((GuestAddress(firmware_start), firmware_size));
+                    firmware_start
+                } else {
+                    0
+                };
+
                 (
+                    size as u64,
+                    0,
                     ram_last_addr,
+                    shm_start_addr,
+                    regions,
+                    firmware_addr,
+                )
+            }
+
+            // case2: guest memory extends beyond the gap
+            Some(remaining) => {
+                let ram_last_addr = FIRST_ADDR_PAST_32BITS + remaining as u64;
+                let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
+
+                let mut regions = if let Some(kernel_load_addr) = kernel_load_addr {
                     vec![
                         (GuestAddress(0), kernel_load_addr as usize),
-                        (GuestAddress(kernel_load_addr + kernel_size as u64), size),
-                    ],
+                        (
+                            GuestAddress(kernel_load_addr + kernel_size as u64),
+                            (MMIO_MEM_START - (kernel_load_addr + kernel_size as u64)) as usize,
+                        ),
+                        (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
+                    ]
+                } else {
+                    vec![
+                        (GuestAddress(0), MMIO_MEM_START as usize),
+                        (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
+                    ]
+                };
+
+                let firmware_addr = if let Some(firmware_size) = firmware_size {
+                    let firmware_start = layout::FIRST_ADDR_PAST_32BITS - firmware_size as u64;
+                    regions.insert(
+                        regions.len() - 2,
+                        (GuestAddress(firmware_start), firmware_size),
+                    );
+                    firmware_start
+                } else {
+                    0
+                };
+
+                (
+                    MMIO_MEM_START,
+                    remaining as u64,
+                    ram_last_addr,
+                    shm_start_addr,
+                    regions,
+                    firmware_addr,
                 )
-            } else {
-                let ram_last_addr = size as u64;
-                (ram_last_addr, vec![(GuestAddress(0), size)])
-            };
-
-            let firmware_addr = if let Some(firmware_size) = firmware_size {
-                let firmware_start = layout::FIRST_ADDR_PAST_32BITS - firmware_size as u64;
-                regions.push((GuestAddress(firmware_start), firmware_size));
-                firmware_start
-            } else {
-                0
-            };
-
-            (ram_last_addr, shm_start_addr, regions, firmware_addr)
-        }
-
-        // case2: guest memory extends beyond the gap
-        Some(remaining) => {
-            let ram_last_addr = FIRST_ADDR_PAST_32BITS + remaining as u64;
-            let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
-
-            let mut regions = if let Some(kernel_load_addr) = kernel_load_addr {
-                vec![
-                    (GuestAddress(0), kernel_load_addr as usize),
-                    (
-                        GuestAddress(kernel_load_addr + kernel_size as u64),
-                        (MMIO_MEM_START - (kernel_load_addr + kernel_size as u64)) as usize,
-                    ),
-                    (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
-                ]
-            } else {
-                vec![
-                    (GuestAddress(0), MMIO_MEM_START as usize),
-                    (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
-                ]
-            };
-
-            let firmware_addr = if let Some(firmware_size) = firmware_size {
-                let firmware_start = layout::FIRST_ADDR_PAST_32BITS - firmware_size as u64;
-                regions.insert(
-                    regions.len() - 2,
-                    (GuestAddress(firmware_start), firmware_size),
-                );
-                firmware_start
-            } else {
-                0
-            };
-
-            (ram_last_addr, shm_start_addr, regions, firmware_addr)
-        }
-    };
+            }
+        };
     let info = ArchMemoryInfo {
+        ram_below_gap,
+        ram_above_gap,
         ram_last_addr,
         shm_start_addr,
         page_size,
@@ -176,36 +192,43 @@ pub fn arch_memory_regions(
 
     // It's safe to cast MMIO_MEM_START to usize because it fits in a u32 variable
     // (It points to an address in the 32 bit space).
-    let (ram_last_addr, shm_start_addr, regions) = match size.checked_sub(MMIO_MEM_START as usize) {
-        // case1: guest memory fits before the gap
-        None | Some(0) => {
-            let ram_last_addr = size as u64;
-            let shm_start_addr = 0u64;
-            (
-                ram_last_addr,
-                shm_start_addr,
-                vec![
-                    (GuestAddress(0), size),
-                    (GuestAddress(FIRMWARE_START), FIRMWARE_SIZE as usize),
-                ],
-            )
-        }
-        // case2: guest memory extends beyond the gap
-        Some(remaining) => {
-            let ram_last_addr = FIRST_ADDR_PAST_32BITS + remaining as u64;
-            let shm_start_addr = 0u64;
-            (
-                ram_last_addr,
-                shm_start_addr,
-                vec![
-                    (GuestAddress(0), MMIO_MEM_START as usize),
-                    (GuestAddress(FIRMWARE_START), FIRMWARE_SIZE as usize),
-                    (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
-                ],
-            )
-        }
-    };
+    let (ram_below_gap, ram_above_gap, ram_last_addr, shm_start_addr, regions) =
+        match size.checked_sub(MMIO_MEM_START as usize) {
+            // case1: guest memory fits before the gap
+            None | Some(0) => {
+                let ram_last_addr = size as u64;
+                let shm_start_addr = 0u64;
+                (
+                    size as u64,
+                    0,
+                    ram_last_addr,
+                    shm_start_addr,
+                    vec![
+                        (GuestAddress(0), size),
+                        (GuestAddress(FIRMWARE_START), FIRMWARE_SIZE as usize),
+                    ],
+                )
+            }
+            // case2: guest memory extends beyond the gap
+            Some(remaining) => {
+                let ram_last_addr = FIRST_ADDR_PAST_32BITS + remaining as u64;
+                let shm_start_addr = 0u64;
+                (
+                    MMIO_MEM_START,
+                    remaining as u64,
+                    ram_last_addr,
+                    shm_start_addr,
+                    vec![
+                        (GuestAddress(0), MMIO_MEM_START as usize),
+                        (GuestAddress(FIRMWARE_START), FIRMWARE_SIZE as usize),
+                        (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
+                    ],
+                )
+            }
+        };
     let info = ArchMemoryInfo {
+        ram_below_gap,
+        ram_above_gap,
         ram_last_addr,
         shm_start_addr,
         page_size,
