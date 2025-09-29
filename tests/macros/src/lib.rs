@@ -13,7 +13,7 @@ pub fn guest(_args: TokenStream, input: TokenStream) -> TokenStream {
     .into();
 
     prefix.extend(input);
-    prefix.into()
+    prefix
 }
 
 #[proc_macro_attribute]
@@ -24,5 +24,5 @@ pub fn host(_args: TokenStream, input: TokenStream) -> TokenStream {
     .into();
 
     prefix.extend(input);
-    prefix.into()
+    prefix
 }
