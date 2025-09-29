@@ -138,7 +138,7 @@ pub fn arch_memory_regions(
                 let firmware_addr = if let Some(firmware_size) = firmware_size {
                     let firmware_start = layout::FIRST_ADDR_PAST_32BITS - firmware_size as u64;
                     regions.insert(
-                        regions.len() - 2,
+                        regions.len() - 1,
                         (GuestAddress(firmware_start), firmware_size),
                     );
                     firmware_start
