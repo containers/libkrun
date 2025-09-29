@@ -15,6 +15,29 @@ jobs:
       - name: Add musl target
         run: rustup target add x86_64-unknown-linux-musl
       
+      - name: Build and install libkrun to test prefix
+        run: make test-prefix
+      
+      - name: Clippy (test_cases guest)
+        run: |
+          cd tests
+          cargo clippy --locked -p test_cases --features guest -- -D warnings
+      
+      - name: Clippy (test_cases host)
+        run: |
+          cd tests
+          PKG_CONFIG_PATH="$(realpath ../test-prefix/lib64/pkgconfig/)" LD_LIBRARY_PATH="$(realpath ../test-prefix/lib64/)" cargo clippy --locked -p test_cases --features host -- -D warnings
+      
+      - name: Clippy (runner)
+        run: |
+          cd tests
+          PKG_CONFIG_PATH="$(realpath ../test-prefix/lib64/pkgconfig/)" LD_LIBRARY_PATH="$(realpath ../test-prefix/lib64/)" cargo clippy --locked -p runner -- -D warnings
+      
+      - name: Clippy (guest-agent)
+        run: |
+          cd tests
+          cargo clippy --locked --target x86_64-unknown-linux-musl -p guest-agent -- -D warnings
+      
       - name: Enable KVM group perms
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
