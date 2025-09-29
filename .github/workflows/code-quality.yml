@@ -15,16 +15,16 @@ jobs:
         run: touch init/init
       
       - name: Clippy (default)
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --locked -- -D warnings
       
       - name: Clippy (amd-sev)
-        run: cargo clippy --features amd-sev -- -D warnings
+        run: cargo clippy --locked --features amd-sev -- -D warnings
       
       - name: Clippy (tdx)
-        run: cargo clippy --features tdx -- -D warnings
+        run: cargo clippy --locked --features tdx -- -D warnings
       
       - name: Clippy (net+blk+gpu+snd)
-        run: cargo clippy --features net,blk,gpu,snd -- -D warnings
+        run: cargo clippy --locked --features net,blk,gpu,snd -- -D warnings
 
   code-quality-linux-aarch64:
     name: Linux aarch64
@@ -39,10 +39,10 @@ jobs:
         run: touch init/init
       
       - name: Clippy (default)
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --locked -- -D warnings
       
       - name: Clippy (net+blk+gpu+snd)
-        run: cargo clippy --features net,blk,gpu,snd -- -D warnings
+        run: cargo clippy --locked --features net,blk,gpu,snd -- -D warnings
 
   code-quality-macos:
     name: macOS aarch64
@@ -57,4 +57,4 @@ jobs:
         run: touch init/init
       
       - name: Clippy (efi+gpu)
-        run: cargo clippy --features efi,gpu -- -D warnings
+        run: cargo clippy --locked --features efi,gpu -- -D warnings
