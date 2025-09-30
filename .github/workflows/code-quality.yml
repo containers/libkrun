@@ -23,8 +23,8 @@ jobs:
       - name: Clippy (tdx)
         run: cargo clippy --locked --features tdx -- -D warnings
       
-      - name: Clippy (net+blk+gpu+snd)
-        run: cargo clippy --locked --features net,blk,gpu,snd -- -D warnings
+      - name: Clippy (net+blk+gpu+snd+input)
+        run: cargo clippy --locked --features net,blk,gpu,snd,input -- -D warnings
 
   code-quality-linux-aarch64:
     name: libkrun (Linux aarch64)
@@ -41,8 +41,8 @@ jobs:
       - name: Clippy (default)
         run: cargo clippy --locked -- -D warnings
       
-      - name: Clippy (net+blk+gpu+snd)
-        run: cargo clippy --locked --features net,blk,gpu,snd -- -D warnings
+      - name: Clippy (net+blk+gpu+snd+input)
+        run: cargo clippy --locked --features net,blk,gpu,snd,input -- -D warnings
 
   code-quality-macos:
     name: libkrun (macOS aarch64)
