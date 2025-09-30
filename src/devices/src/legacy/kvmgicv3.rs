@@ -8,7 +8,7 @@ use crate::legacy::gic::GICDevice;
 use crate::legacy::irqchip::IrqChipT;
 use crate::Error as DeviceError;
 
-use kvm_ioctls::{DeviceFd, VmFd};
+use kvm_ioctls::{DeviceFd, Error, VmFd};
 use utils::eventfd::EventFd;
 
 const KVM_VGIC_V3_BASE_SIZE: u64 = 0x0001_0000;
@@ -27,7 +27,7 @@ pub struct KvmGicV3 {
 }
 
 impl KvmGicV3 {
-    pub fn new(vm: &VmFd, vcpu_count: u64) -> Self {
+    pub fn new(vm: &VmFd, vcpu_count: u64) -> Result<Self, Error> {
         let dist_size = KVM_VGIC_V3_BASE_SIZE;
         let dist_addr = arch::MMIO_MEM_START - dist_size;
         let redist_size = 2 * dist_size;
@@ -39,7 +39,7 @@ impl KvmGicV3 {
             fd: 0,
             flags: 0,
         };
-        let device_fd = vm.create_device(&mut gic_device).unwrap();
+        let device_fd = vm.create_device(&mut gic_device)?;
 
         let attr = kvm_bindings::kvm_device_attr {
             group: kvm_bindings::KVM_DEV_ARM_VGIC_GRP_ADDR,
@@ -47,7 +47,7 @@ impl KvmGicV3 {
             addr: &dist_addr as *const u64 as u64,
             flags: 0,
         };
-        device_fd.set_device_attr(&attr).unwrap();
+        device_fd.set_device_attr(&attr)?;
 
         let attr = kvm_bindings::kvm_device_attr {
             group: kvm_bindings::KVM_DEV_ARM_VGIC_GRP_ADDR,
@@ -55,7 +55,7 @@ impl KvmGicV3 {
             addr: &redists_addr as *const u64 as u64,
             flags: 0,
         };
-        device_fd.set_device_attr(&attr).unwrap();
+        device_fd.set_device_attr(&attr)?;
 
         let nr_irqs: u32 = arch::aarch64::layout::IRQ_MAX - arch::aarch64::layout::IRQ_BASE + 1;
         let nr_irqs_ptr = &nr_irqs as *const u32;
@@ -65,7 +65,7 @@ impl KvmGicV3 {
             addr: nr_irqs_ptr as u64,
             flags: 0,
         };
-        device_fd.set_device_attr(&attr).unwrap();
+        device_fd.set_device_attr(&attr)?;
 
         let attr = kvm_bindings::kvm_device_attr {
             group: kvm_bindings::KVM_DEV_ARM_VGIC_GRP_CTRL,
@@ -73,13 +73,13 @@ impl KvmGicV3 {
             addr: 0,
             flags: 0,
         };
-        device_fd.set_device_attr(&attr).unwrap();
+        device_fd.set_device_attr(&attr)?;
 
-        Self {
+        Ok(Self {
             _device_fd: device_fd,
             properties: [dist_addr, dist_size, redists_addr, redists_size],
             vcpu_count,
-        }
+        })
     }
 }
 
