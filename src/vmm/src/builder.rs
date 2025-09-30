@@ -30,8 +30,6 @@ use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 use crate::vmm_config::net::NetBuilder;
 #[cfg(all(target_os = "linux", target_arch = "riscv64"))]
 use devices::legacy::KvmAia;
-#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-use devices::legacy::KvmGicV3;
 #[cfg(target_arch = "x86_64")]
 use devices::legacy::KvmIoapic;
 use devices::legacy::Serial;
@@ -42,6 +40,8 @@ use devices::legacy::{GicV3, HvfGicV3};
 #[cfg(target_arch = "x86_64")]
 use devices::legacy::{IoApic, IrqChipT};
 use devices::legacy::{IrqChip, IrqChipDevice};
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+use devices::legacy::{KvmGicV2, KvmGicV3};
 use devices::virtio::{port_io, MmioTransport, PortDescription, VirtioDevice, Vsock};
 
 #[cfg(feature = "tee")]
@@ -837,10 +837,21 @@ pub fn build_microvm(
         )
         .map_err(StartMicrovmError::Internal)?;
 
-        intc = Arc::new(Mutex::new(IrqChipDevice::new(Box::new(KvmGicV3::new(
-            vm.fd(),
-            vm_resources.vm_config().vcpu_count.unwrap() as u64,
-        )))));
+        intc = {
+            // The SoC in some popular boards (namely, the RPi family) doesn't support an
+            // architected vGIC, which is required for requesting KVM the instantiation of a
+            // GICv3. To relieve the users from having to configure the gic version manually,
+            // try first to instantiate a GICv3, and fall back to a GICv2 if it fails.
+            let vcpu_count = vm_resources.vm_config().vcpu_count.unwrap() as u64;
+            let gic = match KvmGicV3::new(vm.fd(), vcpu_count) {
+                Ok(gicv3) => IrqChipDevice::new(Box::new(gicv3)),
+                Err(_) => {
+                    warn!("KVM GICv3 creation failed, falling back to KVM GICv2");
+                    IrqChipDevice::new(Box::new(KvmGicV2::new(vm.fd(), vcpu_count)))
+                }
+            };
+            Arc::new(Mutex::new(gic))
+        };
 
         attach_legacy_devices(
             &vm,
