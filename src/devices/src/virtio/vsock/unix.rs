@@ -704,7 +704,12 @@ impl Proxy for UnixAcceptorProxy {
                 Ok(accept_fd) => {
                     // Safe because we've just obtained the FD from the `accept` call above.
                     let new_fd = unsafe { OwnedFd::from_raw_fd(accept_fd) };
-                    update.new_proxy = Some((self.peer_port, new_fd, NewProxyType::Unix));
+                    update.new_proxy = Some((
+                        self.peer_port,
+                        new_fd,
+                        AddressFamily::Unix,
+                        NewProxyType::Unix,
+                    ));
                 }
                 Err(e) => warn!("error accepting connection: id={}, err={}", self.id, e),
             };
