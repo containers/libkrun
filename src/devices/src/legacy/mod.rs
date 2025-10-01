@@ -18,6 +18,8 @@ mod irqchip;
 #[cfg(all(target_os = "linux", target_arch = "riscv64"))]
 mod kvmaia;
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+mod kvmgicv2;
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 mod kvmgicv3;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod kvmioapic;
@@ -55,6 +57,8 @@ pub use self::irqchip::test_utils::DummyIrqChip;
 pub use self::irqchip::{IrqChip, IrqChipDevice, IrqChipT};
 #[cfg(all(target_os = "linux", target_arch = "riscv64"))]
 pub use self::kvmaia::KvmAia;
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+pub use self::kvmgicv2::KvmGicV2;
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 pub use self::kvmgicv3::KvmGicV3;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]

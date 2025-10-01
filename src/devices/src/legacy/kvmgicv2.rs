@@ -1,4 +1,4 @@
-// Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// Copyright 2025 The libkrun Authors. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 use std::io;
@@ -8,15 +8,16 @@ use crate::legacy::gic::GICDevice;
 use crate::legacy::irqchip::IrqChipT;
 use crate::Error as DeviceError;
 
-use kvm_ioctls::{DeviceFd, Error, VmFd};
+use kvm_ioctls::{DeviceFd, VmFd};
 use utils::eventfd::EventFd;
 
-const KVM_VGIC_V3_BASE_SIZE: u64 = 0x0001_0000;
+const KVM_VGIC_V2_DIST_SIZE: u64 = 0x1000;
+const KVM_VGIC_V2_CPU_SIZE: u64 = 0x2000;
 
 // Device trees specific constants
-const ARCH_GIC_V3_MAINT_IRQ: u32 = 9;
+const ARCH_GIC_V2_MAINT_IRQ: u32 = 8;
 
-pub struct KvmGicV3 {
+pub struct KvmGicV2 {
     _device_fd: DeviceFd,
 
     /// GIC device properties, to be used for setting up the fdt entry
@@ -26,36 +27,35 @@ pub struct KvmGicV3 {
     vcpu_count: u64,
 }
 
-impl KvmGicV3 {
-    pub fn new(vm: &VmFd, vcpu_count: u64) -> Result<Self, Error> {
-        let dist_size = KVM_VGIC_V3_BASE_SIZE;
+impl KvmGicV2 {
+    pub fn new(vm: &VmFd, vcpu_count: u64) -> Self {
+        let dist_size = KVM_VGIC_V2_DIST_SIZE;
         let dist_addr = arch::MMIO_MEM_START - dist_size;
-        let redist_size = 2 * dist_size;
-        let redists_size = redist_size * vcpu_count;
-        let redists_addr = dist_addr - redists_size;
+        let cpu_size = KVM_VGIC_V2_CPU_SIZE;
+        let cpu_addr = dist_addr - cpu_size;
 
         let mut gic_device = kvm_bindings::kvm_create_device {
-            type_: kvm_bindings::kvm_device_type_KVM_DEV_TYPE_ARM_VGIC_V3,
+            type_: kvm_bindings::kvm_device_type_KVM_DEV_TYPE_ARM_VGIC_V2,
             fd: 0,
             flags: 0,
         };
-        let device_fd = vm.create_device(&mut gic_device)?;
+        let device_fd = vm.create_device(&mut gic_device).unwrap();
 
         let attr = kvm_bindings::kvm_device_attr {
             group: kvm_bindings::KVM_DEV_ARM_VGIC_GRP_ADDR,
-            attr: u64::from(kvm_bindings::KVM_VGIC_V3_ADDR_TYPE_DIST),
+            attr: u64::from(kvm_bindings::KVM_VGIC_V2_ADDR_TYPE_DIST),
             addr: &dist_addr as *const u64 as u64,
             flags: 0,
         };
-        device_fd.set_device_attr(&attr)?;
+        device_fd.set_device_attr(&attr).unwrap();
 
         let attr = kvm_bindings::kvm_device_attr {
             group: kvm_bindings::KVM_DEV_ARM_VGIC_GRP_ADDR,
-            attr: u64::from(kvm_bindings::KVM_VGIC_V3_ADDR_TYPE_REDIST),
-            addr: &redists_addr as *const u64 as u64,
+            attr: u64::from(kvm_bindings::KVM_VGIC_V2_ADDR_TYPE_CPU),
+            addr: &cpu_addr as *const u64 as u64,
             flags: 0,
         };
-        device_fd.set_device_attr(&attr)?;
+        device_fd.set_device_attr(&attr).unwrap();
 
         let nr_irqs: u32 = arch::aarch64::layout::IRQ_MAX - arch::aarch64::layout::IRQ_BASE + 1;
         let nr_irqs_ptr = &nr_irqs as *const u32;
@@ -65,7 +65,7 @@ impl KvmGicV3 {
             addr: nr_irqs_ptr as u64,
             flags: 0,
         };
-        device_fd.set_device_attr(&attr)?;
+        device_fd.set_device_attr(&attr).unwrap();
 
         let attr = kvm_bindings::kvm_device_attr {
             group: kvm_bindings::KVM_DEV_ARM_VGIC_GRP_CTRL,
@@ -73,17 +73,17 @@ impl KvmGicV3 {
             addr: 0,
             flags: 0,
         };
-        device_fd.set_device_attr(&attr)?;
+        device_fd.set_device_attr(&attr).unwrap();
 
-        Ok(Self {
+        Self {
             _device_fd: device_fd,
-            properties: [dist_addr, dist_size, redists_addr, redists_size],
+            properties: [dist_addr, dist_size, cpu_addr, cpu_size],
             vcpu_count,
-        })
+        }
     }
 }
 
-impl IrqChipT for KvmGicV3 {
+impl IrqChipT for KvmGicV2 {
     fn get_mmio_addr(&self) -> u64 {
         0
     }
@@ -113,7 +113,7 @@ impl IrqChipT for KvmGicV3 {
     }
 }
 
-impl BusDevice for KvmGicV3 {
+impl BusDevice for KvmGicV2 {
     fn read(&mut self, _vcpuid: u64, _offset: u64, _data: &mut [u8]) {
         unreachable!("MMIO operations are managed in-kernel");
     }
@@ -123,7 +123,7 @@ impl BusDevice for KvmGicV3 {
     }
 }
 
-impl GICDevice for KvmGicV3 {
+impl GICDevice for KvmGicV2 {
     fn device_properties(&self) -> Vec<u64> {
         self.properties.to_vec()
     }
@@ -133,14 +133,14 @@ impl GICDevice for KvmGicV3 {
     }
 
     fn fdt_compatibility(&self) -> String {
-        "arm,gic-v3".to_string()
+        "arm,gic-400".to_string()
     }
 
     fn fdt_maint_irq(&self) -> u32 {
-        ARCH_GIC_V3_MAINT_IRQ
+        ARCH_GIC_V2_MAINT_IRQ
     }
 
     fn version(&self) -> u32 {
-        kvm_bindings::kvm_device_type_KVM_DEV_TYPE_ARM_VGIC_V3
+        kvm_bindings::kvm_device_type_KVM_DEV_TYPE_ARM_VGIC_V2
     }
 }
