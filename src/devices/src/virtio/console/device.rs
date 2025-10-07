@@ -5,8 +5,6 @@ use std::mem::{size_of, size_of_val};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::Arc;
 
-use libc::TIOCGWINSZ;
-use nix::ioctl_read_bad;
 use utils::eventfd::EventFd;
 use vm_memory::{ByteValued, Bytes, GuestMemoryMmap};
 

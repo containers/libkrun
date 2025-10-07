@@ -1,29 +1,16 @@
-use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
-use nix::sys::termios::{tcgetattr, tcsetattr, LocalFlags, SetArg};
-use nix::unistd::isatty;
+use nix::sys::termios::{tcgetattr, tcsetattr, LocalFlags, SetArg, Termios};
 use std::os::fd::BorrowedFd;
 
-pub fn term_set_raw_mode(handle_signals_by_terminal: bool) -> Result<(), nix::Error> {
-    if let Some(fd) = get_connected_term_fd() {
-        term_fd_set_raw_mode(fd, handle_signals_by_terminal)
-    } else {
-        Ok(())
-    }
-}
+#[must_use]
+pub struct TerminalMode(Termios);
 
-pub fn term_set_canonical_mode() -> Result<(), nix::Error> {
-    if let Some(fd) = get_connected_term_fd() {
-        term_fd_set_canonical_mode(fd)
-    } else {
-        Ok(())
-    }
-}
-
-pub fn term_fd_set_raw_mode(
+// Enable raw mode for the terminal and return the old state to be restored
+pub fn term_set_raw_mode(
     term: BorrowedFd,
     handle_signals_by_terminal: bool,
-) -> Result<(), nix::Error> {
+) -> Result<TerminalMode, nix::Error> {
     let mut termios = tcgetattr(term)?;
+    let old_state = termios.clone();
 
     let mut mask = LocalFlags::ECHO | LocalFlags::ICANON;
     if !handle_signals_by_terminal {
@@ -32,32 +19,9 @@ pub fn term_fd_set_raw_mode(
 
     termios.local_flags &= !mask;
     tcsetattr(term, SetArg::TCSANOW, &termios)?;
-    Ok(())
+    Ok(TerminalMode(old_state))
 }
 
-pub fn term_fd_set_canonical_mode(term: BorrowedFd) -> Result<(), nix::Error> {
-    let mut termios = tcgetattr(term)?;
-    termios.local_flags |= LocalFlags::ECHO | LocalFlags::ICANON | LocalFlags::ISIG;
-    tcsetattr(term, SetArg::TCSANOW, &termios)?;
-    Ok(())
-}
-
-pub fn get_connected_term_fd() -> Option<BorrowedFd<'static>> {
-    let (stdin, stdout, stderr) = unsafe {
-        (
-            BorrowedFd::borrow_raw(STDIN_FILENO),
-            BorrowedFd::borrow_raw(STDOUT_FILENO),
-            BorrowedFd::borrow_raw(STDERR_FILENO),
-        )
-    };
-
-    if isatty(stdin).unwrap_or(false) {
-        Some(stdin)
-    } else if isatty(stdout).unwrap_or(false) {
-        Some(stdout)
-    } else if isatty(stderr).unwrap_or(false) {
-        Some(stderr)
-    } else {
-        None
-    }
+pub fn term_restore_mode(term: BorrowedFd, restore: &TerminalMode) -> Result<(), nix::Error> {
+    tcsetattr(term, SetArg::TCSANOW, &restore.0)
 }

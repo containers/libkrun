@@ -47,7 +47,6 @@ use std::time::Duration;
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
-use crate::terminal::term_set_canonical_mode;
 #[cfg(target_os = "linux")]
 use crate::vstate::VcpuEvent;
 use crate::vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
@@ -359,10 +358,6 @@ impl Vmm {
     /// Waits for all vCPUs to exit and terminates the Firecracker process.
     pub fn stop(&mut self, exit_code: i32) {
         info!("Vmm is stopping.");
-
-        if let Err(e) = term_set_canonical_mode() {
-            log::error!("Failed to restore terminal to canonical mode: {e}")
-        }
 
         for observer in &self.exit_observers {
             observer

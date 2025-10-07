@@ -52,7 +52,7 @@ use crate::device_manager;
 use crate::signal_handler::register_sigint_handler;
 #[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigwinch_handler;
-use crate::terminal::term_set_raw_mode;
+use crate::terminal::{term_restore_mode, term_set_raw_mode};
 #[cfg(feature = "blk")]
 use crate::vmm_config::block::BlockBuilder;
 #[cfg(not(any(feature = "tee", feature = "nitro")))]
@@ -1919,37 +1919,44 @@ fn attach_console_devices(
             Some(c) => (c.input_fd, c.output_fd, c.err_fd),
             None => (STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO),
         };
-        let stdin_is_terminal =
-            isatty(unsafe { BorrowedFd::borrow_raw(input_fd) }).unwrap_or(false);
-        let stdout_is_terminal =
-            isatty(unsafe { BorrowedFd::borrow_raw(output_fd) }).unwrap_or(false);
-        let stderr_is_terminal = isatty(unsafe { BorrowedFd::borrow_raw(err_fd) }).unwrap_or(false);
+        let input_is_terminal =
+            input_fd >= 0 && isatty(unsafe { BorrowedFd::borrow_raw(input_fd) }).unwrap_or(false);
+        let output_is_terminal =
+            output_fd >= 0 && isatty(unsafe { BorrowedFd::borrow_raw(output_fd) }).unwrap_or(false);
+        let error_is_terminal =
+            err_fd >= 0 && isatty(unsafe { BorrowedFd::borrow_raw(err_fd) }).unwrap_or(false);
 
-        if let Err(e) = term_set_raw_mode(!stdin_is_terminal) {
-            log::error!("Failed to set terminal to raw mode: {e}")
-        }
+        let term_fd = if input_is_terminal {
+            Some(unsafe { BorrowedFd::borrow_raw(input_fd) })
+        } else if output_is_terminal {
+            Some(unsafe { BorrowedFd::borrow_raw(output_fd) })
+        } else if error_is_terminal {
+            Some(unsafe { BorrowedFd::borrow_raw(err_fd) })
+        } else {
+            None
+        };
 
-        let console_input = if stdin_is_terminal {
-            Some(port_io::stdin().unwrap())
-        } else if input_fd < 0 {
-            Some(port_io::input_empty().unwrap())
-        } else if input_fd != STDIN_FILENO {
+        let forwarding_sigint;
+        let console_input = if input_is_terminal && input_fd >= 0 {
+            forwarding_sigint = false;
             Some(port_io::input_to_raw_fd_dup(input_fd).unwrap())
         } else {
             #[cfg(target_os = "linux")]
             {
+                forwarding_sigint = true;
                 let sigint_input = port_io::PortInputSigInt::new();
                 let sigint_input_fd = sigint_input.sigint_evt().as_raw_fd();
                 register_sigint_handler(sigint_input_fd).map_err(RegisterFsSigwinch)?;
                 Some(Box::new(sigint_input) as _)
             }
             #[cfg(not(target_os = "linux"))]
-            Some(port_io::input_empty().unwrap())
+            {
+                forwarding_sigint = false;
+                Some(port_io::input_empty().unwrap())
+            }
         };
 
-        let console_output = if stdout_is_terminal {
-            Some(port_io::stdout().unwrap())
-        } else if output_fd != STDOUT_FILENO && output_fd > 0 {
+        let console_output = if output_is_terminal && output_fd >= 0 {
             Some(port_io::output_to_raw_fd_dup(output_fd).unwrap())
         } else {
             Some(port_io::output_to_log_as_err())
@@ -1957,26 +1964,25 @@ fn attach_console_devices(
 
         let mut ports = vec![PortDescription::console(console_input, console_output)];
 
-        let console_err = if stderr_is_terminal {
-            Some(port_io::stderr().unwrap())
-        } else if err_fd != STDERR_FILENO && err_fd > 0 {
-            Some(port_io::output_to_raw_fd_dup(err_fd).unwrap())
-        } else {
-            None
-        };
-
-        ports.push(PortDescription::console(None, console_err));
-
-        if !stdin_is_terminal && input_fd == STDIN_FILENO {
-            ports.push(PortDescription::input_pipe("krun-stdin", port_io::stdin().unwrap()));
+        if input_fd >= 0 && !input_is_terminal {
+            ports.push(PortDescription::input_pipe(
+                "krun-stdin",
+                port_io::input_to_raw_fd_dup(input_fd).unwrap(),
+            ));
         }
 
-        if !stdout_is_terminal && output_fd == STDOUT_FILENO {
-            ports.push(PortDescription::output_pipe("krun-stdout", port_io::stdout().unwrap()));
+        if output_fd >= 0 && !output_is_terminal {
+            ports.push(PortDescription::output_pipe(
+                "krun-stdout",
+                port_io::output_to_raw_fd_dup(output_fd).unwrap(),
+            ));
         };
 
-        if !stderr_is_terminal && err_fd == STDERR_FILENO {
-            ports.push(PortDescription::output_pipe("krun-stderr", port_io::stderr().unwrap()));
+        if err_fd >= 0 && !error_is_terminal {
+            ports.push(PortDescription::output_pipe(
+                "krun-stderr",
+                port_io::output_to_raw_fd_dup(err_fd).unwrap(),
+            ));
         }
 
         ports
