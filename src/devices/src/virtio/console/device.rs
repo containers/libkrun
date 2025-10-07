@@ -102,10 +102,7 @@ pub struct Console {
 impl Console {
     pub fn new(ports: Vec<PortDescription>) -> super::Result<Console> {
         assert!(!ports.is_empty(), "Expected at least 1 port");
-        assert!(
-            matches!(ports[0], PortDescription::Console { .. }),
-            "First port must be a console"
-        );
+        assert!(ports[0].represents_console, "First port must be a console");
 
         let num_queues = num_queues(ports.len());
         let queues = vec![VirtQueue::new(QUEUE_SIZE); num_queues];
