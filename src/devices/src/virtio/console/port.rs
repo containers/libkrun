@@ -12,19 +12,49 @@ use crate::virtio::console::process_rx::process_rx;
 use crate::virtio::console::process_tx::process_tx;
 use crate::virtio::{InterruptTransport, Queue};
 
-pub enum PortDescription {
-    Console {
+pub struct PortDescription {
+    pub name: Cow<'static, str>,
+    pub represents_console: bool,
+    pub input: Option<Box<dyn PortInput + Send>>,
+    pub output: Option<Box<dyn PortOutput + Send>>,
+}
+
+impl PortDescription {
+    pub fn console(
         input: Option<Box<dyn PortInput + Send>>,
         output: Option<Box<dyn PortOutput + Send>>,
-    },
-    InputPipe {
-        name: Cow<'static, str>,
-        input: Box<dyn PortInput + Send>,
-    },
-    OutputPipe {
-        name: Cow<'static, str>,
+    ) -> Self {
+        Self {
+            name: "".into(),
+            represents_console: true,
+            input,
+            output,
+        }
+    }
+
+    pub fn output_pipe(
+        name: impl Into<Cow<'static, str>>,
         output: Box<dyn PortOutput + Send>,
-    },
+    ) -> Self {
+        Self {
+            name: name.into(),
+            represents_console: false,
+            input: None,
+            output: Some(output),
+        }
+    }
+
+    pub fn input_pipe(
+        name: impl Into<Cow<'static, str>>,
+        input: Box<dyn PortInput + Send>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            represents_console: false,
+            input: Some(input),
+            output: None,
+        }
+    }
 }
 
 enum PortState {
@@ -49,31 +79,15 @@ pub(crate) struct Port {
 
 impl Port {
     pub(crate) fn new(port_id: u32, description: PortDescription) -> Self {
-        match description {
-            PortDescription::Console { input, output } => Self {
-                port_id,
-                name: "".into(),
-                represents_console: true,
-                state: PortState::Inactive,
-                input: input.map(|input| Arc::new(Mutex::new(input))),
-                output: output.map(|output| Arc::new(Mutex::new(output))),
-            },
-            PortDescription::InputPipe { name, input } => Self {
-                port_id,
-                name,
-                represents_console: false,
-                state: PortState::Inactive,
-                input: Some(Arc::new(Mutex::new(input))),
-                output: None,
-            },
-            PortDescription::OutputPipe { name, output } => Self {
-                port_id,
-                name,
-                represents_console: false,
-                state: PortState::Inactive,
-                input: None,
-                output: Some(Arc::new(Mutex::new(output))),
-            },
+        Self {
+            port_id,
+            name: description.name,
+            represents_console: description.represents_console,
+            state: PortState::Inactive,
+            input: description.input.map(|input| Arc::new(Mutex::new(input))),
+            output: description
+                .output
+                .map(|output| Arc::new(Mutex::new(output))),
         }
     }
 
