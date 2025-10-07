@@ -29,34 +29,6 @@ pub(crate) const AVAIL_FEATURES: u64 = (1 << uapi::VIRTIO_CONSOLE_F_SIZE as u64)
     | (1 << uapi::VIRTIO_CONSOLE_F_MULTIPORT as u64)
     | (1 << uapi::VIRTIO_F_VERSION_1 as u64);
 
-#[repr(C)]
-#[derive(Default)]
-struct WS {
-    rows: u16,
-    cols: u16,
-    xpixel: u16,
-    ypixel: u16,
-}
-ioctl_read_bad!(tiocgwinsz, TIOCGWINSZ, WS);
-
-pub(crate) fn get_win_size() -> (u16, u16) {
-    let mut ws: WS = WS::default();
-
-    let ret = unsafe { tiocgwinsz(0, &mut ws) };
-
-    if let Err(err) = ret {
-        match err {
-            // If the port isn't a TTY, this is expected to fail. Avoid logging
-            // an error in that case.
-            nix::errno::Errno::ENOTTY => {}
-            _ => error!("Couldn't get terminal dimensions: {err}"),
-        }
-        (0, 0)
-    } else {
-        (ws.cols, ws.rows)
-    }
-}
-
 #[derive(Copy, Clone, Debug, Default)]
 #[repr(C, packed)]
 pub struct VirtioConsoleConfig {
@@ -100,7 +72,7 @@ pub struct Console {
 impl Console {
     pub fn new(ports: Vec<PortDescription>) -> super::Result<Console> {
         assert!(!ports.is_empty(), "Expected at least 1 port");
-        assert!(ports[0].represents_console, "First port must be a console");
+        assert!(ports[0].terminal.is_some(), "First port must be a console");
 
         let num_queues = num_queues(ports.len());
         let queues = vec![VirtQueue::new(QUEUE_SIZE); num_queues];
@@ -111,11 +83,15 @@ impl Console {
                 .push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(ConsoleError::EventFd)?);
         }
 
-        let (cols, rows) = get_win_size();
-        let config = VirtioConsoleConfig::new(cols, rows, ports.len() as u32);
-        let ports = zip(0u32.., ports)
+        let ports: Vec<Port> = zip(0u32.., ports)
             .map(|(port_id, description)| Port::new(port_id, description))
             .collect();
+
+        let (cols, rows) = ports[0]
+            .terminal()
+            .expect("Port 0 should always be a terminal")
+            .get_win_size();
+        let config = VirtioConsoleConfig::new(cols, rows, ports.len() as u32);
 
         Ok(Console {
             control: ConsoleControl::new(),
@@ -228,10 +204,10 @@ impl Console {
                         continue;
                     }
 
-                    if self.ports[cmd.id as usize].is_console() {
+                    if let Some(term) = self.ports[cmd.id as usize].terminal() {
                         self.control.mark_console_port(mem, cmd.id);
                         self.control.port_open(cmd.id, true);
-                        let (cols, rows) = get_win_size();
+                        let (cols, rows) = term.get_win_size();
                         self.control
                             .console_resize(cmd.id, VirtioConsoleResize { cols, rows });
                     } else {
