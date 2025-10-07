@@ -1910,10 +1910,10 @@ fn attach_console_devices(
 
     let ports = if console_output_path.is_some() {
         let file = File::create(console_output_path.unwrap()).map_err(OpenConsoleFile)?;
-        vec![PortDescription::Console {
-            input: Some(port_io::input_empty().unwrap()),
-            output: Some(port_io::output_file(file).unwrap()),
-        }]
+        vec![PortDescription::console(
+            Some(port_io::input_empty().unwrap()),
+            Some(port_io::output_file(file).unwrap()),
+        )]
     } else {
         let (input_fd, output_fd, err_fd) = match cfg {
             Some(c) => (c.input_fd, c.output_fd, c.err_fd),
@@ -1955,10 +1955,7 @@ fn attach_console_devices(
             Some(port_io::output_to_log_as_err())
         };
 
-        let mut ports = vec![PortDescription::Console {
-            input: console_input,
-            output: console_output,
-        }];
+        let mut ports = vec![PortDescription::console(console_input, console_output)];
 
         let console_err = if stderr_is_terminal {
             Some(port_io::stderr().unwrap())
@@ -1968,30 +1965,18 @@ fn attach_console_devices(
             None
         };
 
-        ports.push(PortDescription::Console {
-            input: None,
-            output: console_err,
-        });
+        ports.push(PortDescription::console(None, console_err));
 
         if !stdin_is_terminal && input_fd == STDIN_FILENO {
-            ports.push(PortDescription::InputPipe {
-                name: "krun-stdin".into(),
-                input: port_io::stdin().unwrap(),
-            })
+            ports.push(PortDescription::input_pipe("krun-stdin", port_io::stdin().unwrap()));
         }
 
         if !stdout_is_terminal && output_fd == STDOUT_FILENO {
-            ports.push(PortDescription::OutputPipe {
-                name: "krun-stdout".into(),
-                output: port_io::stdout().unwrap(),
-            })
+            ports.push(PortDescription::output_pipe("krun-stdout", port_io::stdout().unwrap()));
         };
 
         if !stderr_is_terminal && err_fd == STDERR_FILENO {
-            ports.push(PortDescription::OutputPipe {
-                name: "krun-stderr".into(),
-                output: port_io::stderr().unwrap(),
-            });
+            ports.push(PortDescription::output_pipe("krun-stderr", port_io::stderr().unwrap()));
         }
 
         ports
