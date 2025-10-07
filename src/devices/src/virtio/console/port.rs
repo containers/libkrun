@@ -10,25 +10,27 @@ use crate::virtio::console::console_control::ConsoleControl;
 use crate::virtio::console::port_io::{PortInput, PortOutput};
 use crate::virtio::console::process_rx::process_rx;
 use crate::virtio::console::process_tx::process_tx;
+use crate::virtio::port_io::PortTerminalProperties;
 use crate::virtio::{InterruptTransport, Queue};
 
 pub struct PortDescription {
     pub name: Cow<'static, str>,
-    pub represents_console: bool,
     pub input: Option<Box<dyn PortInput + Send>>,
     pub output: Option<Box<dyn PortOutput + Send>>,
+    pub terminal: Option<Box<dyn PortTerminalProperties>>,
 }
 
 impl PortDescription {
     pub fn console(
         input: Option<Box<dyn PortInput + Send>>,
         output: Option<Box<dyn PortOutput + Send>>,
+        terminal: Box<dyn PortTerminalProperties>,
     ) -> Self {
         Self {
             name: "".into(),
-            represents_console: true,
             input,
             output,
+            terminal: Some(terminal),
         }
     }
 
@@ -38,9 +40,9 @@ impl PortDescription {
     ) -> Self {
         Self {
             name: name.into(),
-            represents_console: false,
             input: None,
             output: Some(output),
+            terminal: None,
         }
     }
 
@@ -50,9 +52,9 @@ impl PortDescription {
     ) -> Self {
         Self {
             name: name.into(),
-            represents_console: false,
             input: Some(input),
             output: None,
+            terminal: None,
         }
     }
 }
@@ -71,10 +73,10 @@ pub(crate) struct Port {
     port_id: u32,
     /// Empty if no name given
     name: Cow<'static, str>,
-    represents_console: bool,
     state: PortState,
     input: Option<Arc<Mutex<Box<dyn PortInput + Send>>>>,
     output: Option<Arc<Mutex<Box<dyn PortOutput + Send>>>>,
+    terminal: Option<Box<dyn PortTerminalProperties>>,
 }
 
 impl Port {
@@ -82,12 +84,12 @@ impl Port {
         Self {
             port_id,
             name: description.name,
-            represents_console: description.represents_console,
             state: PortState::Inactive,
             input: description.input.map(|input| Arc::new(Mutex::new(input))),
             output: description
                 .output
                 .map(|output| Arc::new(Mutex::new(output))),
+            terminal: description.terminal,
         }
     }
 
@@ -95,8 +97,8 @@ impl Port {
         &self.name
     }
 
-    pub fn is_console(&self) -> bool {
-        self.represents_console
+    pub fn terminal(&self) -> Option<&dyn PortTerminalProperties> {
+        self.terminal.as_deref()
     }
 
     pub fn notify_rx(&self) {

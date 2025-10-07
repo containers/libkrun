@@ -3,7 +3,7 @@ use std::os::unix::io::AsRawFd;
 use polly::event_manager::{EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
 
-use super::device::{get_win_size, Console};
+use super::device::Console;
 use crate::virtio::console::device::{CONTROL_RXQ_INDEX, CONTROL_TXQ_INDEX};
 use crate::virtio::console::port_queue_mapping::{queue_idx_to_port_id, QueueDirection};
 use crate::virtio::device::VirtioDevice;
@@ -88,8 +88,10 @@ impl Console {
             error!("Failed to read the sigwinch event: {e:?}");
         }
 
-        let (cols, rows) = get_win_size();
-        self.update_console_size(cols, rows);
+        if let Some(term) = self.ports[0].terminal() {
+            let (cols, rows) = term.get_win_size();
+            self.update_console_size(cols, rows);
+        }
     }
 
     fn read_control_queue_event(&mut self, event: &EpollEvent) {

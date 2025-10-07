@@ -13,7 +13,7 @@ pub fn term_set_raw_mode(
     let old_state = termios.clone();
 
     let mut mask = LocalFlags::ECHO | LocalFlags::ICANON;
-    if !handle_signals_by_terminal {
+    if handle_signals_by_terminal {
         mask |= LocalFlags::ISIG
     }
 
