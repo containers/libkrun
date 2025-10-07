@@ -1,12 +1,14 @@
+use libc::{
+    fcntl, F_GETFL, F_SETFL, O_NONBLOCK, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO, TIOCGWINSZ,
+};
+use log::Level;
+use nix::errno::Errno;
+use nix::ioctl_read_bad;
+use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+use nix::unistd::{dup, isatty};
 use std::fs::File;
 use std::io::{self, ErrorKind};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
-
-use libc::{fcntl, F_GETFL, F_SETFL, O_NONBLOCK, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
-use log::Level;
-use nix::errno::Errno;
-use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
-use nix::unistd::dup;
 use utils::eventfd::EventFd;
 use utils::eventfd::EFD_NONBLOCK;
 use vm_memory::bitmap::Bitmap;
@@ -22,6 +24,11 @@ pub trait PortOutput {
     fn write_volatile(&mut self, buf: &VolatileSlice) -> Result<usize, io::Error>;
 
     fn wait_until_writable(&self);
+}
+
+/// Terminal properties associated with this port
+pub trait PortTerminalProperties: Send + Sync {
+    fn get_win_size(&self) -> (u16, u16);
 }
 
 pub fn stdin() -> Result<Box<dyn PortInput + Send>, nix::Error> {
@@ -42,6 +49,21 @@ pub fn stdout() -> Result<Box<dyn PortOutput + Send>, nix::Error> {
 
 pub fn stderr() -> Result<Box<dyn PortOutput + Send>, nix::Error> {
     output_to_raw_fd_dup(STDERR_FILENO)
+}
+
+pub fn term_fd(
+    term_fd: RawFd,
+) -> Result<Box<dyn PortTerminalProperties + Send + Sync>, nix::Error> {
+    let fd = dup_raw_fd_into_owned(term_fd)?;
+    assert!(
+        isatty(&fd).is_ok_and(|v| v),
+        "Expected fd {fd:?}, to be a tty, to query the window size!"
+    );
+    Ok(Box::new(PortTerminalPropertiesFd(fd)))
+}
+
+pub fn term_fixed_size(width: u16, height: u16) -> Box<dyn PortTerminalProperties + Send + Sync> {
+    Box::new(PortTerminalPropertiesFixed((width, height)))
 }
 
 pub fn input_empty() -> Result<Box<dyn PortInput + Send>, nix::Error> {
@@ -278,3 +300,35 @@ impl PortInput for PortInputEmpty {
         }
     }
 }
+
+struct PortTerminalPropertiesFixed((u16, u16));
+
+impl PortTerminalProperties for PortTerminalPropertiesFixed {
+    fn get_win_size(&self) -> (u16, u16) {
+        self.0
+    }
+}
+
+struct PortTerminalPropertiesFd(OwnedFd);
+
+impl PortTerminalProperties for PortTerminalPropertiesFd {
+    fn get_win_size(&self) -> (u16, u16) {
+        let mut ws: WS = WS::default();
+
+        if let Err(err) = unsafe { tiocgwinsz(self.0.as_raw_fd(), &mut ws) } {
+            error!("Couldn't get terminal dimensions: {err}");
+            return (0, 0);
+        }
+        (ws.cols, ws.rows)
+    }
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct WS {
+    rows: u16,
+    cols: u16,
+    xpixel: u16,
+    ypixel: u16,
+}
+ioctl_read_bad!(tiocgwinsz, TIOCGWINSZ, WS);

@@ -1897,22 +1897,32 @@ fn attach_console_devices(
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
+    let creating_implicit_console = cfg.is_none();
     let mut console_output_path: Option<PathBuf> = None;
 
     // we don't care about the console output that was set for the vm_resources
     // if the implicit console is disabled
     if let Some(path) = vm_resources.console_output.clone() {
         // only set the console output for the implicit console
-        if !vm_resources.disable_implicit_console && cfg.is_none() {
+        if !vm_resources.disable_implicit_console && creating_implicit_console {
             console_output_path = Some(path)
         }
     }
 
     let ports = if console_output_path.is_some() {
         let file = File::create(console_output_path.unwrap()).map_err(OpenConsoleFile)?;
+        // Manually emulate our Legacy behavior: In the case of output_path we have always used the
+        // stdin to determine the console size
+        let stdin_fd = unsafe { BorrowedFd::borrow_raw(STDIN_FILENO) };
+        let term_fd = if isatty(stdin_fd).is_ok_and(|v| v) {
+            port_io::term_fd(stdin_fd.as_raw_fd()).unwrap()
+        } else {
+            port_io::term_fixed_size(0, 0)
+        };
         vec![PortDescription::console(
             Some(port_io::input_empty().unwrap()),
             Some(port_io::output_file(file).unwrap()),
+            term_fd,
         )]
     } else {
         let (input_fd, output_fd, err_fd) = match cfg {
@@ -1962,7 +1972,30 @@ fn attach_console_devices(
             Some(port_io::output_to_log_as_err())
         };
 
-        let mut ports = vec![PortDescription::console(console_input, console_output)];
+        let terminal_properties = term_fd
+            .map(|fd| port_io::term_fd(fd.as_raw_fd()).unwrap())
+            .unwrap_or_else(|| port_io::term_fixed_size(0, 0));
+
+        if let Some(term_fd) = term_fd {
+            match term_set_raw_mode(term_fd, forwarding_sigint) {
+                Ok(old_mode) => {
+                    vmm.exit_observers.push(Arc::new(Mutex::new(move || {
+                        if let Err(e) = term_restore_mode(term_fd, &old_mode) {
+                            log::error!("Failed to restore terminal mode: {e}")
+                        }
+                    })));
+                }
+                Err(e) => {
+                    log::error!("Failed to set terminal to raw mode: {e}")
+                }
+            };
+        }
+
+        let mut ports = vec![PortDescription::console(
+            console_input,
+            console_output,
+            terminal_properties,
+        )];
 
         if input_fd >= 0 && !input_is_terminal {
             ports.push(PortDescription::input_pipe(
