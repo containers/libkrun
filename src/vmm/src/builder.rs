@@ -24,7 +24,7 @@ use super::{Error, Vmm};
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
-use crate::resources::{ConsoleType, VmResources};
+use crate::resources::{DefaultVirtioConsoleConfig, VmResources};
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(feature = "net")]
 use crate::vmm_config::net::NetBuilder;
@@ -732,11 +732,7 @@ pub fn build_microvm(
         )?);
     };
 
-    for s in vm_resources
-        .consoles
-        .get(&ConsoleType::Serial)
-        .unwrap_or(&Vec::new())
-    {
+    for s in &vm_resources.serial_consoles {
         let input: Option<Box<dyn devices::legacy::ReadableFd + Send>> = if s.input_fd >= 0 {
             Some(Box::new(unsafe { File::from_raw_fd(s.input_fd) }))
         } else {
@@ -962,12 +958,7 @@ pub fn build_microvm(
         console_id += 1;
     }
 
-    for console in vm_resources
-        .consoles
-        .get(&ConsoleType::Virtio)
-        .unwrap_or(&Vec::new())
-        .iter()
-    {
+    for console in vm_resources.virtio_consoles.iter() {
         attach_console_devices(
             &mut vmm,
             event_manager,
@@ -1892,7 +1883,7 @@ fn attach_console_devices(
     event_manager: &mut EventManager,
     intc: IrqChip,
     vm_resources: &VmResources,
-    cfg: Option<&super::resources::ConsoleConfig>,
+    cfg: Option<&DefaultVirtioConsoleConfig>,
     id_number: u32,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
