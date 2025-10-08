@@ -1878,29 +1878,25 @@ fn attach_fs_devices(
     Ok(())
 }
 
-fn attach_console_devices(
+/// Creates ports for autoconfigured console based on file descriptors and console output path.
+/// Returns the configured ports and optional terminal restore closure that needs to be
+/// registered as an exit observer.
+fn autoconfigure_console_ports(
     vmm: &mut Vmm,
-    event_manager: &mut EventManager,
-    intc: IrqChip,
     vm_resources: &VmResources,
     cfg: Option<&DefaultVirtioConsoleConfig>,
-    id_number: u32,
-) -> std::result::Result<(), StartMicrovmError> {
+    creating_implicit_console: bool,
+) -> std::result::Result<Vec<PortDescription>, StartMicrovmError> {
     use self::StartMicrovmError::*;
 
-    let creating_implicit_console = cfg.is_none();
     let mut console_output_path: Option<PathBuf> = None;
-
-    // we don't care about the console output that was set for the vm_resources
-    // if the implicit console is disabled
     if let Some(path) = vm_resources.console_output.clone() {
-        // only set the console output for the implicit console
         if !vm_resources.disable_implicit_console && creating_implicit_console {
             console_output_path = Some(path)
         }
     }
 
-    let ports = if console_output_path.is_some() {
+    if console_output_path.is_some() {
         let file = File::create(console_output_path.unwrap()).map_err(OpenConsoleFile)?;
         // Manually emulate our Legacy behavior: In the case of output_path we have always used the
         // stdin to determine the console size
@@ -1910,11 +1906,11 @@ fn attach_console_devices(
         } else {
             port_io::term_fixed_size(0, 0)
         };
-        vec![PortDescription::console(
+        Ok(vec![PortDescription::console(
             Some(port_io::input_empty().unwrap()),
             Some(port_io::output_file(file).unwrap()),
             term_fd,
-        )]
+        )])
     } else {
         let (input_fd, output_fd, err_fd) = match cfg {
             Some(c) => (c.input_fd, c.output_fd, c.err_fd),
@@ -2009,8 +2005,23 @@ fn attach_console_devices(
             ));
         }
 
-        ports
-    };
+        Ok(ports)
+    }
+}
+
+fn attach_console_devices(
+    vmm: &mut Vmm,
+    event_manager: &mut EventManager,
+    intc: IrqChip,
+    vm_resources: &VmResources,
+    cfg: Option<&DefaultVirtioConsoleConfig>,
+    id_number: u32,
+) -> std::result::Result<(), StartMicrovmError> {
+    use self::StartMicrovmError::*;
+
+    let creating_implicit_console = cfg.is_none();
+
+    let ports = autoconfigure_console_ports(vmm, vm_resources, cfg, creating_implicit_console)?;
 
     let console = Arc::new(Mutex::new(devices::virtio::Console::new(ports).unwrap()));
 
