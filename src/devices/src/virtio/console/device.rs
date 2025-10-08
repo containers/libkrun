@@ -72,7 +72,6 @@ pub struct Console {
 impl Console {
     pub fn new(ports: Vec<PortDescription>) -> super::Result<Console> {
         assert!(!ports.is_empty(), "Expected at least 1 port");
-        assert!(ports[0].terminal.is_some(), "First port must be a console");
 
         let num_queues = num_queues(ports.len());
         let queues = vec![VirtQueue::new(QUEUE_SIZE); num_queues];
@@ -89,8 +88,8 @@ impl Console {
 
         let (cols, rows) = ports[0]
             .terminal()
-            .expect("Port 0 should always be a terminal")
-            .get_win_size();
+            .map(|t| t.get_win_size())
+            .unwrap_or((0, 0));
         let config = VirtioConsoleConfig::new(cols, rows, ports.len() as u32);
 
         Ok(Console {
