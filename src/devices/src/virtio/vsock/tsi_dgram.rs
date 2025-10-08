@@ -27,7 +27,7 @@ use utils::epoll::EventSet;
 
 use vm_memory::GuestMemoryMmap;
 
-pub struct UdpProxy {
+pub struct TsiDgramProxy {
     pub id: u64,
     cid: u64,
     local_port: u32,
@@ -45,7 +45,7 @@ pub struct UdpProxy {
     peer_fwd_cnt: Wrapping<u32>,
 }
 
-impl UdpProxy {
+impl TsiDgramProxy {
     pub fn new(
         id: u64,
         cid: u64,
@@ -93,7 +93,7 @@ impl UdpProxy {
             };
         }
 
-        Ok(UdpProxy {
+        Ok(TsiDgramProxy {
             id,
             cid,
             local_port: 0,
@@ -230,7 +230,7 @@ impl UdpProxy {
     }
 }
 
-impl Proxy for UdpProxy {
+impl Proxy for TsiDgramProxy {
     fn id(&self) -> u64 {
         self.id
     }
@@ -464,7 +464,7 @@ impl Proxy for UdpProxy {
     }
 }
 
-impl AsRawFd for UdpProxy {
+impl AsRawFd for TsiDgramProxy {
     fn as_raw_fd(&self) -> RawFd {
         self.fd.as_raw_fd()
     }

@@ -13,8 +13,8 @@ use super::proxy::{Proxy, ProxyRemoval, ProxyUpdate};
 use super::reaper::ReaperThread;
 #[cfg(target_os = "macos")]
 use super::timesync::TimesyncThread;
+use super::tsi_dgram::TsiDgramProxy;
 use super::tsi_stream::TsiStreamProxy;
-use super::udp::UdpProxy;
 use super::unix::UnixProxy;
 use super::VsockError;
 use crossbeam_channel::{unbounded, Sender};
@@ -316,7 +316,7 @@ impl VsockMuxer {
                         warn!("vsock: rejecting udp unix proxy because tsi_unix is disabled");
                         return;
                     }
-                    match UdpProxy::new(
+                    match TsiDgramProxy::new(
                         id,
                         self.cid,
                         req.family,
