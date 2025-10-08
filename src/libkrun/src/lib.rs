@@ -41,7 +41,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use utils::eventfd::EventFd;
-use vmm::resources::{ConsoleConfig, ConsoleType, VmResources};
+use vmm::resources::{DefaultVirtioConsoleConfig, SerialConsoleConfig, VmResources};
 #[cfg(feature = "blk")]
 use vmm::vmm_config::block::{BlockDeviceConfig, BlockRootConfig};
 #[cfg(not(feature = "tee"))]
@@ -2213,12 +2213,8 @@ pub unsafe extern "C" fn krun_add_virtio_console_default(
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            cfg.vmr.consoles.entry(ConsoleType::Virtio).or_default();
 
-            // safe to unwrap since we inserted an empty Vec if the key didn't exist
-            let consoles = cfg.vmr.consoles.get_mut(&ConsoleType::Virtio).unwrap();
-            consoles.push(ConsoleConfig {
-                output_path: None,
+            cfg.vmr.virtio_consoles.push(DefaultVirtioConsoleConfig {
                 input_fd,
                 output_fd,
                 err_fd,
@@ -2240,15 +2236,9 @@ pub unsafe extern "C" fn krun_add_serial_console_default(
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            cfg.vmr.consoles.entry(ConsoleType::Serial).or_default();
-
-            // safe to unwrap since we inserted an empty Vec if the key didn't exist
-            let consoles = cfg.vmr.consoles.get_mut(&ConsoleType::Serial).unwrap();
-            consoles.push(ConsoleConfig {
-                output_path: None,
+            cfg.vmr.serial_consoles.push(SerialConsoleConfig {
                 input_fd,
                 output_fd,
-                err_fd: -1,
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
