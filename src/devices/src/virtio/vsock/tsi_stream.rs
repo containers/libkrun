@@ -38,7 +38,7 @@ use utils::epoll::EventSet;
 
 use vm_memory::GuestMemoryMmap;
 
-pub struct TcpProxy {
+pub struct TsiStreamProxy {
     id: u64,
     cid: u64,
     parent_id: u64,
@@ -61,7 +61,7 @@ pub struct TcpProxy {
     unixsock_path: Option<PathBuf>,
 }
 
-impl TcpProxy {
+impl TsiStreamProxy {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: u64,
@@ -117,7 +117,7 @@ impl TcpProxy {
             };
         }
 
-        Ok(TcpProxy {
+        Ok(TsiStreamProxy {
             id,
             cid,
             parent_id: 0,
@@ -155,7 +155,7 @@ impl TcpProxy {
         rxq: Arc<Mutex<MuxerRxQ>>,
     ) -> Self {
         debug!("new_reverse: id={id} local_port={local_port} peer_port={peer_port}");
-        TcpProxy {
+        TsiStreamProxy {
             id,
             cid,
             parent_id,
@@ -454,7 +454,7 @@ impl TcpProxy {
     }
 }
 
-impl Proxy for TcpProxy {
+impl Proxy for TsiStreamProxy {
     fn id(&self) -> u64 {
         self.id
     }
@@ -884,13 +884,13 @@ impl Proxy for TcpProxy {
     }
 }
 
-impl AsRawFd for TcpProxy {
+impl AsRawFd for TsiStreamProxy {
     fn as_raw_fd(&self) -> RawFd {
         self.fd.as_raw_fd()
     }
 }
 
-impl Drop for TcpProxy {
+impl Drop for TsiStreamProxy {
     fn drop(&mut self) {
         if let Some(path) = &self.unixsock_path {
             _ = fs::remove_file(path);

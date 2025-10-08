@@ -11,9 +11,9 @@ use super::muxer_thread::MuxerThread;
 use super::packet::{TsiConnectReq, TsiGetnameRsp, VsockPacket};
 use super::proxy::{Proxy, ProxyRemoval, ProxyUpdate};
 use super::reaper::ReaperThread;
-use super::tcp::TcpProxy;
 #[cfg(target_os = "macos")]
 use super::timesync::TimesyncThread;
+use super::tsi_stream::TsiStreamProxy;
 use super::udp::UdpProxy;
 use super::unix::UnixProxy;
 use super::VsockError;
@@ -289,7 +289,7 @@ impl VsockMuxer {
                         warn!("vsock: rejecting tcp unix proxy because tsi_unix is disabled");
                         return;
                     }
-                    match TcpProxy::new(
+                    match TsiStreamProxy::new(
                         id,
                         self.cid,
                         req.family,
