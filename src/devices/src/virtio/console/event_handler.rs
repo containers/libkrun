@@ -88,9 +88,11 @@ impl Console {
             error!("Failed to read the sigwinch event: {e:?}");
         }
 
-        if let Some(term) = self.ports[0].terminal() {
-            let (cols, rows) = term.get_win_size();
-            self.update_console_size(cols, rows);
+        for i in 0..self.ports.len() {
+            if let Some(term) = self.ports[i].terminal() {
+                let (cols, rows) = term.get_win_size();
+                self.update_console_size(i as u32, cols, rows);
+            }
         }
     }
 
