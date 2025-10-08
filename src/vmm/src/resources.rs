@@ -92,6 +92,23 @@ pub struct DefaultVirtioConsoleConfig {
     pub err_fd: RawFd,
 }
 
+pub enum VirtioConsoleConfigMode {
+    Autoconfigure(DefaultVirtioConsoleConfig),
+    Explicit(Vec<PortConfig>),
+}
+
+pub enum PortConfig {
+    Tty {
+        name: String,
+        tty_fd: RawFd,
+    },
+    InOut {
+        name: String,
+        input_fd: RawFd,
+        output_fd: RawFd,
+    },
+}
+
 /// A data structure that encapsulates the device configurations
 /// held in the Vmm.
 #[derive(Default)]
@@ -156,7 +173,7 @@ pub struct VmResources {
     /// Serial consoles to attach to the guest
     pub serial_consoles: Vec<SerialConsoleConfig>,
     /// Virtio consoles to attach to the guest
-    pub virtio_consoles: Vec<DefaultVirtioConsoleConfig>,
+    pub virtio_consoles: Vec<VirtioConsoleConfigMode>,
 }
 
 impl VmResources {

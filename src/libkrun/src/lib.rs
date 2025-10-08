@@ -14,10 +14,7 @@ use env_logger::{Env, Target};
 #[cfg(feature = "gpu")]
 use krun_display::DisplayBackend;
 
-use libc::c_char;
-#[cfg(feature = "net")]
-use libc::c_int;
-use libc::size_t;
+use libc::{c_char, c_int, size_t};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
 #[cfg(all(feature = "blk", not(feature = "tee")))]
@@ -30,18 +27,20 @@ use std::env;
 use std::ffi::CString;
 use std::ffi::{c_void, CStr};
 use std::fs::File;
+use std::io::IsTerminal;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
-#[cfg(feature = "input")]
-use std::os::fd::BorrowedFd;
-use std::os::fd::{FromRawFd, RawFd};
+use std::os::fd::{BorrowedFd, FromRawFd, RawFd};
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use utils::eventfd::EventFd;
-use vmm::resources::{DefaultVirtioConsoleConfig, SerialConsoleConfig, VmResources};
+use vmm::resources::{
+    DefaultVirtioConsoleConfig, PortConfig, SerialConsoleConfig, VirtioConsoleConfigMode,
+    VmResources,
+};
 #[cfg(feature = "blk")]
 use vmm::vmm_config::block::{BlockDeviceConfig, BlockRootConfig};
 #[cfg(not(feature = "tee"))]
@@ -2214,11 +2213,15 @@ pub unsafe extern "C" fn krun_add_virtio_console_default(
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
 
-            cfg.vmr.virtio_consoles.push(DefaultVirtioConsoleConfig {
-                input_fd,
-                output_fd,
-                err_fd,
-            });
+            cfg.vmr
+                .virtio_consoles
+                .push(VirtioConsoleConfigMode::Autoconfigure(
+                    DefaultVirtioConsoleConfig {
+                        input_fd,
+                        output_fd,
+                        err_fd,
+                    },
+                ));
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -2228,10 +2231,110 @@ pub unsafe extern "C" fn krun_add_virtio_console_default(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+pub unsafe extern "C" fn krun_add_virtio_console_multiport(ctx_id: u32) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            let console_id = cfg.vmr.virtio_consoles.len() as i32;
+
+            cfg.vmr
+                .virtio_consoles
+                .push(VirtioConsoleConfigMode::Explicit(Vec::new()));
+
+            console_id
+        }
+        Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_console_port_tty(
+    ctx_id: u32,
+    console_id: u32,
+    name: *const libc::c_char,
+    tty_fd: libc::c_int,
+) -> i32 {
+    if tty_fd < 0 {
+        return -libc::EINVAL;
+    }
+
+    let name_str = if name.is_null() {
+        String::new()
+    } else {
+        match CStr::from_ptr(name).to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => return -libc::EINVAL,
+        }
+    };
+
+    if !BorrowedFd::borrow_raw(tty_fd).is_terminal() {
+        return -libc::ENOTTY;
+    }
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+
+            match cfg.vmr.virtio_consoles.get_mut(console_id as usize) {
+                Some(VirtioConsoleConfigMode::Explicit(ports)) => {
+                    ports.push(PortConfig::Tty {
+                        name: name_str,
+                        tty_fd,
+                    });
+                    KRUN_SUCCESS
+                }
+                _ => -libc::EINVAL,
+            }
+        }
+        Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_add_console_port_inout(
+    ctx_id: u32,
+    console_id: u32,
+    name: *const c_char,
+    input_fd: c_int,
+    output_fd: c_int,
+) -> i32 {
+    let name_str = if name.is_null() {
+        String::new()
+    } else {
+        match CStr::from_ptr(name).to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => return -libc::EINVAL,
+        }
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+
+            match cfg.vmr.virtio_consoles.get_mut(console_id as usize) {
+                Some(VirtioConsoleConfigMode::Explicit(ports)) => {
+                    ports.push(PortConfig::InOut {
+                        name: name_str,
+                        input_fd,
+                        output_fd,
+                    });
+                    KRUN_SUCCESS
+                }
+                _ => -libc::EINVAL,
+            }
+        }
+        Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
 pub unsafe extern "C" fn krun_add_serial_console_default(
     ctx_id: u32,
-    input_fd: libc::c_int,
-    output_fd: libc::c_int,
+    input_fd: c_int,
+    output_fd: c_int,
 ) -> i32 {
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {

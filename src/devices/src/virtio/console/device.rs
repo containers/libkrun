@@ -116,11 +116,10 @@ impl Console {
         self.sigwinch_evt.as_raw_fd()
     }
 
-    pub fn update_console_size(&mut self, cols: u16, rows: u16) {
-        log::debug!("update_console_size: {cols} {rows}");
-        // Note that we currently only support resizing on the first/main console
+    pub fn update_console_size(&mut self, port_id: u32, cols: u16, rows: u16) {
+        log::debug!("update_console_size {port_id}: {cols} {rows}");
         self.control
-            .console_resize(0, VirtioConsoleResize { rows, cols });
+            .console_resize(port_id, VirtioConsoleResize { rows, cols });
     }
 
     pub(crate) fn process_control_rx(&mut self) -> bool {

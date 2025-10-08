@@ -12,7 +12,6 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::{self, Read};
-#[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::os::fd::{BorrowedFd, FromRawFd};
 use std::path::PathBuf;
@@ -24,7 +23,9 @@ use super::{Error, Vmm};
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
-use crate::resources::{DefaultVirtioConsoleConfig, VmResources};
+use crate::resources::{
+    DefaultVirtioConsoleConfig, PortConfig, VirtioConsoleConfigMode, VmResources,
+};
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(feature = "net")]
 use crate::vmm_config::net::NetBuilder;
@@ -958,13 +959,13 @@ pub fn build_microvm(
         console_id += 1;
     }
 
-    for console in vm_resources.virtio_consoles.iter() {
+    for console_cfg in vm_resources.virtio_consoles.iter() {
         attach_console_devices(
             &mut vmm,
             event_manager,
             intc.clone(),
             vm_resources,
-            Some(console),
+            Some(console_cfg),
             console_id,
         )?;
         console_id += 1;
@@ -1878,9 +1879,6 @@ fn attach_fs_devices(
     Ok(())
 }
 
-/// Creates ports for autoconfigured console based on file descriptors and console output path.
-/// Returns the configured ports and optional terminal restore closure that needs to be
-/// registered as an exit observer.
 fn autoconfigure_console_ports(
     vmm: &mut Vmm,
     vm_resources: &VmResources,
@@ -1963,20 +1961,7 @@ fn autoconfigure_console_ports(
             .map(|fd| port_io::term_fd(fd.as_raw_fd()).unwrap())
             .unwrap_or_else(|| port_io::term_fixed_size(0, 0));
 
-        if let Some(term_fd) = term_fd {
-            match term_set_raw_mode(term_fd, forwarding_sigint) {
-                Ok(old_mode) => {
-                    vmm.exit_observers.push(Arc::new(Mutex::new(move || {
-                        if let Err(e) = term_restore_mode(term_fd, &old_mode) {
-                            log::error!("Failed to restore terminal mode: {e}")
-                        }
-                    })));
-                }
-                Err(e) => {
-                    log::error!("Failed to set terminal to raw mode: {e}")
-                }
-            };
-        }
+        setup_terminal_raw_mode(vmm, term_fd, forwarding_sigint);
 
         let mut ports = vec![PortDescription::console(
             console_input,
@@ -2009,19 +1994,98 @@ fn autoconfigure_console_ports(
     }
 }
 
+fn setup_terminal_raw_mode(
+    vmm: &mut Vmm,
+    term_fd: Option<BorrowedFd<'_>>,
+    handle_signals_by_terminal: bool,
+) {
+    if let Some(term_fd) = term_fd {
+        match term_set_raw_mode(term_fd, handle_signals_by_terminal) {
+            Ok(old_mode) => {
+                let raw_fd = term_fd.as_raw_fd();
+                vmm.exit_observers.push(Arc::new(Mutex::new(move || {
+                    if let Err(e) =
+                        term_restore_mode(unsafe { BorrowedFd::borrow_raw(raw_fd) }, &old_mode)
+                    {
+                        log::error!("Failed to restore terminal mode: {e}")
+                    }
+                })));
+            }
+            Err(e) => {
+                log::error!("Failed to set terminal to raw mode: {e}")
+            }
+        };
+    }
+}
+
+fn create_explicit_ports(
+    vmm: &mut Vmm,
+    port_configs: &[PortConfig],
+) -> std::result::Result<Vec<PortDescription>, StartMicrovmError> {
+    let mut ports = Vec::with_capacity(port_configs.len());
+
+    for port_cfg in port_configs {
+        let port_desc = match port_cfg {
+            PortConfig::Tty { name, tty_fd } => {
+                assert!(*tty_fd > 0, "PortConfig::Tty must have a valid tty_fd");
+                let term_fd = unsafe { BorrowedFd::borrow_raw(*tty_fd) };
+                setup_terminal_raw_mode(vmm, Some(term_fd), false);
+
+                PortDescription {
+                    name: name.clone().into(),
+                    input: Some(port_io::input_to_raw_fd_dup(*tty_fd).unwrap()),
+                    output: Some(port_io::output_to_raw_fd_dup(*tty_fd).unwrap()),
+                    terminal: Some(port_io::term_fd(*tty_fd).unwrap()),
+                }
+            }
+            PortConfig::InOut {
+                name,
+                input_fd,
+                output_fd,
+            } => PortDescription {
+                name: name.clone().into(),
+                input: if *input_fd < 0 {
+                    None
+                } else {
+                    Some(port_io::input_to_raw_fd_dup(*input_fd).unwrap())
+                },
+                output: if *output_fd < 0 {
+                    None
+                } else {
+                    Some(port_io::output_to_raw_fd_dup(*output_fd).unwrap())
+                },
+                terminal: None,
+            },
+        };
+
+        ports.push(port_desc);
+    }
+
+    Ok(ports)
+}
+
 fn attach_console_devices(
     vmm: &mut Vmm,
     event_manager: &mut EventManager,
     intc: IrqChip,
     vm_resources: &VmResources,
-    cfg: Option<&DefaultVirtioConsoleConfig>,
+    cfg: Option<&VirtioConsoleConfigMode>,
     id_number: u32,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
     let creating_implicit_console = cfg.is_none();
 
-    let ports = autoconfigure_console_ports(vmm, vm_resources, cfg, creating_implicit_console)?;
+    let ports = match cfg {
+        None => autoconfigure_console_ports(vmm, vm_resources, None, creating_implicit_console)?,
+        Some(VirtioConsoleConfigMode::Autoconfigure(autocfg)) => autoconfigure_console_ports(
+            vmm,
+            vm_resources,
+            Some(autocfg),
+            creating_implicit_console,
+        )?,
+        Some(VirtioConsoleConfigMode::Explicit(ports)) => create_explicit_ports(vmm, ports)?,
+    };
 
     let console = Arc::new(Mutex::new(devices::virtio::Console::new(ports).unwrap()));
 

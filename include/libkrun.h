@@ -1015,6 +1015,70 @@ int32_t krun_add_serial_console_default(uint32_t ctx_id,
                                       int input_fd,
                                       int output_fd);
 
+/*
+ * Adds a multi-port virtio-console device to the guest with explicitly configured ports.
+ *
+ * This function creates a new virtio-console device that can have multiple ports added to it
+ * via krun_add_console_port_tty() and krun_add_console_port_inout(). Unlike krun_add_virtio_console_default(),
+ * this does not do any automatic detections to configure ports based on the file descriptors.
+ *
+ * The function can be called multiple times for adding multiple virtio-console devices.
+ * Each device appears in the guest with port 0 accessible as /dev/hvcN (hvc0, hvc1, etc.) in the order
+ * devices are added. If the implicit console is not disabled via `krun_disable_implicit_console`,
+ * the first explicitly added device will occupy the "hvc1" ID. Additional ports within each device
+ * (port 1, 2, ...) appear as /dev/vportNpM character devices.
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *
+ * Returns:
+ *  The console_id (>= 0) on success or a negative error number on failure.
+ */
+int32_t krun_add_virtio_console_multiport(uint32_t ctx_id);
+
+/*
+ * Adds a TTY port to a multi-port virtio-console device.
+ *
+ * The TTY file descriptor is used for both input and output. This port will be marked with the
+ * VIRTIO_CONSOLE_CONSOLE_PORT flag, enabling console-specific features notably window resize.
+ *
+ * Arguments:
+ *  "ctx_id"     - the configuration context ID
+ *  "console_id" - the console ID returned by krun_add_virtio_console_multiport()
+ *  "name"       - the name of the port for identifying the port in the guest, can be empty ("")
+ *  "tty_fd"     - file descriptor for the TTY to use for both input, output, and determining terminal size
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_console_port_tty(uint32_t ctx_id,
+                                   uint32_t console_id,
+                                   const char *name,
+                                   int tty_fd);
+
+/*
+ * Adds a generic I/O port to a multi-port virtio-console device, suitable for arbitrary bidirectional 
+ * data streams that don't require terminal functionality.
+ *
+ * This port will NOT be marked with the VIRTIO_CONSOLE_CONSOLE_PORT flag, meaning it won't support
+ * console-specific features like window resize signals.
+ *
+ * Arguments:
+ *  "ctx_id"     - the configuration context ID
+ *  "console_id" - the console ID returned by krun_add_virtio_console_multiport()
+ *  "name"       - the name of the port for identifying the port in the guest, can be empty ("")
+ *  "input_fd"   - file descriptor to use for input (host writes, guest reads)
+ *  "output_fd"  - file descriptor to use for output (guest writes, host reads)
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_console_port_inout(uint32_t ctx_id,
+                                     uint32_t console_id,
+                                     const char *name,
+                                     int input_fd,
+                                     int output_fd);
+
 /**
  * Configure block device to be used as root filesystem.
  *
