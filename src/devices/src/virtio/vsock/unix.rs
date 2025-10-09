@@ -225,21 +225,21 @@ impl UnixProxy {
                 MsgFlags::MSG_DONTWAIT,
             ) {
                 Ok(cnt) => {
-                    debug!("vsock: unix: recv cnt={cnt}");
+                    debug!("recv cnt={cnt}");
                     if cnt > 0 {
-                        debug!("vsock: tcp: recv rx_cnt={}", self.rx_cnt);
+                        debug!("recv rx_cnt={}", self.rx_cnt);
                         RecvPkt::Read(cnt)
                     } else {
                         RecvPkt::Close
                     }
                 }
                 Err(e) => {
-                    debug!("vsock: tcp: recv_pkt: recv error: {e:?}");
+                    debug!("recv_pkt: recv error: {e:?}");
                     RecvPkt::Error
                 }
             }
         } else {
-            debug!("vsock: tcp: recv_pkt: pkt without buf");
+            debug!("recv_pkt: pkt without buf");
             RecvPkt::Error
         }
     }
@@ -269,7 +269,7 @@ impl UnixProxy {
                     RecvPkt::Error => 0,
                 },
                 Err(e) => {
-                    debug!("vsock: tcp: recv_pkt: RX queue error: {e:?}");
+                    debug!("recv_pkt: RX queue error: {e:?}");
                     0
                 }
             };
@@ -281,7 +281,7 @@ impl UnixProxy {
                 have_used = true;
                 self.push_cnt += Wrapping(len as u32);
                 debug!(
-                    "vsock: tcp: recv_pkt: pushing packet with {} bytes, push_cnt={}",
+                    "recv_pkt: pushing packet with {} bytes, push_cnt={}",
                     len, self.push_cnt
                 );
                 if let Err(e) = queue.add_used(&self.mem, head.index, len as u32) {
@@ -290,13 +290,13 @@ impl UnixProxy {
             }
         }
 
-        debug!("vsock: tcp: recv_pkt: have_used={have_used}");
+        debug!("recv_pkt: have_used={have_used}");
         (have_used, wait_credit)
     }
 
     fn init_data_pkt(&self, pkt: &mut VsockPacket) {
         debug!(
-            "tcp: init_data_pkt: id={}, local_port={}, peer_port={}",
+            "init_data_pkt: id={}, local_port={}, peer_port={}",
             self.id, self.local_port, self.peer_port
         );
 
@@ -327,17 +327,17 @@ impl Proxy for UnixProxy {
 
         let result = match connect(self.fd.as_raw_fd(), &addr) {
             Ok(()) => {
-                debug!("vsock: connect: Connected");
+                debug!("connect: Connected");
                 self.switch_to_connected();
                 0
             }
             Err(nix::errno::Errno::EINPROGRESS) => {
-                debug!("vsock: connect: Connecting");
+                debug!("connect: Connecting");
                 self.status = ProxyStatus::Connecting;
                 0
             }
             Err(e) => {
-                debug!("vsock: UnixProxy: Error connecting: {e}");
+                debug!("Error connecting: {e}");
                 #[cfg(target_os = "macos")]
                 let errno = -linux_errno_raw(Errno::last_raw());
                 #[cfg(target_os = "linux")]
@@ -360,7 +360,7 @@ impl Proxy for UnixProxy {
 
     fn confirm_connect(&mut self, pkt: &VsockPacket) -> Option<ProxyUpdate> {
         debug!(
-            "tcp: confirm_connect: local_port={} peer_port={}, src_port={}, dst_port={}",
+            "confirm_connect: local_port={} peer_port={}, src_port={}, dst_port={}",
             pkt.dst_port(),
             pkt.src_port(),
             self.local_port,
@@ -437,7 +437,7 @@ impl Proxy for UnixProxy {
             update.signal_queue = true;
         }
 
-        debug!("vsock: tcp_proxy: sendmsg ret={ret}");
+        debug!("sendmsg ret={ret}");
 
         update
     }
@@ -595,10 +595,7 @@ impl Proxy for UnixProxy {
                     update.polling = Some((self.id(), self.fd.as_raw_fd(), EventSet::empty()));
                 }
             } else {
-                debug!(
-                    "vsock::tcp: EventSet::IN while not connected: {:?}",
-                    self.status
-                );
+                debug!("EventSet::IN while not connected: {:?}", self.status);
             }
         }
 
@@ -610,7 +607,7 @@ impl Proxy for UnixProxy {
                 update.signal_queue = true;
                 update.polling = Some((self.id(), self.fd.as_raw_fd(), EventSet::IN));
             } else {
-                error!("vsock::tcp: EventSet::OUT while not connecting");
+                error!("EventSet::OUT while not connecting");
             }
         }
 
