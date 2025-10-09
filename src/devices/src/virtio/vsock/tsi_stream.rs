@@ -181,7 +181,7 @@ impl TsiStreamProxy {
 
     fn init_data_pkt(&self, pkt: &mut VsockPacket) {
         debug!(
-            "tcp: init_data_pkt: id={}, local_port={}, peer_port={}",
+            "init_data_pkt: id={}, local_port={}, peer_port={}",
             self.id, self.local_port, self.peer_port
         );
         pkt.set_op(uapi::VSOCK_OP_RW)
@@ -244,11 +244,11 @@ impl TsiStreamProxy {
                 match Backlog::new(req.backlog) {
                     Ok(backlog) => match listen(&self.fd, backlog) {
                         Ok(_) => {
-                            debug!("tcp: proxy: id={}", self.id);
+                            debug!("proxy: id={}", self.id);
                             0
                         }
                         Err(e) => {
-                            warn!("tcp: proxy: id={} err={}", self.id, e);
+                            warn!("proxy: id={} err={}", self.id, e);
                             #[cfg(target_os = "macos")]
                             let errno = -linux_errno_raw(e as i32);
                             #[cfg(target_os = "linux")]
@@ -257,7 +257,7 @@ impl TsiStreamProxy {
                         }
                     },
                     Err(e) => {
-                        warn!("tcp: proxy: id={} err={}", self.id, e);
+                        warn!("proxy: id={} err={}", self.id, e);
                         #[cfg(target_os = "macos")]
                         let errno = -linux_errno_raw(e as i32);
                         #[cfg(target_os = "linux")]
@@ -303,21 +303,21 @@ impl TsiStreamProxy {
                 MsgFlags::MSG_DONTWAIT,
             ) {
                 Ok(cnt) => {
-                    debug!("vsock: tcp: recv cnt={cnt}");
+                    debug!("recv cnt={cnt}");
                     if cnt > 0 {
-                        debug!("vsock: tcp: recv rx_cnt={}", self.rx_cnt);
+                        debug!("recv rx_cnt={}", self.rx_cnt);
                         RecvPkt::Read(cnt)
                     } else {
                         RecvPkt::Close
                     }
                 }
                 Err(e) => {
-                    debug!("vsock: tcp: recv_pkt: recv error: {e:?}");
+                    debug!("recv_pkt: recv error: {e:?}");
                     RecvPkt::Error
                 }
             }
         } else {
-            debug!("vsock: tcp: recv_pkt: pkt without buf");
+            debug!("recv_pkt: pkt without buf");
             RecvPkt::Error
         }
     }
@@ -347,7 +347,7 @@ impl TsiStreamProxy {
                     RecvPkt::Error => 0,
                 },
                 Err(e) => {
-                    debug!("vsock: tcp: recv_pkt: RX queue error: {e:?}");
+                    debug!("recv_pkt: RX queue error: {e:?}");
                     0
                 }
             };
@@ -359,7 +359,7 @@ impl TsiStreamProxy {
                 have_used = true;
                 self.push_cnt += Wrapping(len as u32);
                 debug!(
-                    "vsock: tcp: recv_pkt: pushing packet with {} bytes, push_cnt={}",
+                    "recv_pkt: pushing packet with {} bytes, push_cnt={}",
                     len, self.push_cnt
                 );
                 if let Err(e) = queue.add_used(&self.mem, head.index, len as u32) {
@@ -368,7 +368,7 @@ impl TsiStreamProxy {
             }
         }
 
-        debug!("vsock: tcp: recv_pkt: have_used={have_used}");
+        debug!("recv_pkt: have_used={have_used}");
         (have_used, wait_credit)
     }
 
@@ -468,17 +468,17 @@ impl Proxy for TsiStreamProxy {
 
         let result = match connect(self.fd.as_raw_fd(), &req.addr) {
             Ok(()) => {
-                debug!("vsock: connect: Connected");
+                debug!("connect: Connected");
                 self.switch_to_connected();
                 0
             }
             Err(nix::errno::Errno::EINPROGRESS) => {
-                debug!("vsock: connect: Connecting");
+                debug!("connect: Connecting");
                 self.status = ProxyStatus::Connecting;
                 0
             }
             Err(e) => {
-                debug!("vsock: TcpProxy: Error connecting: {e}");
+                debug!("TcpProxy: Error connecting: {e}");
                 #[cfg(target_os = "macos")]
                 let errno = -linux_errno_raw(Errno::last_raw());
                 #[cfg(target_os = "linux")]
@@ -501,7 +501,7 @@ impl Proxy for TsiStreamProxy {
 
     fn confirm_connect(&mut self, pkt: &VsockPacket) -> Option<ProxyUpdate> {
         debug!(
-            "tcp: confirm_connect: local_port={} peer_port={}, src_port={}, dst_port={}",
+            "confirm_connect: local_port={} peer_port={}, src_port={}, dst_port={}",
             pkt.dst_port(),
             pkt.src_port(),
             self.local_port,
@@ -576,7 +576,7 @@ impl Proxy for TsiStreamProxy {
     }
 
     fn sendmsg(&mut self, pkt: &VsockPacket) -> ProxyUpdate {
-        debug!("vsock: tcp_proxy: sendmsg");
+        debug!("sendmsg");
 
         let mut update = ProxyUpdate::default();
 
@@ -624,7 +624,7 @@ impl Proxy for TsiStreamProxy {
             update.signal_queue = true;
         }
 
-        debug!("vsock: tcp_proxy: sendmsg ret={ret}");
+        debug!("sendmsg ret={ret}");
         update
     }
 
@@ -859,10 +859,7 @@ impl Proxy for TsiStreamProxy {
                 update.signal_queue = true;
                 return update;
             } else {
-                debug!(
-                    "vsock::tcp: EventSet::IN while not connected: {:?}",
-                    self.status
-                );
+                debug!("EventSet::IN while not connected: {:?}", self.status);
             }
         }
 
@@ -876,7 +873,7 @@ impl Proxy for TsiStreamProxy {
                 // OP_REQUEST and the vsock transport is fully established.
                 update.polling = Some((self.id(), self.fd.as_raw_fd(), EventSet::empty()));
             } else {
-                error!("vsock::tcp: EventSet::OUT while not connecting");
+                error!("EventSet::OUT while not connecting");
             }
         }
 

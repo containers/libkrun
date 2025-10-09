@@ -15,11 +15,11 @@ use crate::virtio::VirtioDevice;
 
 impl Vsock {
     pub(crate) fn handle_rxq_event(&mut self, event: &EpollEvent) -> bool {
-        debug!("vsock: RX queue event");
+        debug!("RX queue event");
 
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            warn!("vsock: rxq unexpected event {event_set:?}");
+            warn!("rxq unexpected event {event_set:?}");
             return false;
         }
 
@@ -33,11 +33,11 @@ impl Vsock {
     }
 
     pub(crate) fn handle_txq_event(&mut self, event: &EpollEvent) -> bool {
-        debug!("vsock: TX queue event");
+        debug!("TX queue event");
 
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            warn!("vsock: txq unexpected event {event_set:?}");
+            warn!("txq unexpected event {event_set:?}");
             return false;
         }
 
@@ -57,11 +57,11 @@ impl Vsock {
     }
 
     fn handle_evq_event(&mut self, event: &EpollEvent) -> bool {
-        debug!("vsock: event queue event");
+        debug!("event queue event");
 
         let event_set = event.event_set();
         if event_set != EventSet::IN {
-            warn!("vsock: evq unexpected event {event_set:?}");
+            warn!("evq unexpected event {event_set:?}");
             return false;
         }
 
@@ -72,7 +72,7 @@ impl Vsock {
     }
 
     fn handle_activate_event(&self, event_manager: &mut EventManager) {
-        debug!("vsock: activate event");
+        debug!("activate event");
         if let Err(e) = self.activate_evt.read() {
             error!("Failed to consume vsock activate event: {e:?}");
         }
@@ -147,7 +147,7 @@ impl Subscriber for Vsock {
                 self.device_state.signal_used_queue();
             }
         } else {
-            warn!("Vsock: The device is not yet activated. Spurious event received: {source:?}");
+            warn!("The device is not yet activated. Spurious event received: {source:?}");
         }
     }
 
