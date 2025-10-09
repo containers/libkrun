@@ -198,7 +198,7 @@ impl MuxerThread {
                     }
                 }
                 Err(e) => {
-                    debug!("vsock: failed to consume muxer epoll event: {e}");
+                    debug!("failed to consume muxer epoll event: {e}");
                 }
             }
         }

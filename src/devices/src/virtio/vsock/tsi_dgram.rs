@@ -114,7 +114,7 @@ impl TsiDgramProxy {
 
     fn init_pkt(&self, pkt: &mut VsockPacket) {
         debug!(
-            "udp: init_pkt: id={}, src_port={}, dst_port={}",
+            "init_pkt: id={}, src_port={}, dst_port={}",
             self.id, self.local_port, self.peer_port
         );
         pkt.set_op(uapi::VSOCK_OP_RW)
@@ -165,7 +165,7 @@ impl TsiDgramProxy {
 
             match recv(self.fd.as_raw_fd(), &mut buf[..max_len], MsgFlags::empty()) {
                 Ok(cnt) => {
-                    debug!("vsock: udp: recv cnt={cnt}");
+                    debug!("recv cnt={cnt}");
                     if cnt > 0 {
                         RecvPkt::Read(cnt)
                     } else {
@@ -173,12 +173,12 @@ impl TsiDgramProxy {
                     }
                 }
                 Err(e) => {
-                    debug!("vsock: udp: recv_pkt: recv error: {e:?}");
+                    debug!("recv_pkt: recv error: {e:?}");
                     RecvPkt::Error
                 }
             }
         } else {
-            debug!("vsock: udp: recv_pkt: pkt without buf");
+            debug!("recv_pkt: pkt without buf");
             RecvPkt::Error
         }
     }
@@ -208,7 +208,7 @@ impl TsiDgramProxy {
                     RecvPkt::Error => 0,
                 },
                 Err(e) => {
-                    debug!("vsock: tcp: recv_pkt: RX queue error: {e:?}");
+                    debug!("recv_pkt: RX queue error: {e:?}");
                     0
                 }
             };
@@ -218,14 +218,14 @@ impl TsiDgramProxy {
                 break;
             } else {
                 have_used = true;
-                debug!("vsock: udp: recv_pkt: pushing packet with {len} bytes");
+                debug!("recv_pkt: pushing packet with {len} bytes");
                 if let Err(e) = queue.add_used(&self.mem, head.index, len as u32) {
                     error!("failed to add used elements to the queue: {e:?}");
                 }
             }
         }
 
-        debug!("vsock: udp: recv_pkt: have_used={have_used}");
+        debug!("recv_pkt: have_used={have_used}");
         (have_used, wait_credit)
     }
 }
@@ -240,15 +240,15 @@ impl Proxy for TsiDgramProxy {
     }
 
     fn connect(&mut self, pkt: &VsockPacket, req: TsiConnectReq) -> ProxyUpdate {
-        debug!("vsock: udp: connect: addr={}", req.addr);
+        debug!("connect: addr={}", req.addr);
         let res = match connect(self.fd.as_raw_fd(), &req.addr) {
             Ok(()) => {
-                debug!("vsock: connect: Connected");
+                debug!("connect: Connected");
                 self.status = ProxyStatus::Connected;
                 0
             }
             Err(e) => {
-                debug!("vsock: UdpProxy: Error connecting: {e}");
+                debug!("Error connecting: {e}");
                 #[cfg(target_os = "macos")]
                 let errno = -linux_errno_raw(e as i32);
                 #[cfg(target_os = "linux")]
@@ -276,7 +276,7 @@ impl Proxy for TsiDgramProxy {
     }
 
     fn getpeername(&mut self, pkt: &VsockPacket) {
-        debug!("vsock: udp: process_getpeername");
+        debug!("process_getpeername");
 
         let (result, addr): (i32, SockaddrStorage) = match getpeername(self.fd.as_raw_fd()) {
             Ok(name) => (0, name),
@@ -308,7 +308,7 @@ impl Proxy for TsiDgramProxy {
     }
 
     fn sendmsg(&mut self, pkt: &VsockPacket) -> ProxyUpdate {
-        debug!("vsock: udp_proxy: sendmsg");
+        debug!("sendmsg");
 
         let ret = if let Some(buf) = pkt.buf() {
             #[cfg(target_os = "macos")]
@@ -327,13 +327,13 @@ impl Proxy for TsiDgramProxy {
             -libc::EINVAL
         };
 
-        debug!("vsock: udp_proxy: sendmsg ret={ret}");
+        debug!("sendmsg ret={ret}");
 
         ProxyUpdate::default()
     }
 
     fn sendto_addr(&mut self, req: TsiSendtoAddr) -> ProxyUpdate {
-        debug!("vsock: udp_proxy: sendto_addr: addr={}", req.addr);
+        debug!("sendto_addr: addr={}", req.addr);
 
         let mut update = ProxyUpdate::default();
 
@@ -344,7 +344,7 @@ impl Proxy for TsiDgramProxy {
                     self.listening = true;
                     update.polling = Some((self.id, self.fd.as_raw_fd(), EventSet::IN));
                 }
-                Err(e) => debug!("vsock: udp_proxy: couldn't bind socket: {e}"),
+                Err(e) => debug!("couldn't bind socket: {e}"),
             }
         }
 
@@ -352,7 +352,7 @@ impl Proxy for TsiDgramProxy {
     }
 
     fn sendto_data(&mut self, pkt: &VsockPacket) {
-        debug!("vsock: udp_proxy: sendto_data");
+        debug!("sendto_data");
 
         self.peer_buf_alloc = pkt.buf_alloc();
         self.peer_fwd_cnt = Wrapping(pkt.fwd_cnt());
@@ -371,10 +371,10 @@ impl Proxy for TsiDgramProxy {
                     Err(err) => debug!("error in sendto: {err}"),
                 }
             } else {
-                debug!("vsock: udp_proxy: sendto_data pkt without buffer");
+                debug!("sendto_data pkt without buffer");
             }
         } else {
-            debug!("vsock: udp_proxy: sendto_data without sendto_addr");
+            debug!("sendto_data without sendto_addr");
         }
     }
 
@@ -393,7 +393,7 @@ impl Proxy for TsiDgramProxy {
 
     fn update_peer_credit(&mut self, pkt: &VsockPacket) -> ProxyUpdate {
         debug!(
-            "vsock: udp_proxy: update_credit: buf_alloc={} rx_cnt={} fwd_cnt={}",
+            "update_credit: buf_alloc={} rx_cnt={} fwd_cnt={}",
             pkt.buf_alloc(),
             self.rx_cnt,
             pkt.fwd_cnt()
@@ -457,7 +457,7 @@ impl Proxy for TsiDgramProxy {
         }
 
         if evset.contains(EventSet::OUT) {
-            error!("vsock::udp: EventSet::OUT unexpected");
+            error!("EventSet::OUT unexpected");
         }
 
         update
