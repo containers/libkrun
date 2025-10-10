@@ -30,6 +30,8 @@ mod vcpu;
 #[cfg(target_arch = "x86_64")]
 mod x86_64;
 #[cfg(target_arch = "x86_64")]
+use x86_64::cmos;
+#[cfg(target_arch = "x86_64")]
 use x86_64::serial;
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
@@ -42,6 +44,8 @@ mod riscv64;
 #[cfg(target_arch = "riscv64")]
 use riscv64::serial;
 
+#[cfg(target_arch = "x86_64")]
+pub use self::cmos::Cmos;
 #[cfg(target_os = "macos")]
 pub use self::gicv3::GicV3;
 #[cfg(target_arch = "aarch64")]
