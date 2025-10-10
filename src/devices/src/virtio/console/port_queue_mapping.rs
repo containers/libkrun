@@ -24,7 +24,7 @@ pub(crate) fn queue_idx_to_port_id(queue_index: usize) -> (QueueDirection, usize
         _ => queue_index / 2 - 1,
     };
 
-    let direction = if queue_index.is_multiple_of(2) {
+    let direction = if queue_index % 2 == 0 {
         QueueDirection::Rx
     } else {
         QueueDirection::Tx
