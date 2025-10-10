@@ -1,14 +1,15 @@
 use std::collections::HashMap;
-use std::net::SocketAddrV4;
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::num::Wrapping;
 use std::os::fd::OwnedFd;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 
+use libc::{AF_INET, AF_INET6, AF_UNIX};
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
     bind, connect, getpeername, recv, send, sendto, socket, AddressFamily, MsgFlags, SockFlag,
-    SockType, SockaddrIn,
+    SockType, SockaddrIn, SockaddrLike, SockaddrStorage,
 };
 
 #[cfg(target_os = "macos")]
@@ -26,14 +27,14 @@ use utils::epoll::EventSet;
 
 use vm_memory::GuestMemoryMmap;
 
-pub struct UdpProxy {
+pub struct TsiDgramProxy {
     pub id: u64,
     cid: u64,
     local_port: u32,
     peer_port: u32,
     fd: OwnedFd,
     pub status: ProxyStatus,
-    sendto_addr: Option<SockaddrIn>,
+    sendto_addr: Option<SockaddrStorage>,
     listening: bool,
     mem: GuestMemoryMmap,
     queue: Arc<Mutex<VirtQueue>>,
@@ -44,22 +45,25 @@ pub struct UdpProxy {
     peer_fwd_cnt: Wrapping<u32>,
 }
 
-impl UdpProxy {
+impl TsiDgramProxy {
     pub fn new(
         id: u64,
         cid: u64,
+        family: u16,
         peer_port: u32,
         mem: GuestMemoryMmap,
         queue: Arc<Mutex<VirtQueue>>,
         rxq: Arc<Mutex<MuxerRxQ>>,
     ) -> Result<Self, ProxyError> {
-        let fd = socket(
-            AddressFamily::Inet,
-            SockType::Datagram,
-            SockFlag::empty(),
-            None,
-        )
-        .map_err(ProxyError::CreatingSocket)?;
+        let family = match family as i32 {
+            AF_INET => AddressFamily::Inet,
+            AF_INET6 => AddressFamily::Inet6,
+            AF_UNIX => AddressFamily::Unix,
+            _ => return Err(ProxyError::InvalidFamily),
+        };
+
+        let fd = socket(family, SockType::Datagram, SockFlag::empty(), None)
+            .map_err(ProxyError::CreatingSocket)?;
 
         // macOS forces us to do this here instead of just using SockFlag::SOCK_NONBLOCK above.
         match fcntl(&fd, FcntlArg::F_GETFL) {
@@ -89,7 +93,7 @@ impl UdpProxy {
             };
         }
 
-        Ok(UdpProxy {
+        Ok(TsiDgramProxy {
             id,
             cid,
             local_port: 0,
@@ -110,7 +114,7 @@ impl UdpProxy {
 
     fn init_pkt(&self, pkt: &mut VsockPacket) {
         debug!(
-            "udp: init_pkt: id={}, src_port={}, dst_port={}",
+            "init_pkt: id={}, src_port={}, dst_port={}",
             self.id, self.local_port, self.peer_port
         );
         pkt.set_op(uapi::VSOCK_OP_RW)
@@ -161,7 +165,7 @@ impl UdpProxy {
 
             match recv(self.fd.as_raw_fd(), &mut buf[..max_len], MsgFlags::empty()) {
                 Ok(cnt) => {
-                    debug!("vsock: udp: recv cnt={cnt}");
+                    debug!("recv cnt={cnt}");
                     if cnt > 0 {
                         RecvPkt::Read(cnt)
                     } else {
@@ -169,12 +173,12 @@ impl UdpProxy {
                     }
                 }
                 Err(e) => {
-                    debug!("vsock: udp: recv_pkt: recv error: {e:?}");
+                    debug!("recv_pkt: recv error: {e:?}");
                     RecvPkt::Error
                 }
             }
         } else {
-            debug!("vsock: udp: recv_pkt: pkt without buf");
+            debug!("recv_pkt: pkt without buf");
             RecvPkt::Error
         }
     }
@@ -204,7 +208,7 @@ impl UdpProxy {
                     RecvPkt::Error => 0,
                 },
                 Err(e) => {
-                    debug!("vsock: tcp: recv_pkt: RX queue error: {e:?}");
+                    debug!("recv_pkt: RX queue error: {e:?}");
                     0
                 }
             };
@@ -214,19 +218,19 @@ impl UdpProxy {
                 break;
             } else {
                 have_used = true;
-                debug!("vsock: udp: recv_pkt: pushing packet with {len} bytes");
+                debug!("recv_pkt: pushing packet with {len} bytes");
                 if let Err(e) = queue.add_used(&self.mem, head.index, len as u32) {
                     error!("failed to add used elements to the queue: {e:?}");
                 }
             }
         }
 
-        debug!("vsock: udp: recv_pkt: have_used={have_used}");
+        debug!("recv_pkt: have_used={have_used}");
         (have_used, wait_credit)
     }
 }
 
-impl Proxy for UdpProxy {
+impl Proxy for TsiDgramProxy {
     fn id(&self) -> u64 {
         self.id
     }
@@ -236,18 +240,15 @@ impl Proxy for UdpProxy {
     }
 
     fn connect(&mut self, pkt: &VsockPacket, req: TsiConnectReq) -> ProxyUpdate {
-        debug!("vsock: udp: connect: addr={}, port={}", req.addr, req.port);
-        let res = match connect(
-            self.fd.as_raw_fd(),
-            &SockaddrIn::from(SocketAddrV4::new(req.addr, req.port)),
-        ) {
+        debug!("connect: addr={}", req.addr);
+        let res = match connect(self.fd.as_raw_fd(), &req.addr) {
             Ok(()) => {
-                debug!("vsock: connect: Connected");
+                debug!("connect: Connected");
                 self.status = ProxyStatus::Connected;
                 0
             }
             Err(e) => {
-                debug!("vsock: UdpProxy: Error connecting: {e}");
+                debug!("Error connecting: {e}");
                 #[cfg(target_os = "macos")]
                 let errno = -linux_errno_raw(e as i32);
                 #[cfg(target_os = "linux")]
@@ -275,14 +276,26 @@ impl Proxy for UdpProxy {
     }
 
     fn getpeername(&mut self, pkt: &VsockPacket) {
-        debug!("vsock: udp: process_getpeername");
+        debug!("process_getpeername");
 
-        let name = getpeername::<SockaddrIn>(self.fd.as_raw_fd()).unwrap();
-        let addr = name.ip();
+        let (result, addr): (i32, SockaddrStorage) = match getpeername(self.fd.as_raw_fd()) {
+            Ok(name) => (0, name),
+            Err(e) => {
+                #[cfg(target_os = "macos")]
+                let errno = -linux_errno_raw(e as i32);
+                #[cfg(target_os = "linux")]
+                let errno = -(e as i32);
+                (
+                    errno,
+                    SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0).into(),
+                )
+            }
+        };
+
         let data = TsiGetnameRsp {
+            result,
+            addr_len: addr.len(),
             addr,
-            port: name.port(),
-            result: 0,
         };
 
         // This response goes to the connection.
@@ -295,7 +308,7 @@ impl Proxy for UdpProxy {
     }
 
     fn sendmsg(&mut self, pkt: &VsockPacket) -> ProxyUpdate {
-        debug!("vsock: udp_proxy: sendmsg");
+        debug!("sendmsg");
 
         let ret = if let Some(buf) = pkt.buf() {
             #[cfg(target_os = "macos")]
@@ -314,27 +327,24 @@ impl Proxy for UdpProxy {
             -libc::EINVAL
         };
 
-        debug!("vsock: udp_proxy: sendmsg ret={ret}");
+        debug!("sendmsg ret={ret}");
 
         ProxyUpdate::default()
     }
 
     fn sendto_addr(&mut self, req: TsiSendtoAddr) -> ProxyUpdate {
-        debug!(
-            "vsock: udp_proxy: sendto_addr: addr={}, port={}",
-            req.addr, req.port
-        );
+        debug!("sendto_addr: addr={}", req.addr);
 
         let mut update = ProxyUpdate::default();
 
-        self.sendto_addr = Some(SockaddrIn::from(SocketAddrV4::new(req.addr, req.port)));
+        self.sendto_addr = Some(req.addr);
         if !self.listening {
             match bind(self.fd.as_raw_fd(), &SockaddrIn::new(0, 0, 0, 0, 0)) {
                 Ok(_) => {
                     self.listening = true;
                     update.polling = Some((self.id, self.fd.as_raw_fd(), EventSet::IN));
                 }
-                Err(e) => debug!("vsock: udp_proxy: couldn't bind socket: {e}"),
+                Err(e) => debug!("couldn't bind socket: {e}"),
             }
         }
 
@@ -342,7 +352,7 @@ impl Proxy for UdpProxy {
     }
 
     fn sendto_data(&mut self, pkt: &VsockPacket) {
-        debug!("vsock: udp_proxy: sendto_data");
+        debug!("sendto_data");
 
         self.peer_buf_alloc = pkt.buf_alloc();
         self.peer_fwd_cnt = Wrapping(pkt.fwd_cnt());
@@ -361,10 +371,10 @@ impl Proxy for UdpProxy {
                     Err(err) => debug!("error in sendto: {err}"),
                 }
             } else {
-                debug!("vsock: udp_proxy: sendto_data pkt without buffer");
+                debug!("sendto_data pkt without buffer");
             }
         } else {
-            debug!("vsock: udp_proxy: sendto_data without sendto_addr");
+            debug!("sendto_data without sendto_addr");
         }
     }
 
@@ -383,7 +393,7 @@ impl Proxy for UdpProxy {
 
     fn update_peer_credit(&mut self, pkt: &VsockPacket) -> ProxyUpdate {
         debug!(
-            "vsock: udp_proxy: update_credit: buf_alloc={} rx_cnt={} fwd_cnt={}",
+            "update_credit: buf_alloc={} rx_cnt={} fwd_cnt={}",
             pkt.buf_alloc(),
             self.rx_cnt,
             pkt.fwd_cnt()
@@ -447,14 +457,14 @@ impl Proxy for UdpProxy {
         }
 
         if evset.contains(EventSet::OUT) {
-            error!("vsock::udp: EventSet::OUT unexpected");
+            error!("EventSet::OUT unexpected");
         }
 
         update
     }
 }
 
-impl AsRawFd for UdpProxy {
+impl AsRawFd for TsiDgramProxy {
     fn as_raw_fd(&self) -> RawFd {
         self.fd.as_raw_fd()
     }
