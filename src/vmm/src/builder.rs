@@ -196,6 +196,8 @@ pub enum StartMicrovmError {
     RegisterFsSigwinch(kvm_ioctls::Error),
     /// Cannot initialize a MMIO Gpu device or add a device to the MMIO Bus.
     RegisterGpuDevice(device_manager::mmio::Error),
+    /// Cannot initialize a MMIO Input device or add a device to the MMIO Bus.
+    RegisterInputDevice(device_manager::mmio::Error),
     /// Cannot initialize a MMIO Network Device or add a device to the MMIO Bus.
     RegisterNetDevice(device_manager::mmio::Error),
     /// Cannot initialize a MMIO Rng device or add a device to the MMIO Bus.
@@ -415,6 +417,14 @@ impl Display for StartMicrovmError {
                 write!(
                     f,
                     "Cannot initialize a MMIO Gpu Device or add a device to the MMIO Bus. {err_msg}"
+                )
+            }
+            RegisterInputDevice(ref err) => {
+                let mut err_msg = format!("{err}");
+                err_msg = err_msg.replace('\"', "");
+                write!(
+                    f,
+                    "Cannot initialize a MMIO Input Device or add a device to the MMIO Bus. {err_msg}"
                 )
             }
             RegisterNetDevice(ref err) => {
@@ -996,6 +1006,12 @@ pub fn build_microvm(
             _sender.clone(),
         )?;
     }
+
+    #[cfg(feature = "input")]
+    if !vm_resources.input_backends.is_empty() {
+        attach_input_devices(&mut vmm, &vm_resources.input_backends, intc.clone())?;
+    }
+
     #[cfg(not(any(feature = "tee", feature = "nitro")))]
     attach_fs_devices(
         &mut vmm,
@@ -2147,6 +2163,29 @@ fn attach_gpu_device(
 
     // The device mutex mustn't be locked here otherwise it will deadlock.
     attach_mmio_device(vmm, id, intc, gpu).map_err(RegisterGpuDevice)?;
+
+    Ok(())
+}
+
+#[cfg(feature = "input")]
+fn attach_input_devices(
+    vmm: &mut Vmm,
+    input_backends: &[(
+        krun_input::InputConfigBackend<'static>,
+        krun_input::InputEventProviderBackend<'static>,
+    )],
+    intc: IrqChip,
+) -> std::result::Result<(), StartMicrovmError> {
+    use self::StartMicrovmError::*;
+
+    for (index, (config_backend, events_backend)) in input_backends.iter().enumerate() {
+        let input_device = Arc::new(Mutex::new(
+            devices::virtio::input::Input::new(*config_backend, *events_backend).unwrap(),
+        ));
+
+        let id = format!("input{}", index);
+        attach_mmio_device(vmm, id, intc.clone(), input_device).map_err(RegisterInputDevice)?;
+    }
 
     Ok(())
 }
