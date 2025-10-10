@@ -10,21 +10,53 @@ use crate::virtio::console::console_control::ConsoleControl;
 use crate::virtio::console::port_io::{PortInput, PortOutput};
 use crate::virtio::console::process_rx::process_rx;
 use crate::virtio::console::process_tx::process_tx;
+use crate::virtio::port_io::PortTerminalProperties;
 use crate::virtio::{InterruptTransport, Queue};
 
-pub enum PortDescription {
-    Console {
+pub struct PortDescription {
+    pub name: Cow<'static, str>,
+    pub input: Option<Box<dyn PortInput + Send>>,
+    pub output: Option<Box<dyn PortOutput + Send>>,
+    pub terminal: Option<Box<dyn PortTerminalProperties>>,
+}
+
+impl PortDescription {
+    pub fn console(
         input: Option<Box<dyn PortInput + Send>>,
         output: Option<Box<dyn PortOutput + Send>>,
-    },
-    InputPipe {
-        name: Cow<'static, str>,
-        input: Box<dyn PortInput + Send>,
-    },
-    OutputPipe {
-        name: Cow<'static, str>,
+        terminal: Box<dyn PortTerminalProperties>,
+    ) -> Self {
+        Self {
+            name: "".into(),
+            input,
+            output,
+            terminal: Some(terminal),
+        }
+    }
+
+    pub fn output_pipe(
+        name: impl Into<Cow<'static, str>>,
         output: Box<dyn PortOutput + Send>,
-    },
+    ) -> Self {
+        Self {
+            name: name.into(),
+            input: None,
+            output: Some(output),
+            terminal: None,
+        }
+    }
+
+    pub fn input_pipe(
+        name: impl Into<Cow<'static, str>>,
+        input: Box<dyn PortInput + Send>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            input: Some(input),
+            output: None,
+            terminal: None,
+        }
+    }
 }
 
 enum PortState {
@@ -41,39 +73,23 @@ pub(crate) struct Port {
     port_id: u32,
     /// Empty if no name given
     name: Cow<'static, str>,
-    represents_console: bool,
     state: PortState,
     input: Option<Arc<Mutex<Box<dyn PortInput + Send>>>>,
     output: Option<Arc<Mutex<Box<dyn PortOutput + Send>>>>,
+    terminal: Option<Box<dyn PortTerminalProperties>>,
 }
 
 impl Port {
     pub(crate) fn new(port_id: u32, description: PortDescription) -> Self {
-        match description {
-            PortDescription::Console { input, output } => Self {
-                port_id,
-                name: "".into(),
-                represents_console: true,
-                state: PortState::Inactive,
-                input: input.map(|input| Arc::new(Mutex::new(input))),
-                output: output.map(|output| Arc::new(Mutex::new(output))),
-            },
-            PortDescription::InputPipe { name, input } => Self {
-                port_id,
-                name,
-                represents_console: false,
-                state: PortState::Inactive,
-                input: Some(Arc::new(Mutex::new(input))),
-                output: None,
-            },
-            PortDescription::OutputPipe { name, output } => Self {
-                port_id,
-                name,
-                represents_console: false,
-                state: PortState::Inactive,
-                input: None,
-                output: Some(Arc::new(Mutex::new(output))),
-            },
+        Self {
+            port_id,
+            name: description.name,
+            state: PortState::Inactive,
+            input: description.input.map(|input| Arc::new(Mutex::new(input))),
+            output: description
+                .output
+                .map(|output| Arc::new(Mutex::new(output))),
+            terminal: description.terminal,
         }
     }
 
@@ -81,8 +97,8 @@ impl Port {
         &self.name
     }
 
-    pub fn is_console(&self) -> bool {
-        self.represents_console
+    pub fn terminal(&self) -> Option<&dyn PortTerminalProperties> {
+        self.terminal.as_deref()
     }
 
     pub fn notify_rx(&self) {
