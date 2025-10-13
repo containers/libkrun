@@ -3,7 +3,6 @@
 
 //#![deny(warnings)]
 
-use std::collections::HashMap;
 #[cfg(feature = "tee")]
 use std::fs::File;
 #[cfg(feature = "tee")]
@@ -29,7 +28,6 @@ use crate::vmm_config::machine_config::{VmConfig, VmConfigError};
 use crate::vmm_config::net::{NetBuilder, NetworkInterfaceConfig, NetworkInterfaceError};
 use crate::vmm_config::vsock::*;
 use crate::vstate::VcpuConfig;
-
 #[cfg(feature = "gpu")]
 use devices::virtio::display::DisplayInfo;
 #[cfg(feature = "tee")]
@@ -83,18 +81,32 @@ impl Default for TeeConfig {
     }
 }
 
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-pub enum ConsoleType {
-    Serial,
-    Virtio,
+pub struct SerialConsoleConfig {
+    pub input_fd: RawFd,
+    pub output_fd: RawFd,
 }
 
-#[derive(Debug, Default)]
-pub struct ConsoleConfig {
-    pub output_path: Option<PathBuf>,
+pub struct DefaultVirtioConsoleConfig {
     pub input_fd: RawFd,
     pub output_fd: RawFd,
     pub err_fd: RawFd,
+}
+
+pub enum VirtioConsoleConfigMode {
+    Autoconfigure(DefaultVirtioConsoleConfig),
+    Explicit(Vec<PortConfig>),
+}
+
+pub enum PortConfig {
+    Tty {
+        name: String,
+        tty_fd: RawFd,
+    },
+    InOut {
+        name: String,
+        input_fd: RawFd,
+        output_fd: RawFd,
+    },
 }
 
 /// A data structure that encapsulates the device configurations
@@ -153,8 +165,10 @@ pub struct VmResources {
     pub disable_implicit_console: bool,
     /// The console id to use for console= in the kernel cmdline
     pub kernel_console: Option<String>,
-    /// Consoles to attach to the guest
-    pub consoles: HashMap<ConsoleType, Vec<ConsoleConfig>>,
+    /// Serial consoles to attach to the guest
+    pub serial_consoles: Vec<SerialConsoleConfig>,
+    /// Virtio consoles to attach to the guest
+    pub virtio_consoles: Vec<VirtioConsoleConfigMode>,
 }
 
 impl VmResources {
@@ -353,7 +367,7 @@ impl VmResources {
 mod tests {
     #[cfg(feature = "gpu")]
     use crate::resources::DisplayBackendConfig;
-    use crate::resources::VmResources;
+    use crate::resources::{DefaultVirtioConsoleConfig, VmResources};
     use crate::vmm_config::kernel_cmdline::KernelCmdlineConfig;
     use crate::vmm_config::machine_config::{CpuFeaturesTemplate, VmConfig, VmConfigError};
     use crate::vmm_config::vsock::tests::{default_config, TempSockFile};
@@ -393,7 +407,8 @@ mod tests {
             nested_enabled: false,
             split_irqchip: false,
             disable_implicit_console: false,
-            consoles: HashMap::new(),
+            serial_consoles: Vec::new(),
+            virtio_consoles: Vec::new(),
             kernel_console: None,
         }
     }

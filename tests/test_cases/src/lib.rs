@@ -10,6 +10,9 @@ use test_tsi_tcp_guest_connect::TestTsiTcpGuestConnect;
 mod test_tsi_tcp_guest_listen;
 use test_tsi_tcp_guest_listen::TestTsiTcpGuestListen;
 
+mod test_multiport_console;
+use test_multiport_console::TestMultiportConsole;
+
 pub fn test_cases() -> Vec<TestCase> {
     // Register your test here:
     vec![
@@ -36,6 +39,7 @@ pub fn test_cases() -> Vec<TestCase> {
             "tsi-tcp-guest-listen",
             Box::new(TestTsiTcpGuestListen::new()),
         ),
+        TestCase::new("multiport-console", Box::new(TestMultiportConsole)),
     ]
 }
 
