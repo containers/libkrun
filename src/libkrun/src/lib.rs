@@ -459,10 +459,16 @@ pub unsafe extern "C" fn krun_init_log(target: RawFd, level: u32, style: u32, op
 
 #[no_mangle]
 pub extern "C" fn krun_create_ctx() -> i32 {
+    let shutdown_efd = if cfg!(target_arch = "aarch64") && cfg!(target_os = "macos") {
+        Some(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap())
+    } else {
+        None
+    };
+
     let ctx_cfg = {
         ContextConfig {
             krunfw: KrunfwBindings::new(),
-            shutdown_efd: Some(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap()),
+            shutdown_efd,
             ..Default::default()
         }
     };
