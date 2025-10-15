@@ -148,6 +148,7 @@ The TDX flavor of libkrun only supports guests with 1 vCPU and memory less than 
 #### Requirements
 
 * A working [Rust](https://www.rust-lang.org/) toolchain
+* A host running macOS 14 or newer
 
 #### Compiling
 
