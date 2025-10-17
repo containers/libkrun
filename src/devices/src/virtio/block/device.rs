@@ -18,9 +18,10 @@ use std::result;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
-use imago::file::File as ImagoFile;
-use imago::qcow2::Qcow2;
-use imago::SyncFormatAccess;
+use imago::{
+    file::File as ImagoFile, qcow2::Qcow2, raw::Raw, DynStorage, Storage, StorageOpenOptions,
+    SyncFormatAccess,
+};
 use log::{error, warn};
 use utils::eventfd::{EventFd, EFD_NONBLOCK};
 use virtio_bindings::{
@@ -64,14 +65,14 @@ impl CacheType {
 /// Helper object for setting up all `Block` fields derived from its backing file.
 pub(crate) struct DiskProperties {
     cache_type: CacheType,
-    pub(crate) file: Arc<SyncFormatAccess<ImagoFile>>,
+    pub(crate) file: Arc<SyncFormatAccess<Box<dyn DynStorage>>>,
     nsectors: u64,
     image_id: Vec<u8>,
 }
 
 impl DiskProperties {
     pub fn new(
-        disk_image: Arc<SyncFormatAccess<ImagoFile>>,
+        disk_image: Arc<SyncFormatAccess<Box<dyn DynStorage>>>,
         disk_image_id: Vec<u8>,
         cache_type: CacheType,
     ) -> io::Result<Self> {
@@ -94,7 +95,7 @@ impl DiskProperties {
         })
     }
 
-    pub fn file(&self) -> &SyncFormatAccess<ImagoFile> {
+    pub fn file(&self) -> &SyncFormatAccess<Box<dyn DynStorage>> {
         self.file.as_ref()
     }
 
@@ -176,7 +177,7 @@ pub struct Block {
     // Host file and properties.
     disk: Option<DiskProperties>,
     cache_type: CacheType,
-    disk_image: Arc<SyncFormatAccess<ImagoFile>>,
+    disk_image: Arc<SyncFormatAccess<Box<dyn DynStorage>>>,
     disk_image_id: Vec<u8>,
     worker_thread: Option<JoinHandle<()>>,
     worker_stopfd: EventFd,
@@ -215,18 +216,32 @@ impl Block {
 
         let disk_image_id = DiskProperties::build_disk_image_id(&disk_image);
 
+        let file_opts = StorageOpenOptions::new()
+            .write(!is_disk_read_only)
+            .filename(disk_image_path);
+        #[cfg(target_os = "macos")]
+        let file_opts = file_opts.relaxed_sync(true);
+        let file = ImagoFile::open_sync(file_opts)?;
+
         let disk_image = match disk_image_format {
             ImageType::Qcow2 => {
-                let mut qcow_disk_image =
-                    Qcow2::<ImagoFile>::open_path_sync(disk_image_path, !is_disk_read_only)?;
-                qcow_disk_image.open_implicit_dependencies_sync()?;
-                SyncFormatAccess::new(qcow_disk_image)?
+                let mut qcow2 =
+                    Qcow2::<Box<dyn DynStorage>, Arc<imago::FormatAccess<_>>>::open_image_sync(
+                        Box::new(file),
+                        !is_disk_read_only,
+                    )?;
+                qcow2.open_implicit_dependencies_sync()?;
+                SyncFormatAccess::new(qcow2)?
             }
             ImageType::Raw => {
-                let raw = imago::raw::Raw::open_path_sync(disk_image_path, !is_disk_read_only)?;
+                let raw = Raw::<Box<dyn DynStorage>>::open_image_sync(
+                    Box::new(file),
+                    !is_disk_read_only,
+                )?;
                 SyncFormatAccess::new(raw)?
             }
         };
+
         let disk_image = Arc::new(disk_image);
 
         let disk_properties =
