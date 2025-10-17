@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1044,6 +1045,7 @@ int main(int argc, char **argv)
     int sockfd;
     int status;
     int saved_errno;
+    bool init_pid1 = false;
     char localhost[] = "localhost\0";
     char *hostname;
     char *krun_home;
@@ -1052,6 +1054,7 @@ int main(int argc, char **argv)
     char *krun_root;
     char *krun_root_fstype;
     char *krun_root_options;
+    char *env_init_pid1;
     char *config_workdir, *env_workdir;
     char *rlimits;
     char **config_argv, **exec_argv;
@@ -1186,11 +1189,20 @@ int main(int argc, char **argv)
         exec_argv[0] = &DEFAULT_KRUN_INIT[0];
     }
 
+    env_init_pid1 = getenv("KRUN_INIT_PID1");
+    if (env_init_pid1 && *env_init_pid1 == '1') {
+        init_pid1 = true;
+    }
+
 #ifdef __TIMESYNC__
     if (fork() == 0) {
         clock_worker();
     }
 #endif
+
+    if (init_pid1) {
+        goto exec_init;
+    }
 
     // We need to fork ourselves, because pid 1 cannot doesn't receive SIGINT
     // signal
@@ -1201,6 +1213,7 @@ int main(int argc, char **argv)
         exit(125);
     }
     if (child == 0) { // child
+    exec_init:
         if (setup_redirects() < 0) {
             exit(125);
         }
