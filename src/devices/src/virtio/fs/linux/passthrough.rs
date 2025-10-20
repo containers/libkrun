@@ -147,52 +147,48 @@ fn stat(f: &File) -> io::Result<libc::stat64> {
 }
 
 fn statx(f: &File) -> io::Result<(libc::stat64, u64)> {
-    let mut stx = MaybeUninit::<libc::statx>::zeroed();
+    use rustix::fd::BorrowedFd;
+    use rustix::fs::{statx, AtFlags, StatxFlags};
 
     // Safe because this is a constant value and a valid C string.
     let pathname = unsafe { CStr::from_bytes_with_nul_unchecked(EMPTY_CSTR) };
+    let dirfd = unsafe { BorrowedFd::borrow_raw(f.as_raw_fd()) };
 
     // Safe because the kernel will only write data in `st` and we check the return
     // value.
-    let res = unsafe {
-        libc::statx(
-            f.as_raw_fd(),
-            pathname.as_ptr(),
-            libc::AT_EMPTY_PATH | libc::AT_SYMLINK_NOFOLLOW,
-            libc::STATX_BASIC_STATS | libc::STATX_MNT_ID,
-            stx.as_mut_ptr(),
-        )
-    };
-    if res >= 0 {
-        // Safe because the kernel guarantees that the struct is now fully initialized.
-        let stx = unsafe { stx.assume_init() };
+    match statx(
+        dirfd,
+        pathname,
+        AtFlags::EMPTY_PATH | AtFlags::SYMLINK_NOFOLLOW,
+        StatxFlags::BASIC_STATS | StatxFlags::MNT_ID,
+    ) {
+        Ok(stx) => {
+            // Unfortunately, we cannot use an initializer to create the stat64 object,
+            // because it may contain padding and reserved fields (depending on the
+            // architecture), and it does not implement the Default trait.
+            // So we take a zeroed struct and set what we can. (Zero in all fields is
+            // wrong, but safe.)
+            let mut st = unsafe { MaybeUninit::<libc::stat64>::zeroed().assume_init() };
 
-        // Unfortunately, we cannot use an initializer to create the stat64 object,
-        // because it may contain padding and reserved fields (depending on the
-        // architecture), and it does not implement the Default trait.
-        // So we take a zeroed struct and set what we can. (Zero in all fields is
-        // wrong, but safe.)
-        let mut st = unsafe { MaybeUninit::<libc::stat64>::zeroed().assume_init() };
-
-        st.st_dev = libc::makedev(stx.stx_dev_major, stx.stx_dev_minor);
-        st.st_ino = stx.stx_ino;
-        st.st_mode = stx.stx_mode as _;
-        st.st_nlink = stx.stx_nlink as _;
-        st.st_uid = stx.stx_uid;
-        st.st_gid = stx.stx_gid;
-        st.st_rdev = libc::makedev(stx.stx_rdev_major, stx.stx_rdev_minor);
-        st.st_size = stx.stx_size as _;
-        st.st_blksize = stx.stx_blksize as _;
-        st.st_blocks = stx.stx_blocks as _;
-        st.st_atime = stx.stx_atime.tv_sec;
-        st.st_atime_nsec = stx.stx_atime.tv_nsec as _;
-        st.st_mtime = stx.stx_mtime.tv_sec;
-        st.st_mtime_nsec = stx.stx_mtime.tv_nsec as _;
-        st.st_ctime = stx.stx_ctime.tv_sec;
-        st.st_ctime_nsec = stx.stx_ctime.tv_nsec as _;
-        Ok((st, stx.stx_mnt_id))
-    } else {
-        Err(io::Error::last_os_error())
+            st.st_dev = libc::makedev(stx.stx_dev_major, stx.stx_dev_minor);
+            st.st_ino = stx.stx_ino;
+            st.st_mode = stx.stx_mode as _;
+            st.st_nlink = stx.stx_nlink as _;
+            st.st_uid = stx.stx_uid;
+            st.st_gid = stx.stx_gid;
+            st.st_rdev = libc::makedev(stx.stx_rdev_major, stx.stx_rdev_minor);
+            st.st_size = stx.stx_size as _;
+            st.st_blksize = stx.stx_blksize as _;
+            st.st_blocks = stx.stx_blocks as _;
+            st.st_atime = stx.stx_atime.tv_sec;
+            st.st_atime_nsec = stx.stx_atime.tv_nsec as _;
+            st.st_mtime = stx.stx_mtime.tv_sec;
+            st.st_mtime_nsec = stx.stx_mtime.tv_nsec as _;
+            st.st_ctime = stx.stx_ctime.tv_sec;
+            st.st_ctime_nsec = stx.stx_ctime.tv_nsec as _;
+            Ok((st, stx.stx_mnt_id))
+        }
+        Err(e) => Err(e.into()),
     }
 }
 

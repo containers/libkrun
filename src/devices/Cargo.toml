@@ -37,6 +37,7 @@ utils = { path = "../utils" }
 polly = { path = "../polly" }
 rutabaga_gfx = { path = "../rutabaga_gfx", features = ["virgl_renderer", "virgl_renderer_next"], optional = true }
 imago = { version = "0.1.4", features = ["sync-wrappers", "vm-memory"] }
+rustix = { version = "1.1.2", features = ["fs"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 hvf = { path = "../hvf" }
