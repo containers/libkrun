@@ -9,4 +9,8 @@ __pycache__
 /libkrun.pc
 init/init
 examples/chroot_vm
+examples/launch-tee
+examples/boot_efi
+examples/external_kernel
+examples/nitro
 test-prefix
