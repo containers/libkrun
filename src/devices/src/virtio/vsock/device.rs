@@ -52,6 +52,8 @@ impl Vsock {
         host_port_map: Option<HashMap<u16, u16>>,
         queues: Vec<VirtQueue>,
         unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
+        enable_tsi: bool,
+        enable_tsi_unix: bool,
     ) -> super::Result<Vsock> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
@@ -64,7 +66,13 @@ impl Vsock {
 
         Ok(Vsock {
             cid,
-            muxer: VsockMuxer::new(cid, host_port_map, unix_ipc_port_map),
+            muxer: VsockMuxer::new(
+                cid,
+                host_port_map,
+                unix_ipc_port_map,
+                enable_tsi,
+                enable_tsi_unix,
+            ),
             queue_rx,
             queue_tx,
             queues,
@@ -82,12 +90,21 @@ impl Vsock {
         cid: u64,
         host_port_map: Option<HashMap<u16, u16>>,
         unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
+        enable_tsi: bool,
+        enable_tsi_unix: bool,
     ) -> super::Result<Vsock> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
             .iter()
             .map(|&max_size| VirtQueue::new(max_size))
             .collect();
-        Self::with_queues(cid, host_port_map, queues, unix_ipc_port_map)
+        Self::with_queues(
+            cid,
+            host_port_map,
+            queues,
+            unix_ipc_port_map,
+            enable_tsi,
+            enable_tsi_unix,
+        )
     }
 
     pub fn id(&self) -> &str {
@@ -102,7 +119,7 @@ impl Vsock {
     /// have pending. Return `true` if descriptors have been added to the used ring, and `false`
     /// otherwise.
     pub fn process_stream_rx(&mut self) -> bool {
-        debug!("vsock: process_stream_rx()");
+        debug!("process_stream_rx()");
         let mem = match self.device_state {
             DeviceState::Activated(ref mem, _) => mem,
             // This should never happen, it's been already validated in the event handler.
@@ -111,10 +128,10 @@ impl Vsock {
 
         let mut have_used = false;
 
-        debug!("vsock: process_rx before while");
+        debug!("process_rx before while");
         let mut queue_rx = self.queue_rx.lock().unwrap();
         while let Some(head) = queue_rx.pop(mem) {
-            debug!("vsock: process_rx inside while");
+            debug!("process_rx inside while");
             let used_len = match VsockPacket::from_rx_virtq_head(&head) {
                 Ok(mut pkt) => {
                     if self.muxer.recv_pkt(&mut pkt).is_ok() {
@@ -127,12 +144,12 @@ impl Vsock {
                     }
                 }
                 Err(e) => {
-                    warn!("vsock: RX queue error: {e:?}");
+                    warn!("RX queue error: {e:?}");
                     0
                 }
             };
 
-            debug!("vsock: process_rx: something to queue");
+            debug!("process_rx: something to queue");
             have_used = true;
             if let Err(e) = queue_rx.add_used(mem, head.index, used_len) {
                 error!("failed to add used elements to the queue: {e:?}");
@@ -145,7 +162,7 @@ impl Vsock {
     /// Walk the driver-provided TX queue buffers, package them up as vsock packets, and process
     /// them. Return `true` if descriptors have been added to the used ring, and `false` otherwise.
     pub fn process_stream_tx(&mut self) -> bool {
-        debug!("vsock::process_stream_tx()");
+        debug!("process_stream_tx()");
         let mem = match self.device_state {
             DeviceState::Activated(ref mem, _) => mem,
             // This should never happen, it's been already validated in the event handler.
@@ -159,7 +176,7 @@ impl Vsock {
             let pkt = match VsockPacket::from_tx_virtq_head(&head) {
                 Ok(pkt) => pkt,
                 Err(e) => {
-                    error!("vsock: error reading TX packet: {e:?}");
+                    error!("error reading TX packet: {e:?}");
                     have_used = true;
                     if let Err(e) = queue_tx.add_used(mem, head.index, 0) {
                         error!("failed to add used elements to the queue: {e:?}");
@@ -169,13 +186,13 @@ impl Vsock {
             };
 
             if pkt.type_() == uapi::VSOCK_TYPE_DGRAM {
-                debug!("vsock::process_stream_tx() is DGRAM");
+                debug!("process_stream_tx() is DGRAM");
                 if self.muxer.send_dgram_pkt(&pkt).is_err() {
                     queue_tx.undo_pop();
                     break;
                 }
             } else {
-                debug!("vsock::process_stream_tx() is STREAM");
+                debug!("process_stream_tx() is STREAM");
                 if self.muxer.send_stream_pkt(&pkt).is_err() {
                     queue_tx.undo_pop();
                     break;
@@ -235,7 +252,7 @@ impl VirtioDevice for Vsock {
                 byte_order::write_le_u32(data, ((self.cid() >> 32) & 0xffff_ffff) as u32)
             }
             _ => warn!(
-                "vsock: virtio-vsock received invalid read request of {} bytes at offset {}",
+                "virtio-vsock received invalid read request of {} bytes at offset {}",
                 data.len(),
                 offset
             ),
@@ -244,7 +261,7 @@ impl VirtioDevice for Vsock {
 
     fn write_config(&mut self, offset: u64, data: &[u8]) {
         warn!(
-            "vsock: guest driver attempted to write device config (offset={:x}, len={:x})",
+            "guest driver attempted to write device config (offset={:x}, len={:x})",
             offset,
             data.len()
         );

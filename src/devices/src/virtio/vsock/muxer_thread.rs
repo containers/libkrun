@@ -8,7 +8,7 @@ use super::super::Queue as VirtQueue;
 use super::muxer::{push_packet, MuxerRx, ProxyMap};
 use super::muxer_rxq::MuxerRxQ;
 use super::proxy::{NewProxyType, Proxy, ProxyRemoval, ProxyUpdate};
-use super::tcp::TcpProxy;
+use super::tsi_stream::TsiStreamProxy;
 
 use crate::virtio::vsock::defs;
 use crate::virtio::vsock::unix::{UnixAcceptorProxy, UnixProxy};
@@ -106,14 +106,15 @@ impl MuxerThread {
 
         let mut should_signal = update.signal_queue;
 
-        if let Some((peer_port, accept_fd, proxy_type)) = update.new_proxy {
+        if let Some((peer_port, accept_fd, family, proxy_type)) = update.new_proxy {
             let local_port: u32 = thread_rng.random_range(1024..u32::MAX);
             let new_id: u64 = ((peer_port as u64) << 32) | (local_port as u64);
             let new_proxy: Box<dyn Proxy> = match proxy_type {
-                NewProxyType::Tcp => Box::new(TcpProxy::new_reverse(
+                NewProxyType::Tcp => Box::new(TsiStreamProxy::new_reverse(
                     new_id,
                     self.cid,
                     id,
+                    family,
                     local_port,
                     peer_port,
                     accept_fd,
@@ -197,7 +198,7 @@ impl MuxerThread {
                     }
                 }
                 Err(e) => {
-                    debug!("vsock: failed to consume muxer epoll event: {e}");
+                    debug!("failed to consume muxer epoll event: {e}");
                 }
             }
         }
