@@ -504,6 +504,7 @@ enum Payload {
     KernelCopy,
     ExternalKernel(ExternalKernel),
     #[cfg(test)]
+    #[allow(dead_code)]
     Empty,
     Firmware,
     #[cfg(feature = "tee")]
@@ -2167,14 +2168,16 @@ fn attach_snd_device(vmm: &mut Vmm, intc: IrqChip) -> std::result::Result<(), St
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::vmm_config::kernel_bundle::KernelBundle;
 
+    #[cfg(target_arch = "x86_64")]
     fn default_guest_memory(
         mem_size_mib: usize,
     ) -> std::result::Result<
         (GuestMemoryMmap, ArchMemoryInfo, ShmManager, PayloadConfig),
         StartMicrovmError,
     > {
+        use crate::vmm_config::kernel_bundle::KernelBundle;
+
         let mut vm_resources = VmResources::default();
         vm_resources.kernel_bundle = Some(KernelBundle {
             host_addr: 0x1000,
@@ -2221,9 +2224,6 @@ pub mod tests {
     #[test]
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
     fn test_create_vcpus_aarch64() {
-        let (guest_memory, _arch_memory_info) =
-            create_guest_memory(128, None, Payload::Empty).unwrap();
-        let vm = setup_vm(&guest_memory, false).unwrap();
         let vcpu_count = 2;
 
         let vcpu_config = VcpuConfig {
@@ -2231,6 +2231,12 @@ pub mod tests {
             ht_enabled: false,
             cpu_template: None,
         };
+
+        let vm_resources = VmResources::default();
+
+        let (guest_memory, _arch_memory_info, _shm_manager, _payload_config) =
+            create_guest_memory(128, &vm_resources, &Payload::Empty).unwrap();
+        let vm = setup_vm(&guest_memory, false).unwrap();
 
         // Dummy entry_addr, vcpus will not boot.
         let entry_addr = GuestAddress(0);
