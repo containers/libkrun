@@ -1,0 +1,245 @@
+// SPDX-License-Identifier: Apache-2.0
+
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/mount.h>
+#include <sys/reboot.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/syscall.h>
+#include <linux/vm_sockets.h>
+
+#define finit_module(fd, param_values, flags) (int)syscall(__NR_finit_module, fd, param_values, flags)
+
+#define HEART_BEAT 0xb7
+#define VSOCK_CID 3
+#define VSOCK_PORT 9000
+
+/*
+ * Block or unblock signals.
+ *
+ * NOTE: All signals are blocked before the devies or console are set up.
+ *       Therefore, perror output may not be displayed if a failure occurs
+ *       during this setup.
+ */
+int
+sig_mask(int mask)
+{
+    sigset_t set;
+    int ret;
+
+    // Initialize the signal set to the complete set of supported signals.
+    ret = sigfillset(&set);
+    if (ret < 0) {
+        perror("sigfillset");
+        return ret;
+    }
+
+    // Block/unblock the signals. This essentially blocks/unblocks all signals
+    // to the process.
+    ret = sigprocmask(mask, &set, 0);
+    if (ret < 0) {
+        perror("sigprocmask");
+        return ret;
+    }
+
+    return 0;
+}
+
+/*
+ * Initialize a devtmpfs at /dev.
+ */
+int
+dev_init()
+{
+    int ret;
+
+    ret = mount("dev", "/dev", "devtmpfs", MS_NOSUID | MS_NOEXEC, NULL);
+    if (ret < 0) {
+        perror("mount");
+        return ret;
+    }
+
+    return 0;
+}
+
+/*
+ * Initialize /dev/console and redirect std{err, in, out} to it for early debug
+ * output.
+ */
+int
+console_init()
+{
+    const char *path = "/dev/console";
+    FILE *file;
+    int ret;
+
+    ret = mount("dev", "/dev", "devtmpfs", MS_NOSUID | MS_NOEXEC, NULL);
+    if (ret < 0 && errno != EBUSY) {
+        perror("mount /dev");
+        return -errno;
+    }
+
+    // Redirect stdin, stdout, and stderr to /dev/console.
+    file = freopen(path, "r", stdin);
+    if (file == NULL) {
+        perror("freopen stdin");
+        return -errno;
+    }
+
+    file = freopen(path, "w", stdout);
+    if (file == NULL) {
+        perror("freopen stdout");
+        return -errno;
+    }
+
+    file = freopen(path, "w", stderr);
+    if (file == NULL) {
+        perror("freopen stderr");
+        return -errno;
+    }
+
+    return 0;
+}
+
+/*
+ * Initialize/load the NSM kernel module.
+ */
+int
+nsm_init()
+{
+    const char *file_name = "nsm.ko";
+    int fd, ret;
+
+    fd = open(file_name, O_RDONLY | O_CLOEXEC);
+    if (fd < 0 && errno == ENOENT)
+        return 0;
+    else if (fd < 0) {
+        perror("nsm.ko open");
+        return -errno;
+    }
+
+    // Load the NSM module.
+    ret = finit_module(fd, "", 0);
+    if (ret < 0) {
+        close(fd);
+        perror("nsm.ko finit_module");
+        return -errno;
+    }
+
+    // Close the file descriptor and remove the NSM module file.
+    ret = close(fd);
+    if (ret < 0) {
+        perror("nsm.ko close");
+        return -errno;
+    }
+
+    ret = unlink(file_name);
+    if (ret < 0) {
+        perror("nsm.ko unlink");
+        return -errno;
+    }
+
+    return 0;
+}
+
+/*
+ * Signal to the host that the enclave is ready to receive the archived rootfs.
+ */
+int
+krun_signal()
+{
+    uint8_t buf[1];
+    struct sockaddr_vm saddr;
+    int ret, sock_fd;
+
+    buf[0] = HEART_BEAT;
+    errno = -EINVAL;
+
+    saddr.svm_family = AF_VSOCK;
+    saddr.svm_cid = VSOCK_CID;
+    saddr.svm_port = VSOCK_PORT;
+    saddr.svm_reserved1 = 0;
+
+    sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
+    if (sock_fd < 0) {
+        perror("vsock initialization");
+        return -errno;
+    }
+
+    // Connect to the host.
+    ret = connect(sock_fd, (struct sockaddr *) &saddr, sizeof(saddr));
+    if (ret < 0) {
+        close(sock_fd);
+        perror("vsock connect");
+        return -errno;
+    }
+
+    // Write the heartbeat to the host and read it back to ensure that the
+    // communication is established.
+    ret = write(sock_fd, buf, 1);
+    if (ret != 1) {
+        close(sock_fd);
+        perror("vsock write");
+        return -errno;
+    }
+
+    ret = read(sock_fd, buf, 1);
+    if (ret != 1) {
+        close(sock_fd);
+        perror("vsock read");
+        return -errno;
+    }
+
+    if (buf[0] != HEART_BEAT) {
+        close(sock_fd);
+        printf("unable to establish connection to hypervisor\n");
+        return -1;
+    }
+
+    ret = close(sock_fd);
+    if (ret < 0) {
+        perror("vsock close");
+        return -errno;
+    }
+
+    return 0;
+}
+
+int
+main(int argc, char *argv[])
+{
+    int ret;
+
+    // Block all signals.
+    ret = sig_mask(SIG_BLOCK);
+    if (ret < 0)
+        exit(ret);
+
+    // Initialize early debug output with /dev/console.
+    ret = console_init();
+    if (ret < 0)
+        exit(ret);
+
+    // Initialize the NSM kernel module.
+    ret = nsm_init();
+    if (ret < 0)
+        exit(ret);
+
+    ret = krun_signal();
+    if (ret < 0)
+        exit(ret);
+
+    exit(0);
+    reboot(RB_AUTOBOOT);
+
+    // Unreachable.
+    return -1;
+}
