@@ -8,6 +8,7 @@ __pycache__
 *~
 /libkrun.pc
 init/init
+init/nitro/init
 examples/chroot_vm
 examples/launch-tee
 examples/boot_efi
