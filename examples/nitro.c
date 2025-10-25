@@ -1,9 +1,6 @@
 /*
  * This is an example implementing running an example AWS nitro enclave with
  * libkrun.
- *
- * Given a nitro enclave image, run the image in a nitro enclave with 1 vCPU and
- * 256 MiB of memory allocated.
  */
 
 #include <errno.h>
@@ -33,11 +30,13 @@
 static void print_help(char *const name)
 {
     fprintf(stderr,
-        "Usage: %s EIF_FILE [COMMAND_ARGS...]\n"
+        "Usage: %s ENCLAVE_IMAGE NVCPUS RAM_MIB\n"
         "OPTIONS: \n"
         "        -h    --help                Show help\n"
         "\n"
-        "ENCLAVE_IMAGE:     The enclave image to run\n",
+        "ENCLAVE_IMAGE:     The enclave image to run\n"
+        "NVCPUS:            The amount of vCPUs for running the enclave\n"
+        "RAM_MIB:           The amount of RAM (MiB) allocated for enclave\n",
         name
     );
 }
@@ -50,6 +49,8 @@ static const struct option long_options[] = {
 struct cmdline {
     bool show_help;
     const char *eif_path;
+    unsigned int nvcpus;
+    unsigned int ram_mib;
 };
 
 bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
@@ -78,11 +79,19 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         }
     }
 
-    if (optind < argc) {
+    if (optind < argc - 2) {
         cmdline->eif_path = argv[optind];
+        cmdline->nvcpus = strtoul(argv[optind + 1], NULL, 10);
+        cmdline->ram_mib = strtoul(argv[optind + 2], NULL, 10);
         return true;
-    } else
-        fprintf(stderr, "Missing EIF_FILE argument");
+    }
+
+    if (optind >= argc - 2)
+        fprintf(stderr, "Missing RAM_MIB argument\n");
+    if (optind >= argc - 1)
+        fprintf(stderr, "Missing VCPUS argument\n");
+    if (optind == argc)
+        fprintf(stderr, "Missing ENCLAVE_IMAGE argument\n");
 
     return false;
 }
@@ -168,8 +177,8 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    // Configure the number of vCPUs (1) and the amount of RAM (512 MiB).
-    if (err = krun_set_vm_config(ctx_id, 1, 512)) {
+    // Configure the number of vCPUs and amount of RAM.
+    if (err = krun_set_vm_config(ctx_id, cmdline.nvcpus, cmdline.ram_mib)) {
         errno = -err;
         perror("Error configuring the number of vCPUs and/or the amount of RAM");
         return -1;
