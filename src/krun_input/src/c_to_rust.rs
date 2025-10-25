@@ -194,10 +194,10 @@ pub struct InputConfigBackend<'userdata> {
     pub create_fn: header::krun_input_create_fn,
     pub vtable: header::krun_input_config_vtable,
 }
-unsafe impl<'a> Send for InputConfigBackend<'a> {}
-unsafe impl<'a> Sync for InputConfigBackend<'a> {}
+unsafe impl Send for InputConfigBackend<'_> {}
+unsafe impl Sync for InputConfigBackend<'_> {}
 
-impl<'a> InputConfigBackend<'a> {
+impl InputConfigBackend<'_> {
     /// Create an InputConfigInstance for handling device configuration
     pub fn create_instance(&self) -> Result<InputConfigInstance, InputBackendError> {
         let mut instance = null_mut();
@@ -253,10 +253,10 @@ pub struct InputEventProviderBackend<'userdata> {
     pub vtable: header::krun_input_event_provider_vtable,
 }
 
-unsafe impl<'a> Send for InputEventProviderBackend<'a> {}
-unsafe impl<'a> Sync for InputEventProviderBackend<'a> {}
+unsafe impl Send for InputEventProviderBackend<'_> {}
+unsafe impl Sync for InputEventProviderBackend<'_> {}
 
-impl<'a> InputEventProviderBackend<'a> {
+impl InputEventProviderBackend<'_> {
     /// Create an InputEventsInstance for handling input events
     pub fn create_instance(&self) -> Result<InputEventProviderInstance, InputBackendError> {
         let mut instance = null_mut();
