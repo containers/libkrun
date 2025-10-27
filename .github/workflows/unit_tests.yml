@@ -1,11 +1,10 @@
-name: Tests
+name: Unit tests
 on: [pull_request]
 
 jobs:
-  unit-tests:
-    name: Unit tests (${{ matrix.name }})
-    runner: ubuntu-latest
-    runs-on: ${{ matrix.runner }}
+  unit-tests-linux-x86_64:
+    name: Unit tests (Linux x86_64)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       
@@ -24,3 +23,4 @@ jobs:
 
       - name: Unit tests
         run: cargo test
+
