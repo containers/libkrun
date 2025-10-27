@@ -10,6 +10,7 @@ use std::{
     fs::File,
     io::{Read, Write},
     os::fd::AsFd,
+    path::PathBuf,
 };
 use vsock::{VsockAddr, VsockListener};
 
@@ -29,6 +30,8 @@ pub struct NitroEnclave {
     pub mem_size_mib: usize,
     /// Number of vCPUs.
     pub vcpus: u8,
+    /// Enclave rootfs.
+    pub rootfs: PathBuf,
     /// Enclave start flags.
     pub start_flags: StartFlags,
 }
@@ -36,6 +39,8 @@ pub struct NitroEnclave {
 impl NitroEnclave {
     /// Run the enclave.
     pub fn run(&mut self) -> Result<u32> {
+        let _rootfs_archive = self.rootfs_archive()?;
+
         let device = Device::open().map_err(NitroError::DeviceOpen)?;
 
         let mut launcher = Launcher::new(&device).map_err(NitroError::VmCreate)?;
@@ -63,6 +68,16 @@ impl NitroEnclave {
         enclave_check(listener, poll_timeout.into(), cid)?;
 
         Ok(cid)
+    }
+
+    fn rootfs_archive(&self) -> Result<Vec<u8>> {
+        let mut builder = tar::Builder::new(Vec::new());
+
+        builder
+            .append_dir_all("rootfs", self.rootfs.clone())
+            .unwrap();
+
+        builder.into_inner().map_err(NitroError::RootFsArchive)
     }
 }
 

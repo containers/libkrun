@@ -30,11 +30,12 @@
 static void print_help(char *const name)
 {
     fprintf(stderr,
-        "Usage: %s ENCLAVE_IMAGE NVCPUS RAM_MIB\n"
+        "Usage: %s ENCLAVE_IMAGE NEWROOT NVCPUS RAM_MIB\n"
         "OPTIONS: \n"
         "        -h    --help                Show help\n"
         "\n"
         "ENCLAVE_IMAGE:     The enclave image to run\n"
+        "NEWROOT:           The root directory of the VM\n"
         "NVCPUS:            The amount of vCPUs for running the enclave\n"
         "RAM_MIB:           The amount of RAM (MiB) allocated for enclave\n",
         name
@@ -49,6 +50,7 @@ static const struct option long_options[] = {
 struct cmdline {
     bool show_help;
     const char *eif_path;
+    const char *new_root;
     unsigned int nvcpus;
     unsigned int ram_mib;
 };
@@ -79,17 +81,20 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         }
     }
 
-    if (optind < argc - 2) {
+    if (optind < argc - 3) {
         cmdline->eif_path = argv[optind];
-        cmdline->nvcpus = strtoul(argv[optind + 1], NULL, 10);
-        cmdline->ram_mib = strtoul(argv[optind + 2], NULL, 10);
+        cmdline->new_root = argv[optind + 1];
+        cmdline->nvcpus = strtoul(argv[optind + 2], NULL, 10);
+        cmdline->ram_mib = strtoul(argv[optind + 3], NULL, 10);
         return true;
     }
 
-    if (optind >= argc - 2)
+    if (optind >= argc - 3)
         fprintf(stderr, "Missing RAM_MIB argument\n");
-    if (optind >= argc - 1)
+    if (optind >= argc - 2)
         fprintf(stderr, "Missing VCPUS argument\n");
+    if (optind >= argc - 1)
+        fprintf(stderr, "Missing NEWROOT argument\n");
     if (optind == argc)
         fprintf(stderr, "Missing ENCLAVE_IMAGE argument\n");
 
@@ -197,6 +202,13 @@ int main(int argc, char *const argv[])
     if (err = krun_nitro_set_start_flags(ctx_id, KRUN_NITRO_START_FLAG_DEBUG)) {
         errno = -err;
         perror("Error configuring nitro enclave start flags");
+        return -1;
+    }
+
+    // Configure the enclave's rootfs.
+    if (err = krun_set_root(ctx_id, cmdline.new_root)) {
+        errno = -err;
+        perror("Error configuring enclave rootfs");
         return -1;
     }
 
