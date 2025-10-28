@@ -4,9 +4,11 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
@@ -15,6 +17,8 @@
 #include <sys/types.h>
 #include <sys/syscall.h>
 #include <linux/vm_sockets.h>
+
+#include "include/archive.h"
 
 #define finit_module(fd, param_values, flags) (int)syscall(__NR_finit_module, fd, param_values, flags)
 
@@ -204,19 +208,101 @@ krun_signal()
         return -1;
     }
 
-    ret = close(sock_fd);
+    return sock_fd;
+}
+
+static int
+rootfs_rcv(int sock_fd, void **buf_ptr, size_t *size)
+{
+    uint8_t len_b[8], *rootfs_archive;
+    ssize_t read_len;
+    uint64_t len, idx = 0;
+
+    read_len = read(sock_fd, len_b, 8);
+    if (read_len < 8) {
+        close(sock_fd);
+        perror("vsock rootfs archive length read");
+        return -1;
+    }
+
+    memcpy(&len, len_b, sizeof(uint64_t));
+
+    *size = len;
+
+    rootfs_archive = (uint8_t *) malloc(len);
+    if (rootfs_archive == NULL) {
+        close(sock_fd);
+        perror("rootfs archive malloc");
+        return -1;
+    }
+
+    while (len) {
+        read_len = read(sock_fd, &rootfs_archive[idx], len);
+        if (read_len <= 0) {
+            close(sock_fd);
+            free((void *) rootfs_archive);
+            perror("vsock rootfs archive read");
+            return -1;
+        }
+        idx += read_len;
+        len -= read_len;
+    }
+
+    *buf_ptr = (void *) rootfs_archive;
+
+    return 0;
+}
+
+static int
+rootfs_mount()
+{
+    int ret;
+
+    // Mount /rootfs.
+    ret = mount("/rootfs", "/rootfs", NULL, MS_BIND, NULL);
     if (ret < 0) {
-        perror("vsock close");
+        perror("rootfs mount");
+        return -errno;
+    }
+
+    // Change directory to rootfs.
+    ret = chdir("/rootfs");
+    if (ret < 0) {
+        perror("rootfs chdir");
+        return -errno;
+    }
+
+    // Mount the current directory (/rootfs) on the system root.
+    ret = mount(".", "/", NULL, MS_MOVE, NULL);
+    if (ret < 0) {
+        perror("rootfs system root mount");
+        return -errno;
+    }
+
+    // Change the system root.
+    ret = chroot(".");
+    if (ret < 0) {
+        perror("rootfs chroot");
+        return -errno;
+    }
+
+    // Change the directory to the new root (originally /rootfs).
+    ret = chdir("/");
+    if (ret < 0) {
+        perror("rootfs chdir \"/\"");
         return -errno;
     }
 
     return 0;
 }
 
+
 int
 main(int argc, char *argv[])
 {
-    int ret;
+    uint32_t archive_size;
+    void *rootfs_archive;
+    int ret, sock_fd;
 
     // Block all signals.
     ret = sig_mask(SIG_BLOCK);
@@ -233,7 +319,19 @@ main(int argc, char *argv[])
     if (ret < 0)
         exit(ret);
 
-    ret = krun_signal();
+    sock_fd = krun_signal();
+    if (sock_fd < 0)
+        exit(ret);
+
+    ret = rootfs_rcv(sock_fd, &rootfs_archive, &archive_size);
+    if (ret < 0)
+        exit(ret);
+
+    ret = archive_extract(rootfs_archive, archive_size);
+    if (ret < 0)
+        exit(ret);
+
+    ret = rootfs_mount();
     if (ret < 0)
         exit(ret);
 

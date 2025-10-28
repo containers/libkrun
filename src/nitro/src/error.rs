@@ -18,11 +18,15 @@ pub enum NitroError {
     PollNoSelectedEvents,
     PollMoreThanOneSelectedEvent,
     EnclaveHeartbeatNotDetected,
+    RootFsArchive(io::Error),
     HeartbeatCidMismatch,
     VsockCreate,
     VsockSetTimeout,
     VsockConnect,
     IpcWrite(io::Error),
+    RootFsLenWrite(io::Error),
+    RootFsWrite(io::Error),
+    RootFsTooLarge,
 }
 
 impl fmt::Display for NitroError {
@@ -61,9 +65,19 @@ impl fmt::Display for NitroError {
                 "unable to set poll timeout for enclave vsock".to_string()
             }
             NitroError::VsockConnect => "unable to connect to enclave vsock".to_string(),
+            NitroError::RootFsArchive(e) => {
+                format!("unable to archive rootfs: {e}")
+            }
             NitroError::IpcWrite(e) => {
                 format!("unable to write enclave vsock data to UNIX IPC socket: {e}")
             }
+            NitroError::RootFsLenWrite(e) => {
+                format!("unable to write rootfs archive length to enclave: {e}")
+            }
+            NitroError::RootFsWrite(e) => {
+                format!("unable to write rootfs archive to enclave: {e}")
+            }
+            NitroError::RootFsTooLarge => "rootfs size is larger than 64 bytes".to_string(),
         };
 
         write!(f, "{}", msg)

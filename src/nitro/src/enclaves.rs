@@ -8,11 +8,13 @@ use nitro_enclaves::{
 };
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout as NixPollTimeout};
 use std::{
-    fs::File,
-    io::{Read, Write},
+    ffi::OsStr,
+    fs::{self, File},
+    io::{self, ErrorKind, Read, Write},
     os::fd::AsFd,
     path::PathBuf,
 };
+use tar::HeaderMode;
 use vsock::{VsockAddr, VsockListener, VsockStream};
 
 type Result<T> = std::result::Result<T, NitroError>;
@@ -23,6 +25,14 @@ const VMADDR_CID_PARENT: u32 = 3;
 
 const HEART_BEAT: u8 = 0xb7;
 
+const ROOTFS_DIR_DENYLIST: [&str; 5] = [
+    "proc", // /proc.
+    "run",  // /run.
+    "tmp",  // /tmp.
+    "dev",  // /dev.
+    "sys",  // /sys.
+];
+
 /// Nitro Enclave data.
 pub struct NitroEnclave {
     /// Enclave image.
@@ -32,7 +42,7 @@ pub struct NitroEnclave {
     /// Number of vCPUs.
     pub vcpus: u8,
     /// Enclave rootfs.
-    pub rootfs: PathBuf,
+    pub rootfs: String,
     /// Enclave start flags.
     pub start_flags: StartFlags,
 }
@@ -40,9 +50,11 @@ pub struct NitroEnclave {
 impl NitroEnclave {
     /// Run the enclave.
     pub fn run(&mut self) -> Result<u32> {
-        let _rootfs_archive = self.rootfs_archive()?;
+        let rootfs_archive = self.rootfs_archive()?;
 
-        let (cid, _stream) = self.start()?;
+        let (cid, stream) = self.start()?;
+
+        self.write_rootfs(rootfs_archive, stream)?;
 
         Ok(cid)
     }
@@ -50,9 +62,39 @@ impl NitroEnclave {
     fn rootfs_archive(&self) -> Result<Vec<u8>> {
         let mut builder = tar::Builder::new(Vec::new());
 
-        builder
-            .append_dir_all("rootfs", self.rootfs.clone())
+        builder.mode(HeaderMode::Deterministic);
+        builder.follow_symlinks(false);
+
+        let pathbuf = PathBuf::from(self.rootfs.clone());
+        let pathbuf_copy = pathbuf.clone();
+        let rootfs_dirname = pathbuf_copy
+            .file_name()
+            .unwrap_or(OsStr::new("/"))
+            .to_str()
             .unwrap();
+
+        for entry in fs::read_dir(pathbuf).map_err(NitroError::RootFsArchive)? {
+            let entry = entry.map_err(NitroError::RootFsArchive)?;
+            let filetype = entry.file_type().map_err(NitroError::RootFsArchive)?;
+            let filename = entry.file_name().into_string().map_err(|_| {
+                NitroError::RootFsArchive(io::Error::new(
+                    ErrorKind::Other,
+                    "unable to convert file name to String object",
+                ))
+            })?;
+
+            if !ROOTFS_DIR_DENYLIST.contains(&filename.as_str()) && filename != rootfs_dirname {
+                if filetype.is_dir() {
+                    builder
+                        .append_dir_all(format!("rootfs/{}", filename), entry.path())
+                        .map_err(NitroError::RootFsArchive)?;
+                } else if filetype.is_file() {
+                    builder
+                        .append_path_with_name(entry.path(), format!("rootfs/{}", filename))
+                        .map_err(NitroError::RootFsArchive)?;
+                }
+            }
+        }
 
         builder.into_inner().map_err(NitroError::RootFsArchive)
     }
@@ -119,5 +161,22 @@ impl NitroEnclave {
             .map_err(NitroError::HeartbeatWrite)?;
 
         Ok((cid, stream.0))
+    }
+
+    fn write_rootfs(&self, archive: Vec<u8>, mut stream: VsockStream) -> Result<()> {
+        let len: u64 = archive
+            .len()
+            .try_into()
+            .or(Err(NitroError::RootFsTooLarge))?;
+
+        stream
+            .write_all(&len.to_ne_bytes())
+            .map_err(NitroError::RootFsLenWrite)?;
+
+        stream
+            .write_all(&archive)
+            .map_err(NitroError::RootFsWrite)?;
+
+        Ok(())
     }
 }
