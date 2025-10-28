@@ -372,13 +372,8 @@ impl TryFrom<ContextConfig> for NitroEnclave {
             return Err(-libc::EINVAL);
         };
 
-        let rootfs = if let Some(fs) = &ctx.vmr.fs.first() {
-            let path = PathBuf::from(&fs.shared_dir);
-            if !path.as_path().is_dir() {
-                error!("rootfs path {:?} is not a valid directory", path.display());
-                return Err(-libc::EINVAL);
-            }
-            path
+        let rootfs = if let Some(path) = &ctx.vmr.fs.first() {
+            path.shared_dir.clone()
         } else {
             error!("rootfs path required");
             return Err(-libc::EINVAL);
