@@ -59,6 +59,11 @@ mod defs {
     pub const TSI_ACCEPT: u32 = 1030;
     pub const TSI_PROXY_RELEASE: u32 = 1031;
 
+    // Linux definitions that we need for cross-platform compatibility.
+    pub const LINUX_AF_UNIX: u16 = 1;
+    pub const LINUX_AF_INET: u16 = 2;
+    pub const LINUX_AF_INET6: u16 = 10;
+
     pub mod uapi {
 
         /// Virtio feature flags.

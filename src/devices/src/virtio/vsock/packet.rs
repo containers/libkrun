@@ -18,10 +18,14 @@
 use std::convert::TryInto;
 use std::ffi::CStr;
 use std::net::{Ipv4Addr, SocketAddrV4};
+#[cfg(target_os = "macos")]
+use std::net::{Ipv6Addr, SocketAddrV6};
 use std::os::raw::c_char;
 use std::result;
 
-use nix::sys::socket::{sockaddr, AddressFamily, SockaddrLike, SockaddrStorage};
+#[cfg(target_os = "linux")]
+use nix::sys::socket::{sockaddr, AddressFamily};
+use nix::sys::socket::{SockaddrLike, SockaddrStorage};
 use utils::byte_order;
 use vm_memory::{self, Address, GuestAddress, GuestMemory, GuestMemoryError};
 
@@ -480,6 +484,7 @@ impl VsockPacket {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn parse_address(buf: &[u8], addr_len: u32) -> Option<SockaddrStorage> {
         let sockaddr: SockaddrStorage = unsafe {
             SockaddrStorage::from_raw(&buf[0] as *const _ as *const sockaddr, Some(addr_len))?
@@ -500,6 +505,44 @@ impl VsockPacket {
         }
 
         Some(sockaddr)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn parse_address(buf: &[u8], _addr_len: u32) -> Option<SockaddrStorage> {
+        let family: u16 = byte_order::read_le_u16(&buf[0..2]);
+
+        match family {
+            defs::LINUX_AF_INET => {
+                debug!("parse_address: AF_INET");
+                let in_port: u16 = byte_order::read_be_u16(&buf[2..4]);
+                let in_addr = Ipv4Addr::new(buf[4], buf[5], buf[6], buf[7]);
+                Some(SocketAddrV4::new(in_addr, in_port).into())
+            }
+            defs::LINUX_AF_INET6 => {
+                debug!("parse_address: AF_INET6");
+                let in_port: u16 = byte_order::read_be_u16(&buf[2..4]);
+                let flowinfo: u32 = byte_order::read_be_u32(&buf[4..8]);
+                let in6_addr = Ipv6Addr::new(
+                    byte_order::read_be_u16(&buf[8..10]),
+                    byte_order::read_be_u16(&buf[10..12]),
+                    byte_order::read_be_u16(&buf[12..14]),
+                    byte_order::read_be_u16(&buf[14..16]),
+                    byte_order::read_be_u16(&buf[16..18]),
+                    byte_order::read_be_u16(&buf[18..20]),
+                    byte_order::read_be_u16(&buf[20..22]),
+                    byte_order::read_be_u16(&buf[22..24]),
+                );
+                let scope_id: u32 = byte_order::read_be_u32(&buf[24..28]);
+                Some(SocketAddrV6::new(in6_addr, in_port, flowinfo, scope_id).into())
+            }
+            defs::LINUX_AF_UNIX => {
+                // On macOS, SockaddrStorage doesn't implement `from_raw` for
+                // Unix sockets, nor a way to cast an UnixPath to it.
+                error!("AF_UNIX sockets aren't yet supported on macOS");
+                None
+            }
+            _ => None,
+        }
     }
 
     pub fn read_proxy_create(&self) -> Option<TsiProxyCreate> {
