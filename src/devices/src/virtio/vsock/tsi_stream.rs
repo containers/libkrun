@@ -13,7 +13,6 @@ use std::sync::{Arc, Mutex};
 use libc::EINVAL;
 #[cfg(target_os = "macos")]
 use libc::EINVAL;
-use libc::{AF_INET, AF_INET6, AF_UNIX};
 use nix::errno::Errno;
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
@@ -74,10 +73,11 @@ impl TsiStreamProxy {
         queue: Arc<Mutex<VirtQueue>>,
         rxq: Arc<Mutex<MuxerRxQ>>,
     ) -> Result<Self, ProxyError> {
-        let family = match family as i32 {
-            AF_INET => AddressFamily::Inet,
-            AF_INET6 => AddressFamily::Inet6,
-            AF_UNIX => AddressFamily::Unix,
+        let family = match family {
+            defs::LINUX_AF_INET => AddressFamily::Inet,
+            defs::LINUX_AF_INET6 => AddressFamily::Inet6,
+            #[cfg(target_os = "linux")]
+            defs::LINUX_AF_UNIX => AddressFamily::Unix,
             _ => return Err(ProxyError::InvalidFamily),
         };
         let fd = socket(family, SockType::Stream, SockFlag::empty(), None)
