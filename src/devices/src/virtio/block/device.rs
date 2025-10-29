@@ -208,6 +208,7 @@ impl Block {
         disk_image_path: String,
         disk_image_format: ImageType,
         is_disk_read_only: bool,
+        #[cfg(target_os = "macos")] enable_relaxed_sync: bool,
     ) -> io::Result<Block> {
         let disk_image = OpenOptions::new()
             .read(true)
@@ -220,7 +221,7 @@ impl Block {
             .write(!is_disk_read_only)
             .filename(disk_image_path);
         #[cfg(target_os = "macos")]
-        let file_opts = file_opts.relaxed_sync(true);
+        let file_opts = file_opts.relaxed_sync(enable_relaxed_sync);
         let file = ImagoFile::open_sync(file_opts)?;
 
         let disk_image = match disk_image_format {
