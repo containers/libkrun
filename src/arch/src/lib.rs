@@ -8,6 +8,10 @@ use std::result;
 
 #[derive(Default)]
 pub struct ArchMemoryInfo {
+    #[cfg(target_arch = "x86_64")]
+    pub ram_below_gap: u64,
+    #[cfg(target_arch = "x86_64")]
+    pub ram_above_gap: u64,
     pub ram_last_addr: u64,
     pub shm_start_addr: u64,
     pub page_size: usize,
