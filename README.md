@@ -97,6 +97,8 @@ When exposing a directory in a filesystem from the host to the guest through vir
 
 A mount point isolation mechanism from the host should be used in combination with virtio-fs.
 
+In addition, when using virtio-fs, a guest may exhaust filesystem resources such as inode limits and disk capacity. Controls should be implemented on the host to mitigate this.
+
 ### virtio-vsock + TSI
 
 When TSI is enabled, the VMM acts as a proxy for AF_INET, AF_INET6 and AF_UNIX sockets, for both incoming and outgoing connections. For all that matters, the VMM and the guest should be considered to be running in the network context. As such, you should apply on the VMM whatever restrictions you want to apply on the guest.
