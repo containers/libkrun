@@ -379,12 +379,30 @@ impl TryFrom<ContextConfig> for NitroEnclave {
             return Err(-libc::EINVAL);
         };
 
+        let Some(exec_path) = ctx.exec_path else {
+            error!("exec path not specified");
+            return Err(-libc::EINVAL);
+        };
+
+        let Some(exec_env) = ctx.env else {
+            error!("execution env not specified");
+            return Err(-libc::EINVAL);
+        };
+
+        let Some(exec_args) = ctx.args else {
+            error!("execution args not specified");
+            return Err(-libc::EINVAL);
+        };
+
         Ok(Self {
             image,
             mem_size_mib,
             vcpus,
             rootfs,
             start_flags: ctx.nitro_start_flags,
+            exec_path,
+            exec_args,
+            exec_env,
         })
     }
 }
