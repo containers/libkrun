@@ -19,6 +19,8 @@
 #include <linux/vm_sockets.h>
 
 #include "include/archive.h"
+#include "include/fs_init.h"
+#include "include/cgroups_init.h"
 
 #define finit_module(fd, param_values, flags) (int)syscall(__NR_finit_module, fd, param_values, flags)
 
@@ -51,23 +53,6 @@ sig_mask(int mask)
     ret = sigprocmask(mask, &set, 0);
     if (ret < 0) {
         perror("sigprocmask");
-        return ret;
-    }
-
-    return 0;
-}
-
-/*
- * Initialize a devtmpfs at /dev.
- */
-int
-dev_init()
-{
-    int ret;
-
-    ret = mount("dev", "/dev", "devtmpfs", MS_NOSUID | MS_NOEXEC, NULL);
-    if (ret < 0) {
-        perror("mount");
         return ret;
     }
 
@@ -332,6 +317,21 @@ main(int argc, char *argv[])
         exit(ret);
 
     ret = rootfs_mount();
+    if (ret < 0)
+        exit(ret);
+
+    // Ensure the container /dev is initialized as well.
+    ret = mount("dev", "/dev", "devtmpfs", MS_NOSUID | MS_NOEXEC, NULL);
+    if (ret < 0 && errno != EBUSY) {
+        perror("mount");
+        return ret;
+    }
+
+    ret = filesystem_init();
+    if (ret < 0)
+        exit(ret);
+
+    ret = cgroups_init();
     if (ret < 0)
         exit(ret);
 
