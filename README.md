@@ -58,11 +58,30 @@ Each variant generates a dynamic library with a different name (and ```soname```
 
 ## Networking
 
-In ```libkrun```, networking is provided by two different, mutually exclusive techniques:
+In ```libkrun```, networking is provided by two different, mutually exclusive techniques: **virtio-vsock + TSI** and **virtio-net + passt/gvproxy**.
 
-- **virtio-vsock + TSI**: A novel technique called **Transparent Socket Impersonation** which allows the VM to have network connectivity without a virtual interface. This technique supports both outgoing and incoming connections. It's possible for userspace applications running in the VM to transparently connect to endpoints outside the VM and receive connections from the outside to ports listening inside the VM. Requires a custom kernel (like the one bundled in **libkrunfw**) and it's limited to AF_INET SOCK_DGRAM and SOCK_STREAM sockets.
+### virtio-vsock + TSI
 
-- **virtio-net + passt/gvproxy**: A conventional virtual interface that allows the guest to communicate with the outside through the VMM using a supporting application like [passt](https://passt.top/passt/about/) or [gvproxy](https://github.com/containers/gvisor-tap-vsock). 
+This is a novel technique called **Transparent Socket Impersonation** which allows the VM to have network connectivity without a virtual interface. This technique supports both outgoing and incoming connections. It's possible for userspace applications running in the VM to transparently connect to endpoints outside the VM and receive connections from the outside to ports listening inside the VM.
+
+#### Enabling TSI
+
+TSI for AF_INET and AF_INET6 is automatically enabled when no network interface is added to the VM. TSI for AF_UNIX is enabled when, in addition to the previous condition, `krun_set_root` has been used to set `/` as root filesystem.
+
+#### Known limitations
+
+- Requires a custom kernel (like the one bundled in **libkrunfw**).
+- It's limited to SOCK_DGRAM and SOCK_STREAM sockets and AF_INET, AF_INET6 and AF_UNIX address families (for instance, raw sockets aren't supported).
+- Listening on SOCK_DGRAM sockets from the guest is not supported.
+- When TSI is enabled for AF_UNIX sockets, only absolute path are supported as addresses.
+
+### **virtio-net + passt/gvproxy**
+
+A conventional virtual interface that allows the guest to communicate with the outside through the VMM using a supporting application like [passt](https://passt.top/passt/about/) or [gvproxy](https://github.com/containers/gvisor-tap-vsock).
+
+#### Enabling virtio-net
+
+Use `krun_add_net_unixstream` and/or `krun_add_net_unixdgram` to add a virtio-net interface connected to the userspace network proxy.
 
 ## Building and installing
 
