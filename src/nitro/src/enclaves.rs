@@ -8,11 +8,12 @@ use nitro_enclaves::{
 };
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout as NixPollTimeout};
 use std::{
-    ffi::OsStr,
+    ffi::{CString, OsStr},
     fs::{self, File},
     io::{self, ErrorKind, Read, Write},
     os::fd::AsFd,
     path::PathBuf,
+    str::FromStr,
 };
 use tar::HeaderMode;
 use vsock::{VsockAddr, VsockListener, VsockStream};
@@ -45,6 +46,12 @@ pub struct NitroEnclave {
     pub rootfs: String,
     /// Enclave start flags.
     pub start_flags: StartFlags,
+    /// Execution path.
+    pub exec_path: String,
+    /// Execution args.
+    pub exec_args: String,
+    /// Execution environment.
+    pub exec_env: String,
 }
 
 impl NitroEnclave {
@@ -52,9 +59,11 @@ impl NitroEnclave {
     pub fn run(&mut self) -> Result<u32> {
         let rootfs_archive = self.rootfs_archive()?;
 
-        let (cid, stream) = self.start()?;
+        let (cid, mut stream) = self.start()?;
 
-        self.write_rootfs(rootfs_archive, stream)?;
+        vsock_write_bytes(&rootfs_archive, &mut stream)?;
+
+        self.write_exec(&mut stream)?;
 
         Ok(cid)
     }
@@ -97,6 +106,30 @@ impl NitroEnclave {
         }
 
         builder.into_inner().map_err(NitroError::RootFsArchive)
+    }
+
+    fn write_exec(&self, stream: &mut VsockStream) -> Result<()> {
+        vsock_write_bytes(&str_cstring_bytes(&self.exec_path)?, stream)?;
+
+        let argv: Vec<String> = self
+            .exec_args
+            .replace("\"", "")
+            .split(' ')
+            .map(|s| s.to_string())
+            .collect();
+
+        vsock_write_str_vec(&argv, stream)?;
+
+        let envp: Vec<String> = self
+            .exec_env
+            .replace("\"", "")
+            .split(' ')
+            .map(|s| s.to_string())
+            .collect();
+
+        vsock_write_str_vec(&envp, stream)?;
+
+        Ok(())
     }
 
     fn launch(&mut self) -> Result<u32> {
@@ -162,21 +195,48 @@ impl NitroEnclave {
 
         Ok((cid, stream.0))
     }
+}
 
-    fn write_rootfs(&self, archive: Vec<u8>, mut stream: VsockStream) -> Result<()> {
-        let len: u64 = archive
-            .len()
-            .try_into()
-            .or(Err(NitroError::RootFsTooLarge))?;
+fn str_cstring_bytes(string: &str) -> Result<Vec<u8>> {
+    let bytes = Vec::from(
+        CString::from_str(string)
+            .map_err(NitroError::CStringConversion)?
+            .as_bytes_with_nul(),
+    );
 
-        stream
-            .write_all(&len.to_ne_bytes())
-            .map_err(NitroError::RootFsLenWrite)?;
+    Ok(bytes)
+}
 
-        stream
-            .write_all(&archive)
-            .map_err(NitroError::RootFsWrite)?;
+fn vsock_write_str_vec(vec: &Vec<String>, stream: &mut VsockStream) -> Result<()> {
+    let len: u64 = vec
+        .len()
+        .try_into()
+        .or(Err(NitroError::VsockBytesTooLarge))?;
 
-        Ok(())
+    stream
+        .write_all(&len.to_ne_bytes())
+        .map_err(NitroError::VsockBytesLenWrite)?;
+
+    for string in vec {
+        vsock_write_bytes(&str_cstring_bytes(string)?, stream)?;
     }
+
+    Ok(())
+}
+
+fn vsock_write_bytes(bytes: &[u8], stream: &mut VsockStream) -> Result<()> {
+    let len: u64 = bytes
+        .len()
+        .try_into()
+        .or(Err(NitroError::VsockBytesTooLarge))?;
+
+    stream
+        .write_all(&len.to_ne_bytes())
+        .map_err(NitroError::VsockBytesLenWrite)?;
+
+    stream
+        .write_all(bytes)
+        .map_err(NitroError::VsockBytesWrite)?;
+
+    Ok(())
 }

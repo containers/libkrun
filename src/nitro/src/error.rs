@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use nitro_enclaves::launch::LaunchError;
-use std::{fmt, io};
+use std::{ffi, fmt, io};
 
 #[derive(Debug)]
 pub enum NitroError {
@@ -24,9 +24,10 @@ pub enum NitroError {
     VsockSetTimeout,
     VsockConnect,
     IpcWrite(io::Error),
-    RootFsLenWrite(io::Error),
-    RootFsWrite(io::Error),
-    RootFsTooLarge,
+    VsockBytesLenWrite(io::Error),
+    VsockBytesWrite(io::Error),
+    VsockBytesTooLarge,
+    CStringConversion(ffi::NulError),
 }
 
 impl fmt::Display for NitroError {
@@ -71,13 +72,16 @@ impl fmt::Display for NitroError {
             NitroError::IpcWrite(e) => {
                 format!("unable to write enclave vsock data to UNIX IPC socket: {e}")
             }
-            NitroError::RootFsLenWrite(e) => {
+            NitroError::VsockBytesLenWrite(e) => {
                 format!("unable to write rootfs archive length to enclave: {e}")
             }
-            NitroError::RootFsWrite(e) => {
+            NitroError::VsockBytesWrite(e) => {
                 format!("unable to write rootfs archive to enclave: {e}")
             }
-            NitroError::RootFsTooLarge => "rootfs size is larger than 64 bytes".to_string(),
+            NitroError::VsockBytesTooLarge => {
+                "vsock write byte buffer size is larger than 64 bytes".to_string()
+            }
+            NitroError::CStringConversion(e) => format!("unable to convert String to CString: {e}"),
         };
 
         write!(f, "{}", msg)

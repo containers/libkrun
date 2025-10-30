@@ -149,6 +149,14 @@ void *listen_enclave_output(void *opaque)
     }
 }
 
+const char *const default_argv[] = { "cat", "/etc/os-release", NULL };
+
+#define DEFAULT_PATH_ENV "PATH=/sbin:/usr/sbin:/bin:/usr/bin"
+const char *const default_envp[] = {
+    DEFAULT_PATH_ENV,
+    NULL,
+};
+
 int main(int argc, char *const argv[])
 {
     int ret, cid, ctx_id, err;
@@ -209,6 +217,13 @@ int main(int argc, char *const argv[])
     if (err = krun_set_root(ctx_id, cmdline.new_root)) {
         errno = -err;
         perror("Error configuring enclave rootfs");
+        return -1;
+    }
+
+    // Configure the enclave's execution environment.
+    if (err = krun_set_exec(ctx_id, "ls", default_argv, default_envp)) {
+        errno = -err;
+        perror("Error configuring enclave execution path");
         return -1;
     }
 

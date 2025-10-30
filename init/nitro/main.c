@@ -16,11 +16,13 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <linux/vm_sockets.h>
 
 #include "include/archive.h"
 #include "include/fs_init.h"
 #include "include/cgroups_init.h"
+#include "include/vsock.h"
 
 #define finit_module(fd, param_values, flags) (int)syscall(__NR_finit_module, fd, param_values, flags)
 
@@ -197,48 +199,6 @@ krun_signal()
 }
 
 static int
-rootfs_rcv(int sock_fd, void **buf_ptr, size_t *size)
-{
-    uint8_t len_b[8], *rootfs_archive;
-    ssize_t read_len;
-    uint64_t len, idx = 0;
-
-    read_len = read(sock_fd, len_b, 8);
-    if (read_len < 8) {
-        close(sock_fd);
-        perror("vsock rootfs archive length read");
-        return -1;
-    }
-
-    memcpy(&len, len_b, sizeof(uint64_t));
-
-    *size = len;
-
-    rootfs_archive = (uint8_t *) malloc(len);
-    if (rootfs_archive == NULL) {
-        close(sock_fd);
-        perror("rootfs archive malloc");
-        return -1;
-    }
-
-    while (len) {
-        read_len = read(sock_fd, &rootfs_archive[idx], len);
-        if (read_len <= 0) {
-            close(sock_fd);
-            free((void *) rootfs_archive);
-            perror("vsock rootfs archive read");
-            return -1;
-        }
-        idx += read_len;
-        len -= read_len;
-    }
-
-    *buf_ptr = (void *) rootfs_archive;
-
-    return 0;
-}
-
-static int
 rootfs_mount()
 {
     int ret;
@@ -282,9 +242,46 @@ rootfs_mount()
 }
 
 
+pid_t
+launch(char **argv, char **envp)
+{
+    int ret, pid;
+
+    pid = fork();
+    if (pid < 0) {
+        perror("launch fork");
+        return -errno;
+    } else if (pid != 0) {
+        wait(NULL);
+        return 0;
+    }
+
+    ret = sig_mask(SIG_UNBLOCK);
+    if (ret < 0)
+        return ret;
+
+    setsid();
+    setpgid(0, 0);
+
+    ret = putenv(envp[0]);
+    if (ret < 0) {
+        perror("initialize default path environment");
+        return -errno;
+    }
+
+    ret = execvpe(argv[0], argv, envp);
+    if (ret < 0) {
+        perror("exec application");
+        return -errno;
+    }
+
+    return 0;
+}
+
 int
 main(int argc, char *argv[])
 {
+    char *exec_path, **exec_argv, **exec_envp;
     uint32_t archive_size;
     void *rootfs_archive;
     int ret, sock_fd;
@@ -308,7 +305,19 @@ main(int argc, char *argv[])
     if (sock_fd < 0)
         exit(ret);
 
-    ret = rootfs_rcv(sock_fd, &rootfs_archive, &archive_size);
+    ret = vsock_rcv(sock_fd, &rootfs_archive, &archive_size);
+    if (ret < 0)
+        exit(ret);
+
+    ret = vsock_rcv(sock_fd, (void **) &exec_path, NULL);
+    if (ret < 0)
+        exit(ret);
+
+    ret = vsock_char_list_build(sock_fd, &exec_argv);
+    if (ret < 0)
+        exit(ret);
+
+    ret = vsock_char_list_build(sock_fd, &exec_envp);
     if (ret < 0)
         exit(ret);
 
@@ -332,6 +341,10 @@ main(int argc, char *argv[])
         exit(ret);
 
     ret = cgroups_init();
+    if (ret < 0)
+        exit(ret);
+
+    ret = launch(exec_argv, exec_envp);
     if (ret < 0)
         exit(ret);
 
