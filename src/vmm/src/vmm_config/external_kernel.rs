@@ -3,9 +3,10 @@
 
 use std::path::PathBuf;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum KernelFormat {
     // Raw image, ready to be loaded into the VM.
+    #[default]
     Raw,
     // ELF image, need to locale sections be loaded.
     Elf,
@@ -17,12 +18,6 @@ pub enum KernelFormat {
     ImageGz,
     // ELF image compressed with ZSTD, embedded into an Image file.
     ImageZstd,
-}
-
-impl Default for KernelFormat {
-    fn default() -> Self {
-        Self::Raw
-    }
 }
 
 /// Data structure holding the attributes read from the `libkrunfw` kernel config.
