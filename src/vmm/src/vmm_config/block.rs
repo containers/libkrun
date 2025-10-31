@@ -28,6 +28,8 @@ pub struct BlockDeviceConfig {
     pub disk_image_path: String,
     pub disk_image_format: ImageType,
     pub is_disk_read_only: bool,
+    #[cfg(target_os = "macos")]
+    pub enable_relaxed_sync: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,6 +65,8 @@ impl BlockBuilder {
             config.disk_image_path,
             config.disk_image_format,
             config.is_disk_read_only,
+            #[cfg(target_os = "macos")]
+            config.enable_relaxed_sync,
         )
         .map_err(BlockConfigError::CreateBlockDevice)
     }

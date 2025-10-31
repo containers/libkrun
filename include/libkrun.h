@@ -1035,6 +1035,27 @@ int32_t krun_add_serial_console_default(uint32_t ctx_id,
 int32_t krun_set_root_disk_remount(uint32_t ctx_id, const char *device, const char *fstype, const char *options);
 
 /**
+ * On macOS, `std::fs::File::flush()` uses `F_FULLFSYNC`, which syncs the buffers to the drive an asks
+ * the drive to wait for flushing all the data to the permanent storage. In contrast, Apple
+ * Virtualization.Framework only issues an `fsync()`, which doesn't ask the drive to flush it's buffered
+ * data.
+ *
+ * Configure whether to match the default relaxed Virtualization.Framework behavior.
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *  "block_id"  - a null-terminated string representing the partition to configure.
+ *  "enable" - whether or not to enable relaxed sync behavior.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ *
+ * Notes:
+ *  This is a macOS only API and the relaxed behavior is enabled by default.
+ */
+int32_t krun_enable_relaxed_sync_for_disk(uint32_t ctx_id, const char *block_id, bool enable);
+
+/**
  * Starts and enters the microVM with the configured parameters. The VMM will attempt to take over
  * stdin/stdout to manage them on behalf of the process running inside the isolated environment,
  * simulating that the latter has direct control of the terminal.
