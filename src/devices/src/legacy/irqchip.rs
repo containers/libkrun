@@ -166,6 +166,47 @@ pub mod test_utils {
         }
     }
 
+    #[cfg(target_arch = "aarch64")]
+    impl GICDevice for DummyIrqChip {
+        fn device_properties(&self) -> Vec<u64> {
+            vec![]
+        }
+        fn vcpu_count(&self) -> u64 {
+            0
+        }
+        fn fdt_compatibility(&self) -> String {
+            "vendor,dummy-gic".into()
+        }
+        fn fdt_maint_irq(&self) -> u32 {
+            0
+        }
+        fn version(&self) -> u32 {
+            0
+        }
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    impl AIADevice for DummyIrqChip {
+        fn aplic_compatibility(&self) -> &str {
+            "riscv,aplic"
+        }
+        fn aplic_properties(&self) -> [u32; 4] {
+            [0, 0, 0, 0]
+        }
+        fn imsic_compatibility(&self) -> &str {
+            "riscv,imsics"
+        }
+        fn imsic_properties(&self) -> [u32; 4] {
+            [0, 0, 0, 0]
+        }
+        fn vcpu_count(&self) -> u32 {
+            0
+        }
+        fn msi_compatible(&self) -> bool {
+            false
+        }
+    }
+
     impl BusDevice for DummyIrqChip {}
 
     impl IrqChipT for DummyIrqChip {
