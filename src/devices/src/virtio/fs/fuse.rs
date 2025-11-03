@@ -179,6 +179,9 @@ const HAS_INODE_DAX: u64 = 1 << 33;
 /// and mknod (single group that matches parent)
 const CREATE_SUPP_GROUP: u64 = 1 << 34;
 
+/// We need this for idmapped mounts support
+const ALLOW_IDMAP: u64 = 1 << 40;
+
 bitflags! {
     /// A bitfield passed in as a parameter to and returned from the `init` method of the
     /// `FileSystem` trait.
@@ -429,6 +432,9 @@ bitflags! {
         /// Add supplementary groups info to create, mkdir, symlink
         /// and mknod (single group that matches parent).
         const CREATE_SUPP_GROUP = CREATE_SUPP_GROUP;
+
+        /// Indicates if idmapped mounts are allowed for virtiofs.
+        const ALLOW_IDMAP = ALLOW_IDMAP;
     }
 }
 

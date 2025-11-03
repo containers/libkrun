@@ -1665,6 +1665,13 @@ impl FileSystem for PassthroughFs {
             return Ok(());
         }
 
+        // We use ctx.uid/ctx.gid for these checks, but when idmapped mounts
+        // support is enabled on the guest side, it means that "default_permissions"
+        // flag is set on virtiofs mount and FUSE_ACCESS request should never be
+        // sent to the userspace. Please, refer to the kernel commit
+        // ("fs/fuse: warn if fuse_access is called when idmapped mounts are allowed").
+        // In case when idmapped mounts are not enabled we are good to rely on ctx.uid/ctx.gid values.
+
         if (mode & libc::R_OK) != 0
             && ctx.uid != 0
             && (st.st_uid != ctx.uid || st.st_mode & 0o400 == 0)
