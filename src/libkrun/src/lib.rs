@@ -362,16 +362,6 @@ impl TryFrom<ContextConfig> for NitroEnclave {
             return Err(-libc::EINVAL);
         };
 
-        let Some(image_path) = ctx.nitro_image_path else {
-            error!("nitro image not configured");
-            return Err(-libc::EINVAL);
-        };
-
-        let Ok(image) = File::open(&image_path) else {
-            error!("unable to open {}", image_path.display());
-            return Err(-libc::EINVAL);
-        };
-
         let rootfs = if let Some(path) = &ctx.vmr.fs.first() {
             path.shared_dir.clone()
         } else {
@@ -395,7 +385,7 @@ impl TryFrom<ContextConfig> for NitroEnclave {
         };
 
         Ok(Self {
-            image,
+            _image_path: ctx.nitro_image_path,
             mem_size_mib,
             vcpus,
             rootfs,
