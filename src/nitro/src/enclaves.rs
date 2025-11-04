@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::error::NitroError;
+use flate2::read::GzDecoder;
 use libc::c_int;
 use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
@@ -9,16 +10,19 @@ use nitro_enclaves::{
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout as NixPollTimeout};
 use std::{
     ffi::{CString, OsStr},
-    fs::{self, File},
+    fs,
     io::{self, ErrorKind, Read, Write},
     os::fd::AsFd,
     path::PathBuf,
     str::FromStr,
 };
-use tar::HeaderMode;
+use tar::{Archive, HeaderMode};
 use vsock::{VsockAddr, VsockListener, VsockStream};
 
 type Result<T> = std::result::Result<T, NitroError>;
+
+const KRUN_NITRO_EIF_TAR: &[u8] = include_bytes!("runtime-data/eif.tar.gz");
+const KRUN_NITRO_EIF_FILE_NAME: &str = "krun-nitro.eif";
 
 const ENCLAVE_READY_VSOCK_PORT: u32 = 9000;
 
@@ -36,8 +40,9 @@ const ROOTFS_DIR_DENYLIST: [&str; 5] = [
 
 /// Nitro Enclave data.
 pub struct NitroEnclave {
-    /// Enclave image.
-    pub image: File,
+    /// Path to configurable enclave image. Will default to KRUN_NITRO_ENCLAVE_EIF if one external
+    /// enclave provided.
+    pub _image_path: Option<PathBuf>,
     /// Amount of RAM (in MiB).
     pub mem_size_mib: usize,
     /// Number of vCPUs.
@@ -132,12 +137,12 @@ impl NitroEnclave {
         Ok(())
     }
 
-    fn launch(&mut self) -> Result<u32> {
+    fn launch(&mut self, eif: &[u8]) -> Result<u32> {
         let device = Device::open().map_err(NitroError::DeviceOpen)?;
 
         let mut launcher = Launcher::new(&device).map_err(NitroError::VmCreate)?;
 
-        let mem = MemoryInfo::new(ImageType::Eif(&mut self.image), self.mem_size_mib);
+        let mem = MemoryInfo::new(ImageType::Eif(eif), self.mem_size_mib);
         launcher.set_memory(mem).map_err(NitroError::VmMemorySet)?;
 
         for _ in 0..self.vcpus {
@@ -151,8 +156,8 @@ impl NitroEnclave {
         Ok(cid.try_into().unwrap()) // Safe to unwrap.
     }
 
-    fn poll(&self, listener: &VsockListener) -> Result<()> {
-        let poll_timeout = PollTimeout::try_from((&self.image, self.mem_size_mib << 20))
+    fn poll(&self, listener: &VsockListener, eif: &[u8]) -> Result<()> {
+        let poll_timeout = PollTimeout::try_from((eif, self.mem_size_mib << 20))
             .map_err(NitroError::PollTimeoutCalculate)?;
 
         let mut poll_fds = [PollFd::new(listener.as_fd(), PollFlags::POLLIN)];
@@ -171,9 +176,10 @@ impl NitroEnclave {
     fn start(&mut self) -> Result<(u32, VsockStream)> {
         let sockaddr = VsockAddr::new(VMADDR_CID_PARENT, ENCLAVE_READY_VSOCK_PORT);
         let listener = VsockListener::bind(&sockaddr).map_err(NitroError::HeartbeatBind)?;
+        let eif = eif()?;
 
-        let cid = self.launch()?;
-        self.poll(&listener)?;
+        let cid = self.launch(&eif)?;
+        self.poll(&listener, &eif)?;
 
         let mut stream = listener.accept().map_err(NitroError::HeartbeatAccept)?;
 
@@ -239,4 +245,27 @@ fn vsock_write_bytes(bytes: &[u8], stream: &mut VsockStream) -> Result<()> {
         .map_err(NitroError::VsockBytesWrite)?;
 
     Ok(())
+}
+
+fn eif() -> Result<Vec<u8>> {
+    let gz = GzDecoder::new(KRUN_NITRO_EIF_TAR);
+    let mut archive = Archive::new(gz);
+
+    let mut buf = Vec::new();
+
+    for entry_result in archive.entries().map_err(NitroError::EifTarExtract)? {
+        let mut entry = entry_result.map_err(NitroError::EifTarExtract)?;
+
+        let path = entry.path().map_err(NitroError::EifTarExtract)?;
+        let path_str = path.to_string_lossy();
+
+        if path_str == KRUN_NITRO_EIF_FILE_NAME {
+            entry
+                .read_to_end(&mut buf)
+                .map_err(NitroError::EifTarExtract)?;
+            break;
+        }
+    }
+
+    Ok(buf)
 }

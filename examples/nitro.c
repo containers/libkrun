@@ -34,7 +34,6 @@ static void print_help(char *const name)
         "OPTIONS: \n"
         "        -h    --help                Show help\n"
         "\n"
-        "ENCLAVE_IMAGE:     The enclave image to run\n"
         "NEWROOT:           The root directory of the VM\n"
         "NVCPUS:            The amount of vCPUs for running the enclave\n"
         "RAM_MIB:           The amount of RAM (MiB) allocated for enclave\n",
@@ -49,7 +48,6 @@ static const struct option long_options[] = {
 
 struct cmdline {
     bool show_help;
-    const char *eif_path;
     const char *new_root;
     unsigned int nvcpus;
     unsigned int ram_mib;
@@ -64,7 +62,6 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
     // set the defaults
     *cmdline = (struct cmdline){
         .show_help = false,
-        .eif_path = NULL,
     };
 
     // the '+' in optstring is a GNU extension that disables permutating argv
@@ -81,22 +78,19 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         }
     }
 
-    if (optind < argc - 3) {
-        cmdline->eif_path = argv[optind];
-        cmdline->new_root = argv[optind + 1];
-        cmdline->nvcpus = strtoul(argv[optind + 2], NULL, 10);
-        cmdline->ram_mib = strtoul(argv[optind + 3], NULL, 10);
+    if (optind < argc - 2) {
+        cmdline->new_root = argv[optind];
+        cmdline->nvcpus = strtoul(argv[optind + 1], NULL, 10);
+        cmdline->ram_mib = strtoul(argv[optind + 2], NULL, 10);
         return true;
     }
 
-    if (optind >= argc - 3)
-        fprintf(stderr, "Missing RAM_MIB argument\n");
     if (optind >= argc - 2)
-        fprintf(stderr, "Missing VCPUS argument\n");
+        fprintf(stderr, "Missing RAM_MIB argument\n");
     if (optind >= argc - 1)
-        fprintf(stderr, "Missing NEWROOT argument\n");
+        fprintf(stderr, "Missing VCPUS argument\n");
     if (optind == argc)
-        fprintf(stderr, "Missing ENCLAVE_IMAGE argument\n");
+        fprintf(stderr, "Missing NEWROOT argument\n");
 
     return false;
 }
@@ -195,15 +189,6 @@ int main(int argc, char *const argv[])
         errno = -err;
         perror("Error configuring the number of vCPUs and/or the amount of RAM");
         return -1;
-    }
-
-    // Set the nitro enclave image specified on the command line.
-    if (err = krun_nitro_set_image(ctx_id, cmdline.eif_path,
-                                   KRUN_NITRO_IMG_TYPE_EIF)) {
-        errno = -err;
-        perror("Error configuring nitro enclave image");
-        return -1;
-
     }
 
     // Configure the nitro enclave to run in debug mode.
