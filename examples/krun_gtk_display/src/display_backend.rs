@@ -1,8 +1,8 @@
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use gtk::{gdk::MemoryFormat, glib::Bytes};
 use krun_display::{
-    DisplayBackendBasicFramebuffer, DisplayBackendError, DisplayBackendNew, MAX_DISPLAYS, Rect,
-    ResourceFormat,
+    DisplayBackendBasicFramebuffer, DisplayBackendDmabuf, DisplayBackendError, DisplayBackendNew,
+    DmabufExport, MAX_DISPLAYS, Rect, ResourceFormat,
 };
 use log::error;
 use std::mem;
@@ -21,6 +21,13 @@ const _: () = {
 
 #[derive(Debug, Clone)]
 pub enum DisplayEvent {
+    ImportDmabuf {
+        dmabuf_id: u32,
+        dmabuf_export: DmabufExport,
+    },
+    UnrefDmabuf {
+        dmabuf_id: u32,
+    },
     ConfigureScanout {
         scanout_id: u32,
         display_width: u32,
@@ -28,6 +35,13 @@ pub enum DisplayEvent {
         width: u32,
         height: u32,
         format: MemoryFormat,
+    },
+    ConfigureScanoutDmabuf {
+        scanout_id: u32,
+        display_width: u32,
+        display_height: u32,
+        dmabuf_id: u32,
+        src_rect: Option<Rect>,
     },
     DisableScanout {
         scanout_id: u32,
@@ -37,6 +51,10 @@ pub enum DisplayEvent {
         buffer: Bytes,
         rect: Option<Rect>,
     },
+    UpdateScanoutDmabuf {
+        scanout_id: u32,
+        rect: Option<Rect>,
+    },
 }
 
 // Implements libkrun traits (callbacks) to provide a display implementation, by forwarding the
@@ -44,17 +62,18 @@ pub enum DisplayEvent {
 pub struct GtkDisplayBackend {
     channel: PollableChannelSender<DisplayEvent>,
     scanouts: [Option<Scanout>; MAX_DISPLAYS],
+    next_dmabuf_id: u32,
 }
 
 impl DisplayBackendNew<PollableChannelSender<DisplayEvent>> for GtkDisplayBackend {
-    fn new(channel: Option<&PollableChannelSender<DisplayEvent>>) -> Self {
-        let channel = channel
-            .expect("The channel should have been set by GtkDisplayBackend::into_display_backend")
-            .clone();
+    fn new(userdata: Option<&PollableChannelSender<DisplayEvent>>) -> Self {
+        let channel = userdata
+            .expect("The userdata should have been set by GtkDisplayBackend::into_display_backend");
 
         Self {
-            channel,
+            channel: channel.clone(),
             scanouts: Default::default(),
+            next_dmabuf_id: 1,
         }
     }
 }
@@ -89,6 +108,7 @@ impl DisplayBackendBasicFramebuffer for GtkDisplayBackend {
                 buffer_rx,
                 buffer_tx,
                 current_buffer: Vec::new(),
+                has_dmabuf: false,
             });
         }
 
@@ -157,6 +177,75 @@ impl DisplayBackendBasicFramebuffer for GtkDisplayBackend {
     }
 }
 
+impl DisplayBackendDmabuf for GtkDisplayBackend {
+    fn import_dmabuf(&mut self, dmabuf_export: &DmabufExport) -> Result<u32, DisplayBackendError> {
+        let dmabuf_id = self.next_dmabuf_id;
+        self.next_dmabuf_id += 1;
+
+        self.channel
+            .send(DisplayEvent::ImportDmabuf {
+                dmabuf_id,
+                dmabuf_export: *dmabuf_export,
+            })
+            .unwrap();
+
+        Ok(dmabuf_id)
+    }
+
+    fn unref_dmabuf(&mut self, dmabuf_id: u32) -> Result<(), DisplayBackendError> {
+        self.channel
+            .send(DisplayEvent::UnrefDmabuf { dmabuf_id })
+            .unwrap();
+
+        Ok(())
+    }
+
+    fn configure_scanout_dmabuf(
+        &mut self,
+        scanout_id: u32,
+        display_width: u32,
+        display_height: u32,
+        dmabuf_id: u32,
+        src_rect: Option<&Rect>,
+    ) -> Result<(), DisplayBackendError> {
+        let Some(scanout) = &mut self.scanouts[scanout_id as usize] else {
+            return Err(DisplayBackendError::InvalidScanoutId);
+        };
+
+        scanout.has_dmabuf = true;
+
+        self.channel
+            .send(DisplayEvent::ConfigureScanoutDmabuf {
+                scanout_id,
+                display_width,
+                display_height,
+                dmabuf_id,
+                src_rect: src_rect.copied(),
+            })
+            .unwrap();
+        Ok(())
+    }
+
+    fn present_dmabuf(
+        &mut self,
+        scanout_id: u32,
+        rect: Option<&Rect>,
+    ) -> Result<(), DisplayBackendError> {
+        if self.scanouts[scanout_id as usize]
+            .as_ref()
+            .is_none_or(|scanout| !scanout.has_dmabuf)
+        {
+            return Err(DisplayBackendError::InvalidScanoutId);
+        };
+
+        let rect = rect.copied();
+        self.channel
+            .send(DisplayEvent::UpdateScanoutDmabuf { scanout_id, rect })
+            .unwrap();
+        Ok(())
+    }
+}
+
 fn resource_format_into_gdk(format: ResourceFormat) -> MemoryFormat {
     match format {
         ResourceFormat::BGRA => MemoryFormat::B8g8r8a8,
@@ -175,6 +264,7 @@ struct Scanout {
     buffer_rx: Receiver<Vec<u8>>,
     required_buffer_size: usize,
     current_buffer: Vec<u8>,
+    has_dmabuf: bool,
 }
 
 impl Scanout {

@@ -625,9 +625,11 @@ impl VirtioGpu {
             #[link(name = "GL")]
             extern "C" {
                 fn glFlush();
+                fn glFinish();
             }
 
-            glFlush()
+            glFlush();
+            glFinish();
         };
 
         for scanout_id in resource.scanouts.iter_enabled() {
