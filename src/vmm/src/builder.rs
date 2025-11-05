@@ -876,6 +876,7 @@ pub fn build_microvm(
             &vm,
             &mut mmio_device_manager,
             &mut kernel_cmdline,
+            intc.clone(),
             serial_devices,
         )?;
     }
@@ -1635,11 +1636,12 @@ fn attach_legacy_devices(
     vm: &Vm,
     mmio_device_manager: &mut MMIODeviceManager,
     kernel_cmdline: &mut kernel::cmdline::Cmdline,
+    intc: IrqChip,
     serial: Vec<Arc<Mutex<Serial>>>,
 ) -> std::result::Result<(), StartMicrovmError> {
     for s in serial {
         mmio_device_manager
-            .register_mmio_serial(vm.fd(), kernel_cmdline, s)
+            .register_mmio_serial(vm.fd(), kernel_cmdline, intc.clone(), s)
             .map_err(Error::RegisterMMIODevice)
             .map_err(StartMicrovmError::Internal)?;
     }
