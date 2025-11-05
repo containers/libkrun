@@ -14,12 +14,11 @@ use super::protocol::{
 };
 #[cfg(target_os = "macos")]
 use crossbeam_channel::{unbounded, Sender};
-use krun_display::{
-    DisplayBackend, DisplayBackendBasicFramebuffer, DisplayBackendInstance, Rect,
-    ResourceFormat,
-};
 #[cfg(target_os = "linux")]
 use krun_display::DmabufExport;
+use krun_display::{
+    DisplayBackend, DisplayBackendBasicFramebuffer, DisplayBackendInstance, Rect, ResourceFormat,
+};
 use libc::c_void;
 #[cfg(target_os = "macos")]
 use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_APPLE;
@@ -31,8 +30,8 @@ use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_OPAQUE_FD;
 use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_SHM;
 use rutabaga_gfx::{
     ResourceCreate3D, ResourceCreateBlob, Rutabaga, RutabagaBuilder, RutabagaChannel,
-    RutabagaFence, RutabagaFenceHandler, RutabagaIovec, Transfer3D,
-    RUTABAGA_CHANNEL_TYPE_WAYLAND, RUTABAGA_MAP_CACHE_MASK,
+    RutabagaFence, RutabagaFenceHandler, RutabagaIovec, Transfer3D, RUTABAGA_CHANNEL_TYPE_WAYLAND,
+    RUTABAGA_MAP_CACHE_MASK,
 };
 #[cfg(target_os = "linux")]
 use rutabaga_gfx::{
@@ -629,9 +628,11 @@ impl VirtioGpu {
             #[link(name = "GL")]
             extern "C" {
                 fn glFlush();
+                fn glFinish();
             }
 
-            glFlush()
+            glFlush();
+            glFinish();
         };
 
         for scanout_id in resource.scanouts.iter_enabled() {
