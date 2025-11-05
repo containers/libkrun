@@ -1382,14 +1382,34 @@ pub extern "C" fn krun_set_display_backend(
     vtable: *const c_void,
     vtable_size: usize,
 ) -> i32 {
-    if vtable_size < size_of::<DisplayBackend>() {
+    use krun_display::DisplayBackendV1;
+    use std::cmp::min;
+
+    // The absolute minimum size is V1 (basic_framebuffer only)
+    let min_size = size_of::<DisplayBackendV1>();
+    if vtable_size < min_size {
+        error!(
+            "Provided display backend size ({vtable_size}) is smaller than the minimum V1 ABI size ({min_size})"
+        );
         return -libc::EINVAL;
     }
 
-    // SAFETY: We have checked the vtable size is fine, otherwise we have to trust the user. Just
-    // to be extra careful, this uses read_unaligned, but we could probably get away with ptr::read.
-    let display_backend: DisplayBackend =
-        unsafe { std::ptr::read_unaligned(vtable as *const DisplayBackend) };
+    // SAFETY: We have verified minimum size above.
+    // Zero-initialize the backend, then copy only the actual size provided (clamped to our size).
+    // This handles both older (smaller) and newer (larger) ABI versions safely:
+    // - Older versions: copy their smaller size, rest stays zeroed
+    // - Newer versions: copy only what fits in our current DisplayBackend, ignore unknown fields
+    // The subsequent verify() call will check that required function pointers for the
+    // declared features are non-null, which also catches the cases where the vtable is too small.
+    let mut display_backend: DisplayBackend = unsafe { std::mem::zeroed() };
+    let copy_size = min(vtable_size, size_of::<DisplayBackend>());
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            vtable as *const u8,
+            &mut display_backend as *mut DisplayBackend as *mut u8,
+            copy_size,
+        );
+    }
 
     if !display_backend.verify() {
         return -libc::EINVAL;
@@ -2601,3 +2621,6 @@ fn krun_start_enter_nitro(ctx_id: u32) -> i32 {
         }
     }
 }
+
+#[cfg(test)]
+mod api_tests;
