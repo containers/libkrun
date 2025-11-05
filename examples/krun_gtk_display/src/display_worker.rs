@@ -393,6 +393,7 @@ impl ScanoutWindow {
 
         if let Some(keyboard_event_tx) = keyboard_event_tx {
             picture.set_focusable(true);
+            picture.grab_focus();
             attach_keyboard(keyboard_event_tx, &picture);
         }
         attach_per_display_inputs(&picture, &overlay, per_display_inputs);
