@@ -98,7 +98,7 @@ pub fn create_fdt<T: DeviceInfoForFDT + Clone + Debug>(
     fdt.property_u32("interrupt-parent", GIC_PHANDLE)?;
     create_cpu_nodes(&mut fdt, &vcpu_mpidr)?;
     create_memory_node(&mut fdt, guest_mem, arch_memory_info)?;
-    create_chosen_node(&mut fdt, cmdline, initrd)?;
+    create_chosen_node(&mut fdt, cmdline, initrd, device_info)?;
     create_gic_node(&mut fdt, gic_device)?;
     create_timer_node(&mut fdt)?;
     create_clock_node(&mut fdt)?;
@@ -189,13 +189,23 @@ fn create_memory_node(
     Ok(())
 }
 
-fn create_chosen_node(
+fn create_chosen_node<T: DeviceInfoForFDT + Clone + Debug>(
     fdt: &mut FdtWriter,
     cmdline: &str,
     initrd: &Option<InitrdConfig>,
+    dev_info: &HashMap<(DeviceType, String), T>,
 ) -> Result<()> {
     let chosen_node = fdt.begin_node("chosen")?;
     fdt.property_string("bootargs", cmdline)?;
+
+    // If we have a legacy serial device, tell the guest this is the default console.
+    // Clever guests will still switch to a better console (like virtio-console) if
+    // it becomes available later, and this gives us a good fallback.
+    for ((device_type, _device_id), info) in dev_info {
+        if device_type == &DeviceType::Serial {
+            fdt.property_string("stdout-path", &format!("/uart@{:x}", info.addr()))?;
+        }
+    }
 
     if let Some(initrd_config) = initrd {
         fdt.property_u64("linux,initrd-start", initrd_config.address.raw_value())?;
