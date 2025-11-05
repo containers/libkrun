@@ -14,7 +14,6 @@ use krun_sys::{
     krun_set_display_backend, krun_set_exec, krun_set_gpu_options2, krun_set_root,
     krun_set_vm_config, krun_start_enter,
 };
-use log::LevelFilter;
 use regex::{Captures, Regex};
 use std::ffi::{CString, c_void};
 use std::fmt::Display;
@@ -225,9 +224,7 @@ fn krun_thread(
 }
 
 fn main() -> anyhow::Result<()> {
-    env_logger::builder()
-        .filter_level(LevelFilter::Debug)
-        .init();
+    env_logger::builder().parse_env("GUI_VM_LOG").init();
     let args = Args::parse();
 
     let mut per_display_inputs = vec![vec![]; args.display.len()];
