@@ -82,6 +82,7 @@ ifeq ($(TIMESYNC),1)
 endif
 
 OS = $(shell uname -s)
+ARCH = $(shell uname -m)
 
 KRUN_BINARY_Linux = libkrun$(VARIANT).so.$(FULL_VERSION)
 KRUN_SONAME_Linux = libkrun$(VARIANT).so.$(ABI_VERSION)
@@ -109,10 +110,18 @@ all: $(LIBRARY_RELEASE_$(OS)) libkrun.pc
 
 debug: $(LIBRARY_DEBUG_$(OS)) libkrun.pc
 
+ifeq ($(SYSROOT_LINUX),)
+# Build on Linux host
+CC_LINUX=$(CC)
+else
+# Cross-compile on macOS with the LLVM linker (brew install lld)
+CC_LINUX=clang -target $(ARCH)-linux-gnu -fuse-ld=lld -Wl,-strip-debug --sysroot $(SYSROOT_LINUX) -Wno-c23-extensions
+endif
+
 ifeq ($(BUILD_INIT),1)
 INIT_BINARY = init/init
 $(INIT_BINARY): $(INIT_SRC)
-	$(CC) -O2 -static -Wall $(INIT_DEFS) -o $@ $(INIT_SRC) $(INIT_DEFS)
+	$(CC_LINUX) -O2 -static -Wall $(INIT_DEFS) -o $@ $(INIT_SRC) $(INIT_DEFS)
 endif
 
 NITRO_INIT_BINARY= init/nitro/init
