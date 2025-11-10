@@ -82,6 +82,9 @@ ifeq ($(TIMESYNC),1)
 endif
 
 OS = $(shell uname -s)
+ARCH = $(shell uname -m)
+DEBIAN_DIST ?= bookworm
+ROOTFS_DIR = linux-sysroot
 
 KRUN_BINARY_Linux = libkrun$(VARIANT).so.$(FULL_VERSION)
 KRUN_SONAME_Linux = libkrun$(VARIANT).so.$(ABI_VERSION)
@@ -103,21 +106,69 @@ ifeq ($(PREFIX),)
     PREFIX := /usr/local
 endif
 
-.PHONY: install clean test test-prefix $(LIBRARY_RELEASE_$(OS)) $(LIBRARY_DEBUG_$(OS)) libkrun.pc
+.PHONY: install clean test test-prefix $(LIBRARY_RELEASE_$(OS)) $(LIBRARY_DEBUG_$(OS)) libkrun.pc clean-sysroot clean-all
 
 all: $(LIBRARY_RELEASE_$(OS)) libkrun.pc
 
 debug: $(LIBRARY_DEBUG_$(OS)) libkrun.pc
 
+ifeq ($(OS),Darwin)
+# If SYSROOT_LINUX is not set and we're on macOS, generate sysroot automatically
+ifeq ($(SYSROOT_LINUX),)
+    SYSROOT_LINUX = $(ROOTFS_DIR)
+    SYSROOT_TARGET = $(ROOTFS_DIR)/.sysroot_ready
+else
+    SYSROOT_TARGET =
+endif
+    # Cross-compile on macOS with the LLVM linker (brew install lld)
+    CC_LINUX=/usr/bin/clang -target $(ARCH)-linux-gnu -fuse-ld=lld -Wl,-strip-debug --sysroot $(SYSROOT_LINUX) -Wno-c23-extensions
+else
+    # Build on Linux host
+    CC_LINUX=$(CC)
+    SYSROOT_TARGET =
+endif
+
 ifeq ($(BUILD_INIT),1)
 INIT_BINARY = init/init
-$(INIT_BINARY): $(INIT_SRC)
-	$(CC) -O2 -static -Wall $(INIT_DEFS) -o $@ $(INIT_SRC) $(INIT_DEFS)
+$(INIT_BINARY): $(INIT_SRC) $(SYSROOT_TARGET)
+	$(CC_LINUX) -O2 -static -Wall $(INIT_DEFS) -o $@ $(INIT_SRC) $(INIT_DEFS)
 endif
 
 NITRO_INIT_BINARY= init/nitro/init
 $(NITRO_INIT_BINARY): $(NITRO_INIT_SRC)
 	$(CC) -O2 -static -Wall $(NITRO_INIT_LD_FLAGS) -o $@ $(NITRO_INIT_SRC) $(NITRO_INIT_LD_FLAGS)
+
+# Sysroot preparation rules for cross-compilation on macOS
+DEBIAN_PACKAGES = libc6 libc6-dev libgcc-12-dev linux-libc-dev
+ROOTFS_TMP = $(ROOTFS_DIR)/.tmp
+PACKAGES_FILE = $(ROOTFS_TMP)/Packages.xz
+
+.INTERMEDIATE: $(PACKAGES_FILE)
+
+$(ROOTFS_DIR)/.sysroot_ready: $(PACKAGES_FILE)
+	@echo "Extracting Debian packages to $(ROOTFS_DIR)..."
+	@for pkg in $(DEBIAN_PACKAGES); do \
+		DEB_PATH=$$(xzcat $(PACKAGES_FILE) | sed '1,/Package: '$$pkg'$$/d' | grep Filename: | sed 's/^Filename: //' | head -n1); \
+		DEB_URL="https://deb.debian.org/debian/$$DEB_PATH"; \
+		DEB_NAME=$$(basename "$$DEB_PATH"); \
+		if [ ! -f "$(ROOTFS_TMP)/$$DEB_NAME" ]; then \
+			echo "Downloading $$DEB_URL"; \
+			curl -fL -o "$(ROOTFS_TMP)/$$DEB_NAME" "$$DEB_URL"; \
+		fi; \
+		cd $(ROOTFS_TMP) && ar x "$$DEB_NAME" && cd ../..; \
+		tar xf $(ROOTFS_TMP)/data.tar.* -C $(ROOTFS_DIR); \
+		rm -f $(ROOTFS_TMP)/*.deb $(ROOTFS_TMP)/data.tar.* $(ROOTFS_TMP)/control.tar.* $(ROOTFS_TMP)/debian-binary; \
+	done
+	@touch $@
+
+$(PACKAGES_FILE):
+	@echo "Downloading Debian package index for $(DEBIAN_DIST)/$(ARCH)..."
+	@mkdir -p $(ROOTFS_TMP)
+	@curl -fL -o $@ https://deb.debian.org/debian/dists/$(DEBIAN_DIST)/main/binary-$(ARCH)/Packages.xz
+
+clean-sysroot:
+	rm -rf $(ROOTFS_DIR)
+
 
 $(LIBRARY_RELEASE_$(OS)): $(INIT_BINARY)
 	cargo build --release $(FEATURE_FLAGS)
@@ -174,6 +225,8 @@ clean:
 	cargo clean
 	rm -rf test-prefix
 	cd tests; cargo clean
+
+clean-all: clean clean-sysroot
 
 test-prefix/lib64/libkrun.pc: $(LIBRARY_RELEASE_$(OS))
 	mkdir -p test-prefix
