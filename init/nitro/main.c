@@ -19,6 +19,8 @@
 #include <sys/wait.h>
 #include <linux/vm_sockets.h>
 
+#include <nsm.h>
+
 #include "include/archive.h"
 #include "include/fs_init.h"
 #include "include/cgroups_init.h"
@@ -29,6 +31,11 @@
 #define HEART_BEAT 0xb7
 #define VSOCK_CID 3
 #define VSOCK_PORT 9000
+
+#define NSM_PCR_ROOTFS      16
+#define NSM_PCR_EXEC_DATA   17
+
+#define NSM_PCR_CHUNK_SIZE   0x800  // 2 KiB.
 
 /*
  * Block or unblock signals.
@@ -278,6 +285,67 @@ launch(char **argv, char **envp)
     return 0;
 }
 
+static int
+nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size, char *path,
+    char **argv, char **envp)
+{
+    uint32_t pcr_data_size, total, to_write;
+    uint8_t pcr_data[256];
+    int ret, nsm_fd, i;
+    char *exec_ptr;
+    void *idx;
+
+    nsm_fd = nsm_lib_init();
+    if (nsm_fd < 0) {
+        perror("unable to open NSM guest module");
+        return -errno;
+    }
+
+    idx = rootfs_archive;
+    total = archive_size;
+    while (total > 0) {
+        to_write = (total < NSM_PCR_CHUNK_SIZE) ? total : NSM_PCR_CHUNK_SIZE;
+        ret = nsm_extend_pcr(nsm_fd, NSM_PCR_ROOTFS, idx, to_write,
+            (void *) pcr_data, &pcr_data_size);
+        if (ret != ERROR_CODE_SUCCESS)
+            goto done;
+
+        idx += to_write;
+        total -= to_write;
+    }
+
+    exec_ptr = path;
+    ret = nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *) exec_ptr,
+        strlen(exec_ptr), (void *) pcr_data, &pcr_data_size);
+    if (ret != ERROR_CODE_SUCCESS)
+        goto done;
+
+    for (i = 0; (exec_ptr = argv[i]) != NULL; ++i) {
+        ret = nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *) exec_ptr,
+            strlen(exec_ptr), (void *) pcr_data, &pcr_data_size);
+        if (ret != ERROR_CODE_SUCCESS)
+            goto done;
+    }
+
+    for (i = 0; (exec_ptr = envp[i]) != NULL; ++i) {
+        ret = nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *) exec_ptr,
+            strlen(exec_ptr), (void *) pcr_data, &pcr_data_size);
+        if (ret != ERROR_CODE_SUCCESS)
+            goto done;
+    }
+
+    ret = nsm_lock_pcrs(nsm_fd, NSM_PCR_EXEC_DATA);
+    if (ret != ERROR_CODE_SUCCESS)
+        goto done;
+
+    ret = 0;
+
+done:
+    nsm_lib_exit(nsm_fd);
+
+    return -ret;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -318,6 +386,11 @@ main(int argc, char *argv[])
         exit(ret);
 
     ret = vsock_char_list_build(sock_fd, &exec_envp);
+    if (ret < 0)
+        exit(ret);
+
+    ret = nsm_pcrs_extend(rootfs_archive, archive_size, exec_path, exec_argv,
+        exec_envp);
     if (ret < 0)
         exit(ret);
 
