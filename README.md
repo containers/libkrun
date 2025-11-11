@@ -214,6 +214,20 @@ This is a simple example providing ```chroot```-like functionality using ```libk
 
 #### Building chroot_vm
 
+To be able to ```chroot_vm```, you need need to build libkrun with the `virtio-block` and `virtio-net` optional features:
+
+```
+make BLK=1 NET=1
+```
+
+then
+
+```
+sudo make BLK=1 NET=1 install
+```
+
+you can then build `chroot_vm`:
+
 ```
 cd examples
 make
