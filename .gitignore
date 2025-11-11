@@ -9,4 +9,5 @@ __pycache__
 /libkrun.pc
 init/init
 examples/chroot_vm
+rootfs_fedora
 test-prefix
