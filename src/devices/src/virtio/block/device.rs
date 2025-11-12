@@ -277,6 +277,7 @@ impl Block {
             | (1u64 << VIRTIO_BLK_F_FLUSH)
             | (1u64 << VIRTIO_BLK_F_SEG_MAX)
             | (1u64 << VIRTIO_BLK_F_DISCARD)
+            | (1u64 << VIRTIO_BLK_F_WRITE_ZEROES)
             | (1u64 << VIRTIO_RING_F_EVENT_IDX);
 
         if is_disk_read_only {
@@ -295,6 +296,9 @@ impl Block {
             max_discard_sectors: u32::MAX,
             max_discard_seg: 1,
             discard_sector_alignment: discard_alignment as u32 / 512,
+            max_write_zeroes_sectors: u32::MAX,
+            max_write_zeroes_seg: 1,
+            write_zeroes_may_unmap: 1,
             ..Default::default()
         };
 
