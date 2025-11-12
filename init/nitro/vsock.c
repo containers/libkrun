@@ -43,7 +43,6 @@ vsock_char_list_build(int sock_fd, char ***buf_ptr)
     // Allocate extra space for NULL-terminator.
     buf = (char **) malloc(sizeof(char *) * (size + 1));
     if (buf == NULL) {
-        close(sock_fd);
         perror("vsock char list buffer malloc");
         return -errno;
     }
@@ -82,7 +81,6 @@ vsock_rcv(int sock_fd, void **buf_ptr, uint32_t *size)
 
     buf = (uint8_t *) malloc(sizeof(uint8_t) * len);
     if (buf == NULL) {
-        close(sock_fd);
         perror("vsock byte buffer malloc");
         return -errno;
     }
@@ -90,7 +88,6 @@ vsock_rcv(int sock_fd, void **buf_ptr, uint32_t *size)
     while (len) {
         read_len = read(sock_fd, &buf[idx], len);
         if (read_len <= 0) {
-            close(sock_fd);
             free((void *) buf);
             perror("vsock byte buffer read");
             return -errno;

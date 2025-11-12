@@ -374,20 +374,30 @@ main(int argc, char *argv[])
         exit(ret);
 
     ret = vsock_rcv(sock_fd, &rootfs_archive, &archive_size);
-    if (ret < 0)
+    if (ret < 0) {
+        close(sock_fd);
         exit(ret);
+    }
 
     ret = vsock_rcv(sock_fd, (void **) &exec_path, NULL);
-    if (ret < 0)
+    if (ret < 0) {
+        close(sock_fd);
         exit(ret);
+    }
 
     ret = vsock_char_list_build(sock_fd, &exec_argv);
-    if (ret < 0)
+    if (ret < 0) {
+        close(sock_fd);
         exit(ret);
+    }
 
     ret = vsock_char_list_build(sock_fd, &exec_envp);
-    if (ret < 0)
+    if (ret < 0) {
+        close(sock_fd);
         exit(ret);
+    }
+
+    close(sock_fd);
 
     ret = nsm_pcrs_extend(rootfs_archive, archive_size, exec_path, exec_argv,
         exec_envp);
