@@ -315,11 +315,10 @@ mod tests {
     use super::*;
     use arch;
     use devices::legacy::DummyIrqChip;
+    use devices::legacy::KvmApi;
     use devices::virtio::InterruptTransport;
-    use devices::{
-        legacy::KvmIoapic,
-        virtio::{ActivateResult, Queue, VirtioDevice},
-    };
+
+    use devices::virtio::{ActivateResult, Queue, VirtioDevice};
     use std::sync::Arc;
     use utils::errno;
     use utils::eventfd::EventFd;
@@ -333,7 +332,7 @@ mod tests {
             vm: &VmFd,
             guest_mem: GuestMemoryMmap,
             device: Arc<Mutex<dyn devices::virtio::VirtioDevice>>,
-            cmdline: &mut kernel_cmdline::Cmdline,
+            _cmdline: &mut kernel_cmdline::Cmdline,
             type_id: u32,
             device_id: &str,
         ) -> Result<u64> {
@@ -343,7 +342,7 @@ mod tests {
             let (mmio_base, _irq) =
                 self.register_mmio_device(vm, mmio_device, type_id, device_id.to_string())?;
             #[cfg(target_arch = "x86_64")]
-            self.add_device_to_cmdline(cmdline, mmio_base, _irq)?;
+            self.add_device_to_cmdline(_cmdline, mmio_base, _irq)?;
             Ok(mmio_base)
         }
     }
@@ -435,7 +434,7 @@ mod tests {
         let vm = builder::setup_vm(&guest_mem, false).unwrap();
         let mut device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
-        let _kvmioapic = KvmIoapic::new(vm.fd()).unwrap();
+        let _kvmapi = KvmApi::new(vm.fd(), vcpu_count.into()).unwrap();
 
         let mut cmdline = kernel_cmdline::Cmdline::new(4096);
         let dummy = Arc::new(Mutex::new(DummyDevice::new()));
@@ -455,7 +454,7 @@ mod tests {
         let vm = builder::setup_vm(&guest_mem, false).unwrap();
         let mut device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
-        let _kvmioapic = KvmIoapic::new(vm.fd()).unwrap();
+        let _kvmapi = KvmApi::new(vm.fd(), vcpu_count.into()).unwrap();
 
         let mut cmdline = kernel_cmdline::Cmdline::new(4096);
 
@@ -552,7 +551,7 @@ mod tests {
         let start_addr2 = GuestAddress(0x1000);
         let guest_mem =
             GuestMemoryMmap::from_ranges(&[(start_addr1, 0x1000), (start_addr2, 0x1000)]).unwrap();
-        let vcpu_count = 1;
+        let _vcpu_count = 1;
         let vm = builder::setup_vm(&guest_mem, false).unwrap();
         let mut device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
