@@ -247,6 +247,7 @@ impl Block {
         #[cfg(target_os = "macos")]
         let file_opts = file_opts.relaxed_sync(true);
         let file = ImagoFile::open_sync(file_opts)?;
+        let discard_alignment = file.discard_align();
 
         let disk_image = match disk_image_format {
             ImageType::Qcow2 => {
@@ -275,6 +276,7 @@ impl Block {
         let mut avail_features = (1u64 << VIRTIO_F_VERSION_1)
             | (1u64 << VIRTIO_BLK_F_FLUSH)
             | (1u64 << VIRTIO_BLK_F_SEG_MAX)
+            | (1u64 << VIRTIO_BLK_F_DISCARD)
             | (1u64 << VIRTIO_RING_F_EVENT_IDX);
 
         if is_disk_read_only {
@@ -290,6 +292,9 @@ impl Block {
             size_max: 0,
             // QUEUE_SIZE - 2
             seg_max: 254,
+            max_discard_sectors: u32::MAX,
+            max_discard_seg: 1,
+            discard_sector_alignment: discard_alignment as u32 / 512,
             ..Default::default()
         };
 
