@@ -17,10 +17,12 @@ use vm_memory::{ByteValued, GuestMemoryMmap};
 #[derive(Debug)]
 pub enum RequestError {
     Discarding(io::Error),
+    DiscardingToZero(io::Error),
     FlushingToDisk(io::Error),
     InvalidDataLength,
     ReadingFromDescriptor(io::Error),
     WritingToDescriptor(io::Error),
+    WritingZeroes(io::Error),
     UnknownRequest,
 }
 
@@ -270,6 +272,34 @@ impl BlockWorker {
                         discard_write_data.num_sectors as u64 * 512,
                     )
                     .map_err(RequestError::Discarding)?;
+                Ok(0)
+            }
+            VIRTIO_BLK_T_WRITE_ZEROES => {
+                let discard_write_data: DiscardWriteData = reader
+                    .read_obj()
+                    .map_err(RequestError::ReadingFromDescriptor)?;
+                let unmap = (discard_write_data.flags & VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP) != 0;
+                if unmap {
+                    self.disk
+                        .file
+                        .lock()
+                        .unwrap()
+                        .discard_to_zero(
+                            discard_write_data.sector * 512,
+                            discard_write_data.num_sectors as u64 * 512,
+                        )
+                        .map_err(RequestError::DiscardingToZero)?;
+                } else {
+                    self.disk
+                        .file
+                        .lock()
+                        .unwrap()
+                        .write_zeroes(
+                            discard_write_data.sector * 512,
+                            discard_write_data.num_sectors as u64 * 512,
+                        )
+                        .map_err(RequestError::WritingZeroes)?;
+                }
                 Ok(0)
             }
             _ => Err(RequestError::UnknownRequest),
