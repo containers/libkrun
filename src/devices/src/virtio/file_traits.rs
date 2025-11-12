@@ -432,7 +432,7 @@ impl FileReadWriteAtVolatile for DiskProperties {
             .len()
             .try_into()
             .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
-        self.file().readv(iovec, offset)?;
+        self.file.lock().unwrap().readv(iovec, offset)?;
         Ok(full_length)
     }
 
@@ -450,7 +450,7 @@ impl FileReadWriteAtVolatile for DiskProperties {
             .len()
             .try_into()
             .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
-        self.file().writev(iovec, offset)?;
+        self.file.lock().unwrap().writev(iovec, offset)?;
         Ok(full_length)
     }
 }
