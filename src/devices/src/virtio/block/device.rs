@@ -163,10 +163,39 @@ impl Drop for DiskProperties {
 
 #[derive(Copy, Clone, Debug, Default)]
 #[repr(C, packed)]
+struct VirtioBlkGeometry {
+    cylinders: u16,
+    heads: u8,
+    sectors: u8,
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+#[repr(C, packed)]
+struct VirtioBlkTopology {
+    physical_block_exp: u8,
+    alignment_offset: u8,
+    min_io_size: u16,
+    opt_io_size: u32,
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+#[repr(C, packed)]
 struct VirtioBlkConfig {
     capacity: u64,
     size_max: u32,
     seg_max: u32,
+    geometry: VirtioBlkGeometry,
+    blk_size: u32,
+    topology: VirtioBlkTopology,
+    writeback: u8,
+    unused0: u8,
+    num_queues: u16,
+    max_discard_sectors: u32,
+    max_discard_seg: u32,
+    discard_sector_alignment: u32,
+    max_write_zeroes_sectors: u32,
+    max_write_zeroes_seg: u32,
+    write_zeroes_may_unmap: u8,
 }
 
 // Safe because it only has data and has no implicit padding.
@@ -265,6 +294,7 @@ impl Block {
             size_max: 0,
             // QUEUE_SIZE - 2
             seg_max: 254,
+            ..Default::default()
         };
 
         Ok(Block {
