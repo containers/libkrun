@@ -244,7 +244,7 @@ If the ```libkrun``` and/or ```libkrunfw``` libraries were installed on a path t
 To avoid this problem, use the ```LD_LIBRARY_PATH``` environment variable to point to the location where the libraries were installed. For example, if the libraries were installed in ```/usr/local/lib64```, use something like this:
 
 ```
-LD_LIBRARY_PATH=/usr/local/lib64 ./chroot_vm rootfs/ /bin/sh
+LD_LIBRARY_PATH=/usr/local/lib64 ./chroot_vm rootfs_fedora/ /bin/sh
 ```
 
 ## Status
