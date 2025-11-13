@@ -181,5 +181,7 @@ test-prefix/lib64/libkrun.pc: $(LIBRARY_RELEASE_$(OS))
 
 test-prefix: test-prefix/lib64/libkrun.pc
 
+TEST ?= all
+
 test: test-prefix
-	cd tests; LD_LIBRARY_PATH="$$(realpath ../test-prefix/lib64/)" PKG_CONFIG_PATH="$$(realpath ../test-prefix/lib64/pkgconfig/)" ./run.sh
+	cd tests; LD_LIBRARY_PATH="$$(realpath ../test-prefix/lib64/)" PKG_CONFIG_PATH="$$(realpath ../test-prefix/lib64/pkgconfig/)" ./run.sh test --test-case "$(TEST)"
