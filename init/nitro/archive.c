@@ -8,8 +8,7 @@
 
 #include "include/archive.h"
 
-static struct archive *
-reader_init(void *buf, size_t size)
+static struct archive *reader_init(void *buf, size_t size)
 {
     struct archive *r;
     int ret;
@@ -35,8 +34,7 @@ reader_init(void *buf, size_t size)
     return r;
 }
 
-static struct archive *
-writer_init()
+static struct archive *writer_init()
 {
     struct archive *w;
     int ret;
@@ -56,8 +54,7 @@ writer_init()
     return w;
 }
 
-static int
-extract(struct archive *r, struct archive *w)
+static int extract(struct archive *r, struct archive *w)
 {
     struct archive_entry *entry;
     const void *buf;
@@ -67,32 +64,38 @@ extract(struct archive *r, struct archive *w)
 
     while ((ret = archive_read_next_header(r, &entry)) != ARCHIVE_EOF) {
         if (ret != ARCHIVE_OK) {
-            printf("error reading archive entry\ncause: %s\n", archive_error_string(r));
+            printf("error reading archive entry\ncause: %s\n",
+                   archive_error_string(r));
             return -1;
         }
 
         ret = archive_write_header(w, entry);
         if (ret != ARCHIVE_OK) {
-            printf("error writing %s entry\ncause: %s\n", archive_entry_pathname(entry), archive_error_string(w));
+            printf("error writing %s entry\ncause: %s\n",
+                   archive_entry_pathname(entry), archive_error_string(w));
             return -1;
         }
 
-        while ((ret = archive_read_data_block(r, &buf, &size, &offset)) != ARCHIVE_EOF) {
+        while ((ret = archive_read_data_block(r, &buf, &size, &offset)) !=
+               ARCHIVE_EOF) {
             if (ret != ARCHIVE_OK) {
-                printf("error reading archive data block\ncause: %s\n", archive_error_string(r));
+                printf("error reading archive data block\ncause: %s\n",
+                       archive_error_string(r));
                 return -1;
             }
 
             ret = archive_write_data_block(w, buf, size, offset);
             if (ret != ARCHIVE_OK) {
-                printf("error writing archive data block\ncause: %s\n", archive_error_string(w));
+                printf("error writing archive data block\ncause: %s\n",
+                       archive_error_string(w));
                 return -1;
             }
         }
 
         ret = archive_write_finish_entry(w);
         if (ret != ARCHIVE_OK) {
-            printf("error finishing %s entry\ncause: %s\n", archive_entry_pathname(entry), archive_error_string(w));
+            printf("error finishing %s entry\ncause: %s\n",
+                   archive_entry_pathname(entry), archive_error_string(w));
             return -1;
         }
     }
@@ -100,8 +103,7 @@ extract(struct archive *r, struct archive *w)
     return 0;
 }
 
-static void
-archive_cleanup(struct archive *r, struct archive *w)
+static void archive_cleanup(struct archive *r, struct archive *w)
 {
     if (r != NULL) {
         archive_read_close(r);
@@ -109,13 +111,12 @@ archive_cleanup(struct archive *r, struct archive *w)
     }
 
     if (w != NULL) {
-	    archive_write_close(w);
+        archive_write_close(w);
         archive_write_free(w);
     }
 }
 
-int
-archive_extract(void *buf, size_t size)
+int archive_extract(void *buf, size_t size)
 {
     struct archive *reader, *writer;
     int ret;

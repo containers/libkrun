@@ -3,39 +3,40 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/vm_sockets.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include <sys/syscall.h>
+#include <sys/types.h>
 #include <sys/wait.h>
-#include <linux/vm_sockets.h>
+#include <unistd.h>
 
 #include <nsm.h>
 
 #include "include/archive.h"
-#include "include/fs_init.h"
 #include "include/cgroups_init.h"
+#include "include/fs_init.h"
 #include "include/vsock.h"
 
-#define finit_module(fd, param_values, flags) (int)syscall(__NR_finit_module, fd, param_values, flags)
+#define finit_module(fd, param_values, flags)                                  \
+    (int)syscall(__NR_finit_module, fd, param_values, flags)
 
 #define HEART_BEAT 0xb7
 #define VSOCK_CID 3
 #define VSOCK_PORT 9000
 
-#define NSM_PCR_ROOTFS      16
-#define NSM_PCR_EXEC_DATA   17
+#define NSM_PCR_ROOTFS 16
+#define NSM_PCR_EXEC_DATA 17
 
-#define NSM_PCR_CHUNK_SIZE   0x800  // 2 KiB.
+#define NSM_PCR_CHUNK_SIZE 0x800 // 2 KiB.
 
 /*
  * Block or unblock signals.
@@ -44,8 +45,7 @@
  *       Therefore, perror output may not be displayed if a failure occurs
  *       during this setup.
  */
-int
-sig_mask(int mask)
+int sig_mask(int mask)
 {
     sigset_t set;
     int ret;
@@ -72,8 +72,7 @@ sig_mask(int mask)
  * Initialize /dev/console and redirect std{err, in, out} to it for early debug
  * output.
  */
-int
-console_init()
+int console_init()
 {
     const char *path = "/dev/console";
     FILE *file;
@@ -110,8 +109,7 @@ console_init()
 /*
  * Initialize/load the NSM kernel module.
  */
-int
-nsm_init()
+int nsm_init()
 {
     const char *file_name = "nsm.ko";
     int fd, ret;
@@ -151,8 +149,7 @@ nsm_init()
 /*
  * Signal to the host that the enclave is ready to receive the archived rootfs.
  */
-int
-krun_signal()
+int krun_signal()
 {
     uint8_t buf[1];
     struct sockaddr_vm saddr;
@@ -173,7 +170,7 @@ krun_signal()
     }
 
     // Connect to the host.
-    ret = connect(sock_fd, (struct sockaddr *) &saddr, sizeof(saddr));
+    ret = connect(sock_fd, (struct sockaddr *)&saddr, sizeof(saddr));
     if (ret < 0) {
         close(sock_fd);
         perror("vsock connect");
@@ -205,8 +202,7 @@ krun_signal()
     return sock_fd;
 }
 
-static int
-rootfs_mount()
+static int rootfs_mount()
 {
     int ret;
 
@@ -248,9 +244,7 @@ rootfs_mount()
     return 0;
 }
 
-
-pid_t
-launch(char **argv, char **envp)
+pid_t launch(char **argv, char **envp)
 {
     int ret, pid;
 
@@ -285,9 +279,8 @@ launch(char **argv, char **envp)
     return 0;
 }
 
-static int
-nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size, char *path,
-    char **argv, char **envp)
+static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
+                           char *path, char **argv, char **envp)
 {
     uint32_t pcr_data_size, total, to_write;
     uint8_t pcr_data[256];
@@ -306,7 +299,7 @@ nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size, char *path,
     while (total > 0) {
         to_write = (total < NSM_PCR_CHUNK_SIZE) ? total : NSM_PCR_CHUNK_SIZE;
         ret = nsm_extend_pcr(nsm_fd, NSM_PCR_ROOTFS, idx, to_write,
-            (void *) pcr_data, &pcr_data_size);
+                             (void *)pcr_data, &pcr_data_size);
         if (ret != ERROR_CODE_SUCCESS)
             goto done;
 
@@ -315,21 +308,23 @@ nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size, char *path,
     }
 
     exec_ptr = path;
-    ret = nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *) exec_ptr,
-        strlen(exec_ptr), (void *) pcr_data, &pcr_data_size);
+    ret = nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *)exec_ptr,
+                         strlen(exec_ptr), (void *)pcr_data, &pcr_data_size);
     if (ret != ERROR_CODE_SUCCESS)
         goto done;
 
     for (i = 0; (exec_ptr = argv[i]) != NULL; ++i) {
-        ret = nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *) exec_ptr,
-            strlen(exec_ptr), (void *) pcr_data, &pcr_data_size);
+        ret =
+            nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *)exec_ptr,
+                           strlen(exec_ptr), (void *)pcr_data, &pcr_data_size);
         if (ret != ERROR_CODE_SUCCESS)
             goto done;
     }
 
     for (i = 0; (exec_ptr = envp[i]) != NULL; ++i) {
-        ret = nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *) exec_ptr,
-            strlen(exec_ptr), (void *) pcr_data, &pcr_data_size);
+        ret =
+            nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *)exec_ptr,
+                           strlen(exec_ptr), (void *)pcr_data, &pcr_data_size);
         if (ret != ERROR_CODE_SUCCESS)
             goto done;
     }
@@ -346,8 +341,7 @@ done:
     return -ret;
 }
 
-int
-main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
     char *exec_path, **exec_argv, **exec_envp;
     uint32_t archive_size;
@@ -379,7 +373,7 @@ main(int argc, char *argv[])
         exit(ret);
     }
 
-    ret = vsock_rcv(sock_fd, (void **) &exec_path, NULL);
+    ret = vsock_rcv(sock_fd, (void **)&exec_path, NULL);
     if (ret < 0) {
         close(sock_fd);
         exit(ret);
@@ -400,7 +394,7 @@ main(int argc, char *argv[])
     close(sock_fd);
 
     ret = nsm_pcrs_extend(rootfs_archive, archive_size, exec_path, exec_argv,
-        exec_envp);
+                          exec_envp);
     if (ret < 0)
         exit(ret);
 
