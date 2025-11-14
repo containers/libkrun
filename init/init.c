@@ -1133,6 +1133,11 @@ int main(int argc, char **argv)
         }
     }
 
+    if (mount(NULL, "/", NULL, MS_REC | MS_SHARED, NULL) < 0) {
+        perror("Couldn't set shared propagation on the root mount");
+        exit(-1);
+    }
+
     setsid();
     ioctl(0, TIOCSCTTY, 1);
 
