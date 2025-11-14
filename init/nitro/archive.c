@@ -127,7 +127,7 @@ int archive_extract(void *buf, size_t size)
 
     writer = writer_init();
     if (writer == NULL) {
-        archive_cleanup(r, NULL);
+        archive_cleanup(reader, NULL);
         return -1;
     }
 
