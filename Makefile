@@ -17,9 +17,20 @@ SNP_INIT_SRC =	init/tee/snp_attest.c		\
 		$(KBS_INIT_SRC)			\
 
 TDX_INIT_SRC = $(KBS_INIT_SRC)
+NITRO_INIT_SRC = init/nitro/include/vsock.h		\
+		init/nitro/include/archive.h		\
+		init/nitro/include/cgroups_init.h	\
+		init/nitro/include/fs_init.h		\
+		init/nitro/main.c			\
+		init/nitro/vsock.c			\
+		init/nitro/archive.c			\
+		init/nitro/cgroups_init.c		\
+		init/nitro/fs_init.c			\
 
 KBS_LD_FLAGS =	-lcurl -lidn2 -lssl -lcrypto -lzstd -lz -lbrotlidec-static \
 		-lbrotlicommon-static
+
+NITRO_INIT_LD_FLAGS = -larchive -lnsm
 
 BUILD_INIT = 1
 INIT_DEFS =
@@ -105,6 +116,10 @@ INIT_BINARY = init/init
 $(INIT_BINARY): $(INIT_SRC)
 	$(CC) -O2 -static -Wall $(INIT_DEFS) -o $@ $(INIT_SRC) $(INIT_DEFS)
 endif
+
+NITRO_INIT_BINARY= init/nitro/init
+$(NITRO_INIT_BINARY): $(NITRO_INIT_SRC)
+	$(CC) -O2 -static -Wall $(NITRO_INIT_LD_FLAGS) -o $@ $(NITRO_INIT_SRC) $(NITRO_INIT_LD_FLAGS)
 
 $(LIBRARY_RELEASE_$(OS)): $(INIT_BINARY)
 	cargo build --release $(FEATURE_FLAGS)
