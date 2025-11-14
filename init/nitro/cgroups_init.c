@@ -8,8 +8,7 @@
 
 #include "include/cgroups_init.h"
 
-int
-cgroups_init()
+int cgroups_init()
 {
     const char *fpath = "/proc/cgroups";
     int ret, heir, groups, enabled;
@@ -36,7 +35,7 @@ cgroups_init()
 
         if (ret != 4) {
             fclose(f);
-            errno = errno ? : EINVAL;
+            errno = errno ?: EINVAL;
             perror("fscan /sys/fs/cgroup");
             return -errno;
         }
