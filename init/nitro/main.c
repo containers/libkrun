@@ -22,8 +22,7 @@
 #include <nsm.h>
 
 #include "include/archive.h"
-#include "include/cgroups_init.h"
-#include "include/fs_init.h"
+#include "include/fs.h"
 #include "include/vsock.h"
 
 #define finit_module(fd, param_values, flags)                                  \

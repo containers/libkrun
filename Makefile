@@ -19,13 +19,11 @@ SNP_INIT_SRC =	init/tee/snp_attest.c		\
 TDX_INIT_SRC = $(KBS_INIT_SRC)
 NITRO_INIT_SRC = init/nitro/include/vsock.h		\
 		init/nitro/include/archive.h		\
-		init/nitro/include/cgroups_init.h	\
-		init/nitro/include/fs_init.h		\
+		init/nitro/include/fs.h			\
 		init/nitro/main.c			\
 		init/nitro/vsock.c			\
 		init/nitro/archive.c			\
-		init/nitro/cgroups_init.c		\
-		init/nitro/fs_init.c			\
+		init/nitro/fs.c				\
 
 KBS_LD_FLAGS =	-lcurl -lidn2 -lssl -lcrypto -lzstd -lz -lbrotlidec-static \
 		-lbrotlicommon-static
