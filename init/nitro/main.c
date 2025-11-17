@@ -47,7 +47,7 @@ int sig_mask(int mask)
     ret = sigfillset(&set);
     if (ret < 0) {
         perror("sigfillset");
-        return ret;
+        return -errno;
     }
 
     // Block/unblock the signals. This essentially blocks/unblocks all signals
@@ -55,7 +55,7 @@ int sig_mask(int mask)
     ret = sigprocmask(mask, &set, 0);
     if (ret < 0) {
         perror("sigprocmask");
-        return ret;
+        return -errno;
     }
 
     return 0;
@@ -87,16 +87,20 @@ int console_init()
     file = freopen(path, "w", stdout);
     if (file == NULL) {
         perror("freopen stdout");
-        return -errno;
+        goto err;
     }
 
     file = freopen(path, "w", stderr);
     if (file == NULL) {
         perror("freopen stderr");
-        return -errno;
+        goto err;
     }
 
     return 0;
+
+err:
+    fclose(file);
+    return -errno;
 }
 
 /*
@@ -231,6 +235,8 @@ static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
         return -errno;
     }
 
+    pcr_data_size = 256;
+
     idx = rootfs_archive;
     total = archive_size;
     while (total > 0) {
@@ -238,7 +244,7 @@ static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
         ret = nsm_extend_pcr(nsm_fd, NSM_PCR_ROOTFS, idx, to_write,
                              (void *)pcr_data, &pcr_data_size);
         if (ret != ERROR_CODE_SUCCESS)
-            goto done;
+            goto out;
 
         idx += to_write;
         total -= to_write;
@@ -248,14 +254,14 @@ static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
     ret = nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *)exec_ptr,
                          strlen(exec_ptr), (void *)pcr_data, &pcr_data_size);
     if (ret != ERROR_CODE_SUCCESS)
-        goto done;
+        goto out;
 
     for (i = 0; (exec_ptr = argv[i]) != NULL; ++i) {
         ret =
             nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *)exec_ptr,
                            strlen(exec_ptr), (void *)pcr_data, &pcr_data_size);
         if (ret != ERROR_CODE_SUCCESS)
-            goto done;
+            goto out;
     }
 
     for (i = 0; (exec_ptr = envp[i]) != NULL; ++i) {
@@ -263,16 +269,16 @@ static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
             nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *)exec_ptr,
                            strlen(exec_ptr), (void *)pcr_data, &pcr_data_size);
         if (ret != ERROR_CODE_SUCCESS)
-            goto done;
+            goto out;
     }
 
     ret = nsm_lock_pcrs(nsm_fd, NSM_PCR_EXEC_DATA);
     if (ret != ERROR_CODE_SUCCESS)
-        goto done;
+        goto out;
 
     ret = 0;
 
-done:
+out:
     nsm_lib_exit(nsm_fd);
 
     return -ret;
@@ -288,44 +294,44 @@ int main(int argc, char *argv[])
     // Block all signals.
     ret = sig_mask(SIG_BLOCK);
     if (ret < 0)
-        exit(ret);
+        goto out;
 
     // Initialize early debug output with /dev/console.
     ret = console_init();
     if (ret < 0)
-        exit(ret);
+        goto out;
 
     // Initialize the NSM kernel module.
     ret = nsm_init();
     if (ret < 0)
-        exit(ret);
+        goto out;
 
     sock_fd = vsock_hypervisor_signal();
     if (sock_fd < 0)
-        exit(ret);
+        goto out;
 
     ret = vsock_rcv(sock_fd, &rootfs_archive, &archive_size);
     if (ret < 0) {
         close(sock_fd);
-        exit(ret);
+        goto out;
     }
 
     ret = vsock_rcv(sock_fd, (void **)&exec_path, NULL);
     if (ret < 0) {
         close(sock_fd);
-        exit(ret);
+        goto out;
     }
 
     ret = vsock_char_list_build(sock_fd, &exec_argv);
     if (ret < 0) {
         close(sock_fd);
-        exit(ret);
+        goto out;
     }
 
     ret = vsock_char_list_build(sock_fd, &exec_envp);
     if (ret < 0) {
         close(sock_fd);
-        exit(ret);
+        goto out;
     }
 
     close(sock_fd);
@@ -333,15 +339,15 @@ int main(int argc, char *argv[])
     ret = nsm_pcrs_extend(rootfs_archive, archive_size, exec_path, exec_argv,
                           exec_envp);
     if (ret < 0)
-        exit(ret);
+        goto out;
 
     ret = archive_extract(rootfs_archive, archive_size);
     if (ret < 0)
-        exit(ret);
+        goto out;
 
     ret = rootfs_mount();
     if (ret < 0)
-        exit(ret);
+        goto out;
 
     // Ensure the container /dev is initialized as well.
     ret = mount("dev", "/dev", "devtmpfs", MS_NOSUID | MS_NOEXEC, NULL);
@@ -352,17 +358,20 @@ int main(int argc, char *argv[])
 
     ret = filesystem_init();
     if (ret < 0)
-        exit(ret);
+        goto out;
 
     ret = cgroups_init();
     if (ret < 0)
-        exit(ret);
+        goto out;
 
     ret = launch(exec_argv, exec_envp);
     if (ret < 0)
-        exit(ret);
+        goto out;
 
-    exit(0);
+    ret = 0;
+
+out:
+    exit(ret);
     reboot(RB_AUTOBOOT);
 
     // Unreachable.
