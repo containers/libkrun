@@ -39,10 +39,9 @@ int cgroups_init()
             break;
 
         if (ret != 4) {
-            fclose(f);
             errno = errno ?: EINVAL;
             perror("fscan /sys/fs/cgroup");
-            return -errno;
+            goto err;
         }
 
         if (enabled) {
@@ -50,24 +49,28 @@ int cgroups_init()
 
             ret = mkdir(path, 0755);
             if (ret < 0) {
-                fclose(f);
                 perror("mkdir cgroup path");
-                return -errno;
+                goto err;
             }
 
             ret = mount(name, path, "cgroup", MS_NODEV | MS_NOSUID | MS_NOEXEC,
                         name);
             if (ret < 0) {
-                fclose(f);
                 perror("mount cgroup");
-                return -errno;
+                goto err;
             }
         }
     }
 
-    fclose(f);
+    ret = 0;
+    goto out;
 
-    return 0;
+err:
+    ret = -errno;
+
+out:
+    fclose(f);
+    return ret;
 }
 
 int filesystem_init()
