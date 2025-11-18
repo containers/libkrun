@@ -3,7 +3,6 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/vm_sockets.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -12,7 +11,6 @@
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
@@ -27,10 +25,6 @@
 
 #define finit_module(fd, param_values, flags)                                  \
     (int)syscall(__NR_finit_module, fd, param_values, flags)
-
-#define HEART_BEAT 0xb7
-#define VSOCK_CID 3
-#define VSOCK_PORT 9000
 
 #define NSM_PCR_ROOTFS 16
 #define NSM_PCR_EXEC_DATA 17
@@ -143,62 +137,6 @@ int nsm_init()
     }
 
     return 0;
-}
-
-/*
- * Signal to the host that the enclave is ready to receive the archived rootfs.
- */
-int krun_signal()
-{
-    uint8_t buf[1];
-    struct sockaddr_vm saddr;
-    int ret, sock_fd;
-
-    buf[0] = HEART_BEAT;
-    errno = -EINVAL;
-
-    saddr.svm_family = AF_VSOCK;
-    saddr.svm_cid = VSOCK_CID;
-    saddr.svm_port = VSOCK_PORT;
-    saddr.svm_reserved1 = 0;
-
-    sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
-    if (sock_fd < 0) {
-        perror("vsock initialization");
-        return -errno;
-    }
-
-    // Connect to the host.
-    ret = connect(sock_fd, (struct sockaddr *)&saddr, sizeof(saddr));
-    if (ret < 0) {
-        close(sock_fd);
-        perror("vsock connect");
-        return -errno;
-    }
-
-    // Write the heartbeat to the host and read it back to ensure that the
-    // communication is established.
-    ret = write(sock_fd, buf, 1);
-    if (ret != 1) {
-        close(sock_fd);
-        perror("vsock write");
-        return -errno;
-    }
-
-    ret = read(sock_fd, buf, 1);
-    if (ret != 1) {
-        close(sock_fd);
-        perror("vsock read");
-        return -errno;
-    }
-
-    if (buf[0] != HEART_BEAT) {
-        close(sock_fd);
-        printf("unable to establish connection to hypervisor\n");
-        return -1;
-    }
-
-    return sock_fd;
 }
 
 static int rootfs_mount()
@@ -362,7 +300,7 @@ int main(int argc, char *argv[])
     if (ret < 0)
         exit(ret);
 
-    sock_fd = krun_signal();
+    sock_fd = vsock_hypervisor_signal();
     if (sock_fd < 0)
         exit(ret);
 
