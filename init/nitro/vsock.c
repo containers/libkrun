@@ -27,6 +27,16 @@ static int vsock_len_read(int sock_fd, uint32_t *size)
     return 0;
 }
 
+void char_list_free(char **buf)
+{
+    char *ptr;
+
+    for (int i = 0; (ptr = buf[i]) != NULL; ++i)
+        free((void *)ptr);
+
+    free((void *)buf);
+}
+
 int vsock_char_list_build(int sock_fd, char ***buf_ptr)
 {
     uint32_t size;
@@ -48,7 +58,7 @@ int vsock_char_list_build(int sock_fd, char ***buf_ptr)
     for (i = 0; i < size; ++i) {
         ret = vsock_rcv(sock_fd, (void **)&buf[i], NULL);
         if (ret < 0) {
-            free((void *)buf);
+            char_list_free(buf);
             return ret;
         }
     }
