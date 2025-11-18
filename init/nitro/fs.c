@@ -10,13 +10,17 @@
 
 #include "include/fs.h"
 
+#define PROC_CGROUPS_PATH "/proc/cgroups"
+#define SYS_FS_CGROUP_PATH "/sys/fs/cgroup/"
+#define CGROUP_SUB_PATH_SIZE (sizeof(SYS_FS_CGROUP_PATH) - 1 + 64)
+
 int cgroups_init()
 {
-    const char *fpath = "/proc/cgroups";
+    char path[CGROUP_SUB_PATH_SIZE], *name;
     int ret, heir, groups, enabled;
     FILE *f;
 
-    f = fopen(fpath, "r");
+    f = fopen(PROC_CGROUPS_PATH, "r");
     if (f == NULL) {
         perror("fopen /proc/cgroups");
         return -errno;
@@ -28,9 +32,8 @@ int cgroups_init()
     } while (ret != EOF && ret != '\n');
 
     for (;;) {
-        static const char base_path[] = "/sys/fs/cgroup/";
-        char path[sizeof(base_path) - 1 + 64];
-        char *name = path + sizeof(base_path) - 1;
+        name = path + sizeof(SYS_FS_CGROUP_PATH) - 1;
+
         ret = fscanf(f, "%64s %d %d %d\n", name, &heir, &groups, &enabled);
         if (ret == EOF)
             break;
@@ -43,7 +46,7 @@ int cgroups_init()
         }
 
         if (enabled) {
-            memcpy(path, base_path, sizeof(base_path) - 1);
+            memcpy(path, SYS_FS_CGROUP_PATH, sizeof(SYS_FS_CGROUP_PATH) - 1);
 
             ret = mkdir(path, 0755);
             if (ret < 0) {
