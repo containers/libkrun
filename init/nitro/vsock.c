@@ -7,9 +7,17 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <sys/socket.h>
+
+#include <linux/vm_sockets.h>
+
 #include "include/vsock.h"
 
 #define UINT64_T_SIZE 8
+
+#define HEART_BEAT 0xb7
+#define VSOCK_CID 3
+#define VSOCK_PORT 9000
 
 static int vsock_len_read(int sock_fd, uint32_t *size)
 {
@@ -106,4 +114,61 @@ int vsock_rcv(int sock_fd, void **buf_ptr, uint32_t *size)
     *buf_ptr = (void *)buf;
 
     return 0;
+}
+
+/*
+ * Signal to the host that the enclave is ready to receive the archived rootfs.
+ */
+int vsock_hypervisor_signal()
+{
+    uint8_t buf[1];
+    struct sockaddr_vm saddr;
+    int ret, sock_fd;
+
+    buf[0] = HEART_BEAT;
+    errno = -EINVAL;
+
+    saddr.svm_family = AF_VSOCK;
+    saddr.svm_cid = VSOCK_CID;
+    saddr.svm_port = VSOCK_PORT;
+    saddr.svm_reserved1 = 0;
+
+    sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
+    if (sock_fd < 0) {
+        perror("vsock initialization");
+        return -errno;
+    }
+
+    // Connect to the host.
+    ret = connect(sock_fd, (struct sockaddr *)&saddr, sizeof(saddr));
+    if (ret < 0) {
+        perror("vsock connect");
+        goto err;
+    }
+
+    // Write the heartbeat to the host and read it back to ensure that the
+    // communication is established.
+    ret = write(sock_fd, buf, 1);
+    if (ret != 1) {
+        perror("vsock write");
+        goto err;
+    }
+
+    ret = read(sock_fd, buf, 1);
+    if (ret != 1) {
+        perror("vsock read");
+        goto err;
+    }
+
+    if (buf[0] != HEART_BEAT) {
+        printf("unable to establish connection to hypervisor\n");
+        errno = 1;
+        goto err;
+    }
+
+    return sock_fd;
+
+err:
+    close(sock_fd);
+    return -errno;
 }
