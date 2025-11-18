@@ -13,13 +13,15 @@ use thiserror::Error;
     dead_code,
     unused_variables
 )]
-mod header {
+pub mod header {
     include!(concat!(env!("OUT_DIR"), "/display_header.rs"));
 }
 
 bitflags! {
+    #[derive(PartialEq, Eq)]
     pub struct DisplayFeatures: u64 {
         const BASIC_FRAMEBUFFER = header::KRUN_DISPLAY_FEATURE_BASIC_FRAMEBUFFER as u64;
+        const DMABUF_CONSUMER = header::KRUN_DISPLAY_FEATURE_DMABUF_CONSUMER as u64;
     }
 }
 
@@ -75,6 +77,34 @@ impl TryFrom<u32> for ResourceFormat {
     }
 }
 
-pub type DisplayVtable = header::krun_display_vtable;
+// V1 ABI: Before dmabuf support was added (backward compatibility)
+#[repr(C)]
+pub struct DisplayBackendV1 {
+    pub features: u64,
+    pub create_userdata: *const std::ffi::c_void,
+    pub create: header::krun_display_create_fn,
+    pub vtable: DisplayVtableV1,
+}
+
+#[repr(C)]
+pub union DisplayVtableV1 {
+    pub basic_framebuffer: DisplayBasicFramebufferVtable,
+}
+
+// V2 ABI: Current version with dmabuf support
+pub type DisplayBackendV2 = header::krun_display_backend;
+pub type DisplayVtableV2 = header::krun_display_vtable;
+
+// Known vtables
 pub type DisplayBasicFramebufferVtable = header::krun_display_basic_framebuffer_vtable;
+pub type DisplayDmabufVtable = header::krun_display_dmabuf_vtable;
+
+// Default to V2
+pub type DisplayVtable = DisplayVtableV2;
+
+const _: () = {
+    assert!(std::mem::size_of::<DisplayBackendV1>() < std::mem::size_of::<DisplayBackendV2>(),);
+};
+
 pub type Rect = header::krun_rect;
+pub type DmabufExport = header::krun_display_dmabuf_export;
