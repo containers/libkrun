@@ -35,27 +35,6 @@ static struct archive *reader_init(void *buf, size_t size)
     return r;
 }
 
-static struct archive *writer_init()
-{
-    struct archive *w;
-    int ret;
-
-    w = archive_write_disk_new();
-    if (w == NULL) {
-        printf("init writer failed\n");
-        return NULL;
-    }
-
-    ret = archive_write_disk_set_options(w, ARCHIVE_EXTRACT_TIME);
-    if (ret != ARCHIVE_OK) {
-        printf("error setting writer disk options\ncause: %s\n",
-               archive_error_string(w));
-        return NULL;
-    }
-
-    return w;
-}
-
 static int extract(struct archive *r, struct archive *w)
 {
     struct archive_entry *entry;
@@ -133,7 +112,7 @@ int archive_extract(void *buf, size_t size)
     if (reader == NULL)
         return -1;
 
-    writer = writer_init();
+    writer = archive_write_disk_new();
     if (writer == NULL) {
         archive_cleanup(reader, NULL);
         return -1;
