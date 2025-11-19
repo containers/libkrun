@@ -214,7 +214,7 @@ fn str_cstring_bytes(string: &str) -> Result<Vec<u8>> {
 }
 
 fn vsock_write_str_vec(vec: &Vec<String>, stream: &mut VsockStream) -> Result<()> {
-    let len: u64 = vec
+    let len: u32 = vec
         .len()
         .try_into()
         .or(Err(NitroError::VsockBytesTooLarge))?;
@@ -231,7 +231,7 @@ fn vsock_write_str_vec(vec: &Vec<String>, stream: &mut VsockStream) -> Result<()
 }
 
 fn vsock_write_bytes(bytes: &[u8], stream: &mut VsockStream) -> Result<()> {
-    let len: u64 = bytes
+    let len: u32 = bytes
         .len()
         .try_into()
         .or(Err(NitroError::VsockBytesTooLarge))?;
