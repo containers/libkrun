@@ -127,13 +127,14 @@ int nsm_init()
         return -errno;
     }
 
-    // Close the file descriptor and remove the NSM module file.
+    // Close the file descriptor.
     ret = close(fd);
     if (ret < 0) {
         perror("nsm.ko close");
         return -errno;
     }
 
+    // The NSM module file is no longer needed, remove it.
     ret = unlink(file_name);
     if (ret < 0) {
         perror("nsm.ko unlink");
@@ -143,6 +144,9 @@ int nsm_init()
     return 0;
 }
 
+/*
+ * Mount the extracted rootfs and switch the root directory to it.
+ */
 static int rootfs_mount()
 {
     int ret;
@@ -185,32 +189,43 @@ static int rootfs_mount()
     return 0;
 }
 
+/*
+ * Launch the application specified with argv and envp.
+ */
 pid_t launch(char **argv, char **envp)
 {
     int ret, pid;
 
+    // Fork the process.
     pid = fork();
     if (pid < 0) {
         perror("launch fork");
         return -errno;
     } else if (pid != 0) {
+        // Parent process. Wait for the child to end before exiting.
         wait(NULL);
         return 0;
     }
 
+    // Unblock all signals.
     ret = sig_mask(SIG_UNBLOCK);
     if (ret < 0)
         return ret;
 
+    // Create a new session and set the process group ID.
     setsid();
+
+    // Set the PGID to the same as the process ID.
     setpgid(0, 0);
 
+    // Add the envp to the environment variables.
     ret = putenv(envp[0]);
     if (ret < 0) {
         perror("initialize default path environment");
         return -errno;
     }
 
+    // Execute the process.
     ret = execvpe(argv[0], argv, envp);
     if (ret < 0) {
         perror("exec application");
@@ -220,6 +235,14 @@ pid_t launch(char **argv, char **envp)
     return 0;
 }
 
+/*
+ * Measure the enclave rootfs and execution variables (path, argv, envp) with
+ * the NSM PCRs.
+ *
+ * NSM PCR 16 contains the measurement of the root filesystem.
+ * NSM PCR 17 contains the measurement of the execution variables (path, argv,
+ * envp).
+ */
 static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
                            char *path, char **argv, char **envp)
 {
@@ -229,6 +252,7 @@ static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
     char *exec_ptr;
     void *idx;
 
+    // Initialize the NSM device handle.
     nsm_fd = nsm_lib_init();
     if (nsm_fd < 0) {
         perror("unable to open NSM guest module");
@@ -237,6 +261,11 @@ static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
 
     pcr_data_size = 256;
 
+    /*
+     * Measure the root filesystem archive with NSM PCR 16. NSM PCR extension
+     * requests have a data size cap of 4KB (usually smaller than the rootfs
+     * size). Therefore, measure the rootfs in 2KB chunks.
+     */
     idx = rootfs_archive;
     total = archive_size;
     while (total > 0) {
@@ -250,12 +279,14 @@ static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
         total -= to_write;
     }
 
+    // Measure the execution path with NSM PCR 17.
     exec_ptr = path;
     ret = nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *)exec_ptr,
                          strlen(exec_ptr), (void *)pcr_data, &pcr_data_size);
     if (ret != ERROR_CODE_SUCCESS)
         goto out;
 
+    // Measure each execution argument with NSM PCR 17.
     for (i = 0; (exec_ptr = argv[i]) != NULL; ++i) {
         ret =
             nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *)exec_ptr,
@@ -264,6 +295,7 @@ static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
             goto out;
     }
 
+    // Measure each environment variable with NSM PCR 17.
     for (i = 0; (exec_ptr = envp[i]) != NULL; ++i) {
         ret =
             nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *)exec_ptr,
@@ -272,6 +304,11 @@ static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
             goto out;
     }
 
+    /*
+     * Lock PCRs 16 and 17 so they cannot be extended further. This is to ensure
+     * there can no further data measured other than the rootfs and execution
+     * variables.
+     */
     ret = nsm_lock_pcrs(nsm_fd, NSM_PCR_EXEC_DATA);
     if (ret != ERROR_CODE_SUCCESS)
         goto out;
@@ -279,6 +316,7 @@ static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
     ret = 0;
 
 out:
+    // Close the NSM device handle.
     nsm_lib_exit(nsm_fd);
 
     return -ret;
@@ -306,45 +344,57 @@ int main(int argc, char *argv[])
     if (ret < 0)
         goto out;
 
+    /*
+     * Signal to the hypervisor that the enclave is booted and ready to read the
+     * root filesystem. Open the vsock.
+     */
     sock_fd = vsock_hypervisor_signal();
     if (sock_fd < 0)
         goto out;
 
+    // Read the rootfs archive from the hypervisor.
     ret = vsock_rcv(sock_fd, &rootfs_archive, &archive_size);
     if (ret < 0) {
         close(sock_fd);
         goto out;
     }
 
+    // Read the execution path from the hypervisor.
     ret = vsock_rcv(sock_fd, (void **)&exec_path, NULL);
     if (ret < 0) {
         close(sock_fd);
         goto out;
     }
 
+    // Read the execution argv from the hypervisor.
     ret = vsock_char_list_build(sock_fd, &exec_argv);
     if (ret < 0) {
         close(sock_fd);
         goto out;
     }
 
+    // Read the execution envp from the hypervisor.
     ret = vsock_char_list_build(sock_fd, &exec_envp);
     if (ret < 0) {
         close(sock_fd);
         goto out;
     }
 
+    // Communication with the hypervisor is complete, close the vsock.
     close(sock_fd);
 
+    // Measure the rootfs and execution variables in the NSM PCRs.
     ret = nsm_pcrs_extend(rootfs_archive, archive_size, exec_path, exec_argv,
                           exec_envp);
     if (ret < 0)
         goto out;
 
+    // Extract the rootfs from memory and write it to the enclave filesystem.
     ret = archive_extract(rootfs_archive, archive_size);
     if (ret < 0)
         goto out;
 
+    // Mount the root filesystem.
     ret = rootfs_mount();
     if (ret < 0)
         goto out;
@@ -356,14 +406,17 @@ int main(int argc, char *argv[])
         return ret;
     }
 
+    // Initialize the rest of the filesystem.
     ret = filesystem_init();
     if (ret < 0)
         goto out;
 
+    // Initialize the cgroups.
     ret = cgroups_init();
     if (ret < 0)
         goto out;
 
+    // Execute the enclave application.
     ret = launch(exec_argv, exec_envp);
     if (ret < 0)
         goto out;
