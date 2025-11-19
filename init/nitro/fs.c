@@ -14,6 +14,9 @@
 #define SYS_FS_CGROUP_PATH "/sys/fs/cgroup/"
 #define CGROUP_SUB_PATH_SIZE (sizeof(SYS_FS_CGROUP_PATH) - 1 + 64)
 
+/*
+ * Initialize the cgroups.
+ */
 int cgroups_init()
 {
     char path[CGROUP_SUB_PATH_SIZE], *name;
@@ -73,10 +76,15 @@ out:
     return ret;
 }
 
+/*
+ * Initialize the rest of the root filesystem with ephemeral enclave file
+ * systems.
+ */
 int filesystem_init()
 {
     int ret;
 
+    // Create the /proc filesystem.
     ret =
         mount("proc", "/proc", "proc", MS_NODEV | MS_NOSUID | MS_NOEXEC, NULL);
     if (ret < 0) {
@@ -90,6 +98,7 @@ int filesystem_init()
         return -errno;
     }
 
+    // Redirect the input/output/err file descriptors to /dev/std{err, in, out}.
     ret = symlink("/proc/self/fd/0", "/dev/stdin");
     if (ret < 0) {
         perror("symlink add");
@@ -108,6 +117,7 @@ int filesystem_init()
         return -errno;
     }
 
+    // Create the /tmp filesystem.
     ret = mount("tmpfs", "/run", "tmpfs", MS_NODEV | MS_NOSUID | MS_NOEXEC,
                 "mode=0755");
     if (ret < 0) {
@@ -122,6 +132,7 @@ int filesystem_init()
         return -errno;
     }
 
+    // Create /dev/shm.
     ret = mkdir("/dev/shm", 0755);
     if (ret < 0) {
         perror("mkdir /dev/shm");
@@ -135,6 +146,7 @@ int filesystem_init()
         return -errno;
     }
 
+    // Initialize pseudo-terminal device filesystem.
     ret = mkdir("/dev/pts", 0755);
     if (ret < 0) {
         perror("mkdir /dev/pts");
@@ -147,6 +159,7 @@ int filesystem_init()
         return -errno;
     }
 
+    // Initialize sysfs.
     ret =
         mount("sysfs", "/sys", "sysfs", MS_NODEV | MS_NOSUID | MS_NOEXEC, NULL);
     if (ret < 0) {
@@ -154,6 +167,7 @@ int filesystem_init()
         return -errno;
     }
 
+    // Initialize the cgroup root.
     ret = mount("cgroup_root", "/sys/fs/cgroup", "tmpfs",
                 MS_NODEV | MS_NOSUID | MS_NOEXEC, "mode=0755");
     if (ret < 0) {
