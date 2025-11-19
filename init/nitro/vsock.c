@@ -13,7 +13,7 @@
 
 #include "include/vsock.h"
 
-#define UINT64_T_SIZE 8
+#define UINT32_T_SIZE 4
 
 #define HEART_BEAT 0xb7
 #define VSOCK_CID 3
@@ -21,11 +21,11 @@
 
 static int vsock_len_read(int sock_fd, uint32_t *size)
 {
-    uint8_t bytes[UINT64_T_SIZE];
+    uint8_t bytes[UINT32_T_SIZE];
     ssize_t ret;
 
-    ret = read(sock_fd, bytes, UINT64_T_SIZE);
-    if (ret < UINT64_T_SIZE) {
+    ret = read(sock_fd, bytes, UINT32_T_SIZE);
+    if (ret < UINT32_T_SIZE) {
         perror("vsock byte buffer length read");
         return -errno;
     }
