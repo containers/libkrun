@@ -38,4 +38,5 @@ pub enum Error {
 pub enum ImageType {
     Raw,
     Qcow2,
+    Vmdk,
 }

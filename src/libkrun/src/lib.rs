@@ -703,6 +703,7 @@ pub unsafe extern "C" fn krun_add_disk2(
     let format = match disk_format {
         0 => ImageType::Raw,
         1 => ImageType::Qcow2,
+        2 => ImageType::Vmdk,
         _ => {
             // Do not continue if the user cannot specify a valid disk format
             return -libc::EINVAL;

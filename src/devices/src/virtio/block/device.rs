@@ -19,8 +19,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use imago::{
-    file::File as ImagoFile, qcow2::Qcow2, raw::Raw, DynStorage, Storage, StorageOpenOptions,
-    SyncFormatAccess,
+    file::File as ImagoFile, qcow2::Qcow2, raw::Raw, vmdk::Vmdk, DynStorage, FormatDriverBuilder,
+    PermissiveImplicitOpenGate, Storage, StorageOpenOptions, SyncFormatAccess,
 };
 use log::{error, warn};
 use utils::eventfd::{EventFd, EFD_NONBLOCK};
@@ -265,6 +265,13 @@ impl Block {
                     !is_disk_read_only,
                 )?;
                 SyncFormatAccess::new(raw)?
+            }
+            ImageType::Vmdk => {
+                let vmdk = Vmdk::<Box<dyn DynStorage>, Arc<imago::FormatAccess<_>>>::builder(
+                    Box::new(file),
+                )
+                .open_sync(PermissiveImplicitOpenGate::default())?;
+                SyncFormatAccess::new(vmdk)?
             }
         };
 
