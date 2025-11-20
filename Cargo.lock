@@ -739,9 +739,8 @@ dependencies = [
 
 [[package]]
 name = "imago"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a94a5babb4a05f462d7736c7263ddd7e721ec0c5e5f26b02d888e9edf75b549"
+version = "0.1.0-modified"
+source = "git+https://gitlab.com/hreitz/imago.git?branch=main#98627977ec7f99a8395bdd8c3125c4386cf85132"
 dependencies = [
  "async-trait",
  "bincode",
