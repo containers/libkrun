@@ -5,6 +5,6 @@
 
 #include <stddef.h>
 
-int archive_extract(void *, size_t);
+int archive_extract(int, void *, size_t);
 
 #endif // _ROOTFS_ARCHIVE_H

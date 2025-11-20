@@ -26,7 +26,6 @@
 #define finit_module(fd, param_values, flags)                                  \
     (int)syscall(__NR_finit_module, fd, param_values, flags)
 
-#define NSM_PCR_ROOTFS 16
 #define NSM_PCR_EXEC_DATA 17
 
 #define NSM_PCR_CHUNK_SIZE 0x800 // 2 KiB.
@@ -243,41 +242,15 @@ pid_t launch(char **argv, char **envp)
  * NSM PCR 17 contains the measurement of the execution variables (path, argv,
  * envp).
  */
-static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
-                           char *path, char **argv, char **envp)
+static int nsm_pcrs_exec_path_extend(int nsm_fd, char *path, char **argv,
+                                     char **envp)
 {
-    uint32_t pcr_data_size, total, to_write;
+    uint32_t pcr_data_size;
     uint8_t pcr_data[256];
-    int ret, nsm_fd, i;
     char *exec_ptr;
-    void *idx;
-
-    // Initialize the NSM device handle.
-    nsm_fd = nsm_lib_init();
-    if (nsm_fd < 0) {
-        perror("unable to open NSM guest module");
-        return -errno;
-    }
+    int ret, i;
 
     pcr_data_size = 256;
-
-    /*
-     * Measure the root filesystem archive with NSM PCR 16. NSM PCR extension
-     * requests have a data size cap of 4KB (usually smaller than the rootfs
-     * size). Therefore, measure the rootfs in 2KB chunks.
-     */
-    idx = rootfs_archive;
-    total = archive_size;
-    while (total > 0) {
-        to_write = (total < NSM_PCR_CHUNK_SIZE) ? total : NSM_PCR_CHUNK_SIZE;
-        ret = nsm_extend_pcr(nsm_fd, NSM_PCR_ROOTFS, idx, to_write,
-                             (void *)pcr_data, &pcr_data_size);
-        if (ret != ERROR_CODE_SUCCESS)
-            goto out;
-
-        idx += to_write;
-        total -= to_write;
-    }
 
     // Measure the execution path with NSM PCR 17.
     exec_ptr = path;
@@ -304,6 +277,19 @@ static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
             goto out;
     }
 
+    ret = 0;
+
+out:
+    return -ret;
+}
+
+/*
+ * Lock PCRs measured by initramfs and close the NSM handle.
+ */
+static int nsm_exit(int nsm_fd)
+{
+    int ret;
+
     /*
      * Lock PCRs 16 and 17 so they cannot be extended further. This is to ensure
      * there can no further data measured other than the rootfs and execution
@@ -313,21 +299,21 @@ static int nsm_pcrs_extend(void *rootfs_archive, uint32_t archive_size,
     if (ret != ERROR_CODE_SUCCESS)
         goto out;
 
-    ret = 0;
-
-out:
     // Close the NSM device handle.
     nsm_lib_exit(nsm_fd);
 
+    ret = 0;
+
+out:
     return -ret;
 }
 
 int main(int argc, char *argv[])
 {
     char *exec_path, **exec_argv, **exec_envp;
+    int ret, sock_fd, nsm_fd;
     uint32_t archive_size;
     void *rootfs_archive;
-    int ret, sock_fd;
 
     // Block all signals.
     ret = sig_mask(SIG_BLOCK);
@@ -383,14 +369,26 @@ int main(int argc, char *argv[])
     // Communication with the hypervisor is complete, close the vsock.
     close(sock_fd);
 
+    // Create a handle to the NSM.
+    nsm_fd = nsm_lib_init();
+    if (nsm_fd < 0) {
+        perror("unable to open NSM guest module");
+        ret = -errno;
+        goto out;
+    }
+
     // Measure the rootfs and execution variables in the NSM PCRs.
-    ret = nsm_pcrs_extend(rootfs_archive, archive_size, exec_path, exec_argv,
-                          exec_envp);
+    ret = nsm_pcrs_exec_path_extend(nsm_fd, exec_path, exec_argv, exec_envp);
     if (ret < 0)
         goto out;
 
     // Extract the rootfs from memory and write it to the enclave filesystem.
-    ret = archive_extract(rootfs_archive, archive_size);
+    ret = archive_extract(nsm_fd, rootfs_archive, archive_size);
+    if (ret < 0)
+        goto out;
+
+    // Lock NSM PCRs and close handle.
+    ret = nsm_exit(nsm_fd);
     if (ret < 0)
         goto out;
 

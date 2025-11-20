@@ -2,11 +2,16 @@
 
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <archive.h>
 #include <archive_entry.h>
+#include <nsm.h>
 
 #include "include/archive.h"
+
+#define NSM_PCR_ROOTFS 16
+#define NSM_PCR_CHUNK_SIZE 0x800 // 2 KiB.
 
 /*
  * Create an archive object for reading streaming archives. Enclaves' rootfs is
@@ -42,11 +47,48 @@ static struct archive *reader_init(void *buf, size_t size)
 }
 
 /*
+ * Extend the rootfs NSM PCR with a data block from the tar archive.
+ */
+static int nsm_rootfs_pcr_extend(int nsm_fd, const void *data, size_t size)
+{
+    uint32_t pcr_data_size, to_write;
+    uint8_t pcr_data[256];
+    size_t total;
+    void *idx;
+    int ret;
+
+    pcr_data_size = 256;
+
+    /*
+     * Measure the root filesystem archive with NSM PCR 16. NSM PCR extension
+     * requests have a data size cap of 4KiB (usually smaller than the rootfs
+     * size). Therefore, measure the rootfs in 2KiB chunks.
+     */
+    idx = (void *)data;
+    total = size;
+    while (total > 0) {
+        to_write = (total < NSM_PCR_CHUNK_SIZE) ? total : NSM_PCR_CHUNK_SIZE;
+        ret = nsm_extend_pcr(nsm_fd, NSM_PCR_ROOTFS, idx, to_write,
+                             (void *)pcr_data, &pcr_data_size);
+        if (ret != ERROR_CODE_SUCCESS)
+            goto out;
+
+        idx += to_write;
+        total -= to_write;
+    }
+
+    ret = 0;
+
+out:
+    return ret;
+}
+
+/*
  * Extract the tarball from the reader (that is, the memory buffer that read the
  * rootfs archive from the hypervisor vsock) and write it to the enclave's file
  * system.
  */
-static int extract(struct archive *r, struct archive *w)
+static int extract(int nsm_fd, struct archive *r, struct archive *w)
 {
     struct archive_entry *entry;
     const char *path;
@@ -79,6 +121,14 @@ static int extract(struct archive *r, struct archive *w)
             if (ret != ARCHIVE_OK) {
                 printf("error reading %s archive data block\ncause: %s\n", path,
                        archive_error_string(r));
+                goto err;
+            }
+
+            ret = nsm_rootfs_pcr_extend(nsm_fd, buf, size);
+            if (ret != 0) {
+                printf("unable to measure %s archive data block with NSM "
+                       "PCR\n",
+                       path);
                 goto err;
             }
 
@@ -125,7 +175,7 @@ static void archive_cleanup(struct archive *r, struct archive *w)
  * Extract the archive written to memory and write it to the enclave file
  * system.
  */
-int archive_extract(void *buf, size_t size)
+int archive_extract(int nsm_fd, void *buf, size_t size)
 {
     struct archive *reader, *writer;
     int ret;
@@ -140,7 +190,7 @@ int archive_extract(void *buf, size_t size)
         return -1;
     }
 
-    ret = extract(reader, writer);
+    ret = extract(nsm_fd, reader, writer);
     archive_cleanup(reader, writer);
 
     return ret;
