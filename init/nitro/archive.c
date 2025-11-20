@@ -94,6 +94,7 @@ static int extract(int nsm_fd, struct archive *r, struct archive *w)
     const char *path;
     const void *buf;
     int64_t offset;
+    bool measure;
     size_t size;
     int ret;
 
@@ -106,6 +107,19 @@ static int extract(int nsm_fd, struct archive *r, struct archive *w)
         }
 
         path = archive_entry_pathname(entry);
+        measure = true;
+
+        /*
+         * Avoid measuring /etc/hostname, which is an ephemeral value in
+         * containers (the hostname being the container ID).
+         */
+        measure &= (strstr(path, "rootfs/etc/hostname") == NULL);
+
+        /*
+         * Also avoid measuring /etc/hosts, which also contains the ephemeral
+         * hostname.
+         */
+        measure &= (strstr(path, "rootfs/etc/hosts") == NULL);
 
         // Write the header to the filesystem.
         ret = archive_write_header(w, entry);
@@ -124,12 +138,14 @@ static int extract(int nsm_fd, struct archive *r, struct archive *w)
                 goto err;
             }
 
-            ret = nsm_rootfs_pcr_extend(nsm_fd, buf, size);
-            if (ret != 0) {
-                printf("unable to measure %s archive data block with NSM "
-                       "PCR\n",
-                       path);
-                goto err;
+            if (measure) {
+                ret = nsm_rootfs_pcr_extend(nsm_fd, buf, size);
+                if (ret != 0) {
+                    printf("unable to measure %s archive data block with NSM "
+                           "PCR\n",
+                           path);
+                    goto err;
+                }
             }
 
             ret = archive_write_data_block(w, buf, size, offset);
