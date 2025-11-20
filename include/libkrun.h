@@ -167,6 +167,9 @@ int32_t krun_add_disk(uint32_t ctx_id, const char *block_id, const char *disk_pa
 /* Supported disk image formats */
 #define KRUN_DISK_FORMAT_RAW 0
 #define KRUN_DISK_FORMAT_QCOW2 1
+/* Note: Only supports FLAT/ZERO formats without delta links */
+#define KRUN_DISK_FORMAT_VMDK 2
+
 /**
  * Adds a disk image to be used as a general partition for the microVM. The supported
  * image formats are: "raw" and "qcow2".
