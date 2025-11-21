@@ -168,7 +168,7 @@ static int extract(int nsm_fd, struct archive *r, struct archive *w)
     return 0;
 
 err:
-    return -ret;
+    return ret;
 }
 
 /*
