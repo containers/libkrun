@@ -671,6 +671,8 @@ pub unsafe extern "C" fn krun_add_disk(
                 disk_image_path: disk_path.to_string(),
                 disk_image_format: ImageType::Raw,
                 is_disk_read_only: read_only,
+                #[cfg(target_os = "macos")]
+                enable_relaxed_sync: true,
             };
             cfg.add_block_cfg(block_device_config);
         }
@@ -718,6 +720,8 @@ pub unsafe extern "C" fn krun_add_disk2(
                 disk_image_path: disk_path.to_string(),
                 disk_image_format: format,
                 is_disk_read_only: read_only,
+                #[cfg(target_os = "macos")]
+                enable_relaxed_sync: true,
             };
             cfg.add_block_cfg(block_device_config);
         }
@@ -745,6 +749,8 @@ pub unsafe extern "C" fn krun_set_root_disk(ctx_id: u32, c_disk_path: *const c_c
                 disk_image_path: disk_path.to_string(),
                 disk_image_format: ImageType::Raw,
                 is_disk_read_only: false,
+                #[cfg(target_os = "macos")]
+                enable_relaxed_sync: true,
             };
             cfg.set_root_block_cfg(block_device_config);
         }
@@ -772,6 +778,8 @@ pub unsafe extern "C" fn krun_set_data_disk(ctx_id: u32, c_disk_path: *const c_c
                 disk_image_path: disk_path.to_string(),
                 disk_image_format: ImageType::Raw,
                 is_disk_read_only: false,
+                #[cfg(target_os = "macos")]
+                enable_relaxed_sync: true,
             };
             cfg.set_data_block_cfg(block_device_config);
         }
@@ -2382,6 +2390,35 @@ pub unsafe extern "C" fn krun_set_kernel_console(ctx_id: u32, console_id: *const
     }
 
     KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(target_os = "macos")]
+pub unsafe extern "C" fn krun_enable_relaxed_sync(
+    ctx_id: u32,
+    c_block_id: *const c_char,
+    enable: bool,
+) -> i32 {
+    let block_id = match CStr::from_ptr(c_block_id).to_str() {
+        Ok(block_id) => block_id.to_string(),
+        Err(_) => return -libc::EINVAL,
+    };
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+
+            for blk in cfg.block_cfgs.iter_mut() {
+                if blk.block_id == block_id {
+                    blk.enable_relaxed_sync = enable;
+                    return KRUN_SUCCESS;
+                }
+            }
+            error!("no block device configured matching the provided block ID");
+            -libc::EINVAL
+        }
+        Entry::Vacant(_) => -libc::ENOENT,
+    }
 }
 
 #[no_mangle]
