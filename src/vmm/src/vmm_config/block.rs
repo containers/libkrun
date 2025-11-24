@@ -2,7 +2,10 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use devices::virtio::{block::ImageType, Block, CacheType};
+use devices::virtio::{
+    block::{ImageType, SyncMode},
+    Block, CacheType,
+};
 
 #[derive(Debug)]
 pub enum BlockConfigError {
@@ -28,6 +31,8 @@ pub struct BlockDeviceConfig {
     pub disk_image_path: String,
     pub disk_image_format: ImageType,
     pub is_disk_read_only: bool,
+    pub direct_io: bool,
+    pub sync_mode: SyncMode,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,6 +68,8 @@ impl BlockBuilder {
             config.disk_image_path,
             config.disk_image_format,
             config.is_disk_read_only,
+            config.direct_io,
+            config.sync_mode,
         )
         .map_err(BlockConfigError::CreateBlockDevice)
     }
