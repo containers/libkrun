@@ -85,7 +85,10 @@ impl NitroEnclave {
             .file_name()
             .unwrap_or(OsStr::new("/"))
             .to_str()
-            .unwrap();
+            .ok_or(NitroError::RootFsArchive(io::Error::new(
+                ErrorKind::Other,
+                "unable to convert rootfs directory name to str",
+            )))?;
 
         for entry in fs::read_dir(pathbuf).map_err(NitroError::RootFsArchive)? {
             let entry = entry.map_err(NitroError::RootFsArchive)?;
