@@ -220,6 +220,60 @@ int32_t krun_add_disk2(uint32_t ctx_id,
                        uint32_t disk_format,
                        bool read_only);
 
+
+/* Supported sync modes */
+
+/**
+ * Ignore VIRTIO_BLK_F_FLUSH.
+ * WARNING: may lead to loss of data 
+ */ 
+#define KRUN_SYNC_NONE 0
+/**
+ * Honor VIRTIO_BLK_F_FLUSH requests, but relax strict hardware syncing on macOS.
+ * This is the recommended mode.
+ *
+ * On macOS this flushes the OS buffers, but does not ask the drive to flush
+ * its buffered data, which significantly improves performance. 
+ * On Linux this is the same as full sync.
+ */
+#define KRUN_SYNC_RELAXED 1
+/** 
+ * Honor VIRTIO_BLK_F_FLUSH, strictly flushing buffers to physical disk.
+ */
+#define KRUN_SYNC_FULL 2
+
+/**
+ * Adds a disk image to be used as a general partition for the microVM.
+ *
+ * This API is mutually exclusive with the deprecated krun_set_root_disk and
+ * krun_set_data_disk methods and must not be used together.
+ *
+ * SECURITY NOTE:
+ * See the security note for `krun_add_disk2`.
+ *
+ * Arguments:
+ *  "ctx_id"      - the configuration context ID.
+ *  "block_id"    - a null-terminated string representing the partition.
+ *  "disk_path"   - a null-terminated string representing the path leading to the disk image.
+ *  "disk_format" - the disk image format (i.e. KRUN_DISK_FORMAT_{RAW, QCOW2})
+ *  "read_only"   - whether the mount should be read-only. Required if the caller does not have
+ *                  write permissions (for disk images in /usr/share).
+ *  "direct_io"   - whether to bypass the host caches.
+ *  "sync_mode"   - whether to enable VIRTIO_BLK_F_FLUSH. On macOS, an additional relaxed sync
+ *                  mode is available, which is enabled by default, and will not ask the drive
+ *                  to flush its buffered data.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+ int32_t krun_add_disk3(uint32_t ctx_id,
+                       const char *block_id,
+                       const char *disk_path,
+                       uint32_t disk_format,
+                       bool read_only,
+                       bool direct_io,
+                       uint32_t sync_mode);
+
 /**
  * NO LONGER SUPPORTED. DO NOT USE.
  *
