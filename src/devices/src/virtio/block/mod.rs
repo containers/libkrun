@@ -39,3 +39,18 @@ pub enum ImageType {
     Raw,
     Qcow2,
 }
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum CacheMode {
+    Uncached,
+    #[default]
+    Cached,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum SyncMode {
+    None,
+    Relaxed,
+    #[default]
+    Full,
+}

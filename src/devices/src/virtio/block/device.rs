@@ -35,7 +35,10 @@ use super::{
     Error, QUEUE_SIZES, SECTOR_SHIFT, SECTOR_SIZE,
 };
 
-use crate::virtio::{block::ImageType, ActivateError, InterruptTransport};
+use crate::virtio::{
+    block::{CacheMode, ImageType, SyncMode},
+    ActivateError, InterruptTransport,
+};
 
 /// Configuration options for disk caching.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -208,6 +211,9 @@ impl Block {
         disk_image_path: String,
         disk_image_format: ImageType,
         is_disk_read_only: bool,
+        // TODO(jakecorrenti): should this even be here? Am i just re-writing essentially what's represented by `CacheType`?
+        cache_mode: CacheMode,
+        sync_mode: SyncMode,
     ) -> io::Result<Block> {
         let disk_image = OpenOptions::new()
             .read(true)
@@ -218,7 +224,10 @@ impl Block {
 
         let file_opts = StorageOpenOptions::new()
             .write(!is_disk_read_only)
-            .filename(disk_image_path);
+            .filename(disk_image_path)
+            .direct(cache_mode == CacheMode::Uncached);
+
+        // TODO(jakecorrenti): how do I do a partial fsync on linux to handle that OS?
         #[cfg(target_os = "macos")]
         let file_opts = file_opts.relaxed_sync(true);
         let file = ImagoFile::open_sync(file_opts)?;
@@ -248,9 +257,13 @@ impl Block {
             DiskProperties::new(Arc::clone(&disk_image), disk_image_id.clone(), cache_type)?;
 
         let mut avail_features = (1u64 << VIRTIO_F_VERSION_1)
-            | (1u64 << VIRTIO_BLK_F_FLUSH)
+            // | (1u64 << VIRTIO_BLK_F_FLUSH)
             | (1u64 << VIRTIO_BLK_F_SEG_MAX)
             | (1u64 << VIRTIO_RING_F_EVENT_IDX);
+
+        if sync_mode != SyncMode::None {
+            avail_features |= 1u64 << VIRTIO_BLK_F_FLUSH;
+        }
 
         if is_disk_read_only {
             avail_features |= 1u64 << VIRTIO_BLK_F_RO;
