@@ -40,3 +40,43 @@ pub enum ImageType {
     Qcow2,
     Vmdk,
 }
+
+impl TryFrom<u32> for ImageType {
+    type Error = ();
+
+    fn try_from(disk_format: u32) -> Result<Self, Self::Error> {
+        match disk_format {
+            0 => Ok(ImageType::Raw),
+            1 => Ok(ImageType::Qcow2),
+            2 => Ok(ImageType::Vmdk),
+            _ => {
+                // Do not continue if the user cannot specify a valid disk format
+                Err(())
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum SyncMode {
+    None,
+    Relaxed,
+    #[default]
+    Full,
+}
+
+impl TryFrom<u32> for SyncMode {
+    type Error = ();
+
+    fn try_from(sync_mode: u32) -> Result<Self, Self::Error> {
+        match sync_mode {
+            0 => Ok(SyncMode::None),
+            1 => Ok(SyncMode::Relaxed),
+            2 => Ok(SyncMode::Full),
+            _ => {
+                // Do not continue if the user cannot specify a valid sync mode
+                Err(())
+            }
+        }
+    }
+}
