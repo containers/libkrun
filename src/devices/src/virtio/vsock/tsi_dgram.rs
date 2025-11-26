@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::num::Wrapping;
 use std::os::fd::OwnedFd;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
     bind, connect, getpeername, recv, send, sendto, socket, AddressFamily, MsgFlags, SockFlag,
-    SockType, SockaddrIn, SockaddrLike, SockaddrStorage,
+    SockType, SockaddrIn, SockaddrLike, SockaddrStorage, UnixAddr,
 };
 
 #[cfg(target_os = "macos")]
@@ -35,6 +35,7 @@ pub struct TsiDgramProxy {
     pub status: ProxyStatus,
     sendto_addr: Option<SockaddrStorage>,
     listening: bool,
+    family: AddressFamily,
     mem: GuestMemoryMmap,
     queue: Arc<Mutex<VirtQueue>>,
     rxq: Arc<Mutex<MuxerRxQ>>,
@@ -102,6 +103,7 @@ impl TsiDgramProxy {
             status: ProxyStatus::Idle,
             sendto_addr: None,
             listening: false,
+            family,
             mem,
             queue,
             rxq,
@@ -339,7 +341,25 @@ impl Proxy for TsiDgramProxy {
 
         self.sendto_addr = Some(req.addr);
         if !self.listening {
-            match bind(self.fd.as_raw_fd(), &SockaddrIn::new(0, 0, 0, 0, 0)) {
+            let bind_result = match self.family {
+                AddressFamily::Inet => bind(self.fd.as_raw_fd(), &SockaddrIn::new(0, 0, 0, 0, 0)),
+                AddressFamily::Inet6 => {
+                    let addr6: SockaddrStorage =
+                        SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into();
+                    bind(self.fd.as_raw_fd(), &addr6)
+                }
+                #[cfg(target_os = "linux")]
+                AddressFamily::Unix => {
+                    let addr = UnixAddr::new_unnamed();
+                    bind(self.fd.as_raw_fd(), &addr)
+                }
+                _ => {
+                    warn!("sendto_addr: unsupported address family: {:?}", self.family);
+                    return update;
+                }
+            };
+
+            match bind_result {
                 Ok(_) => {
                     self.listening = true;
                     update.polling = Some((self.id, self.fd.as_raw_fd(), EventSet::IN));
