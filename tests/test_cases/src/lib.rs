@@ -91,13 +91,18 @@ pub trait Test {
 pub struct TestCase {
     pub name: &'static str,
     pub test: Box<dyn Test>,
+    pub requires_namespace: bool,
 }
 
 impl TestCase {
     // Your test can be parametrized, so you can add the same test multiple times constructed with
     // different parameters with and specify a different name here.
     pub fn new(name: &'static str, test: Box<dyn Test>) -> Self {
-        Self { name, test }
+        Self { name, test, requires_namespace: false }
+    }
+
+    pub fn new_with_namespace(name: &'static str, test: Box<dyn Test>) -> Self {
+        Self { name, test, requires_namespace: true }
     }
 
     #[allow(dead_code)]

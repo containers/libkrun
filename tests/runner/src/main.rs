@@ -32,10 +32,73 @@ fn start_vm(test_setup: TestSetup) -> anyhow::Result<()> {
     setrlimit(Resource::RLIMIT_NOFILE, hard_limit, hard_limit)
         .context("setrlimit RLIMIT_NOFILE")?;
 
-    let test = get_test(&test_setup.test_case)?;
-    test.start_vm(test_setup.clone())
-        .with_context(|| format!("testcase: {test_setup:?}"))?;
+    // Check if this test requires a namespace
+    let test_cases = test_cases();
+    let requires_namespace = test_cases
+        .into_iter()
+        .find(|t| t.name == test_setup.test_case)
+        .map(|t| t.requires_namespace)
+        .unwrap_or(false);
+
+    if requires_namespace {
+        setup_namespace_and_run(test_setup)?;
+    } else {
+        let test = get_test(&test_setup.test_case)?;
+        test.start_vm(test_setup.clone())
+            .with_context(|| format!("testcase: {test_setup:?}"))?;
+    }
     Ok(())
+}
+
+fn setup_namespace_and_run(test_setup: TestSetup) -> anyhow::Result<()> {
+    use nix::sched::{unshare, CloneFlags};
+    use nix::unistd::{fork, Gid, Uid, ForkResult};
+    use std::fs;
+
+    // Get our current uid/gid before entering the namespace
+    let uid = Uid::current();
+    let gid = Gid::current();
+
+    // Create a new user namespace, mount namespace, and PID namespace (rootless)
+    unshare(CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID)
+        .context("Failed to unshare user+mount+pid namespace")?;
+
+    // Set up uid_map to map our uid to root (0) in the namespace
+    let uid_map = format!("0 {} 1", uid);
+    fs::write("/proc/self/uid_map", uid_map)
+        .context("Failed to write uid_map")?;
+
+    // Disable setgroups (required before writing gid_map as non-root)
+    fs::write("/proc/self/setgroups", "deny")
+        .context("Failed to write setgroups")?;
+
+    // Set up gid_map to map our gid to root (0) in the namespace
+    let gid_map = format!("0 {} 1", gid);
+    fs::write("/proc/self/gid_map", gid_map)
+        .context("Failed to write gid_map")?;
+
+    // Fork so the child becomes PID 1 in the new PID namespace
+    // This is necessary to be able to mount procfs
+    match unsafe { fork() }.context("Failed to fork")? {
+        ForkResult::Parent { child } => {
+            // Parent waits for child and exits
+            use nix::sys::wait::waitpid;
+            let status = waitpid(child, None).context("Failed to wait for child")?;
+            // Exit with the child's exit code
+            use nix::sys::wait::WaitStatus;
+            match status {
+                WaitStatus::Exited(_, code) => std::process::exit(code),
+                _ => std::process::exit(1),
+            }
+        }
+        ForkResult::Child => {
+            // Child continues - we are now PID 1 in the PID namespace
+            let test = get_test(&test_setup.test_case)?;
+            test.start_vm(test_setup.clone())
+                .with_context(|| format!("testcase: {test_setup:?}"))?;
+            Ok(())
+        }
+    }
 }
 
 fn run_single_test(
@@ -162,7 +225,7 @@ fn run_tests(
         let all_tests = test_cases();
         let max_name_len = all_tests.iter().map(|t| t.name.len()).max().unwrap_or(0);
 
-        for TestCase { name, test: _ } in all_tests {
+        for TestCase { name, test: _, requires_namespace: _ } in all_tests {
             results.push(run_single_test(name, &base_dir, keep_all, max_name_len).context(name)?);
         }
     } else {
