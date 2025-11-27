@@ -31,13 +31,24 @@ fn start_vm(test_setup: TestSetup) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_single_test(test_case: &str, base_dir: &Path, keep_all: bool) -> anyhow::Result<bool> {
+fn run_single_test(
+    test_case: &str,
+    base_dir: &Path,
+    keep_all: bool,
+    max_name_len: usize,
+) -> anyhow::Result<bool> {
     let executable = env::current_exe().context("Failed to detect current executable")?;
     let test_dir = base_dir.join(test_case);
     fs::create_dir(&test_dir).context("Failed to create test directory")?;
 
     let log_path = test_dir.join("log.txt");
     let log_file = File::create(&log_path).context("Failed to create log file")?;
+
+    eprint!(
+        "[{test_case}] {:.<width$} ",
+        "",
+        width = max_name_len - test_case.len() + 3
+    );
 
     let child = Command::new(&executable)
         .arg("start-vm")
@@ -59,14 +70,14 @@ fn run_single_test(test_case: &str, base_dir: &Path, keep_all: bool) -> anyhow::
 
     match result {
         Ok(()) => {
-            println!("[{test_case}]: OK");
+            eprintln!("OK");
             if !keep_all {
                 let _ = fs::remove_dir_all(&test_dir);
             }
             Ok(true)
         }
         Err(_e) => {
-            println!("[{test_case}]: FAIL (dir {:?} kept)", test_dir);
+            eprintln!("FAIL");
             Ok(false)
         }
     }
@@ -88,15 +99,18 @@ fn run_tests(test_case: &str, base_dir: Option<PathBuf>, keep_all: bool) -> anyh
     let mut num_ok: usize = 0;
 
     if test_case == "all" {
-        let test_cases = test_cases();
-        num_tests = test_cases.len();
+        let all_tests = test_cases();
+        num_tests = all_tests.len();
+        let max_name_len = all_tests.iter().map(|t| t.name.len()).max().unwrap_or(0);
 
-        for TestCase { name, test: _ } in test_cases {
-            num_ok += run_single_test(name, &base_dir, keep_all).context(name)? as usize;
+        for TestCase { name, test: _ } in all_tests {
+            num_ok +=
+                run_single_test(name, &base_dir, keep_all, max_name_len).context(name)? as usize;
         }
     } else {
-        num_ok += run_single_test(test_case, &base_dir, keep_all).context(test_case.to_string())?
-            as usize;
+        let max_name_len = test_case.len();
+        num_ok += run_single_test(test_case, &base_dir, keep_all, max_name_len)
+            .context(test_case.to_string())? as usize;
     }
 
     let num_failures = num_tests - num_ok;
@@ -108,7 +122,7 @@ fn run_tests(test_case: &str, base_dir: Option<PathBuf>, keep_all: bool) -> anyh
         if keep_all {
             eprintln!("(See test artifacts at: {})", base_dir.display());
         }
-        println!("\nOK (PASSED {num_ok}/{num_tests})");
+        eprintln!("\nOK ({num_ok}/{num_tests} passed)");
     }
 
     Ok(())
