@@ -4,7 +4,7 @@ use macros::{guest, host};
 /// Test that setsockopt works on TSI-intercepted UDP sockets.
 /// This is a regression test for a kernel NULL pointer dereference bug
 /// in tsi_dgram_setsockopt that occurred when setting socket options
-/// on UDP sockets before any sendto() call.
+/// on UDP sockets and unix dgram sockets.
 #[allow(dead_code)] // Used in guest module
 pub struct TestTsiUdpSetsockopt {
     ip_version: IpVersion,

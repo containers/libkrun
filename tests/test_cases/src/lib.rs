@@ -36,7 +36,6 @@ pub fn test_cases() -> Vec<TestCase> {
         ),
         // Vsock connecting to unix socket (non TSI)
         TestCase::new("vsock-guest-connect", Box::new(TestVsockGuestConnect)),
-        // UDP setsockopt regression tests
         TestCase::new(
             "tsi-udp-setsockopt-ipv4",
             Box::new(TestTsiUdpSetsockopt::new(IpVersion::V4)),
@@ -45,7 +44,6 @@ pub fn test_cases() -> Vec<TestCase> {
             "tsi-udp-setsockopt-ipv6",
             Box::new(TestTsiUdpSetsockopt::new(IpVersion::V6)),
         ),
-        // TCP: server on host, client in guest
         TestCase::new(
             "tsi-tcp-host-guest-ipv4",
             Box::new(TestTsi::new(
@@ -68,7 +66,6 @@ pub fn test_cases() -> Vec<TestCase> {
                 Guest,
             )),
         ),
-        // TCP: server in guest, client on host
         TestCase::new(
             "tsi-tcp-guest-host-ipv4",
             Box::new(TestTsi::new(
@@ -91,7 +88,6 @@ pub fn test_cases() -> Vec<TestCase> {
                 Host,
             )),
         ),
-        // TCP: both in guest
         TestCase::new(
             "tsi-tcp-guest-guest-ipv4",
             Box::new(TestTsi::new(
@@ -114,7 +110,6 @@ pub fn test_cases() -> Vec<TestCase> {
                 Guest,
             )),
         ),
-        // UDP: server on host, client in guest
         TestCase::new(
             "tsi-udp-host-guest-ipv4",
             Box::new(TestTsi::new(
@@ -137,7 +132,6 @@ pub fn test_cases() -> Vec<TestCase> {
                 Guest,
             )),
         ),
-        // UDP: both in guest
         TestCase::new(
             "tsi-udp-guest-guest-ipv4",
             Box::new(TestTsi::new(
@@ -160,7 +154,6 @@ pub fn test_cases() -> Vec<TestCase> {
                 Guest,
             )),
         ),
-        // Unix stream: server on host
         TestCase::new_with_namespace(
             "tsi-unix-stream-host-guest",
             Box::new(TestTsi::new(
