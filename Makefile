@@ -182,6 +182,7 @@ test-prefix/lib64/libkrun.pc: $(LIBRARY_RELEASE_$(OS))
 test-prefix: test-prefix/lib64/libkrun.pc
 
 TEST ?= all
+TEST_FLAGS ?=
 
 test: test-prefix
-	cd tests; LD_LIBRARY_PATH="$$(realpath ../test-prefix/lib64/)" PKG_CONFIG_PATH="$$(realpath ../test-prefix/lib64/pkgconfig/)" ./run.sh test --test-case "$(TEST)"
+	cd tests; RUST_LOG=trace LD_LIBRARY_PATH="$$(realpath ../test-prefix/lib64/)" PKG_CONFIG_PATH="$$(realpath ../test-prefix/lib64/pkgconfig/)" ./run.sh test --test-case "$(TEST)" $(TEST_FLAGS)

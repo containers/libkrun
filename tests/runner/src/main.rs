@@ -1,10 +1,11 @@
 use anyhow::Context;
 use clap::Parser;
 use nix::sys::resource::{getrlimit, setrlimit, Resource};
+use std::env;
+use std::fs;
 use std::panic::catch_unwind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::{env, mem};
 use tempdir::TempDir;
 use test_cases::{test_cases, Test, TestCase, TestSetup};
 
@@ -30,17 +31,17 @@ fn start_vm(test_setup: TestSetup) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_single_test(test_case: &str) -> anyhow::Result<bool> {
+fn run_single_test(test_case: &str, base_dir: &Path, keep_all: bool) -> anyhow::Result<bool> {
     let executable = env::current_exe().context("Failed to detect current executable")?;
-    let tmp_dir =
-        TempDir::new(&format!("krun-test-{test_case}")).context("Failed to create tmp dir")?;
+    let test_dir = base_dir.join(test_case);
+    fs::create_dir(&test_dir).context("Failed to create test directory")?;
 
     let child = Command::new(&executable)
         .arg("start-vm")
         .arg("--test-case")
         .arg(test_case)
         .arg("--tmp-dir")
-        .arg(tmp_dir.path())
+        .arg(&test_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -56,17 +57,30 @@ fn run_single_test(test_case: &str) -> anyhow::Result<bool> {
     match result {
         Ok(()) => {
             println!("[{test_case}]: OK");
+            if !keep_all {
+                let _ = fs::remove_dir_all(&test_dir);
+            }
             Ok(true)
         }
         Err(_e) => {
-            println!("[{test_case}]: FAIL (dir {:?} kept)", tmp_dir.path());
-            mem::forget(tmp_dir);
+            println!("[{test_case}]: FAIL (dir {:?} kept)", test_dir);
             Ok(false)
         }
     }
 }
 
-fn run_tests(test_case: &str) -> anyhow::Result<()> {
+fn run_tests(test_case: &str, base_dir: Option<PathBuf>, keep_all: bool) -> anyhow::Result<()> {
+    // Create the base directory - either use provided path or create a temp one
+    let base_dir = match base_dir {
+        Some(path) => {
+            fs::create_dir_all(&path).context("Failed to create base directory")?;
+            path
+        }
+        None => TempDir::new("libkrun-tests")
+            .context("Failed to create temp base directory")?
+            .into_path(),
+    };
+
     let mut num_tests = 1;
     let mut num_ok: usize = 0;
 
@@ -75,17 +89,22 @@ fn run_tests(test_case: &str) -> anyhow::Result<()> {
         num_tests = test_cases.len();
 
         for TestCase { name, test: _ } in test_cases {
-            num_ok += run_single_test(name).context(name)? as usize;
+            num_ok += run_single_test(name, &base_dir, keep_all).context(name)? as usize;
         }
     } else {
-        num_ok += run_single_test(test_case).context(test_case.to_string())? as usize;
+        num_ok += run_single_test(test_case, &base_dir, keep_all).context(test_case.to_string())?
+            as usize;
     }
 
     let num_failures = num_tests - num_ok;
     if num_failures > 0 {
+        eprintln!("(See test artifacts at: {})", base_dir.display());
         println!("\nFAIL (PASSED {num_ok}/{num_tests})");
         anyhow::bail!("")
     } else {
+        if keep_all {
+            eprintln!("(See test artifacts at: {})", base_dir.display());
+        }
         println!("\nOK (PASSED {num_ok}/{num_tests})");
     }
 
@@ -98,6 +117,12 @@ enum CliCommand {
         /// Specify which test to run or "all"
         #[arg(long, default_value = "all")]
         test_case: String,
+        /// Base directory for test artifacts
+        #[arg(long)]
+        base_dir: Option<PathBuf>,
+        /// Keep all test artifacts even on success
+        #[arg(long)]
+        keep_all: bool,
     },
     StartVm {
         #[arg(long)]
@@ -111,6 +136,8 @@ impl Default for CliCommand {
     fn default() -> Self {
         Self::Test {
             test_case: "all".to_string(),
+            base_dir: None,
+            keep_all: false,
         }
     }
 }
@@ -127,6 +154,10 @@ fn main() -> anyhow::Result<()> {
 
     match command {
         CliCommand::StartVm { test_case, tmp_dir } => start_vm(TestSetup { test_case, tmp_dir }),
-        CliCommand::Test { test_case } => run_tests(&test_case),
+        CliCommand::Test {
+            test_case,
+            base_dir,
+            keep_all,
+        } => run_tests(&test_case, base_dir, keep_all),
     }
 }
