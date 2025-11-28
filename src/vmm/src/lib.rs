@@ -309,8 +309,12 @@ impl Vmm {
 
         #[cfg(target_arch = "aarch64")]
         {
-            arch::aarch64::configure_system(&self.guest_memory, _smbios_oem_strings)
-                .map_err(Error::ConfigureSystem)?;
+            arch::aarch64::configure_system(
+                &self.guest_memory,
+                &self.arch_memory_info,
+                _smbios_oem_strings,
+            )
+            .map_err(Error::ConfigureSystem)?;
         }
 
         #[cfg(target_arch = "riscv64")]
