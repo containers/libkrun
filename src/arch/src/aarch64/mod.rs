@@ -44,7 +44,12 @@ pub fn arch_memory_regions(
     firmware_size: Option<usize>,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
-    let dram_size = align_upwards!(size, page_size);
+    // align up, then cap to the maximum allowed DRAM size
+    let aligned = align_upwards!(size, page_size);
+    let dram_size = {
+        let capped = core::cmp::min(aligned as u64, layout::DRAM_MEM_MAX_SIZE);
+        capped as usize
+    };
     let ram_last_addr = layout::DRAM_MEM_START + (dram_size as u64);
     let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
 
@@ -112,9 +117,16 @@ pub fn initrd_load_addr(guest_mem: &GuestMemoryMmap, initrd_size: usize) -> supe
 }
 
 // Auxiliary function to get the address where the device tree blob is loaded.
-pub fn get_fdt_addr(_mem: &GuestMemoryMmap) -> u64 {
-    // Put FDT at the beginning of the DRAM
-    layout::DRAM_MEM_START
+pub fn get_fdt_addr(mem: &GuestMemoryMmap) -> u64 {
+    // Put FDT at the beginning of DRAM while the RAM region is small (<= FDT_MAX_SIZE)
+    // For larger guests, move it by one page to avoid overlapping early allocations.
+    let dram_end = mem.last_addr().raw_value();
+    let dram_size = dram_end.saturating_sub(layout::DRAM_MEM_START) + 1;
+    if dram_size > layout::FDT_MAX_SIZE as u64 {
+        layout::DRAM_MEM_START + 0x1000
+    } else {
+        layout::DRAM_MEM_START
+    }
 }
 
 #[cfg(test)]
