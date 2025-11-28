@@ -34,7 +34,7 @@ mod host {
                     self.tcp_tester.run_client();
                 });
 
-                krun_call!(krun_set_log_level(KRUN_LOG_LEVEL_WARN))?;
+                krun_call!(krun_set_log_level(KRUN_LOG_LEVEL_TRACE))?;
                 let ctx = krun_call_u32!(krun_create_ctx())?;
                 let port_mapping = format!("{PORT}:{PORT}");
                 let port_mapping = CString::new(port_mapping).unwrap();

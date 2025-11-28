@@ -63,7 +63,7 @@ mod host {
 
             thread::spawn(move || server(listener));
             unsafe {
-                krun_call!(krun_set_log_level(KRUN_LOG_LEVEL_WARN))?;
+                krun_call!(krun_set_log_level(KRUN_LOG_LEVEL_TRACE))?;
                 let ctx = krun_call_u32!(krun_create_ctx())?;
                 krun_call!(krun_add_vsock_port(
                     ctx,
