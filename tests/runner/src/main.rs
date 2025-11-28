@@ -1,12 +1,20 @@
 use anyhow::Context;
 use clap::Parser;
 use nix::sys::resource::{getrlimit, setrlimit, Resource};
+use std::env;
+use std::fs::{self, File};
+use std::io::Write;
 use std::panic::catch_unwind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::{env, mem};
 use tempdir::TempDir;
 use test_cases::{test_cases, Test, TestCase, TestSetup};
+
+struct TestResult {
+    name: String,
+    passed: bool,
+    log_path: PathBuf,
+}
 
 fn get_test(name: &str) -> anyhow::Result<Box<dyn Test>> {
     let tests = test_cases();
@@ -17,33 +25,149 @@ fn get_test(name: &str) -> anyhow::Result<Box<dyn Test>> {
         .map(|t| t.test)
 }
 
-fn start_vm(test_setup: TestSetup) -> anyhow::Result<()> {
+fn start_vm(mut test_setup: TestSetup) -> anyhow::Result<()> {
     // Raise soft fd limit up to the hard limit
     let (_soft_limit, hard_limit) =
         getrlimit(Resource::RLIMIT_NOFILE).context("getrlimit RLIMIT_NOFILE")?;
     setrlimit(Resource::RLIMIT_NOFILE, hard_limit, hard_limit)
         .context("setrlimit RLIMIT_NOFILE")?;
 
-    let test = get_test(&test_setup.test_case)?;
-    test.start_vm(test_setup.clone())
-        .with_context(|| format!("testcase: {test_setup:?}"))?;
+    // Check if this test requires a namespace
+    let test_cases = test_cases();
+    let requires_namespace = test_cases
+        .into_iter()
+        .find(|t| t.name == test_setup.test_case)
+        .map(|t| t.requires_namespace)
+        .unwrap_or(false);
+
+    test_setup.requires_namespace = requires_namespace;
+
+    if requires_namespace {
+        setup_namespace_and_run(test_setup)?;
+    } else {
+        let test = get_test(&test_setup.test_case)?;
+        test.start_vm(test_setup.clone())
+            .with_context(|| format!("testcase: {test_setup:?}"))?;
+    }
     Ok(())
 }
 
-fn run_single_test(test_case: &str) -> anyhow::Result<bool> {
+fn setup_namespace_and_run(test_setup: TestSetup) -> anyhow::Result<()> {
+    use nix::sched::{unshare, CloneFlags};
+    use nix::unistd::{fork, ForkResult, Gid, Uid};
+    use std::fs;
+
+    // Get our current uid/gid before entering the namespace
+    let uid = Uid::current();
+    let gid = Gid::current();
+
+    // Create a new user namespace, mount namespace, and PID namespace (rootless)
+    unshare(CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID)
+        .context("Failed to unshare user+mount+pid namespace")?;
+
+    // Set up uid_map to map our uid to root (0) in the namespace
+    let uid_map = format!("0 {} 1", uid);
+    fs::write("/proc/self/uid_map", uid_map).context("Failed to write uid_map")?;
+
+    // Disable setgroups (required before writing gid_map as non-root)
+    fs::write("/proc/self/setgroups", "deny").context("Failed to write setgroups")?;
+
+    // Set up gid_map to map our gid to root (0) in the namespace
+    let gid_map = format!("0 {} 1", gid);
+    fs::write("/proc/self/gid_map", gid_map).context("Failed to write gid_map")?;
+
+    // Fork so the child becomes PID 1 in the new PID namespace
+    // This is necessary to be able to mount procfs
+    match unsafe { fork() }.context("Failed to fork")? {
+        ForkResult::Parent { child } => {
+            // Parent waits for child and exits
+            use nix::sys::wait::waitpid;
+            let status = waitpid(child, None).context("Failed to wait for child")?;
+            // Exit with the child's exit code
+            use nix::sys::wait::WaitStatus;
+            match status {
+                WaitStatus::Exited(_, code) => std::process::exit(code),
+                _ => std::process::exit(1),
+            }
+        }
+        ForkResult::Child => {
+            use nix::mount::{mount, MsFlags};
+            use std::fs::create_dir;
+
+            // Child continues - we are now PID 1 in the PID namespace
+            // Set up the root directory structure (but don't chroot yet - that happens after krun loads libraries)
+            let root_dir = test_setup.tmp_dir.join("root");
+            create_dir(&root_dir).context("Failed to create root directory")?;
+
+            // Create necessary directories
+            create_dir(root_dir.join("tmp")).context("Failed to create tmp directory")?;
+            create_dir(root_dir.join("dev")).context("Failed to create dev directory")?;
+            create_dir(root_dir.join("proc")).context("Failed to create proc directory")?;
+            create_dir(root_dir.join("sys")).context("Failed to create sys directory")?;
+
+            // Copy guest agent
+            let guest_agent_path = env::var_os("KRUN_TEST_GUEST_AGENT_PATH")
+                .context("KRUN_TEST_GUEST_AGENT_PATH env variable not set")?;
+            fs::copy(&guest_agent_path, root_dir.join("guest-agent"))
+                .context("Failed to copy guest agent")?;
+
+            // Make mounts private so they don't affect parent namespace
+            mount(
+                None::<&str>,
+                "/",
+                None::<&str>,
+                MsFlags::MS_REC | MsFlags::MS_PRIVATE,
+                None::<&str>,
+            )
+            .context("Failed to make / private")?;
+
+            // Bind mount /dev
+            mount(
+                Some("/dev"),
+                root_dir.join("dev").as_path(),
+                None::<&str>,
+                MsFlags::MS_BIND | MsFlags::MS_REC,
+                None::<&str>,
+            )
+            .context("Failed to bind mount /dev")?;
+
+            // The test's start_vm will handle chroot after loading libraries
+            let test = get_test(&test_setup.test_case)?;
+            test.start_vm(test_setup.clone())
+                .with_context(|| format!("testcase: {test_setup:?}"))?;
+            Ok(())
+        }
+    }
+}
+
+fn run_single_test(
+    test_case: &str,
+    base_dir: &Path,
+    keep_all: bool,
+    max_name_len: usize,
+) -> anyhow::Result<TestResult> {
     let executable = env::current_exe().context("Failed to detect current executable")?;
-    let tmp_dir =
-        TempDir::new(&format!("krun-test-{test_case}")).context("Failed to create tmp dir")?;
+    let test_dir = base_dir.join(test_case);
+    fs::create_dir(&test_dir).context("Failed to create test directory")?;
+
+    let log_path = test_dir.join("log.txt");
+    let log_file = File::create(&log_path).context("Failed to create log file")?;
+
+    eprint!(
+        "[{test_case}] {:.<width$} ",
+        "",
+        width = max_name_len - test_case.len() + 3
+    );
 
     let child = Command::new(&executable)
         .arg("start-vm")
         .arg("--test-case")
         .arg(test_case)
         .arg("--tmp-dir")
-        .arg(tmp_dir.path())
+        .arg(&test_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(log_file)
         .spawn()
         .context("Failed to start subprocess for test")?;
 
@@ -53,40 +177,122 @@ fn run_single_test(test_case: &str) -> anyhow::Result<bool> {
         test.check(child);
     });
 
-    match result {
-        Ok(()) => {
-            println!("[{test_case}]: OK");
-            Ok(true)
-        }
-        Err(_e) => {
-            println!("[{test_case}]: FAIL (dir {:?} kept)", tmp_dir.path());
-            mem::forget(tmp_dir);
-            Ok(false)
-        }
-    }
-}
-
-fn run_tests(test_case: &str) -> anyhow::Result<()> {
-    let mut num_tests = 1;
-    let mut num_ok: usize = 0;
-
-    if test_case == "all" {
-        let test_cases = test_cases();
-        num_tests = test_cases.len();
-
-        for TestCase { name, test: _ } in test_cases {
-            num_ok += run_single_test(name).context(name)? as usize;
+    let passed = result.is_ok();
+    if passed {
+        eprintln!("OK");
+        if !keep_all {
+            let _ = fs::remove_dir_all(&test_dir);
         }
     } else {
-        num_ok += run_single_test(test_case).context(test_case.to_string())? as usize;
+        eprintln!("FAIL");
+    }
+
+    Ok(TestResult {
+        name: test_case.to_string(),
+        passed,
+        log_path,
+    })
+}
+
+fn write_github_summary(
+    results: &[TestResult],
+    num_ok: usize,
+    num_tests: usize,
+) -> anyhow::Result<()> {
+    let summary_path = env::var("GITHUB_STEP_SUMMARY")
+        .context("GITHUB_STEP_SUMMARY environment variable not set")?;
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&summary_path)
+        .context("Failed to open GITHUB_STEP_SUMMARY")?;
+
+    let all_passed = num_ok == num_tests;
+    let status = if all_passed { "✅" } else { "❌" };
+
+    writeln!(
+        file,
+        "## {status} Integration Tests ({num_ok}/{num_tests} passed)\n"
+    )?;
+
+    for result in results {
+        let icon = if result.passed { "✅" } else { "❌" };
+        let log_content = fs::read_to_string(&result.log_path).unwrap_or_default();
+
+        writeln!(file, "<details>")?;
+        writeln!(file, "<summary>{icon} {}</summary>\n", result.name)?;
+        writeln!(file, "```")?;
+        // Limit log size to avoid huge summaries (2 MiB limit)
+        const MAX_LOG_SIZE: usize = 2 * 1024 * 1024;
+        let truncated = if log_content.len() > MAX_LOG_SIZE {
+            format!(
+                "... (truncated, showing last 1 MiB) ...\n{}",
+                &log_content[log_content.len() - MAX_LOG_SIZE..]
+            )
+        } else {
+            log_content
+        };
+        writeln!(file, "{truncated}")?;
+        writeln!(file, "```")?;
+        writeln!(file, "</details>\n")?;
+    }
+
+    Ok(())
+}
+
+fn run_tests(
+    test_case: &str,
+    base_dir: Option<PathBuf>,
+    keep_all: bool,
+    github_summary: bool,
+) -> anyhow::Result<()> {
+    // Create the base directory - either use provided path or create a temp one
+    let base_dir = match base_dir {
+        Some(path) => {
+            fs::create_dir_all(&path).context("Failed to create base directory")?;
+            path
+        }
+        None => TempDir::new("libkrun-tests")
+            .context("Failed to create temp base directory")?
+            .into_path(),
+    };
+
+    let mut results: Vec<TestResult> = Vec::new();
+
+    if test_case == "all" {
+        let all_tests = test_cases();
+        let max_name_len = all_tests.iter().map(|t| t.name.len()).max().unwrap_or(0);
+
+        for TestCase { name, test: _, requires_namespace: _ } in all_tests {
+            results.push(run_single_test(name, &base_dir, keep_all, max_name_len).context(name)?);
+        }
+    } else {
+        let max_name_len = test_case.len();
+        results.push(
+            run_single_test(test_case, &base_dir, keep_all, max_name_len)
+                .context(test_case.to_string())?,
+        );
+    }
+
+    let num_tests = results.len();
+    let num_ok = results.iter().filter(|r| r.passed).count();
+
+    // Write GitHub Actions summary if requested
+    if github_summary {
+        write_github_summary(&results, num_ok, num_tests)?;
     }
 
     let num_failures = num_tests - num_ok;
     if num_failures > 0 {
+        eprintln!("(See test artifacts at: {})", base_dir.display());
         println!("\nFAIL (PASSED {num_ok}/{num_tests})");
         anyhow::bail!("")
     } else {
-        println!("\nOK (PASSED {num_ok}/{num_tests})");
+        if keep_all {
+            eprintln!("(See test artifacts at: {})", base_dir.display());
+        }
+        eprintln!("\nOK ({num_ok}/{num_tests} passed)");
     }
 
     Ok(())
@@ -98,6 +304,15 @@ enum CliCommand {
         /// Specify which test to run or "all"
         #[arg(long, default_value = "all")]
         test_case: String,
+        /// Base directory for test artifacts
+        #[arg(long)]
+        base_dir: Option<PathBuf>,
+        /// Keep all test artifacts even on success
+        #[arg(long)]
+        keep_all: bool,
+        /// Write test results to GitHub Actions job summary ($GITHUB_STEP_SUMMARY)
+        #[arg(long)]
+        github_summary: bool,
     },
     StartVm {
         #[arg(long)]
@@ -111,6 +326,9 @@ impl Default for CliCommand {
     fn default() -> Self {
         Self::Test {
             test_case: "all".to_string(),
+            base_dir: None,
+            keep_all: false,
+            github_summary: false,
         }
     }
 }
@@ -126,7 +344,16 @@ fn main() -> anyhow::Result<()> {
     let command = cli.command.unwrap_or_default();
 
     match command {
-        CliCommand::StartVm { test_case, tmp_dir } => start_vm(TestSetup { test_case, tmp_dir }),
-        CliCommand::Test { test_case } => run_tests(&test_case),
+        CliCommand::StartVm { test_case, tmp_dir } => start_vm(TestSetup {
+            test_case,
+            tmp_dir,
+            requires_namespace: false, // Will be set by start_vm based on test case
+        }),
+        CliCommand::Test {
+            test_case,
+            base_dir,
+            keep_all,
+            github_summary,
+        } => run_tests(&test_case, base_dir, keep_all, github_summary),
     }
 }
