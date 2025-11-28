@@ -2,7 +2,7 @@ use anyhow::Context;
 use clap::Parser;
 use nix::sys::resource::{getrlimit, setrlimit, Resource};
 use std::env;
-use std::fs;
+use std::fs::{self, File};
 use std::panic::catch_unwind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -36,6 +36,9 @@ fn run_single_test(test_case: &str, base_dir: &Path, keep_all: bool) -> anyhow::
     let test_dir = base_dir.join(test_case);
     fs::create_dir(&test_dir).context("Failed to create test directory")?;
 
+    let log_path = test_dir.join("log.txt");
+    let log_file = File::create(&log_path).context("Failed to create log file")?;
+
     let child = Command::new(&executable)
         .arg("start-vm")
         .arg("--test-case")
@@ -44,7 +47,7 @@ fn run_single_test(test_case: &str, base_dir: &Path, keep_all: bool) -> anyhow::
         .arg(&test_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(log_file)
         .spawn()
         .context("Failed to start subprocess for test")?;
 
