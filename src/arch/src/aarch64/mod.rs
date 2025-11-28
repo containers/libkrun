@@ -84,23 +84,19 @@ pub fn arch_memory_regions(
 }
 
 /// Configures the system and should be called once per vm before starting vcpu threads.
-/// For aarch64, we only setup the FDT.
-///
-/// # Arguments
-///
-/// * `guest_mem` - The memory to be used by the guest.
-/// * `cmdline_cstring` - The kernel commandline.
-/// * `vcpu_mpidr` - Array of MPIDR register values per vcpu.
-/// * `device_info` - A hashmap containing the attached devices for building FDT device nodes.
-/// * `gic_device` - The GIC device.
-/// * `initrd` - Information about an optional initrd.
+/// For aarch64, we only setup SMBIOS.
 #[allow(clippy::too_many_arguments)]
 pub fn configure_system(
-    _guest_mem: &GuestMemoryMmap,
-    _smbios_oem_strings: &Option<Vec<String>>,
+    guest_mem: &GuestMemoryMmap,
+    mem_info: &ArchMemoryInfo,
+    smbios_oem_strings: &Option<Vec<String>>,
 ) -> super::Result<()> {
-    smbios::setup_smbios(_guest_mem, layout::SMBIOS_START, _smbios_oem_strings)
-        .map_err(Error::Smbios)?;
+    // When booting EFI, RAM starts at 0x4000_0000, while when doing a direct kernel
+    // boot RAM starts at 0x8000_0000. Only write SMBIOS in the former case.
+    if mem_info.ram_start_addr < layout::SMBIOS_START {
+        smbios::setup_smbios(guest_mem, layout::SMBIOS_START, smbios_oem_strings)
+            .map_err(Error::Smbios)?;
+    }
 
     Ok(())
 }
