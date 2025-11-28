@@ -160,6 +160,8 @@ pub enum StartMicrovmError {
     InvalidKernelBundle(vm_memory::mmap::MmapRegionError),
     /// The kernel command line is invalid.
     KernelCmdline(String),
+    /// The kernel doesn't fit into the microVM memory.
+    KernelDoesNotFit(u64, usize),
     /// The supplied kernel format is not supported.
     KernelFormatUnsupported,
     /// Cannot load command line string.
@@ -329,6 +331,10 @@ impl Display for StartMicrovmError {
                 )
             }
             KernelCmdline(ref err) => write!(f, "Invalid kernel command line: {err}"),
+            KernelDoesNotFit(load_addr, size) => write!(
+                f,
+                "The kernel doesn't fit in the microVM memory (load_addr={load_addr}, size={size})"
+            ),
             KernelFormatUnsupported => {
                 write!(f, "The supplied kernel format is not supported.")
             }
@@ -1283,6 +1289,12 @@ fn load_payload(
 
             let kernel_data =
                 unsafe { std::slice::from_raw_parts(kernel_host_addr as *mut u8, kernel_size) };
+            if kernel_guest_addr + kernel_size as u64 > _arch_mem_info.ram_last_addr {
+                return Err(StartMicrovmError::KernelDoesNotFit(
+                    kernel_guest_addr,
+                    kernel_size,
+                ));
+            }
             guest_mem
                 .write(kernel_data, GuestAddress(kernel_guest_addr))
                 .unwrap();
