@@ -52,4 +52,14 @@ jobs:
         run: curl -L -o /tmp/libkrunfw-5.0.0-x86_64.tgz https://github.com/containers/libkrunfw/releases/download/v5.0.0/libkrunfw-5.0.0-x86_64.tgz && mkdir tmp && tar xf /tmp/libkrunfw-5.0.0-x86_64.tgz -C tmp && sudo mv tmp/lib64/* /lib/x86_64-linux-gnu
       
       - name: Integration tests
-        run: RUST_LOG=trace KRUN_ENOMEM_WORKAROUND=1 KRUN_NO_UNSHARE=1 make test
+        run: KRUN_ENOMEM_WORKAROUND=1 KRUN_NO_UNSHARE=1 KRUN_TEST_BASE_DIR=/tmp/libkrun-tests make test TEST_FLAGS="--keep-all --github-summary"
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: |
+            /tmp/libkrun-tests/
+            !/tmp/libkrun-tests/**/guest-agent
+          if-no-files-found: ignore
