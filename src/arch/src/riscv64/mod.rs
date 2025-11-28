@@ -67,27 +67,6 @@ pub fn configure_system(
     Ok(())
 }
 
-/// Returns the memory address where the kernel could be loaded.
-pub fn get_kernel_start() -> u64 {
-    layout::DRAM_MEM_START
-}
-
-/// Returns the memory address where the initrd could be loaded.
-pub fn initrd_load_addr(guest_mem: &GuestMemoryMmap, initrd_size: usize) -> super::Result<u64> {
-    match GuestAddress(get_fdt_addr(guest_mem))
-        .checked_sub(align_upwards!(initrd_size, super::PAGE_SIZE) as u64)
-    {
-        Some(offset) => {
-            if guest_mem.address_in_range(offset) {
-                Ok(offset.raw_value())
-            } else {
-                Err(Error::InitrdAddress)
-            }
-        }
-        None => Err(Error::InitrdAddress),
-    }
-}
-
 // Auxiliary function to get the address where the device tree blob is loaded.
 pub fn get_fdt_addr(_mem: &GuestMemoryMmap) -> u64 {
     // If the memory allocated is smaller than the size allocated for the FDT,

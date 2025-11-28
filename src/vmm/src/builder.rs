@@ -160,6 +160,8 @@ pub enum StartMicrovmError {
     InvalidKernelBundle(vm_memory::mmap::MmapRegionError),
     /// The kernel command line is invalid.
     KernelCmdline(String),
+    /// The kernel doesn't fit into the microVM memory.
+    KernelDoesNotFit(u64, usize),
     /// The supplied kernel format is not supported.
     KernelFormatUnsupported,
     /// Cannot load command line string.
@@ -329,6 +331,10 @@ impl Display for StartMicrovmError {
                 )
             }
             KernelCmdline(ref err) => write!(f, "Invalid kernel command line: {err}"),
+            KernelDoesNotFit(load_addr, size) => write!(
+                f,
+                "The kernel doesn't fit in the microVM memory (load_addr={load_addr}, size={size})"
+            ),
             KernelFormatUnsupported => {
                 write!(f, "The supplied kernel format is not supported.")
             }
@@ -844,7 +850,7 @@ pub fn build_microvm(
         vcpus = create_vcpus_aarch64(
             &vm,
             &vcpu_config,
-            &guest_memory,
+            &arch_memory_info,
             payload_config.entry_addr,
             &exit_evt,
         )
@@ -889,7 +895,7 @@ pub fn build_microvm(
         vcpus = create_vcpus_aarch64(
             &vm,
             &vcpu_config,
-            &guest_memory,
+            &arch_memory_info,
             payload_config.entry_addr,
             &exit_evt,
             vcpu_list.clone(),
@@ -1283,6 +1289,12 @@ fn load_payload(
 
             let kernel_data =
                 unsafe { std::slice::from_raw_parts(kernel_host_addr as *mut u8, kernel_size) };
+            if kernel_guest_addr + kernel_size as u64 > _arch_mem_info.ram_last_addr {
+                return Err(StartMicrovmError::KernelDoesNotFit(
+                    kernel_guest_addr,
+                    kernel_size,
+                ));
+            }
             guest_mem
                 .write(kernel_data, GuestAddress(kernel_guest_addr))
                 .unwrap();
@@ -1716,7 +1728,7 @@ fn create_vcpus_x86_64(
 fn create_vcpus_aarch64(
     vm: &Vm,
     vcpu_config: &VcpuConfig,
-    guest_mem: &GuestMemoryMmap,
+    mem_info: &ArchMemoryInfo,
     entry_addr: GuestAddress,
     exit_evt: &EventFd,
 ) -> super::Result<Vec<Vcpu>> {
@@ -1729,7 +1741,7 @@ fn create_vcpus_aarch64(
         )
         .map_err(Error::Vcpu)?;
 
-        vcpu.configure_aarch64(vm.fd(), guest_mem, entry_addr)
+        vcpu.configure_aarch64(vm.fd(), mem_info, entry_addr)
             .map_err(Error::Vcpu)?;
 
         vcpus.push(vcpu);
@@ -1741,7 +1753,7 @@ fn create_vcpus_aarch64(
 fn create_vcpus_aarch64(
     _vm: &Vm,
     vcpu_config: &VcpuConfig,
-    guest_mem: &GuestMemoryMmap,
+    mem_info: &ArchMemoryInfo,
     entry_addr: GuestAddress,
     exit_evt: &EventFd,
     vcpu_list: Arc<VcpuList>,
@@ -1768,7 +1780,7 @@ fn create_vcpus_aarch64(
         )
         .map_err(Error::Vcpu)?;
 
-        vcpu.configure_aarch64(guest_mem).map_err(Error::Vcpu)?;
+        vcpu.configure_aarch64(mem_info).map_err(Error::Vcpu)?;
 
         if let Some(boot_sender) = boot_sender {
             boot_senders.insert(vcpu.get_mpidr(), boot_sender);

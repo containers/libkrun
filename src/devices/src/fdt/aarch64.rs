@@ -12,7 +12,6 @@ use std::{io, result};
 use crate::legacy::gic::GICDevice;
 use crate::legacy::IrqChip;
 use crate::DeviceType;
-use arch::aarch64::get_fdt_addr;
 use arch::aarch64::layout::{GTIMER_HYP, GTIMER_PHYS, GTIMER_SEC, GTIMER_VIRT};
 use arch::{ArchMemoryInfo, InitrdConfig};
 use vm_fdt::{Error as FdtError, FdtWriter};
@@ -112,7 +111,7 @@ pub fn create_fdt<T: DeviceInfoForFDT + Clone + Debug>(
     let fdt_final = fdt.finish()?;
 
     // Write FDT to memory.
-    let fdt_address = GuestAddress(get_fdt_addr(guest_mem));
+    let fdt_address = GuestAddress(arch_memory_info.fdt_addr);
     guest_mem
         .write_slice(fdt_final.as_slice(), fdt_address)
         .map_err(Error::WriteFDTToMemory)?;
@@ -177,10 +176,10 @@ fn create_memory_node(
     _guest_mem: &GuestMemoryMmap,
     arch_memory_info: &ArchMemoryInfo,
 ) -> Result<()> {
-    let mem_size = arch_memory_info.ram_last_addr - arch::aarch64::layout::DRAM_MEM_START;
+    let mem_size = arch_memory_info.ram_last_addr - arch_memory_info.ram_start_addr;
     // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/booting-without-of.txt#L960
     // for an explanation of this.
-    let mem_reg_prop = generate_prop64(&[arch::aarch64::layout::DRAM_MEM_START, mem_size]);
+    let mem_reg_prop = generate_prop64(&[arch_memory_info.ram_start_addr, mem_size]);
 
     let mem_node = fdt.begin_node("memory")?;
     fdt.property_string("device_type", "memory")?;

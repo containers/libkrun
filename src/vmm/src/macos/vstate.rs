@@ -18,6 +18,7 @@ use std::time::Duration;
 use super::super::{FC_EXIT_CODE_GENERIC_ERROR, FC_EXIT_CODE_OK};
 use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 
+use arch::ArchMemoryInfo;
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use devices::legacy::VcpuList;
 use hvf::{HvfVcpu, HvfVm, VcpuExit, Vcpus};
@@ -320,8 +321,8 @@ impl Vcpu {
     /// # Arguments
     ///
     /// * `guest_mem` - The guest memory used by this microvm.
-    pub fn configure_aarch64(&mut self, guest_mem: &GuestMemoryMmap) -> Result<()> {
-        self.fdt_addr = arch::aarch64::get_fdt_addr(guest_mem);
+    pub fn configure_aarch64(&mut self, mem_info: &ArchMemoryInfo) -> Result<()> {
+        self.fdt_addr = mem_info.fdt_addr;
 
         Ok(())
     }

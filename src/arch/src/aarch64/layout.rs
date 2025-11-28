@@ -49,12 +49,14 @@
 //
 // Taken from (http://infocenter.arm.com/help/topic/com.arm.doc.den0001c/DEN0001C_principles_of_arm_memory_maps.pdf).
 
-/// Start of RAM on 64 bit ARM.
-pub const DRAM_MEM_START: u64 = 0x4000_0000; // 1 GB.
+/// Start of RAM on 64 bit ARM when loading an EFI firmware.
+pub const DRAM_MEM_START_EFI: u64 = 0x4000_0000; // 1 GB.
+/// Start of RAM on 64 bit ARM when loading a kernel.
+pub const DRAM_MEM_START_KERNEL: u64 = 0x8000_0000; // 2 GB.
 /// The maximum addressable RAM address.
 pub const DRAM_MEM_END: u64 = 0x00FF_8000_0000; // 1024 - 2 = 1022 GB.
 /// The maximum RAM size.
-pub const DRAM_MEM_MAX_SIZE: u64 = DRAM_MEM_END - DRAM_MEM_START;
+pub const DRAM_MEM_MAX_SIZE: u64 = DRAM_MEM_END - DRAM_MEM_START_KERNEL;
 
 /// Kernel command line maximum size.
 /// As per `arch/arm64/include/uapi/asm/setup.h`.

@@ -17,8 +17,11 @@ pub use self::macos::*;
 
 use std::fmt::Debug;
 
-use crate::{aarch64::layout::FIRMWARE_START, ArchMemoryInfo};
-use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMmap};
+use crate::{
+    aarch64::layout::{DRAM_MEM_START_EFI, DRAM_MEM_START_KERNEL, FIRMWARE_START},
+    ArchMemoryInfo,
+};
+use vm_memory::{GuestAddress, GuestMemoryMmap};
 use vmm_sys_util::align_upwards;
 
 use smbios;
@@ -43,78 +46,59 @@ pub fn arch_memory_regions(
     initrd_size: u64,
     firmware_size: Option<usize>,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
+    let ram_start_addr = if firmware_size.is_some() {
+        DRAM_MEM_START_EFI
+    } else {
+        DRAM_MEM_START_KERNEL
+    };
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
     let dram_size = align_upwards!(size, page_size);
-    let ram_last_addr = layout::DRAM_MEM_START + (dram_size as u64);
+    let ram_last_addr = ram_start_addr + (dram_size as u64);
     let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
+    let fdt_addr = if firmware_size.is_some() {
+        DRAM_MEM_START_EFI
+    } else {
+        ram_last_addr - layout::FDT_MAX_SIZE as u64
+    };
 
     let info = ArchMemoryInfo {
+        ram_start_addr,
         ram_last_addr,
         shm_start_addr,
         page_size,
-        initrd_addr: ram_last_addr - layout::FDT_MAX_SIZE as u64 - initrd_size,
+        fdt_addr,
+        initrd_addr: fdt_addr - initrd_size,
         firmware_addr: FIRMWARE_START,
     };
     let regions = if let Some(firmware_size) = firmware_size {
         vec![
             // Space for loading the firmware
             (GuestAddress(0u64), align_upwards!(firmware_size, page_size)),
-            (GuestAddress(layout::DRAM_MEM_START), dram_size),
+            (GuestAddress(ram_start_addr), dram_size),
         ]
     } else {
-        vec![(GuestAddress(layout::DRAM_MEM_START), dram_size)]
+        vec![(GuestAddress(ram_start_addr), dram_size)]
     };
 
     (info, regions)
 }
 
 /// Configures the system and should be called once per vm before starting vcpu threads.
-/// For aarch64, we only setup the FDT.
-///
-/// # Arguments
-///
-/// * `guest_mem` - The memory to be used by the guest.
-/// * `cmdline_cstring` - The kernel commandline.
-/// * `vcpu_mpidr` - Array of MPIDR register values per vcpu.
-/// * `device_info` - A hashmap containing the attached devices for building FDT device nodes.
-/// * `gic_device` - The GIC device.
-/// * `initrd` - Information about an optional initrd.
+/// For aarch64, we only setup SMBIOS.
 #[allow(clippy::too_many_arguments)]
 pub fn configure_system(
-    _guest_mem: &GuestMemoryMmap,
-    _smbios_oem_strings: &Option<Vec<String>>,
+    guest_mem: &GuestMemoryMmap,
+    mem_info: &ArchMemoryInfo,
+    smbios_oem_strings: &Option<Vec<String>>,
 ) -> super::Result<()> {
-    smbios::setup_smbios(_guest_mem, layout::SMBIOS_START, _smbios_oem_strings)
-        .map_err(Error::Smbios)?;
+    // When booting EFI, RAM starts at 0x4000_0000, while when doing a direct kernel
+    // boot RAM starts at 0x8000_0000. Only write SMBIOS in the former case.
+    if mem_info.ram_start_addr < layout::SMBIOS_START {
+        smbios::setup_smbios(guest_mem, layout::SMBIOS_START, smbios_oem_strings)
+            .map_err(Error::Smbios)?;
+    }
 
     Ok(())
-}
-
-/// Returns the memory address where the kernel could be loaded.
-pub fn get_kernel_start() -> u64 {
-    layout::DRAM_MEM_START
-}
-
-/// Returns the memory address where the initrd could be loaded.
-pub fn initrd_load_addr(guest_mem: &GuestMemoryMmap, initrd_size: usize) -> super::Result<u64> {
-    match GuestAddress(get_fdt_addr(guest_mem))
-        .checked_sub(align_upwards!(initrd_size, super::PAGE_SIZE) as u64)
-    {
-        Some(offset) => {
-            if guest_mem.address_in_range(offset) {
-                Ok(offset.raw_value())
-            } else {
-                Err(Error::InitrdAddress)
-            }
-        }
-        None => Err(Error::InitrdAddress),
-    }
-}
-
-// Auxiliary function to get the address where the device tree blob is loaded.
-pub fn get_fdt_addr(_mem: &GuestMemoryMmap) -> u64 {
-    // Put FDT at the beginning of the DRAM
-    layout::DRAM_MEM_START
 }
 
 #[cfg(test)]
@@ -125,7 +109,10 @@ mod tests {
     fn test_regions_lt_1024gb() {
         let (_mem_info, regions) = arch_memory_regions(1usize << 29, 0);
         assert_eq!(1, regions.len());
-        assert_eq!(GuestAddress(super::layout::DRAM_MEM_START), regions[0].0);
+        assert_eq!(
+            GuestAddress(super::layout::DRAM_MEM_START_KERNEL),
+            regions[0].0
+        );
         assert_eq!(1usize << 29, regions[0].1);
     }
 
@@ -133,22 +120,10 @@ mod tests {
     fn test_regions_gt_1024gb() {
         let (_mem_info, regions) = arch_memory_regions(1usize << 41, 0);
         assert_eq!(1, regions.len());
-        assert_eq!(GuestAddress(super::layout::DRAM_MEM_START), regions[0].0);
+        assert_eq!(
+            GuestAddress(super::layout::DRAM_MEM_START_KERNEL),
+            regions[0].0
+        );
         assert_eq!(super::layout::DRAM_MEM_MAX_SIZE, regions[0].1 as u64);
-    }
-
-    #[test]
-    fn test_get_fdt_addr() {
-        let (_mem_info, regions) = arch_memory_regions(layout::FDT_MAX_SIZE - 0x1000, 0);
-        let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
-        assert_eq!(get_fdt_addr(&mem), layout::DRAM_MEM_START);
-
-        let (_mem_info, regions) = arch_memory_regions(layout::FDT_MAX_SIZE, 0);
-        let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
-        assert_eq!(get_fdt_addr(&mem), layout::DRAM_MEM_START);
-
-        let (_mem_info, regions) = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000, 0);
-        let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
-        assert_eq!(get_fdt_addr(&mem), 0x1000 + layout::DRAM_MEM_START);
     }
 }
