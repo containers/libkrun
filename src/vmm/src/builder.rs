@@ -850,7 +850,7 @@ pub fn build_microvm(
         vcpus = create_vcpus_aarch64(
             &vm,
             &vcpu_config,
-            &guest_memory,
+            &arch_memory_info,
             payload_config.entry_addr,
             &exit_evt,
         )
@@ -895,7 +895,7 @@ pub fn build_microvm(
         vcpus = create_vcpus_aarch64(
             &vm,
             &vcpu_config,
-            &guest_memory,
+            &arch_memory_info,
             payload_config.entry_addr,
             &exit_evt,
             vcpu_list.clone(),
@@ -1728,7 +1728,7 @@ fn create_vcpus_x86_64(
 fn create_vcpus_aarch64(
     vm: &Vm,
     vcpu_config: &VcpuConfig,
-    guest_mem: &GuestMemoryMmap,
+    mem_info: &ArchMemoryInfo,
     entry_addr: GuestAddress,
     exit_evt: &EventFd,
 ) -> super::Result<Vec<Vcpu>> {
@@ -1741,7 +1741,7 @@ fn create_vcpus_aarch64(
         )
         .map_err(Error::Vcpu)?;
 
-        vcpu.configure_aarch64(vm.fd(), guest_mem, entry_addr)
+        vcpu.configure_aarch64(vm.fd(), mem_info, entry_addr)
             .map_err(Error::Vcpu)?;
 
         vcpus.push(vcpu);
@@ -1753,7 +1753,7 @@ fn create_vcpus_aarch64(
 fn create_vcpus_aarch64(
     _vm: &Vm,
     vcpu_config: &VcpuConfig,
-    guest_mem: &GuestMemoryMmap,
+    mem_info: &ArchMemoryInfo,
     entry_addr: GuestAddress,
     exit_evt: &EventFd,
     vcpu_list: Arc<VcpuList>,
@@ -1780,7 +1780,7 @@ fn create_vcpus_aarch64(
         )
         .map_err(Error::Vcpu)?;
 
-        vcpu.configure_aarch64(guest_mem).map_err(Error::Vcpu)?;
+        vcpu.configure_aarch64(mem_info).map_err(Error::Vcpu)?;
 
         if let Some(boot_sender) = boot_sender {
             boot_senders.insert(vcpu.get_mpidr(), boot_sender);

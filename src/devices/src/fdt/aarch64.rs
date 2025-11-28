@@ -12,7 +12,6 @@ use std::{io, result};
 use crate::legacy::gic::GICDevice;
 use crate::legacy::IrqChip;
 use crate::DeviceType;
-use arch::aarch64::get_fdt_addr;
 use arch::aarch64::layout::{GTIMER_HYP, GTIMER_PHYS, GTIMER_SEC, GTIMER_VIRT};
 use arch::{ArchMemoryInfo, InitrdConfig};
 use vm_fdt::{Error as FdtError, FdtWriter};
@@ -112,7 +111,7 @@ pub fn create_fdt<T: DeviceInfoForFDT + Clone + Debug>(
     let fdt_final = fdt.finish()?;
 
     // Write FDT to memory.
-    let fdt_address = GuestAddress(get_fdt_addr(guest_mem));
+    let fdt_address = GuestAddress(arch_memory_info.fdt_addr);
     guest_mem
         .write_slice(fdt_final.as_slice(), fdt_address)
         .map_err(Error::WriteFDTToMemory)?;
