@@ -7,7 +7,8 @@
 
 use std::{mem, mem::offset_of, num::TryFromIntError, result};
 
-use super::super::get_fdt_addr;
+use crate::ArchMemoryInfo;
+
 use kvm_bindings::{
     kvm_regs, user_pt_regs, KVM_REG_ARM64, KVM_REG_ARM64_SYSREG, KVM_REG_ARM64_SYSREG_CRM_MASK,
     KVM_REG_ARM64_SYSREG_CRM_SHIFT, KVM_REG_ARM64_SYSREG_CRN_MASK, KVM_REG_ARM64_SYSREG_CRN_SHIFT,
@@ -16,8 +17,6 @@ use kvm_bindings::{
     KVM_REG_ARM_CORE, KVM_REG_SIZE_U64,
 };
 use kvm_ioctls::VcpuFd;
-
-use vm_memory::GuestMemoryMmap;
 
 /// Errors thrown while setting aarch64 registers.
 #[derive(Debug)]
@@ -108,8 +107,13 @@ arm64_sys_reg!(MPIDR_EL1, 3, 0, 0, 0, 5);
 /// * `vcpu` - Structure for the VCPU that holds the VCPU's fd.
 /// * `cpu_id` - Index of current vcpu.
 /// * `boot_ip` - Starting instruction pointer.
-/// * `mem` - Reserved DRAM for current VM.
-pub fn setup_regs(vcpu: &VcpuFd, cpu_id: u8, boot_ip: u64, mem: &GuestMemoryMmap) -> Result<()> {
+/// * `mem_info` - Structure with information about the memory layout.
+pub fn setup_regs(
+    vcpu: &VcpuFd,
+    cpu_id: u8,
+    boot_ip: u64,
+    mem_info: &ArchMemoryInfo,
+) -> Result<()> {
     // Get the register index of the PSTATE (Processor State) register.
     vcpu.set_one_reg(arm64_core_reg!(pstate), &PSTATE_FAULT_BITS_64.to_le_bytes())
         .map_err(Error::SetCoreRegister)?;
@@ -123,8 +127,8 @@ pub fn setup_regs(vcpu: &VcpuFd, cpu_id: u8, boot_ip: u64, mem: &GuestMemoryMmap
         // Last mandatory thing to set -> the address pointing to the FDT (also called DTB).
         // "The device tree blob (dtb) must be placed on an 8-byte boundary and must
         // not exceed 2 megabytes in size." -> https://www.kernel.org/doc/Documentation/arm64/booting.txt.
-        // We are choosing to place it the end of DRAM. See `get_fdt_addr`.
-        vcpu.set_one_reg(arm64_core_reg!(regs), &get_fdt_addr(mem).to_le_bytes())
+        // For direct kernel boot, we place it at the end of DRAM.
+        vcpu.set_one_reg(arm64_core_reg!(regs), &mem_info.fdt_addr.to_le_bytes())
             .map_err(Error::SetCoreRegister)?;
     }
     Ok(())

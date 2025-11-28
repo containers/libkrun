@@ -307,13 +307,7 @@ impl Vmm {
             .map_err(Error::SetupFDT)?;
         }
 
-        #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-        {
-            arch::aarch64::configure_system(&self.guest_memory, _smbios_oem_strings)
-                .map_err(Error::ConfigureSystem)?;
-        }
-
-        #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+        #[cfg(target_arch = "aarch64")]
         {
             arch::aarch64::configure_system(&self.guest_memory, _smbios_oem_strings)
                 .map_err(Error::ConfigureSystem)?;

@@ -15,6 +15,7 @@ pub struct ArchMemoryInfo {
     pub ram_last_addr: u64,
     pub shm_start_addr: u64,
     pub page_size: usize,
+    pub fdt_addr: u64,
     pub initrd_addr: u64,
     pub firmware_addr: u64,
 }
