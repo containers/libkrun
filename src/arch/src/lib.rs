@@ -12,9 +12,12 @@ pub struct ArchMemoryInfo {
     pub ram_below_gap: u64,
     #[cfg(target_arch = "x86_64")]
     pub ram_above_gap: u64,
+    #[cfg(target_arch = "aarch64")]
+    pub ram_start_addr: u64,
     pub ram_last_addr: u64,
     pub shm_start_addr: u64,
     pub page_size: usize,
+    #[cfg(target_arch = "aarch64")]
     pub fdt_addr: u64,
     pub initrd_addr: u64,
     pub firmware_addr: u64,
