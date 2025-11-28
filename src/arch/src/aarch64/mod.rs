@@ -17,7 +17,10 @@ pub use self::macos::*;
 
 use std::fmt::Debug;
 
-use crate::{aarch64::layout::FIRMWARE_START, ArchMemoryInfo};
+use crate::{
+    aarch64::layout::{DRAM_MEM_START_EFI, DRAM_MEM_START_KERNEL, FIRMWARE_START},
+    ArchMemoryInfo,
+};
 use vm_memory::{GuestAddress, GuestMemoryMmap};
 use vmm_sys_util::align_upwards;
 
@@ -43,13 +46,23 @@ pub fn arch_memory_regions(
     initrd_size: u64,
     firmware_size: Option<usize>,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
+    let ram_start_addr = if firmware_size.is_some() {
+        DRAM_MEM_START_EFI
+    } else {
+        DRAM_MEM_START_KERNEL
+    };
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
     let dram_size = align_upwards!(size, page_size);
-    let ram_last_addr = layout::DRAM_MEM_START + (dram_size as u64);
+    let ram_last_addr = ram_start_addr + (dram_size as u64);
     let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
-    let fdt_addr = ram_last_addr - layout::FDT_MAX_SIZE as u64;
+    let fdt_addr = if firmware_size.is_some() {
+        DRAM_MEM_START_EFI
+    } else {
+        ram_last_addr - layout::FDT_MAX_SIZE as u64
+    };
 
     let info = ArchMemoryInfo {
+        ram_start_addr,
         ram_last_addr,
         shm_start_addr,
         page_size,
@@ -61,10 +74,10 @@ pub fn arch_memory_regions(
         vec![
             // Space for loading the firmware
             (GuestAddress(0u64), align_upwards!(firmware_size, page_size)),
-            (GuestAddress(layout::DRAM_MEM_START), dram_size),
+            (GuestAddress(ram_start_addr), dram_size),
         ]
     } else {
-        vec![(GuestAddress(layout::DRAM_MEM_START), dram_size)]
+        vec![(GuestAddress(ram_start_addr), dram_size)]
     };
 
     (info, regions)
@@ -100,7 +113,10 @@ mod tests {
     fn test_regions_lt_1024gb() {
         let (_mem_info, regions) = arch_memory_regions(1usize << 29, 0);
         assert_eq!(1, regions.len());
-        assert_eq!(GuestAddress(super::layout::DRAM_MEM_START), regions[0].0);
+        assert_eq!(
+            GuestAddress(super::layout::DRAM_MEM_START_KERNEL),
+            regions[0].0
+        );
         assert_eq!(1usize << 29, regions[0].1);
     }
 
@@ -108,7 +124,10 @@ mod tests {
     fn test_regions_gt_1024gb() {
         let (_mem_info, regions) = arch_memory_regions(1usize << 41, 0);
         assert_eq!(1, regions.len());
-        assert_eq!(GuestAddress(super::layout::DRAM_MEM_START), regions[0].0);
+        assert_eq!(
+            GuestAddress(super::layout::DRAM_MEM_START_KERNEL),
+            regions[0].0
+        );
         assert_eq!(super::layout::DRAM_MEM_MAX_SIZE, regions[0].1 as u64);
     }
 }
