@@ -1773,7 +1773,8 @@ mod tests {
 
     use super::*;
     use devices;
-    use devices::legacy::KvmIoapic;
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    use devices::legacy::KvmApi;
 
     use utils::signal::validate_signal_num;
 
@@ -1795,7 +1796,9 @@ mod tests {
         let kvm = KvmContext::new().unwrap();
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), mem_size)]).unwrap();
         let mut vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
-        let _kvmioapic = KvmIoapic::new(&vm.fd()).unwrap();
+        let vcpu_count = 1;
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        let _kvmapi = KvmApi::new(vm.fd(), vcpu_count.into()).unwrap();
         assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
 
         let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
@@ -1804,7 +1807,7 @@ mod tests {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             vcpu = Vcpu::new_x86_64(
-                1,
+                vcpu_count,
                 vm.fd(),
                 vm.supported_cpuid().clone(),
                 vm.supported_msrs().clone(),
@@ -1815,7 +1818,7 @@ mod tests {
         }
         #[cfg(target_arch = "aarch64")]
         {
-            vcpu = Vcpu::new_aarch64(1, vm.fd(), exit_evt).unwrap();
+            vcpu = Vcpu::new_aarch64(vcpu_count, vm.fd(), exit_evt).unwrap();
         }
 
         (vm, vcpu, gm)
