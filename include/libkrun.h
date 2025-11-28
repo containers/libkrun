@@ -217,6 +217,22 @@ int32_t krun_add_disk2(uint32_t ctx_id,
                        uint32_t disk_format,
                        bool read_only);
 
+
+ #define KRUN_SYNC_NONE 0;
+ #define KRUN_SYNC_RELAXED 1;
+ #define KRUN_SYNC_FULL 2;
+
+ #define KRUN_UNCACHED 0;
+ #define KRUN_CACHED 1;
+
+ int32_t krun_add_disk3(uint32_t ctx_id,
+                       const char *block_id,
+                       const char *disk_path,
+                       uint32_t disk_format,
+                       bool read_only,
+                       uint32_t cache_mode,
+                       uint32_t sync_mode);
+
 /**
  * NO LONGER SUPPORTED. DO NOT USE.
  *

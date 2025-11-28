@@ -3,7 +3,7 @@ extern crate log;
 
 use crossbeam_channel::unbounded;
 #[cfg(feature = "blk")]
-use devices::virtio::block::ImageType;
+use devices::virtio::block::{CacheMode, ImageType, SyncMode};
 #[cfg(feature = "gpu")]
 use devices::virtio::gpu::display::DisplayInfo;
 #[cfg(feature = "net")]
@@ -671,6 +671,8 @@ pub unsafe extern "C" fn krun_add_disk(
                 disk_image_path: disk_path.to_string(),
                 disk_image_format: ImageType::Raw,
                 is_disk_read_only: read_only,
+                cache_mode: CacheMode::Cached,
+                sync_mode: SyncMode::Full,
             };
             cfg.add_block_cfg(block_device_config);
         }
@@ -718,6 +720,78 @@ pub unsafe extern "C" fn krun_add_disk2(
                 disk_image_path: disk_path.to_string(),
                 disk_image_format: format,
                 is_disk_read_only: read_only,
+                cache_mode: CacheMode::Cached,
+                sync_mode: SyncMode::Full,
+            };
+            cfg.add_block_cfg(block_device_config);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(feature = "blk")]
+pub unsafe extern "C" fn krun_add_disk3(
+    ctx_id: u32,
+    c_block_id: *const c_char,
+    c_disk_path: *const c_char,
+    disk_format: u32,
+    read_only: bool,
+    cache_mode: u32,
+    sync_mode: u32,
+) -> i32 {
+    let disk_path = match CStr::from_ptr(c_disk_path).to_str() {
+        Ok(disk) => disk,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    let block_id = match CStr::from_ptr(c_block_id).to_str() {
+        Ok(block_id) => block_id,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    let format = match disk_format {
+        0 => ImageType::Raw,
+        1 => ImageType::Qcow2,
+        _ => {
+            // Do not continue if the user cannot specify a valid disk format
+            return -libc::EINVAL;
+        }
+    };
+
+    let cache_mode = match cache_mode {
+        0 => CacheMode::Uncached,
+        1 => CacheMode::Cached,
+        _ => {
+            // Do not continue if the user cannot specify a valid cache mode
+            return -libc::EINVAL;
+        }
+    };
+
+    let sync_mode = match sync_mode {
+        0 => SyncMode::None,
+        1 => SyncMode::Relaxed,
+        2 => SyncMode::Full,
+        _ => {
+            // Do not continue if the user cannot specify a valid sync mode
+            return -libc::EINVAL;
+        }
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            let block_device_config = BlockDeviceConfig {
+                block_id: block_id.to_string(),
+                cache_type: CacheType::auto(disk_path),
+                disk_image_path: disk_path.to_string(),
+                disk_image_format: format,
+                is_disk_read_only: read_only,
+                cache_mode,
+                sync_mode,
             };
             cfg.add_block_cfg(block_device_config);
         }
@@ -745,6 +819,8 @@ pub unsafe extern "C" fn krun_set_root_disk(ctx_id: u32, c_disk_path: *const c_c
                 disk_image_path: disk_path.to_string(),
                 disk_image_format: ImageType::Raw,
                 is_disk_read_only: false,
+                cache_mode: CacheMode::Cached,
+                sync_mode: SyncMode::Full,
             };
             cfg.set_root_block_cfg(block_device_config);
         }
@@ -772,6 +848,8 @@ pub unsafe extern "C" fn krun_set_data_disk(ctx_id: u32, c_disk_path: *const c_c
                 disk_image_path: disk_path.to_string(),
                 disk_image_format: ImageType::Raw,
                 is_disk_read_only: false,
+                cache_mode: CacheMode::Cached,
+                sync_mode: SyncMode::Full,
             };
             cfg.set_data_block_cfg(block_device_config);
         }
