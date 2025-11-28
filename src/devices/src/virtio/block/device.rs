@@ -15,7 +15,7 @@ use std::os::linux::fs::MetadataExt;
 use std::os::macos::fs::MetadataExt;
 use std::path::PathBuf;
 use std::result;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use imago::{
@@ -65,18 +65,18 @@ impl CacheType {
 /// Helper object for setting up all `Block` fields derived from its backing file.
 pub(crate) struct DiskProperties {
     cache_type: CacheType,
-    pub(crate) file: Arc<SyncFormatAccess<Box<dyn DynStorage>>>,
+    pub(crate) file: Arc<Mutex<SyncFormatAccess<Box<dyn DynStorage>>>>,
     nsectors: u64,
     image_id: Vec<u8>,
 }
 
 impl DiskProperties {
     pub fn new(
-        disk_image: Arc<SyncFormatAccess<Box<dyn DynStorage>>>,
+        disk_image: Arc<Mutex<SyncFormatAccess<Box<dyn DynStorage>>>>,
         disk_image_id: Vec<u8>,
         cache_type: CacheType,
     ) -> io::Result<Self> {
-        let disk_size = disk_image.size();
+        let disk_size = disk_image.lock().unwrap().size();
 
         // We only support disk size, which uses the first two words of the configuration space.
         // If the image is not a multiple of the sector size, the tail bits are not exposed.
@@ -93,10 +93,6 @@ impl DiskProperties {
             image_id: disk_image_id,
             file: disk_image,
         })
-    }
-
-    pub fn file(&self) -> &SyncFormatAccess<Box<dyn DynStorage>> {
-        self.file.as_ref()
     }
 
     pub fn nsectors(&self) -> u64 {
@@ -146,11 +142,11 @@ impl Drop for DiskProperties {
         match self.cache_type {
             CacheType::Writeback => {
                 // flush() first to force any cached data out.
-                if self.file.flush().is_err() {
+                if self.file.lock().unwrap().flush().is_err() {
                     error!("Failed to flush block data on drop.");
                 }
                 // Sync data out to physical media on host.
-                if self.file.sync().is_err() {
+                if self.file.lock().unwrap().sync().is_err() {
                     error!("Failed to sync block data on drop.")
                 }
             }
@@ -163,10 +159,39 @@ impl Drop for DiskProperties {
 
 #[derive(Copy, Clone, Debug, Default)]
 #[repr(C, packed)]
+struct VirtioBlkGeometry {
+    cylinders: u16,
+    heads: u8,
+    sectors: u8,
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+#[repr(C, packed)]
+struct VirtioBlkTopology {
+    physical_block_exp: u8,
+    alignment_offset: u8,
+    min_io_size: u16,
+    opt_io_size: u32,
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+#[repr(C, packed)]
 struct VirtioBlkConfig {
     capacity: u64,
     size_max: u32,
     seg_max: u32,
+    geometry: VirtioBlkGeometry,
+    blk_size: u32,
+    topology: VirtioBlkTopology,
+    writeback: u8,
+    unused0: u8,
+    num_queues: u16,
+    max_discard_sectors: u32,
+    max_discard_seg: u32,
+    discard_sector_alignment: u32,
+    max_write_zeroes_sectors: u32,
+    max_write_zeroes_seg: u32,
+    write_zeroes_may_unmap: u8,
 }
 
 // Safe because it only has data and has no implicit padding.
@@ -177,7 +202,7 @@ pub struct Block {
     // Host file and properties.
     disk: Option<DiskProperties>,
     cache_type: CacheType,
-    disk_image: Arc<SyncFormatAccess<Box<dyn DynStorage>>>,
+    disk_image: Arc<Mutex<SyncFormatAccess<Box<dyn DynStorage>>>>,
     disk_image_id: Vec<u8>,
     worker_thread: Option<JoinHandle<()>>,
     worker_stopfd: EventFd,
@@ -222,6 +247,7 @@ impl Block {
         #[cfg(target_os = "macos")]
         let file_opts = file_opts.relaxed_sync(true);
         let file = ImagoFile::open_sync(file_opts)?;
+        let discard_alignment = file.discard_align();
 
         let disk_image = match disk_image_format {
             ImageType::Qcow2 => {
@@ -242,14 +268,16 @@ impl Block {
             }
         };
 
-        let disk_image = Arc::new(disk_image);
+        let disk_image = Arc::new(Mutex::new(disk_image));
 
         let disk_properties =
-            DiskProperties::new(Arc::clone(&disk_image), disk_image_id.clone(), cache_type)?;
+            DiskProperties::new(disk_image.clone(), disk_image_id.clone(), cache_type)?;
 
         let mut avail_features = (1u64 << VIRTIO_F_VERSION_1)
             | (1u64 << VIRTIO_BLK_F_FLUSH)
             | (1u64 << VIRTIO_BLK_F_SEG_MAX)
+            | (1u64 << VIRTIO_BLK_F_DISCARD)
+            | (1u64 << VIRTIO_BLK_F_WRITE_ZEROES)
             | (1u64 << VIRTIO_RING_F_EVENT_IDX);
 
         if is_disk_read_only {
@@ -265,6 +293,13 @@ impl Block {
             size_max: 0,
             // QUEUE_SIZE - 2
             seg_max: 254,
+            max_discard_sectors: u32::MAX,
+            max_discard_seg: 1,
+            discard_sector_alignment: discard_alignment as u32 / 512,
+            max_write_zeroes_sectors: u32::MAX,
+            max_write_zeroes_seg: 1,
+            write_zeroes_may_unmap: 1,
+            ..Default::default()
         };
 
         Ok(Block {

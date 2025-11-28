@@ -16,10 +16,13 @@ use vm_memory::{ByteValued, GuestMemoryMmap};
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum RequestError {
+    Discarding(io::Error),
+    DiscardingToZero(io::Error),
     FlushingToDisk(io::Error),
     InvalidDataLength,
     ReadingFromDescriptor(io::Error),
     WritingToDescriptor(io::Error),
+    WritingZeroes(io::Error),
     UnknownRequest,
 }
 
@@ -39,9 +42,18 @@ pub struct RequestHeader {
     _reserved: u32,
     sector: u64,
 }
-
 // Safe because RequestHeader only contains plain data.
 unsafe impl ByteValued for RequestHeader {}
+
+#[derive(Copy, Clone, Default)]
+#[repr(C)]
+pub struct DiscardWriteData {
+    sector: u64,
+    num_sectors: u32,
+    flags: u32,
+}
+// Safe because DiscardWriteData only contains plain data.
+unsafe impl ByteValued for DiscardWriteData {}
 
 pub struct BlockWorker {
     queue: Queue,
@@ -228,7 +240,7 @@ impl BlockWorker {
             }
             VIRTIO_BLK_T_FLUSH => match self.disk.cache_type() {
                 CacheType::Writeback => {
-                    let diskfile = self.disk.file();
+                    let diskfile = self.disk.file.lock().unwrap();
                     diskfile.flush().map_err(RequestError::FlushingToDisk)?;
                     diskfile.sync().map_err(RequestError::FlushingToDisk)?;
                     Ok(0)
@@ -246,6 +258,49 @@ impl BlockWorker {
                         .map_err(RequestError::WritingToDescriptor)?;
                     Ok(disk_id.len())
                 }
+            }
+            VIRTIO_BLK_T_DISCARD => {
+                let discard_write_data: DiscardWriteData = reader
+                    .read_obj()
+                    .map_err(RequestError::ReadingFromDescriptor)?;
+                self.disk
+                    .file
+                    .lock()
+                    .unwrap()
+                    .discard_to_any(
+                        discard_write_data.sector * 512,
+                        discard_write_data.num_sectors as u64 * 512,
+                    )
+                    .map_err(RequestError::Discarding)?;
+                Ok(0)
+            }
+            VIRTIO_BLK_T_WRITE_ZEROES => {
+                let discard_write_data: DiscardWriteData = reader
+                    .read_obj()
+                    .map_err(RequestError::ReadingFromDescriptor)?;
+                let unmap = (discard_write_data.flags & VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP) != 0;
+                if unmap {
+                    self.disk
+                        .file
+                        .lock()
+                        .unwrap()
+                        .discard_to_zero(
+                            discard_write_data.sector * 512,
+                            discard_write_data.num_sectors as u64 * 512,
+                        )
+                        .map_err(RequestError::DiscardingToZero)?;
+                } else {
+                    self.disk
+                        .file
+                        .lock()
+                        .unwrap()
+                        .write_zeroes(
+                            discard_write_data.sector * 512,
+                            discard_write_data.num_sectors as u64 * 512,
+                        )
+                        .map_err(RequestError::WritingZeroes)?;
+                }
+                Ok(0)
             }
             _ => Err(RequestError::UnknownRequest),
         }
