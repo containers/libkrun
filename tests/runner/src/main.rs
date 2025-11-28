@@ -3,11 +3,18 @@ use clap::Parser;
 use nix::sys::resource::{getrlimit, setrlimit, Resource};
 use std::env;
 use std::fs::{self, File};
+use std::io::Write;
 use std::panic::catch_unwind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tempdir::TempDir;
 use test_cases::{test_cases, Test, TestCase, TestSetup};
+
+struct TestResult {
+    name: String,
+    passed: bool,
+    log_path: PathBuf,
+}
 
 fn get_test(name: &str) -> anyhow::Result<Box<dyn Test>> {
     let tests = test_cases();
@@ -36,7 +43,7 @@ fn run_single_test(
     base_dir: &Path,
     keep_all: bool,
     max_name_len: usize,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<TestResult> {
     let executable = env::current_exe().context("Failed to detect current executable")?;
     let test_dir = base_dir.join(test_case);
     fs::create_dir(&test_dir).context("Failed to create test directory")?;
@@ -68,22 +75,76 @@ fn run_single_test(
         test.check(child);
     });
 
-    match result {
-        Ok(()) => {
-            eprintln!("OK");
-            if !keep_all {
-                let _ = fs::remove_dir_all(&test_dir);
-            }
-            Ok(true)
+    let passed = result.is_ok();
+    if passed {
+        eprintln!("OK");
+        if !keep_all {
+            let _ = fs::remove_dir_all(&test_dir);
         }
-        Err(_e) => {
-            eprintln!("FAIL");
-            Ok(false)
-        }
+    } else {
+        eprintln!("FAIL");
     }
+
+    Ok(TestResult {
+        name: test_case.to_string(),
+        passed,
+        log_path,
+    })
 }
 
-fn run_tests(test_case: &str, base_dir: Option<PathBuf>, keep_all: bool) -> anyhow::Result<()> {
+fn write_github_summary(
+    results: &[TestResult],
+    num_ok: usize,
+    num_tests: usize,
+) -> anyhow::Result<()> {
+    let summary_path = env::var("GITHUB_STEP_SUMMARY")
+        .context("GITHUB_STEP_SUMMARY environment variable not set")?;
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&summary_path)
+        .context("Failed to open GITHUB_STEP_SUMMARY")?;
+
+    let all_passed = num_ok == num_tests;
+    let status = if all_passed { "✅" } else { "❌" };
+
+    writeln!(
+        file,
+        "## {status} Integration Tests ({num_ok}/{num_tests} passed)\n"
+    )?;
+
+    for result in results {
+        let icon = if result.passed { "✅" } else { "❌" };
+        let log_content = fs::read_to_string(&result.log_path).unwrap_or_default();
+
+        writeln!(file, "<details>")?;
+        writeln!(file, "<summary>{icon} {}</summary>\n", result.name)?;
+        writeln!(file, "```")?;
+        // Limit log size to avoid huge summaries (2 MiB limit)
+        const MAX_LOG_SIZE: usize = 2 * 1024 * 1024;
+        let truncated = if log_content.len() > MAX_LOG_SIZE {
+            format!(
+                "... (truncated, showing last 1 MiB) ...\n{}",
+                &log_content[log_content.len() - MAX_LOG_SIZE..]
+            )
+        } else {
+            log_content
+        };
+        writeln!(file, "{truncated}")?;
+        writeln!(file, "```")?;
+        writeln!(file, "</details>\n")?;
+    }
+
+    Ok(())
+}
+
+fn run_tests(
+    test_case: &str,
+    base_dir: Option<PathBuf>,
+    keep_all: bool,
+    github_summary: bool,
+) -> anyhow::Result<()> {
     // Create the base directory - either use provided path or create a temp one
     let base_dir = match base_dir {
         Some(path) => {
@@ -95,22 +156,29 @@ fn run_tests(test_case: &str, base_dir: Option<PathBuf>, keep_all: bool) -> anyh
             .into_path(),
     };
 
-    let mut num_tests = 1;
-    let mut num_ok: usize = 0;
+    let mut results: Vec<TestResult> = Vec::new();
 
     if test_case == "all" {
         let all_tests = test_cases();
-        num_tests = all_tests.len();
         let max_name_len = all_tests.iter().map(|t| t.name.len()).max().unwrap_or(0);
 
         for TestCase { name, test: _ } in all_tests {
-            num_ok +=
-                run_single_test(name, &base_dir, keep_all, max_name_len).context(name)? as usize;
+            results.push(run_single_test(name, &base_dir, keep_all, max_name_len).context(name)?);
         }
     } else {
         let max_name_len = test_case.len();
-        num_ok += run_single_test(test_case, &base_dir, keep_all, max_name_len)
-            .context(test_case.to_string())? as usize;
+        results.push(
+            run_single_test(test_case, &base_dir, keep_all, max_name_len)
+                .context(test_case.to_string())?,
+        );
+    }
+
+    let num_tests = results.len();
+    let num_ok = results.iter().filter(|r| r.passed).count();
+
+    // Write GitHub Actions summary if requested
+    if github_summary {
+        write_github_summary(&results, num_ok, num_tests)?;
     }
 
     let num_failures = num_tests - num_ok;
@@ -140,6 +208,9 @@ enum CliCommand {
         /// Keep all test artifacts even on success
         #[arg(long)]
         keep_all: bool,
+        /// Write test results to GitHub Actions job summary ($GITHUB_STEP_SUMMARY)
+        #[arg(long)]
+        github_summary: bool,
     },
     StartVm {
         #[arg(long)]
@@ -155,6 +226,7 @@ impl Default for CliCommand {
             test_case: "all".to_string(),
             base_dir: None,
             keep_all: false,
+            github_summary: false,
         }
     }
 }
@@ -175,6 +247,7 @@ fn main() -> anyhow::Result<()> {
             test_case,
             base_dir,
             keep_all,
-        } => run_tests(&test_case, base_dir, keep_all),
+            github_summary,
+        } => run_tests(&test_case, base_dir, keep_all, github_summary),
     }
 }
