@@ -11,6 +11,8 @@ use std::{fmt, io};
 
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 use devices::fdt::DeviceInfoForFDT;
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+use devices::legacy::IrqChip;
 use devices::{BusDevice, DeviceType};
 use kernel::cmdline as kernel_cmdline;
 use kvm_ioctls::{IoEventAddress, VmFd};
@@ -192,6 +194,7 @@ impl MMIODeviceManager {
         &mut self,
         vm: &VmFd,
         cmdline: &mut kernel_cmdline::Cmdline,
+        intc: IrqChip,
         serial: Arc<Mutex<devices::legacy::Serial>>,
     ) -> Result<()> {
         if self.irq > self.last_irq {
@@ -200,6 +203,8 @@ impl MMIODeviceManager {
 
         vm.register_irqfd(serial.lock().unwrap().interrupt_evt(), self.irq)
             .map_err(Error::RegisterIrqFd)?;
+
+        serial.lock().unwrap().set_intc(intc);
 
         self.bus
             .insert(serial, self.mmio_base, MMIO_LEN)
