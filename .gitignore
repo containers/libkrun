@@ -16,3 +16,4 @@ examples/external_kernel
 examples/nitro
 examples/consoles
 test-prefix
+/linux-sysroot
