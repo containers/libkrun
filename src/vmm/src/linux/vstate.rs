@@ -669,7 +669,17 @@ impl Vm {
         let start = region.start_addr().raw_value();
         let end = start + region.len();
 
-        if !self.fd.check_extension(GuestMemfd) {
+        // GuestMemfd is generally intended for either of two purposes:
+        // * sharing the memory with out-of-process components, and conversely,
+        // * hiding the memory completely from the VMM process (Confidential Computing).
+        //
+        // We only use it for the second use case currently, so don't even try to use it
+        // outside of TEE builds. Software-protected VMs are only available on x86_64 and
+        // are marked with strongly-worded warnings about them being for development only,
+        // as of late 2025. Also, on other architectures like aarch64, guest_memfd in
+        // general is unstable for now, so don't try to use it without a reason.
+
+        if cfg!(not(feature = "tee")) {
             let memory_region = kvm_userspace_memory_region {
                 slot: self.next_mem_slot,
                 guest_phys_addr: start,
@@ -686,6 +696,10 @@ impl Vm {
                     .map_err(Error::SetUserMemoryRegion)?;
             };
         } else {
+            if !self.fd.check_extension(GuestMemfd) {
+                return Err(Error::KvmCap(GuestMemfd));
+            }
+
             // Create a guest_memfd and set the region.
             let guest_memfd = self
                 .fd
@@ -716,7 +730,6 @@ impl Vm {
                     .map_err(Error::SetUserMemoryRegion)?;
             };
 
-            #[cfg(not(target_arch = "riscv64"))]
             let attr = kvm_memory_attributes {
                 address: start,
                 size: region.len(),
@@ -724,7 +737,6 @@ impl Vm {
                 flags: 0,
             };
 
-            #[cfg(not(target_arch = "riscv64"))]
             self.fd
                 .set_memory_attributes(attr)
                 .map_err(Error::SetMemoryAttributes)?;
