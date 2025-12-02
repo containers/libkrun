@@ -1006,7 +1006,7 @@ pub fn build_microvm(
     };
 
     #[cfg(feature = "gpu")]
-    if let Some(virgl_flags) = vm_resources.gpu_virgl_flags {
+    if vm_resources.gpu_virgl_flags.is_some() {
         let display_backend = vm_resources
             .display_backend
             .unwrap_or_else(|| NoopDisplayBackend::into_display_backend(None));
@@ -1017,7 +1017,6 @@ pub fn build_microvm(
             #[cfg(not(feature = "tee"))]
             export_table.clone(),
             intc.clone(),
-            virgl_flags,
             Box::from(&vm_resources.displays[..]),
             display_backend,
             #[cfg(target_os = "macos")]
@@ -2254,7 +2253,6 @@ fn attach_gpu_device(
     shm_manager: &mut ShmManager,
     #[cfg(not(feature = "tee"))] mut export_table: Option<ExportTable>,
     intc: IrqChip,
-    virgl_flags: u32,
     displays: Box<[DisplayInfo]>,
     display_backend: DisplayBackend<'static>,
     #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
@@ -2263,7 +2261,6 @@ fn attach_gpu_device(
 
     let gpu = Arc::new(Mutex::new(
         devices::virtio::Gpu::new(
-            virgl_flags,
             displays,
             display_backend,
             #[cfg(target_os = "macos")]
