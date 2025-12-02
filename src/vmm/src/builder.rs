@@ -11,7 +11,7 @@ use kernel::cmdline::Cmdline;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
-use std::io::{self, Read};
+use std::io::{self, IsTerminal, Read};
 use std::os::fd::AsRawFd;
 use std::os::fd::{BorrowedFd, FromRawFd};
 use std::path::PathBuf;
@@ -741,7 +741,16 @@ pub fn build_microvm(
         )?);
     };
 
+    // We can't call to `setup_terminal_raw_mode` until `Vmm` is created,
+    // so let's keep track of FDs connected to legacy serial devices here
+    // and set raw mode on them later.
+    let mut serial_ttys = Vec::new();
+
     for s in &vm_resources.serial_consoles {
+        let input = unsafe { BorrowedFd::borrow_raw(s.input_fd) };
+        if input.is_terminal() {
+            serial_ttys.push(input);
+        }
         let input: Option<Box<dyn devices::legacy::ReadableFd + Send>> = if s.input_fd >= 0 {
             Some(Box::new(unsafe { File::from_raw_fd(s.input_fd) }))
         } else {
@@ -954,6 +963,11 @@ pub fn build_microvm(
         #[cfg(target_arch = "x86_64")]
         pio_device_manager,
     };
+
+    // Set raw mode for FDs that are connected to legacy serial devices.
+    for serial_tty in serial_ttys {
+        setup_terminal_raw_mode(&mut vmm, Some(serial_tty), false);
+    }
 
     #[cfg(not(feature = "tee"))]
     attach_balloon_device(&mut vmm, event_manager, intc.clone())?;
