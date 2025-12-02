@@ -767,7 +767,6 @@ dependencies = [
  "krun-hvf",
  "krun-input",
  "krun-polly",
- "krun-rutabaga-gfx",
  "krun-utils",
  "kvm-bindings",
  "kvm-ioctls",
@@ -778,6 +777,7 @@ dependencies = [
  "nix 0.30.1",
  "pipewire",
  "rand",
+ "rutabaga_gfx",
  "thiserror 2.0.18",
  "virtio-bindings",
  "vm-fdt",
@@ -1072,6 +1072,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "mesa3d_util"
+version = "0.1.76-libkrun.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a95e11093683dd73b2e70dbd3f848cddd54f05a971fdcb5e3dc655773062fd79"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "log",
+ "remain",
+ "rustix",
+ "thiserror 1.0.69",
+ "zerocopy",
 ]
 
 [[package]]
@@ -1414,6 +1429,24 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+
+[[package]]
+name = "rutabaga_gfx"
+version = "0.1.76-libkrun.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecc09e93072d8a9282568ebf9958e77f5f15a04eadbe41074efdfe57d6507db2"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "log",
+ "mesa3d_util",
+ "pkg-config",
+ "remain",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "zerocopy",
+]
 
 [[package]]
 name = "semver"
