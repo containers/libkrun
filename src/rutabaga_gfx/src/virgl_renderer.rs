@@ -301,17 +301,6 @@ impl VirglRenderer {
             }
         }
 
-        // virglrenderer is a global state backed library that uses thread bound OpenGL contexts.
-        // Initialize it only once and use the non-send/non-sync Renderer struct to keep things tied
-        // to whichever thread called this function first.
-        static INIT_ONCE: AtomicBool = AtomicBool::new(false);
-        if INIT_ONCE
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
-            .is_err()
-        {
-            return Err(RutabagaError::AlreadyInUse);
-        }
-
         unsafe { virgl_set_debug_callback(Some(debug_callback)) };
 
         // Cookie is intentionally never freed because virglrenderer never gets uninitialized.
@@ -334,6 +323,19 @@ impl VirglRenderer {
                     as *mut virgl_renderer_callbacks,
             )
         };
+
+        if ret == 0 {
+            // virglrenderer is a global state backed library that uses thread bound OpenGL contexts.
+            // Initialize it only once and use the non-send/non-sync Renderer struct to keep things tied
+            // to whichever thread called this function first.
+            static INIT_ONCE: AtomicBool = AtomicBool::new(false);
+            if INIT_ONCE
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+                .is_err()
+            {
+                return Err(RutabagaError::AlreadyInUse);
+            }
+        }
 
         ret_to_res(ret)?;
         Ok(Box::new(VirglRenderer {}))
