@@ -235,7 +235,7 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    // Configure the number of vCPUs (2) and the amount of RAM (1024 MiB).
+    // Configure the number of vCPUs (2) and the amount of RAM (2048 MiB).
     if (err = krun_set_vm_config(ctx_id, 2, 2048))
     {
         errno = -err;
