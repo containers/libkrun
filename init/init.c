@@ -17,12 +17,21 @@
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#if __FreeBSD__
+#include <kenv.h>
+#include <libutil.h>
+#include <sys/mount.h>
+#include <sys/param.h>
+#else
 #include <sys/statfs.h>
+#endif
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#if __linux__
 #include <linux/vm_sockets.h>
+#endif
 
 #include "jsmn.h"
 
@@ -49,6 +58,92 @@ static char *snp_get_luks_passphrase(char *, char *, char *, int *);
 #endif
 
 char DEFAULT_KRUN_INIT[] = "/bin/sh";
+
+#if __FreeBSD__
+
+#define b64_ntop __b64_ntop
+#define b64_pton __b64_pton
+/* There are no header files for these functions. */
+
+int b64_ntop(unsigned char const *src, size_t srclength, char *target,
+             size_t targsize);
+int b64_pton(char const *src, unsigned char *target, size_t targsize);
+
+static char *get_kenv(const char *name)
+{
+    static char kenv_value[KENV_MVALLEN + 1];
+    if (kenv(KENV_GET, name, kenv_value, KENV_MVALLEN + 1) < 0) {
+        return NULL;
+    }
+    return kenv_value;
+}
+
+static int get_krun_init_argv_flat(char *buf, int buf_len)
+{
+    int len_total = 0;
+    int len_part;
+    char *buf_ptr = buf;
+    char name_buf[32];
+    int idx = 0;
+
+    while (true) {
+        snprintf(name_buf, sizeof(name_buf), "KRUN_INIT_ARGV%d", idx++);
+        char *argv_b64 = get_kenv(name_buf);
+        if (!argv_b64) {
+            break;
+        }
+        len_part =
+            b64_pton(argv_b64, (unsigned char *)buf_ptr, buf_len - len_total);
+        buf_ptr += len_part;
+        len_total += len_part;
+    }
+
+    return len_total;
+}
+
+#define getenv get_kenv
+
+#define _PATH_CONSOLE "/dev/console"
+#define _PATH_DEVNULL "/dev/null"
+#define _PATH_INITLOG "/init.log"
+/*
+ * Start a session and allocate a controlling terminal.
+ * Only called by children of init after forking.
+ */
+static void open_console(void)
+{
+    int fd;
+
+    /*
+     * Try to open /dev/console.  Open the device with O_NONBLOCK to
+     * prevent potential blocking on a carrier.
+     */
+    revoke(_PATH_CONSOLE);
+    if ((fd = open(_PATH_CONSOLE, O_RDWR | O_NONBLOCK)) != -1) {
+        (void)fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK);
+        if (login_tty(fd) == 0)
+            return;
+        close(fd);
+    }
+
+    /* No luck.  Log output to file if possible. */
+    if ((fd = open(_PATH_DEVNULL, O_RDWR)) == -1) {
+        _exit(1);
+    }
+    if (fd != STDIN_FILENO) {
+        dup2(fd, STDIN_FILENO);
+        close(fd);
+    }
+    fd = open(_PATH_INITLOG, O_WRONLY | O_APPEND | O_CREAT, 0644);
+    if (fd == -1)
+        dup2(STDIN_FILENO, STDOUT_FILENO);
+    else if (fd != STDOUT_FILENO) {
+        dup2(fd, STDOUT_FILENO);
+        close(fd);
+    }
+    dup2(STDOUT_FILENO, STDERR_FILENO);
+}
+#endif
 
 static void set_rlimits(const char *rlimits)
 {
@@ -395,6 +490,7 @@ static int chroot_luks()
 
 static int mount_filesystems()
 {
+#if __linux__
     char *const DIRS_LEVEL1[] = {"/dev", "/proc", "/sys"};
     char *const DIRS_LEVEL2[] = {"/dev/pts", "/dev/shm"};
     int i;
@@ -451,7 +547,7 @@ static int mount_filesystems()
 
     /* May fail if already exists and that's fine. */
     symlink("/proc/self/fd", "/dev/fd");
-
+#endif
     return 0;
 }
 
@@ -1003,6 +1099,7 @@ void set_exit_code(int code)
     close(fd);
 }
 
+#if __linux__
 int try_mount(const char *source, const char *target, const char *fstype,
               unsigned long mountflags, const void *data)
 {
@@ -1037,11 +1134,19 @@ int try_mount(const char *source, const char *target, const char *fstype,
 
     return mount_status;
 }
+#endif
+
+char *clone_str(const char *str)
+{
+    if (str == NULL) {
+        return NULL;
+    }
+    return strdup(str);
+}
 
 int main(int argc, char **argv)
 {
     struct ifreq ifr;
-    int fd;
     int sockfd;
     int status;
     int saved_errno;
@@ -1051,13 +1156,20 @@ int main(int argc, char **argv)
     char *krun_home;
     char *krun_term;
     char *krun_init;
+#if __linux__
+    int fd;
     char *krun_root;
     char *krun_root_fstype;
     char *krun_root_options;
+#endif
     char *env_init_pid1;
     char *config_workdir, *env_workdir;
     char *rlimits;
     char **config_argv, **exec_argv;
+
+#if __FreeBSD__
+    open_console();
+#endif
 
 #ifdef TDX
     if (mkdir("/tmp", 0755) < 0 && errno != EEXIST) {
@@ -1092,21 +1204,25 @@ int main(int argc, char **argv)
         exit(-2);
     }
 
-    krun_root = getenv("KRUN_BLOCK_ROOT_DEVICE");
+#if __linux__
+    krun_root = clone_str(getenv("KRUN_BLOCK_ROOT_DEVICE"));
     if (krun_root) {
         if (mkdir("/newroot", 0755) < 0 && errno != EEXIST) {
             perror("mkdir(/newroot)");
             exit(-1);
         }
 
-        krun_root_fstype = getenv("KRUN_BLOCK_ROOT_FSTYPE");
-        krun_root_options = getenv("KRUN_BLOCK_ROOT_OPTIONS");
+        krun_root_fstype = clone_str(getenv("KRUN_BLOCK_ROOT_FSTYPE"));
+        krun_root_options = clone_str(getenv("KRUN_BLOCK_ROOT_OPTIONS"));
 
         if (try_mount(krun_root, "/newroot", krun_root_fstype, 0,
                       krun_root_options) < 0) {
             perror("mount KRUN_BLOCK_ROOT_DEVICE");
             exit(-1);
         }
+        free(krun_root);
+        free(krun_root_fstype);
+        free(krun_root_options);
 
         chdir("/newroot");
 
@@ -1137,9 +1253,14 @@ int main(int argc, char **argv)
         perror("Couldn't set shared propagation on the root mount");
         exit(-1);
     }
+#endif
 
     setsid();
     ioctl(0, TIOCSCTTY, 1);
+
+#if __FreeBSD__
+    setlogin("root");
+#endif
 
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd >= 0) {
@@ -1184,15 +1305,34 @@ int main(int argc, char **argv)
         chdir(config_workdir);
     }
 
+#if __FreeBSD__
+    exec_argv = malloc(MAX_ARGS * sizeof(char *));
+#else
     exec_argv = argv;
+#endif
     krun_init = getenv("KRUN_INIT");
     if (krun_init) {
-        exec_argv[0] = krun_init;
+        exec_argv[0] = clone_str(krun_init);
     } else if (config_argv) {
         exec_argv = config_argv;
     } else {
         exec_argv[0] = &DEFAULT_KRUN_INIT[0];
     }
+
+#if __FreeBSD__
+    int i = 1;
+    static char argv_flat[512];
+    int argv_flat_len = get_krun_init_argv_flat(argv_flat, sizeof(argv_flat));
+
+    int j = 0;
+    while (j < argv_flat_len) {
+        exec_argv[i++] = &argv_flat[j];
+        for (; j < argv_flat_len && argv_flat[j] != 0; j++) {
+        }
+        j++;
+    }
+    exec_argv[i] = NULL;
+#endif
 
     env_init_pid1 = getenv("KRUN_INIT_PID1");
     if (env_init_pid1 && *env_init_pid1 == '1') {
@@ -1219,9 +1359,13 @@ int main(int argc, char **argv)
     }
     if (child == 0) { // child
     exec_init:
+#if __FreeBSD__
+        open_console();
+#else
         if (setup_redirects() < 0) {
             exit(125);
         }
+#endif
         if (execvp(exec_argv[0], exec_argv) < 0) {
             saved_errno = errno;
             printf("Couldn't execute '%s' inside the vm: %s\n", exec_argv[0],
