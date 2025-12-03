@@ -83,10 +83,14 @@ ifeq ($(TIMESYNC),1)
     INIT_DEFS += -D__TIMESYNC__
 endif
 
+CLANG = /usr/bin/clang
+
 OS = $(shell uname -s)
 ARCH = $(shell uname -m)
 DEBIAN_DIST ?= bookworm
 ROOTFS_DIR = linux-sysroot
+FREEBSD_VERSION ?= 14.3-RELEASE
+FREEBSD_ROOTFS_DIR = freebsd-sysroot
 
 KRUN_BINARY_Linux = libkrun$(VARIANT).so.$(FULL_VERSION)
 KRUN_SONAME_Linux = libkrun$(VARIANT).so.$(ABI_VERSION)
@@ -123,7 +127,7 @@ else
     SYSROOT_TARGET =
 endif
     # Cross-compile on macOS with the LLVM linker (brew install lld)
-    CC_LINUX=/usr/bin/clang -target $(ARCH)-linux-gnu -fuse-ld=lld -Wl,-strip-debug --sysroot $(SYSROOT_LINUX) -Wno-c23-extensions
+    CC_LINUX=$(CLANG) -target $(ARCH)-linux-gnu -fuse-ld=lld -Wl,-strip-debug --sysroot $(SYSROOT_LINUX) -Wno-c23-extensions
 else
     # Build on Linux host
     CC_LINUX=$(CC)
@@ -134,6 +138,28 @@ ifeq ($(BUILD_INIT),1)
 INIT_BINARY = init/init
 $(INIT_BINARY): $(INIT_SRC) $(SYSROOT_TARGET)
 	$(CC_LINUX) -O2 -static -Wall $(INIT_DEFS) -o $@ $(INIT_SRC) $(INIT_DEFS)
+endif
+
+ifeq ($(OS),Darwin)
+# If SYSROOT_BSD is not set and we're on macOS, generate sysroot automatically
+ifeq ($(SYSROOT_BSD),)
+    SYSROOT_BSD = $(FREEBSD_ROOTFS_DIR)
+    SYSROOT_BSD_TARGET = $(FREEBSD_ROOTFS_DIR)/.sysroot_ready
+else
+    SYSROOT_BSD_TARGET =
+endif
+    # Cross-compile on macOS with the LLVM linker (brew install lld)
+    CC_BSD=$(CLANG) -target $(ARCH)-unknown-freebsd -fuse-ld=lld -stdlib=libc++ -Wl,-strip-debug --sysroot $(SYSROOT_BSD)
+else
+    # Build on FreeBSD host
+    CC_BSD=$(CC)
+    SYSROOT_BSD_TARGET =
+endif
+
+ifeq ($(BUILD_BSD_INIT),1)
+INIT_BINARY_BSD = init/init-freebsd
+$(INIT_BINARY_BSD): $(INIT_SRC) $(SYSROOT_BSD_TARGET)
+	$(CC_BSD) -std=c23 -O2 -static -Wall $(INIT_DEFS) -lutil -o $@ $(INIT_SRC) $(INIT_DEFS)
 endif
 
 NITRO_INIT_BINARY= init/nitro/init
@@ -168,11 +194,27 @@ $(PACKAGES_FILE):
 	@mkdir -p $(ROOTFS_TMP)
 	@curl -fL -o $@ https://deb.debian.org/debian/dists/$(DEBIAN_DIST)/main/binary-$(ARCH)/Packages.xz
 
+# FreeBSD sysroot preparation rules for cross-compilation on macOS
+FREEBSD_BASE_TXZ = $(FREEBSD_ROOTFS_DIR)/base.txz
+
+.INTERMEDIATE: $(FREEBSD_BASE_TXZ)
+
+$(FREEBSD_ROOTFS_DIR)/.sysroot_ready: $(FREEBSD_BASE_TXZ)
+	@echo "Extracting FreeBSD base to $(FREEBSD_ROOTFS_DIR)..."
+	@cd $(FREEBSD_ROOTFS_DIR) && tar xJf base.txz 2>/dev/null || true
+	@touch $@
+
+$(FREEBSD_BASE_TXZ):
+	@echo "Downloading FreeBSD $(FREEBSD_VERSION) base for $(ARCH)..."
+	@mkdir -p $(FREEBSD_ROOTFS_DIR)
+	@curl -fL -o $@ https://download.freebsd.org/releases/$(ARCH)/$(FREEBSD_VERSION)/base.txz
+
 clean-sysroot:
 	rm -rf $(ROOTFS_DIR)
+	rm -rf $(FREEBSD_ROOTFS_DIR)
 
 
-$(LIBRARY_RELEASE_$(OS)): $(INIT_BINARY)
+$(LIBRARY_RELEASE_$(OS)): $(INIT_BINARY) $(INIT_BINARY_BSD)
 	cargo build --release $(FEATURE_FLAGS)
 ifeq ($(SEV),1)
 	mv target/release/libkrun.so target/release/$(KRUN_BASE_$(OS))
@@ -191,7 +233,7 @@ endif
 endif
 	cp target/release/$(KRUN_BASE_$(OS)) $(LIBRARY_RELEASE_$(OS))
 
-$(LIBRARY_DEBUG_$(OS)): $(INIT_BINARY)
+$(LIBRARY_DEBUG_$(OS)): $(INIT_BINARY) $(INIT_BINARY_BSD)
 	cargo build $(FEATURE_FLAGS)
 ifeq ($(SEV),1)
 	mv target/debug/libkrun.so target/debug/$(KRUN_BASE_$(OS))
@@ -223,7 +265,12 @@ install: libkrun.pc
 	cd $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/ ; ln -sf $(KRUN_BINARY_$(OS)) $(KRUN_SONAME_$(OS)) ; ln -sf $(KRUN_SONAME_$(OS)) $(KRUN_BASE_$(OS))
 
 clean:
+ifeq ($(BUILD_INIT),1)
 	rm -f $(INIT_BINARY)
+endif
+ifeq ($(BUILD_BSD_INIT),1)
+	rm -f $(INIT_BINARY_BSD)
+endif
 	cargo clean
 	rm -rf test-prefix
 	cd tests; cargo clean
