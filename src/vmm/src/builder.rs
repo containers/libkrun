@@ -572,11 +572,15 @@ pub fn build_microvm(
     )?;
 
     let vcpu_config = vm_resources.vcpu_config();
+    let mut kernel_is_freebsd = false;
 
     // Clone the command-line so that a failed boot doesn't pollute the original.
     #[allow(unused_mut)]
     let mut kernel_cmdline = Cmdline::new(arch::CMDLINE_MAX_SIZE);
     if let Some(cmdline) = payload_config.kernel_cmdline {
+        if cmdline.starts_with("FreeBSD:") {
+            kernel_is_freebsd = true;
+        }
         kernel_cmdline.insert_str(cmdline.as_str()).unwrap();
     } else if let Some(cmdline) = &vm_resources.kernel_cmdline.prolog {
         kernel_cmdline.insert_str(cmdline).unwrap();
@@ -1042,7 +1046,9 @@ pub fn build_microvm(
     }
 
     if let Some(s) = &vm_resources.kernel_cmdline.epilog {
-        vmm.kernel_cmdline.insert_str(s).unwrap();
+        if !kernel_is_freebsd {
+            vmm.kernel_cmdline.insert_str(s).unwrap();
+        }
     };
 
     // Write the kernel command line to guest memory. This is x86_64 specific, since on
