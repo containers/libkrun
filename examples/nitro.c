@@ -102,6 +102,70 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
     return false;
 }
 
+void *listen_enclave_app_output(void *opague)
+{
+    int ret, sock_fd, bytes_read, client_fd;
+    char buffer[BUFSIZE];
+    struct sockaddr_vm addr;
+    struct timeval timeval;
+
+    sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
+    if (sock_fd < 0) {
+        perror("unable to create host socket for application output");
+        return (void *)-1;
+    }
+
+    bzero((char *) &addr, sizeof(struct sockaddr_vm));
+    addr.svm_family = AF_VSOCK;
+    addr.svm_cid = VMADDR_CID_ANY;
+    addr.svm_port = 8081;
+
+    memset(&timeval, 0, sizeof(struct timeval));
+    timeval.tv_sec = 5;
+
+    ret = setsockopt(sock_fd, AF_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT, (void *) &timeval, sizeof(struct timeval));
+    if (ret < 0) {
+        close(sock_fd);
+        perror("unable to set socket options for application output socket");
+        return (void *)-1;
+    }
+
+    ret = bind(sock_fd, (struct sockaddr *) &addr, sizeof(addr));
+    if (ret < 0) {
+        close(sock_fd);
+        perror("unable to bind the host application output socket to the address");
+        return (void *)-1;
+    }
+
+    ret = listen(sock_fd, 1);
+    if (ret < 0) {
+        close(sock_fd);
+        perror("unable to listen for incoming connection to host application output socket.");
+        return (void *)-1;
+    }
+
+    client_fd = accept(sock_fd, NULL, NULL);
+    if (client_fd < 0) {
+        close(sock_fd);
+        perror("unable to connect host application output socket to guest socket");
+        return (void *)-1;
+    }
+
+    close(sock_fd);
+
+    while((bytes_read = read(client_fd, buffer, sizeof(buffer) - 1)) > 0) {
+        buffer[bytes_read] = '\0';
+        printf("%s", buffer);
+        fflush(stdout);
+    }
+
+    if (bytes_read < 0)
+        perror("application output socket read error");
+
+    close(client_fd);
+    return (void *)0;
+}
+
 void *listen_enclave_output(void *opaque)
 {
     socklen_t addr_sz = sizeof(struct sockaddr_vm);
@@ -203,7 +267,9 @@ int main(int argc, char *const argv[])
 {
     int ret, cid, ctx_id, err, passt_fd;
     struct cmdline cmdline;
-    pthread_t thread;
+    pthread_t debug_console_thread, app_thread;
+
+    int nitro_start_flags = KRUN_NITRO_START_FLAG_DEBUG;
 
     if (!parse_cmdline(argc, argv, &cmdline)) {
         putchar('\n');
@@ -217,7 +283,7 @@ int main(int argc, char *const argv[])
     }
 
     // Set the log level to "off".
-    err = krun_set_log_level(0);
+    err = krun_init_log(KRUN_LOG_TARGET_DEFAULT, KRUN_LOG_LEVEL_OFF, KRUN_LOG_STYLE_AUTO, 0);
     if (err) {
         errno = -err;
         perror("Error configuring log level");
@@ -240,7 +306,7 @@ int main(int argc, char *const argv[])
     }
 
     // Configure the nitro enclave to run in debug mode.
-    if (err = krun_nitro_set_start_flags(ctx_id, KRUN_NITRO_START_FLAG_DEBUG)) {
+    if (err = krun_nitro_set_start_flags(ctx_id, nitro_start_flags)) {
         errno = -err;
         perror("Error configuring nitro enclave start flags");
         return -1;
@@ -276,6 +342,12 @@ int main(int argc, char *const argv[])
         }
     }
 
+    ret = pthread_create(&app_thread, NULL, listen_enclave_app_output, NULL);
+    if (ret < 0) {
+        perror("unable to create new app listener thread");
+        return -1;
+    }
+
     /*
      * Start and enter the microVM. In the libkrun-nitro flavor, a positive
      * value returned by krun_start_enter() is the enclave's CID.
@@ -287,17 +359,18 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    ret = pthread_create(&thread, NULL, listen_enclave_output, (void *) cid);
-    if (ret < 0) {
-        perror("unable to create new listener thread");
-        exit(1);
+    if (nitro_start_flags == KRUN_NITRO_START_FLAG_DEBUG) {
+        ret = pthread_create(&debug_console_thread, NULL, listen_enclave_output, (void *) cid);
+        if (ret < 0) {
+            perror("unable to create new listener thread");
+            return -1;
+        }
     }
 
-    ret = pthread_join(thread, NULL);
+    ret = pthread_join(app_thread, NULL);
     if (ret < 0) {
-        perror("unable to join listener thread");
-        exit(1);
+        perror("unable to join app listener thread");
+        return -1;
     }
-
     return 0;
 }
