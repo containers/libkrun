@@ -24,6 +24,9 @@
 #include "include/tap_afvsock.h"
 #include "include/vsock.h"
 
+#include <linux/vm_sockets.h>
+#include <sys/socket.h>
+
 #define finit_module(fd, param_values, flags)                                  \
     (int)syscall(__NR_finit_module, fd, param_values, flags)
 
@@ -194,7 +197,10 @@ static int rootfs_mount()
  */
 pid_t launch(char **argv, char **envp)
 {
-    int ret, pid;
+    int ret, pid, sock_fd;
+    struct sockaddr_vm addr;
+    struct timeval timeval;
+    int streams[3] = {STDOUT_FILENO, STDIN_FILENO, STDERR_FILENO};
 
     // Fork the process.
     pid = fork();
@@ -223,6 +229,45 @@ pid_t launch(char **argv, char **envp)
     if (ret < 0) {
         perror("initialize default path environment");
         return -errno;
+    }
+
+    sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
+    if (sock_fd < 0) {
+        perror("unable to create guest socket");
+        return -errno;
+    }
+
+    bzero((char *)&addr, sizeof(struct sockaddr_vm));
+    addr.svm_family = AF_VSOCK;
+    addr.svm_cid = VMADDR_CID_HOST;
+    addr.svm_port = 8081;
+
+    memset(&timeval, 0, sizeof(struct timeval));
+    timeval.tv_sec = 5;
+
+    ret = setsockopt(sock_fd, AF_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
+                     (void *)&timeval, sizeof(struct timeval));
+    if (ret < 0) {
+        perror("unable to connect to host socket");
+        close(sock_fd);
+        return -errno;
+    }
+
+    ret = connect(sock_fd, (struct sockaddr *)&addr, sizeof(addr));
+    if (ret < 0) {
+        perror("unable to connect to host socket");
+        close(sock_fd);
+        return -errno;
+    }
+
+    for (size_t i = 0; i < 3; i++) {
+        ret = dup2(sock_fd, streams[i]);
+        if (ret < 0) {
+            fprintf(stderr, "unable to redirect stream [%d] to socket: %s\n",
+                    streams[i], strerror(errno));
+            close(sock_fd);
+            return -errno;
+        }
     }
 
     // Execute the process.
