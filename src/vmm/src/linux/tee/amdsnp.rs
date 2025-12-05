@@ -6,11 +6,7 @@ use std::{
 use crate::vstate::MeasuredRegion;
 use arch::x86_64::layout::*;
 
-use sev::{
-    error::FirmwareError,
-    firmware::{guest::GuestPolicy, host::Firmware},
-    launch::snp::*,
-};
+use sev_snp_launch::{error::FirmwareError, firmware::Firmware, *};
 
 use kvm_bindings::{kvm_enc_region, CpuId, KVM_CPUID_FLAG_SIGNIFCANT_INDEX};
 use kvm_ioctls::VmFd;

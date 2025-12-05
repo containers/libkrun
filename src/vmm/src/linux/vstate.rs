@@ -69,7 +69,7 @@ use vm_memory::{
 };
 
 #[cfg(feature = "amd-sev")]
-use sev::launch::snp;
+use sev_snp_launch::*;
 
 /// Signal number (SIGRTMIN) used to kick Vcpus.
 pub(crate) const VCPU_RTSIG_OFFSET: i32 = 0;
@@ -798,7 +798,7 @@ impl Vm {
     pub fn snp_secure_virt_prepare(
         &self,
         guest_mem: &GuestMemoryMmap,
-    ) -> Result<snp::Launcher<snp::Started, RawFd, RawFd>> {
+    ) -> Result<Launcher<Started, RawFd, RawFd>> {
         match &self.tee {
             Some(s) => s
                 .vm_prepare(&self.fd, guest_mem)
@@ -813,7 +813,7 @@ impl Vm {
         cpuid: CpuId,
         guest_mem: &GuestMemoryMmap,
         measured_regions: Vec<MeasuredRegion>,
-        launcher: snp::Launcher<snp::Started, RawFd, RawFd>,
+        launcher: Launcher<Started, RawFd, RawFd>,
     ) -> Result<()> {
         match &self.tee {
             Some(s) => s
