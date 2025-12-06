@@ -40,3 +40,18 @@ pub enum ImageType {
     Qcow2,
     Vmdk,
 }
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum CacheMode {
+    Uncached,
+    #[default]
+    Cached,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum SyncMode {
+    None,
+    Relaxed,
+    #[default]
+    Full,
+}
