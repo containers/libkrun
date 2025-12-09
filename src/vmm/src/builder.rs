@@ -24,7 +24,7 @@ use super::{Error, Vmm};
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
 use crate::resources::{
-    DefaultVirtioConsoleConfig, PortConfig, VirtioConsoleConfigMode, VmResources,
+    DefaultVirtioConsoleConfig, PortConfig, TsiFlags, VirtioConsoleConfigMode, VmResources,
 };
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(feature = "net")]
@@ -1045,16 +1045,18 @@ pub fn build_microvm(
     )?;
     #[cfg(feature = "blk")]
     attach_block_devices(&mut vmm, &vm_resources.block, intc.clone())?;
+
     if let Some(vsock) = vm_resources.vsock.get() {
         attach_unixsock_vsock_device(&mut vmm, vsock, event_manager, intc.clone())?;
-        #[cfg(not(feature = "net"))]
-        vmm.kernel_cmdline.insert_str("tsi_hijack")?;
-        #[cfg(feature = "net")]
-        if vm_resources.net.list.is_empty() {
-            // Only enable TSI if we don't have any network devices.
+        let tsi_flags = vm_resources.vsock.tsi_flags();
+        if tsi_flags.contains(TsiFlags::HIJACK_INET) {
             vmm.kernel_cmdline.insert_str("tsi_hijack")?;
         }
+        if tsi_flags.contains(TsiFlags::HIJACK_UNIX) {
+            vmm.kernel_cmdline.insert_str("tsi_hijack_unix")?;
+        }
     }
+
     #[cfg(feature = "net")]
     attach_net_devices(&mut vmm, &vm_resources.net, intc.clone())?;
     #[cfg(feature = "snd")]

@@ -38,8 +38,8 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 use utils::eventfd::EventFd;
 use vmm::resources::{
-    DefaultVirtioConsoleConfig, PortConfig, SerialConsoleConfig, VirtioConsoleConfigMode,
-    VmResources,
+    DefaultVirtioConsoleConfig, PortConfig, SerialConsoleConfig, TsiFlags, VirtioConsoleConfigMode,
+    VmResources, VsockConfig,
 };
 #[cfg(feature = "blk")]
 use vmm::vmm_config::block::{BlockDeviceConfig, BlockRootConfig};
@@ -145,6 +145,7 @@ struct ContextConfig {
     legacy_mac: Option<[u8; 6]>,
     net_index: u8,
     tsi_port_map: Option<HashMap<u16, u16>>,
+    vsock_config: VsockConfig,
     #[cfg(feature = "blk")]
     block_cfgs: Vec<BlockDeviceConfig>,
     #[cfg(feature = "blk")]
@@ -1213,6 +1214,9 @@ pub unsafe extern "C" fn krun_set_port_map(ctx_id: u32, c_port_map: *const *cons
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
+            if cfg.vsock_config == VsockConfig::Disabled {
+                return -libc::ENODEV;
+            }
             if cfg.set_port_map(port_map).is_err() {
                 return -libc::EINVAL;
             }
@@ -1437,6 +1441,9 @@ pub unsafe extern "C" fn krun_add_vsock_port2(
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
+            if cfg.vsock_config == VsockConfig::Disabled {
+                return -libc::ENODEV;
+            }
             cfg.add_vsock_port(port, filepath, listen);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -2273,6 +2280,40 @@ pub extern "C" fn krun_disable_implicit_console(ctx_id: u32) -> i32 {
     KRUN_SUCCESS
 }
 
+#[no_mangle]
+pub extern "C" fn krun_disable_implicit_vsock(ctx_id: u32) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vsock_config = VsockConfig::Disabled;
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn krun_add_vsock(ctx_id: u32, tsi_features: u32) -> i32 {
+    let tsi_flags = match TsiFlags::from_bits(tsi_features) {
+        Some(flags) => flags,
+        None => return -libc::EINVAL,
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            if cfg.vsock_config != VsockConfig::Disabled {
+                return -libc::EEXIST;
+            }
+            cfg.vsock_config = VsockConfig::Explicit { tsi_flags };
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_add_virtio_console_default(
@@ -2542,46 +2583,45 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         }
     }
 
-    #[allow(unused_assignments)]
-    let mut vsock_set = false;
-    let mut vsock_config = VsockDeviceConfig {
-        vsock_id: "vsock0".to_string(),
-        guest_cid: 3,
-        host_port_map: None,
-        unix_ipc_port_map: None,
-        enable_tsi: false,
-        enable_tsi_unix: false,
-    };
+    match &ctx_cfg.vsock_config {
+        VsockConfig::Disabled => (),
+        VsockConfig::Explicit { tsi_flags } => {
+            let vsock_device_config = VsockDeviceConfig {
+                vsock_id: "vsock0".to_string(),
+                guest_cid: 3,
+                host_port_map: ctx_cfg.tsi_port_map,
+                unix_ipc_port_map: ctx_cfg.unix_ipc_port_map.clone(),
+                tsi_flags: *tsi_flags,
+            };
+            ctx_cfg.vmr.set_vsock_device(vsock_device_config).unwrap();
+        }
+        VsockConfig::Implicit => {
+            // Implicit vsock configuration - use heuristics
+            // Check if TSI should be enabled based on network configuration
+            #[cfg(feature = "net")]
+            let enable_tsi = ctx_cfg.vmr.net.list.is_empty() && ctx_cfg.legacy_net_cfg.is_none();
+            #[cfg(not(feature = "net"))]
+            let enable_tsi = true;
 
-    #[cfg(feature = "net")]
-    if ctx_cfg.vmr.net.list.is_empty() && ctx_cfg.legacy_net_cfg.is_none() {
-        vsock_config.host_port_map = ctx_cfg.tsi_port_map;
-        vsock_config.enable_tsi = true;
-        vsock_set = true;
-    }
-    #[cfg(not(feature = "net"))]
-    {
-        vsock_config.host_port_map = ctx_cfg.tsi_port_map;
-        vsock_config.enable_tsi = true;
-        vsock_set = true;
-    }
+            let has_ipc_map = ctx_cfg.unix_ipc_port_map.is_some();
 
-    if let Some(ref map) = ctx_cfg.unix_ipc_port_map {
-        vsock_config.unix_ipc_port_map = Some(map.clone());
-        vsock_set = true;
-    }
+            if enable_tsi || has_ipc_map {
+                let (tsi_flags, host_port_map) = if enable_tsi {
+                    (TsiFlags::HIJACK_INET, ctx_cfg.tsi_port_map)
+                } else {
+                    (TsiFlags::empty(), None)
+                };
 
-    if vsock_set {
-        if vsock_config.enable_tsi {
-            // We only support using TSI for AF_UNIX in a containerized context,
-            // so only enable it when we have a single virtio-fs device pointing
-            // to root.
-            #[cfg(not(feature = "tee"))]
-            if ctx_cfg.vmr.fs.len() == 1 && ctx_cfg.vmr.fs[0].shared_dir == "/" {
-                vsock_config.enable_tsi_unix = true;
+                let vsock_device_config = VsockDeviceConfig {
+                    vsock_id: "vsock0".to_string(),
+                    guest_cid: 3,
+                    host_port_map,
+                    unix_ipc_port_map: ctx_cfg.unix_ipc_port_map.clone(),
+                    tsi_flags,
+                };
+                ctx_cfg.vmr.set_vsock_device(vsock_device_config).unwrap();
             }
         }
-        ctx_cfg.vmr.set_vsock_device(vsock_config).unwrap();
     }
 
     if let Some(virgl_flags) = ctx_cfg.gpu_virgl_flags {
