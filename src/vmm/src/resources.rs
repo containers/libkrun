@@ -37,6 +37,9 @@ use krun_display::DisplayBackend;
 
 type Result<E> = std::result::Result<(), E>;
 
+// Re-export TsiFlags from devices crate
+pub use devices::virtio::TsiFlags;
+
 /// Errors encountered when configuring microVM resources.
 #[derive(Debug)]
 pub enum Error {
@@ -107,6 +110,18 @@ pub enum PortConfig {
         input_fd: RawFd,
         output_fd: RawFd,
     },
+}
+
+/// Configuration for the vsock device
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
+pub enum VsockConfig {
+    /// Default behavior - vsock created implicitly with heuristics-based TSI
+    #[default]
+    Implicit,
+    /// Explicit configuration with specified TSI features
+    Explicit { tsi_flags: TsiFlags },
+    /// Vsock device disabled
+    Disabled,
 }
 
 /// A data structure that encapsulates the device configurations
