@@ -6,7 +6,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use devices::virtio::{Vsock, VsockError};
+use devices::virtio::{TsiFlags, Vsock, VsockError};
 
 type MutexVsock = Arc<Mutex<Vsock>>;
 
@@ -40,10 +40,8 @@ pub struct VsockDeviceConfig {
     pub host_port_map: Option<HashMap<u16, u16>>,
     /// An optional map of guest port to host UNIX domain sockets for IPC.
     pub unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
-    /// Whether to enable TSI
-    pub enable_tsi: bool,
-    /// Whether to enable TSI for AF_UNIX
-    pub enable_tsi_unix: bool,
+    /// TSI feature flags
+    pub tsi_flags: TsiFlags,
 }
 
 struct VsockWrapper {
@@ -54,17 +52,22 @@ struct VsockWrapper {
 #[derive(Default)]
 pub struct VsockBuilder {
     inner: Option<VsockWrapper>,
+    tsi_flags: TsiFlags,
 }
 
 impl VsockBuilder {
     /// Creates an empty Vsock.
     pub fn new() -> Self {
-        Self { inner: None }
+        Self {
+            inner: None,
+            tsi_flags: TsiFlags::empty(),
+        }
     }
 
     /// Inserts a Vsock in the store.
     /// If an entry already exists, it will overwrite it.
     pub fn insert(&mut self, cfg: VsockDeviceConfig) -> Result<()> {
+        self.tsi_flags = cfg.tsi_flags;
         self.inner = Some(VsockWrapper {
             vsock: Arc::new(Mutex::new(Self::create_vsock(cfg)?)),
         });
@@ -76,14 +79,17 @@ impl VsockBuilder {
         self.inner.as_ref().map(|pair| &pair.vsock)
     }
 
+    pub fn tsi_flags(&self) -> TsiFlags {
+        self.tsi_flags
+    }
+
     /// Creates a Vsock device from a VsockDeviceConfig.
     pub fn create_vsock(cfg: VsockDeviceConfig) -> Result<Vsock> {
         Vsock::new(
             u64::from(cfg.guest_cid),
             cfg.host_port_map,
             cfg.unix_ipc_port_map,
-            cfg.enable_tsi,
-            cfg.enable_tsi_unix,
+            cfg.tsi_flags,
         )
         .map_err(VsockConfigError::CreateVsockDevice)
     }
@@ -121,8 +127,7 @@ pub(crate) mod tests {
             guest_cid: 3,
             host_port_map: None,
             unix_ipc_port_map: None,
-            enable_tsi: false,
-            enable_tsi_unix: false,
+            tsi_flags: TsiFlags::empty(),
         }
     }
 

@@ -327,6 +327,10 @@ int32_t krun_add_virtiofs2(uint32_t ctx_id,
    as required by gvproxy in vfkit mode. */
 #define NET_FLAG_VFKIT 1 << 0
 
+/* TSI (Transparent Socket Impersonation) feature flags for vsock */
+#define KRUN_TSI_HIJACK_INET  (1 << 0)
+#define KRUN_TSI_HIJACK_UNIX  (1 << 1)
+
 /* Taken from uapi/linux/virtio_net.h */
 #define NET_FEATURE_CSUM 1 << 0
 #define NET_FEATURE_GUEST_CSUM 1 << 1
@@ -862,6 +866,27 @@ int32_t krun_add_vsock_port2(uint32_t ctx_id,
                              uint32_t port,
                              const char *c_filepath,
                              bool listen);
+
+/**
+ * Add a vsock device with specified TSI features.
+ *
+ * By default, libkrun creates a vsock device implicitly with TSI hijacking
+ * enabled based on heuristics. To use this function, you must first call
+ * krun_disable_implicit_vsock() to disable the implicit vsock device.
+ *
+ * Currently only one vsock device is supported. Calling this function
+ * multiple times will return an error.
+ *
+ * Arguments:
+ *  "ctx_id"       - the configuration context ID.
+ *  "tsi_features" - bitmask of TSI features (KRUN_TSI_HIJACK_INET, KRUN_TSI_HIJACK_UNIX)
+ *                   Use 0 to add vsock without any TSI hijacking.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_vsock(uint32_t ctx_id, uint32_t tsi_features);
+
 /**
  * Returns the eventfd file descriptor to signal the guest to shut down orderly. This must be
  * called before starting the microVM with "krun_start_event". Only available in libkrun-efi.
@@ -985,6 +1010,20 @@ int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_disable_implicit_console(uint32_t ctx_id);
+
+/**
+ * Disable the implicit vsock device.
+ *
+ * By default, libkrun creates a vsock device automatically. This function
+ * disables that behavior entirely - no vsock device will be created.
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_disable_implicit_vsock(uint32_t ctx_id);
 
 /*
  * Specify the value of `console=` in the kernel commandline.

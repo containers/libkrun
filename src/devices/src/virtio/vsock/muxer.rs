@@ -16,6 +16,7 @@ use super::timesync::TimesyncThread;
 use super::tsi_dgram::TsiDgramProxy;
 use super::tsi_stream::TsiStreamProxy;
 use super::unix::UnixProxy;
+use super::TsiFlags;
 use super::VsockError;
 use crossbeam_channel::{unbounded, Sender};
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
@@ -106,8 +107,7 @@ pub struct VsockMuxer {
     proxy_map: ProxyMap,
     reaper_sender: Option<Sender<u64>>,
     unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
-    enable_tsi: bool,
-    enable_tsi_unix: bool,
+    tsi_flags: TsiFlags,
 }
 
 impl VsockMuxer {
@@ -115,8 +115,7 @@ impl VsockMuxer {
         cid: u64,
         host_port_map: Option<HashMap<u16, u16>>,
         unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
-        enable_tsi: bool,
-        enable_tsi_unix: bool,
+        tsi_flags: TsiFlags,
     ) -> Self {
         VsockMuxer {
             cid,
@@ -129,8 +128,7 @@ impl VsockMuxer {
             proxy_map: Arc::new(RwLock::new(HashMap::new())),
             reaper_sender: None,
             unix_ipc_port_map,
-            enable_tsi,
-            enable_tsi_unix,
+            tsi_flags,
         }
     }
 
@@ -285,8 +283,16 @@ impl VsockMuxer {
                 defs::SOCK_STREAM => {
                     debug!("proxy create stream");
                     let id = ((req.peer_port as u64) << 32) | (defs::TSI_PROXY_PORT as u64);
-                    if req.family as i32 == libc::AF_UNIX && !self.enable_tsi_unix {
-                        warn!("rejecting tcp unix proxy because tsi_unix is disabled");
+                    if req.family as i32 == libc::AF_UNIX
+                        && !self.tsi_flags.contains(TsiFlags::HIJACK_UNIX)
+                    {
+                        warn!("rejecting stream unix proxy because HIJACK_UNIX is disabled");
+                        return;
+                    }
+                    if (req.family as i32 == libc::AF_INET || req.family as i32 == libc::AF_INET6)
+                        && !self.tsi_flags.contains(TsiFlags::HIJACK_INET)
+                    {
+                        warn!("rejecting stream inet proxy because HIJACK_INET is disabled");
                         return;
                     }
                     match TsiStreamProxy::new(
@@ -312,8 +318,16 @@ impl VsockMuxer {
                 defs::SOCK_DGRAM => {
                     debug!("proxy create dgram");
                     let id = ((req.peer_port as u64) << 32) | (defs::TSI_PROXY_PORT as u64);
-                    if req.family as i32 == libc::AF_UNIX && !self.enable_tsi_unix {
-                        warn!("rejecting udp unix proxy because tsi_unix is disabled");
+                    if req.family as i32 == libc::AF_UNIX
+                        && !self.tsi_flags.contains(TsiFlags::HIJACK_UNIX)
+                    {
+                        warn!("rejecting dgram unix proxy because HIJACK_UNIX is disabled");
+                        return;
+                    }
+                    if (req.family as i32 == libc::AF_INET || req.family as i32 == libc::AF_INET6)
+                        && !self.tsi_flags.contains(TsiFlags::HIJACK_INET)
+                    {
+                        warn!("rejecting dgram inet proxy because HIJACK_INET is disabled");
                         return;
                     }
                     match TsiDgramProxy::new(
@@ -498,14 +512,18 @@ impl VsockMuxer {
         }
 
         match pkt.dst_port() {
-            defs::TSI_PROXY_CREATE if self.enable_tsi => self.process_proxy_create(pkt),
-            defs::TSI_CONNECT if self.enable_tsi => self.process_connect(pkt),
-            defs::TSI_GETNAME if self.enable_tsi => self.process_getname(pkt),
-            defs::TSI_SENDTO_ADDR if self.enable_tsi => self.process_sendto_addr(pkt),
-            defs::TSI_SENDTO_DATA if self.enable_tsi => self.process_sendto_data(pkt),
-            defs::TSI_LISTEN if self.enable_tsi => self.process_listen_request(pkt),
-            defs::TSI_ACCEPT if self.enable_tsi => self.process_accept_request(pkt),
-            defs::TSI_PROXY_RELEASE if self.enable_tsi => self.process_proxy_release(pkt),
+            defs::TSI_PROXY_CREATE if self.tsi_flags.tsi_enabled() => {
+                self.process_proxy_create(pkt)
+            }
+            defs::TSI_CONNECT if self.tsi_flags.tsi_enabled() => self.process_connect(pkt),
+            defs::TSI_GETNAME if self.tsi_flags.tsi_enabled() => self.process_getname(pkt),
+            defs::TSI_SENDTO_ADDR if self.tsi_flags.tsi_enabled() => self.process_sendto_addr(pkt),
+            defs::TSI_SENDTO_DATA if self.tsi_flags.tsi_enabled() => self.process_sendto_data(pkt),
+            defs::TSI_LISTEN if self.tsi_flags.tsi_enabled() => self.process_listen_request(pkt),
+            defs::TSI_ACCEPT if self.tsi_flags.tsi_enabled() => self.process_accept_request(pkt),
+            defs::TSI_PROXY_RELEASE if self.tsi_flags.tsi_enabled() => {
+                self.process_proxy_release(pkt)
+            }
             _ => {
                 if pkt.op() == uapi::VSOCK_OP_RW {
                     self.process_dgram_rw(pkt);
