@@ -37,6 +37,9 @@ use krun_display::DisplayBackend;
 
 type Result<E> = std::result::Result<(), E>;
 
+// Re-export TsiFlags from devices crate
+pub use devices::virtio::TsiFlags;
+
 /// Errors encountered when configuring microVM resources.
 #[derive(Debug)]
 pub enum Error {
@@ -109,6 +112,18 @@ pub enum PortConfig {
     },
 }
 
+/// Configuration for the vsock device
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
+pub enum VsockConfig {
+    /// Default behavior - vsock created implicitly with heuristics-based TSI
+    #[default]
+    Implicit,
+    /// Explicit configuration with specified TSI features
+    Explicit { tsi_flags: TsiFlags },
+    /// Vsock device disabled
+    Disabled,
+}
+
 /// A data structure that encapsulates the device configurations
 /// held in the Vmm.
 #[derive(Default)]
@@ -134,6 +149,8 @@ pub struct VmResources {
     pub fs: Vec<FsDeviceConfig>,
     /// The vsock device.
     pub vsock: VsockBuilder,
+    /// Configuration for the vsock device
+    pub vsock_config: VsockConfig,
     /// The virtio-blk device.
     #[cfg(feature = "blk")]
     pub block: BlockBuilder,
@@ -397,6 +414,7 @@ mod tests {
             external_kernel: None,
             fs: Default::default(),
             vsock: Default::default(),
+            vsock_config: VsockConfig::default(),
             #[cfg(feature = "net")]
             net_builder: Default::default(),
             gpu_virgl_flags: None,

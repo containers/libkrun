@@ -18,6 +18,7 @@ use super::super::{
 };
 use super::muxer::VsockMuxer;
 use super::packet::VsockPacket;
+use super::TsiFlags;
 use super::{defs, defs::uapi};
 use crate::virtio::InterruptTransport;
 
@@ -52,8 +53,7 @@ impl Vsock {
         host_port_map: Option<HashMap<u16, u16>>,
         queues: Vec<VirtQueue>,
         unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
-        enable_tsi: bool,
-        enable_tsi_unix: bool,
+        tsi_flags: TsiFlags,
     ) -> super::Result<Vsock> {
         let mut queue_events = Vec::new();
         for _ in 0..queues.len() {
@@ -66,13 +66,7 @@ impl Vsock {
 
         Ok(Vsock {
             cid,
-            muxer: VsockMuxer::new(
-                cid,
-                host_port_map,
-                unix_ipc_port_map,
-                enable_tsi,
-                enable_tsi_unix,
-            ),
+            muxer: VsockMuxer::new(cid, host_port_map, unix_ipc_port_map, tsi_flags),
             queue_rx,
             queue_tx,
             queues,
@@ -90,21 +84,13 @@ impl Vsock {
         cid: u64,
         host_port_map: Option<HashMap<u16, u16>>,
         unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
-        enable_tsi: bool,
-        enable_tsi_unix: bool,
+        tsi_flags: TsiFlags,
     ) -> super::Result<Vsock> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
             .iter()
             .map(|&max_size| VirtQueue::new(max_size))
             .collect();
-        Self::with_queues(
-            cid,
-            host_port_map,
-            queues,
-            unix_ipc_port_map,
-            enable_tsi,
-            enable_tsi_unix,
-        )
+        Self::with_queues(cid, host_port_map, queues, unix_ipc_port_map, tsi_flags)
     }
 
     pub fn id(&self) -> &str {
