@@ -6,6 +6,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define VSOCK_CID 3
+
 int vsock_hypervisor_signal();
 int vsock_rcv(int, void **, uint32_t *);
 int vsock_char_list_build(int, char ***);

@@ -21,6 +21,7 @@
 
 #include "include/archive.h"
 #include "include/fs.h"
+#include "include/tap_afvsock.h"
 #include "include/vsock.h"
 
 #define finit_module(fd, param_values, flags)                                  \
@@ -411,6 +412,11 @@ int main(int argc, char *argv[])
 
     // Initialize the cgroups.
     ret = cgroups_init();
+    if (ret < 0)
+        goto out;
+
+    // Initialize the network TAP device.
+    ret = tap_afvsock_init();
     if (ret < 0)
         goto out;
 

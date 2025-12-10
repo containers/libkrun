@@ -71,7 +71,7 @@ pub enum VirtioNetBackend {
 
 pub struct Net {
     id: String,
-    cfg_backend: VirtioNetBackend,
+    pub cfg_backend: VirtioNetBackend,
 
     avail_features: u64,
     acked_features: u64,
