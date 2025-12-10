@@ -33,6 +33,7 @@ static void print_help(char *const name)
         "Usage: %s ENCLAVE_IMAGE NEWROOT NVCPUS RAM_MIB\n"
         "OPTIONS: \n"
         "        -h    --help                Show help\n"
+        "              --net                 Enable networking with passt"
         "\n"
         "NEWROOT:           The root directory of the VM\n"
         "NVCPUS:            The amount of vCPUs for running the enclave\n"
@@ -43,6 +44,7 @@ static void print_help(char *const name)
 
 static const struct option long_options[] = {
     { "help", no_argument, NULL, 'h' },
+    { "net", no_argument, NULL, 'n' },
     { NULL, 0, NULL, 0 }
 };
 
@@ -51,6 +53,7 @@ struct cmdline {
     const char *new_root;
     unsigned int nvcpus;
     unsigned int ram_mib;
+    bool net;
 };
 
 bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
@@ -62,6 +65,7 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
     // set the defaults
     *cmdline = (struct cmdline){
         .show_help = false,
+        .net = false,
     };
 
     // the '+' in optstring is a GNU extension that disables permutating argv
@@ -70,6 +74,9 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         case 'h':
             cmdline->show_help = true;
             return true;
+        case 'n':
+            cmdline->net = true;
+            break;
         case '?':
             return false;
         default:
@@ -151,9 +158,50 @@ const char *const default_envp[] = {
     NULL,
 };
 
+int start_passt()
+{
+    int socket_fds[2];
+    const int PARENT = 0;
+    const int CHILD = 1;
+
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, socket_fds) < 0) {
+        perror("Failed to create passt socket fd");
+        return -1;
+    }
+
+    int pid = fork();
+    if (pid < 0) {
+        perror("fork");
+        return -1;
+    }
+
+    if (pid == 0) { // child
+        if (close(socket_fds[PARENT]) < 0) {
+            perror("close PARENT");
+        }
+
+        char fd_as_str[16];
+        snprintf(fd_as_str, sizeof(fd_as_str), "%d", socket_fds[CHILD]);
+
+        printf("passing fd %s to passt", fd_as_str);
+
+        if (execlp("passt", "passt", "-f", "--fd", fd_as_str, NULL) < 0) {
+            perror("execlp");
+            return -1;
+        }
+
+    } else { // parent
+        if (close(socket_fds[CHILD]) < 0) {
+            perror("close CHILD");
+        }
+
+        return socket_fds[PARENT];
+    }
+}
+
 int main(int argc, char *const argv[])
 {
-    int ret, cid, ctx_id, err;
+    int ret, cid, ctx_id, err, passt_fd;
     struct cmdline cmdline;
     pthread_t thread;
 
@@ -210,6 +258,22 @@ int main(int argc, char *const argv[])
         errno = -err;
         perror("Error configuring enclave execution path");
         return -1;
+    }
+
+    if (cmdline.net) {
+        uint8_t mac[] = { 0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee };
+
+        passt_fd = start_passt();
+        if (passt_fd < 0) {
+            printf("unable to start passt socket pair\n");
+            return -1;
+        }
+
+        if (err = krun_add_net_unixstream(ctx_id, NULL, passt_fd, &mac[0], COMPAT_NET_FEATURES, 0)) {
+            errno = -err;
+            perror("Error configuring net mode");
+            return -1;
+        }
     }
 
     /*
