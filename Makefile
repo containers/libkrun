@@ -73,7 +73,7 @@ ifeq ($(INPUT),1)
 endif
 ifeq ($(NITRO),1)
 	VARIANT = -nitro
-	FEATURE_FLAGS := --features nitro
+	FEATURE_FLAGS := --features nitro,net
 	BUILD_INIT = 0
 endif
 

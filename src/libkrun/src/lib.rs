@@ -384,6 +384,34 @@ impl TryFrom<ContextConfig> for NitroEnclave {
             return Err(-libc::EINVAL);
         };
 
+        let net = {
+            let mut list = ctx.vmr.net.list;
+            let len = list.len();
+            match len {
+                0 => None,
+                1 => {
+                    let device = list.pop_front().unwrap();
+
+                    match device.lock().unwrap().backend() {
+                        VirtioNetBackend::UnixstreamFd(_) | VirtioNetBackend::UnixstreamPath(_) => {
+                        }
+                        _ => {
+                            error!("configured virtio-net backend must be unix stream");
+                            return Err(-libc::EINVAL);
+                        }
+                    };
+
+                    Some(device)
+                }
+                _ => {
+                    error!(
+                        "more than one network interface configured (max 1 allowed, found {len})"
+                    );
+                    return Err(-libc::EINVAL);
+                }
+            }
+        };
+
         Ok(Self {
             _image_path: ctx.nitro_image_path,
             mem_size_mib,
@@ -393,6 +421,7 @@ impl TryFrom<ContextConfig> for NitroEnclave {
             exec_path,
             exec_args,
             exec_env,
+            net,
         })
     }
 }
