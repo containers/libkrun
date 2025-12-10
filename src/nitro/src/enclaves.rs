@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::error::NitroError;
-use devices::virtio::net::device::Net;
+use devices::virtio::net::device::{Net, VirtioNetBackend};
 use flate2::read::GzDecoder;
+use fork::{daemon, Fork};
 use libc::c_int;
 use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
@@ -13,7 +14,10 @@ use std::{
     ffi::{CString, OsStr},
     fs,
     io::{self, Read, Write},
-    os::fd::AsFd,
+    os::{
+        fd::{AsFd, FromRawFd, OwnedFd},
+        unix::net::UnixStream,
+    },
     path::PathBuf,
     str::FromStr,
     sync::{Arc, Mutex},
@@ -27,6 +31,7 @@ const KRUN_NITRO_EIF_TAR: &[u8] = include_bytes!("runtime-data/eif.tar.gz");
 const KRUN_NITRO_EIF_FILE_NAME: &str = "krun-nitro.eif";
 
 const ENCLAVE_READY_VSOCK_PORT: u32 = 9000;
+const ENCLAVE_NET_VSOCK_PORT: u32 = 8080;
 
 const HEART_BEAT: u8 = 0xb7;
 
@@ -72,7 +77,51 @@ impl NitroEnclave {
 
         self.write_exec(&mut stream)?;
 
-        Ok(cid)
+        match fork::fork().unwrap() {
+            Fork::Parent(_child) => Ok(cid),
+            Fork::Child => {
+                let sockaddr = VsockAddr::new(VMADDR_CID_ANY, ENCLAVE_NET_VSOCK_PORT);
+                let listener = VsockListener::bind(&sockaddr).unwrap();
+
+                let mut vsock_stream = listener.accept().unwrap();
+
+                let mut tun_stream = {
+                    let net = self.net.as_mut().unwrap().lock().unwrap();
+                    match net.cfg_backend {
+                        VirtioNetBackend::UnixstreamFd(fd) => {
+                            let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+                            UnixStream::from(owned_fd)
+                        }
+                        _ => panic!("not a unixstream FD"),
+                    }
+                };
+
+                let mut vsock_stream_clone = vsock_stream.0.try_clone().unwrap();
+                let mut tun_stream_clone = tun_stream.try_clone().unwrap();
+
+                // vsock
+                std::thread::spawn(move || {
+                    let mut vsock_buf = [0u8; 1500];
+                    loop {
+                        let size = vsock_stream_clone.read(&mut vsock_buf).unwrap();
+                        if size > 0 {
+                            tun_stream_clone.write_all(&vsock_buf[..size]).unwrap();
+                        } else {
+                            std::process::exit(0);
+                        }
+                    }
+                });
+
+                // TUN
+                let mut tun_buf = [0u8; 1500];
+                loop {
+                    let size = tun_stream.read(&mut tun_buf).unwrap();
+                    if size > 0 {
+                        vsock_stream.0.write_all(&tun_buf[..size]).unwrap();
+                    }
+                }
+            }
+        }
     }
 
     fn rootfs_archive(&self) -> Result<Vec<u8>> {
