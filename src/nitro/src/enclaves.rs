@@ -11,7 +11,7 @@ use nix::poll::{poll, PollFd, PollFlags, PollTimeout as NixPollTimeout};
 use std::{
     ffi::{CString, OsStr},
     fs,
-    io::{self, ErrorKind, Read, Write},
+    io::{self, Read, Write},
     os::fd::AsFd,
     path::PathBuf,
     str::FromStr,
@@ -85,8 +85,7 @@ impl NitroEnclave {
             .file_name()
             .unwrap_or(OsStr::new("/"))
             .to_str()
-            .ok_or(NitroError::RootFsArchive(io::Error::new(
-                ErrorKind::Other,
+            .ok_or(NitroError::RootFsArchive(io::Error::other(
                 "unable to convert rootfs directory name to str",
             )))?;
 
@@ -94,8 +93,7 @@ impl NitroEnclave {
             let entry = entry.map_err(NitroError::RootFsArchive)?;
             let filetype = entry.file_type().map_err(NitroError::RootFsArchive)?;
             let filename = entry.file_name().into_string().map_err(|_| {
-                NitroError::RootFsArchive(io::Error::new(
-                    ErrorKind::Other,
+                NitroError::RootFsArchive(io::Error::other(
                     "unable to convert file name to String object",
                 ))
             })?;
