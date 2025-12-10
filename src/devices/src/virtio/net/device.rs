@@ -128,6 +128,11 @@ impl Net {
     pub fn id(&self) -> &str {
         &self.id
     }
+
+    /// Provides the virtio-net backend of this net device.
+    pub fn backend(&self) -> &VirtioNetBackend {
+        &self.cfg_backend
+    }
 }
 
 impl VirtioDevice for Net {

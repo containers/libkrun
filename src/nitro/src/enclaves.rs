@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::error::NitroError;
+use devices::virtio::net::device::Net;
 use flate2::read::GzDecoder;
 use libc::c_int;
 use nitro_enclaves::{
@@ -15,6 +16,7 @@ use std::{
     os::fd::AsFd,
     path::PathBuf,
     str::FromStr,
+    sync::{Arc, Mutex},
 };
 use tar::{Archive, HeaderMode};
 use vsock::{VsockAddr, VsockListener, VsockStream};
@@ -57,6 +59,8 @@ pub struct NitroEnclave {
     pub exec_args: String,
     /// Execution environment.
     pub exec_env: String,
+    /// virtio-net builder.
+    pub net: Option<Arc<Mutex<Net>>>,
 }
 
 impl NitroEnclave {

@@ -1016,6 +1016,7 @@ dependencies = [
 name = "nitro"
 version = "0.1.0"
 dependencies = [
+ "devices",
  "flate2",
  "libc",
  "nitro-enclaves",
