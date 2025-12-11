@@ -12,7 +12,6 @@ use vulkano::format::Format as VulkanFormat;
 #[cfg(feature = "vulkano")]
 use vulkano::image::ImageAspect as VulkanImageAspect;
 
-use crate::checked_arithmetic;
 use crate::rutabaga_gralloc::gralloc::ImageAllocationInfo;
 use crate::rutabaga_gralloc::gralloc::ImageMemoryRequirements;
 use crate::rutabaga_utils::*;
