@@ -6,7 +6,6 @@ LDFLAGS_riscv64_Linux = -lkrun
 LDFLAGS_arm64_Darwin = -L/opt/homebrew/lib -lkrun
 LDFLAGS_sev = -lkrun-sev
 LDFLAGS_tdx = -lkrun-tdx
-LDFLAGS_efi = -L/opt/homebrew/lib -lkrun-efi
 LDFLAGS_nitro = -lkrun-nitro
 CFLAGS = -O2 -g -I../include
 ROOTFS_DISTRO := fedora
@@ -14,15 +13,12 @@ ROOTFS_DIR = rootfs_$(ROOTFS_DISTRO)
 
 .PHONY: clean rootfs
 
-EXAMPLES := chroot_vm external_kernel consoles
+EXAMPLES := boot_efi chroot_vm external_kernel consoles
 ifeq ($(SEV),1)
     EXAMPLES := launch-tee
 endif
 ifeq ($(TDX),1)
     EXAMPLES := launch-tee
-endif
-ifeq ($(EFI),1)
-    EXAMPLES := boot_efi
 endif
 
 all: $(EXAMPLES)
@@ -42,7 +38,7 @@ ifeq ($(TDX),1)
 endif
 
 boot_efi: boot_efi.c
-	gcc -o $@ $< $(CFLAGS) $(LDFLAGS_efi)
+	gcc -o $@ $< $(CFLAGS) $(LDFLAGS_$(ARCH)_$(OS))
 ifeq ($(OS),Darwin)
 	codesign --entitlements chroot_vm.entitlements --force -s - $@
 endif
