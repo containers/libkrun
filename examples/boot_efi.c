@@ -26,11 +26,12 @@
 static void print_help(char *const name)
 {
     fprintf(stderr,
-        "Usage: %s [OPTIONS] DISK\n"
+        "Usage: %s [OPTIONS] EFI_FW DISK\n"
         "OPTIONS: \n"
         "        -h    --help                Show help\n"
         "              --passt-socket=PATH   Connect to passt socket at PATH"
         "\n"
+        "EFI_FW: path to the EFI firmware to be loaded\n"
         "DISK:   path to the vm's disk image in raw format\n",
         name
     );
@@ -45,6 +46,7 @@ static const struct option long_options[] = {
 struct cmdline {
     bool show_help;
     char const *passt_socket_path;
+    char const *efi_fw;
     char const *disk_image;
 };
 
@@ -56,6 +58,7 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
     *cmdline = (struct cmdline){
         .show_help = false,
         .passt_socket_path = "/tmp/network.sock",
+        .efi_fw = NULL,
         .disk_image = NULL,
     };
 
@@ -78,8 +81,9 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         }
     }
 
-    if (optind <= argc - 1) {
-        cmdline->disk_image = argv[optind];
+    if (optind <= argc - 2) {
+        cmdline->efi_fw = argv[optind];
+        cmdline->disk_image = argv[optind + 1];
         return true;
     }
 
@@ -184,6 +188,12 @@ int main(int argc, char *const argv[])
     if (err = krun_set_vm_config(ctx_id, 2, 1024)) {
         errno = -err;
         perror("Error configuring the number of vCPUs and/or the amount of RAM");
+        return -1;
+    }
+
+    if (err = krun_set_firmware(ctx_id, cmdline.efi_fw)) {
+        errno = -err;
+        perror("Error configuring EFI FW path");
         return -1;
     }
 
