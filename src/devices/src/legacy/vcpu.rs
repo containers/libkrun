@@ -5,7 +5,8 @@ use std::sync::Mutex;
 use arch::aarch64::layout::VTIMER_IRQ;
 use arch::aarch64::sysreg::*;
 use hvf::bindings::{
-    hv_sys_reg_t_HV_SYS_REG_MDCCINT_EL1, hv_vcpu_get_sys_reg, hv_vcpu_set_sys_reg, HV_SUCCESS,
+    hv_sys_reg_t_HV_SYS_REG_CNTHCTL_EL2, hv_sys_reg_t_HV_SYS_REG_MDCCINT_EL1, hv_vcpu_get_sys_reg,
+    hv_vcpu_set_sys_reg, HV_SUCCESS,
 };
 use hvf::{vcpu_request_exit, Vcpus};
 
@@ -149,7 +150,6 @@ impl Vcpus for VcpuList {
         }
 
         match reg {
-            SYSREG_CNTHCTL_EL2 => Some(0),
             SYSREG_ICC_IAR1_EL1 => Some(
                 self.vcpus[vcpuid as usize]
                     .lock()
@@ -163,6 +163,21 @@ impl Vcpus for VcpuList {
                     | (1 << ICC_CTLR_EL1_ID_BITS_SHIFT)
                     | (4 << ICC_CTLR_EL1_PRI_BITS_SHIFT),
             ),
+            SYSREG_CNTHCTL_EL2 => {
+                let val: u64 = 0;
+                let ret = unsafe {
+                    hv_vcpu_get_sys_reg(
+                        vcpuid,
+                        hv_sys_reg_t_HV_SYS_REG_CNTHCTL_EL2,
+                        &val as *const _ as *mut _,
+                    )
+                };
+                if ret == HV_SUCCESS {
+                    Some(val)
+                } else {
+                    None
+                }
+            }
             SYSREG_MDCCINT_EL1 => {
                 let val: u64 = 0;
                 let ret = unsafe {
@@ -222,14 +237,19 @@ impl Vcpus for VcpuList {
 
                 true
             }
+            SYSREG_CNTHCTL_EL2 => {
+                let ret = unsafe {
+                    hv_vcpu_set_sys_reg(vcpuid, hv_sys_reg_t_HV_SYS_REG_CNTHCTL_EL2, val)
+                };
+                ret == HV_SUCCESS
+            }
             SYSREG_MDCCINT_EL1 => {
                 let ret = unsafe {
                     hv_vcpu_set_sys_reg(vcpuid, hv_sys_reg_t_HV_SYS_REG_MDCCINT_EL1, val)
                 };
                 ret == HV_SUCCESS
             }
-            SYSREG_CNTHCTL_EL2
-            | SYSREG_ICC_EOIR1_EL1
+            SYSREG_ICC_EOIR1_EL1
             | SYSREG_ICC_IGRPEN1_EL1
             | SYSREG_ICC_PMR_EL1
             | SYSREG_ICC_BPR1_EL1
