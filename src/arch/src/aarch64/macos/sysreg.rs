@@ -29,6 +29,8 @@ arm64_sys_reg!(
     SYSREG_CRM_MASK
 );
 
+arm64_sys_reg!(SYSREG_MDCCINT_EL1, 2, 0, 0, 0, 2);
+
 arm64_sys_reg!(SYSREG_OSLAR_EL1, 2, 0, 4, 1, 0);
 arm64_sys_reg!(SYSREG_OSDLR_EL1, 2, 0, 4, 1, 3);
 
