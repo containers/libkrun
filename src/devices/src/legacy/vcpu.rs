@@ -4,6 +4,9 @@ use std::sync::Mutex;
 
 use arch::aarch64::layout::VTIMER_IRQ;
 use arch::aarch64::sysreg::*;
+use hvf::bindings::{
+    hv_sys_reg_t_HV_SYS_REG_MDCCINT_EL1, hv_vcpu_get_sys_reg, hv_vcpu_set_sys_reg, HV_SUCCESS,
+};
 use hvf::{vcpu_request_exit, Vcpus};
 
 // See https://developer.arm.com/documentation/ddi0595/2020-12/AArch64-Registers/ICC-IAR0-EL1--Interrupt-Controller-Interrupt-Acknowledge-Register-0
@@ -160,6 +163,21 @@ impl Vcpus for VcpuList {
                     | (1 << ICC_CTLR_EL1_ID_BITS_SHIFT)
                     | (4 << ICC_CTLR_EL1_PRI_BITS_SHIFT),
             ),
+            SYSREG_MDCCINT_EL1 => {
+                let val: u64 = 0;
+                let ret = unsafe {
+                    hv_vcpu_get_sys_reg(
+                        vcpuid,
+                        hv_sys_reg_t_HV_SYS_REG_MDCCINT_EL1,
+                        &val as *const _ as *mut _,
+                    )
+                };
+                if ret == HV_SUCCESS {
+                    Some(val)
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -203,6 +221,12 @@ impl Vcpus for VcpuList {
                 }
 
                 true
+            }
+            SYSREG_MDCCINT_EL1 => {
+                let ret = unsafe {
+                    hv_vcpu_set_sys_reg(vcpuid, hv_sys_reg_t_HV_SYS_REG_MDCCINT_EL1, val)
+                };
+                ret == HV_SUCCESS
             }
             SYSREG_CNTHCTL_EL2
             | SYSREG_ICC_EOIR1_EL1
