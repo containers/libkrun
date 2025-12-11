@@ -1928,8 +1928,8 @@ fn autoconfigure_console_ports(
         }
     }
 
-    if console_output_path.is_some() {
-        let file = File::create(console_output_path.unwrap()).map_err(OpenConsoleFile)?;
+    if let Some(console_output_path) = console_output_path {
+        let file = File::create(console_output_path).map_err(OpenConsoleFile)?;
         // Manually emulate our Legacy behavior: In the case of output_path we have always used the
         // stdin to determine the console size
         let stdin_fd = unsafe { BorrowedFd::borrow_raw(STDIN_FILENO) };
