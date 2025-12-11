@@ -293,7 +293,6 @@ impl NetWorker {
 
         while let Some(head) = tx_queue.pop(&self.mem) {
             let head_index = head.index;
-            let mut read_count = 0;
             let mut next_desc = Some(head);
 
             self.tx_iovec.clear();
@@ -303,12 +302,11 @@ impl NetWorker {
                     break;
                 }
                 self.tx_iovec.push((desc.addr, desc.len as usize));
-                read_count += desc.len as usize;
                 next_desc = desc.next_descriptor();
             }
 
             // Copy buffer from across multiple descriptors.
-            read_count = 0;
+            let mut read_count = 0;
             for (desc_addr, desc_len) in self.tx_iovec.drain(..) {
                 let limit = cmp::min(read_count + desc_len, self.tx_frame_buf.len());
 
