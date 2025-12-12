@@ -516,7 +516,7 @@ impl Display for StartMicrovmError {
     }
 }
 
-enum Payload {
+pub enum Payload {
     #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
     KernelMmap,
     #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
@@ -1411,13 +1411,13 @@ fn load_payload(
     }
 }
 
-struct PayloadConfig {
+pub struct PayloadConfig {
     entry_addr: GuestAddress,
     initrd_config: Option<InitrdConfig>,
     kernel_cmdline: Option<String>,
 }
 
-fn create_guest_memory(
+pub fn create_guest_memory(
     mem_size: usize,
     vm_resources: &VmResources,
     payload: &Payload,
@@ -2346,7 +2346,7 @@ pub mod tests {
             size: 0x1000,
         });
 
-        create_guest_memory(mem_size_mib, &vm_resources, &Payload::KernelMmap)
+        create_guest_memory(mem_size_mib, &vm_resources, &Payload::Empty)
     }
 
     #[test]
@@ -2384,8 +2384,8 @@ pub mod tests {
     #[test]
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
     fn test_create_vcpus_aarch64() {
-        let (guest_memory, _arch_memory_info) =
-            create_guest_memory(128, None, Payload::Empty).unwrap();
+        let (guest_memory, arch_memory_info, _shm_manager, _payload_config) =
+            default_guest_memory(128).unwrap();
         let vm = setup_vm(&guest_memory, false).unwrap();
         let vcpu_count = 2;
 
@@ -2400,7 +2400,7 @@ pub mod tests {
         let vcpu_vec = create_vcpus_aarch64(
             &vm,
             &vcpu_config,
-            &guest_memory,
+            &arch_memory_info,
             entry_addr,
             &EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
         )
