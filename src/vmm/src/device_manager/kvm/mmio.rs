@@ -320,11 +320,11 @@ mod tests {
     use super::*;
     use arch;
     use devices::legacy::DummyIrqChip;
-    use devices::virtio::InterruptTransport;
-    use devices::{
-        legacy::KvmIoapic,
-        virtio::{ActivateResult, Queue, VirtioDevice},
-    };
+    #[cfg(target_arch = "aarch64")]
+    use devices::legacy::KvmGicV3;
+    #[cfg(target_arch = "x86_64")]
+    use devices::legacy::KvmIoapic;
+    use devices::virtio::{ActivateResult, InterruptTransport, Queue, VirtioDevice};
     use std::sync::Arc;
     use utils::errno;
     use utils::eventfd::EventFd;
@@ -436,11 +436,13 @@ mod tests {
         let start_addr2 = GuestAddress(0x1000);
         let guest_mem =
             GuestMemoryMmap::from_ranges(&[(start_addr1, 0x1000), (start_addr2, 0x1000)]).unwrap();
-        let vcpu_count: u8 = 1;
         let vm = builder::setup_vm(&guest_mem, false).unwrap();
         let mut device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
+        #[cfg(target_arch = "x86_64")]
         let _kvmioapic = KvmIoapic::new(vm.fd()).unwrap();
+        #[cfg(target_arch = "aarch64")]
+        let _gic = KvmGicV3::new(vm.fd(), 1).unwrap();
 
         let mut cmdline = kernel_cmdline::Cmdline::new(4096);
         let dummy = Arc::new(Mutex::new(DummyDevice::new()));
@@ -456,11 +458,13 @@ mod tests {
         let start_addr2 = GuestAddress(0x1000);
         let guest_mem =
             GuestMemoryMmap::from_ranges(&[(start_addr1, 0x1000), (start_addr2, 0x1000)]).unwrap();
-        let vcpu_count: u8 = 1;
         let vm = builder::setup_vm(&guest_mem, false).unwrap();
         let mut device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
+        #[cfg(target_arch = "x86_64")]
         let _kvmioapic = KvmIoapic::new(vm.fd()).unwrap();
+        #[cfg(target_arch = "aarch64")]
+        let _gic = KvmGicV3::new(vm.fd(), 1).unwrap();
 
         let mut cmdline = kernel_cmdline::Cmdline::new(4096);
 
