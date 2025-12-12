@@ -210,17 +210,14 @@ impl VirtioGpu {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn create_rutabaga(
         mem: GuestMemoryMmap,
         queue_ctl: Arc<Mutex<VirtQueue>>,
         interrupt: InterruptTransport,
+        fence_state: Arc<Mutex<FenceState>>,
         virgl_flags: u32,
-        #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
         export_table: Option<ExportTable>,
-        displays: Box<[DisplayInfo]>,
-        display_backend: DisplayBackend,
-    ) -> Self {
+    ) -> Option<Rutabaga> {
         let xdg_runtime_dir = match env::var("XDG_RUNTIME_DIR") {
             Ok(dir) => dir,
             Err(_) => "/run/user/1000".to_string(),
@@ -274,12 +271,62 @@ impl VirtioGpu {
             builder
         };
 
-        let fence_state = Arc::new(Mutex::new(Default::default()));
         let fence =
             Self::create_fence_handler(mem, queue_ctl.clone(), fence_state.clone(), interrupt);
-        let rutabaga = builder
-            .build(fence, None)
-            .expect("Rutabaga initialization failed!");
+        builder.clone().build(fence.clone(), None).ok()
+    }
+
+    pub fn create_fallback_rutabaga(
+        mem: GuestMemoryMmap,
+        queue_ctl: Arc<Mutex<VirtQueue>>,
+        interrupt: InterruptTransport,
+        fence_state: Arc<Mutex<FenceState>>,
+    ) -> Option<Rutabaga> {
+        const VIRGLRENDERER_NO_VIRGL: u32 = 1 << 7;
+        let builder = RutabagaBuilder::new(
+            rutabaga_gfx::RutabagaComponentType::VirglRenderer,
+            VIRGLRENDERER_NO_VIRGL,
+            0,
+        );
+
+        let fence =
+            Self::create_fence_handler(mem, queue_ctl.clone(), fence_state.clone(), interrupt);
+        builder.clone().build(fence.clone(), None).ok()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        mem: GuestMemoryMmap,
+        queue_ctl: Arc<Mutex<VirtQueue>>,
+        interrupt: InterruptTransport,
+        virgl_flags: u32,
+        #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
+        export_table: Option<ExportTable>,
+        displays: Box<[DisplayInfo]>,
+        display_backend: DisplayBackend,
+    ) -> Self {
+        let fence_state = Arc::new(Mutex::new(Default::default()));
+
+        let rutabaga = match Self::create_rutabaga(
+            mem.clone(),
+            queue_ctl.clone(),
+            interrupt.clone(),
+            fence_state.clone(),
+            virgl_flags,
+            export_table.clone(),
+        ) {
+            Some(rutabaga) => rutabaga,
+            None => {
+                warn!("Failed to create virtio_gpu backend with the requested parameters. Falling back to safe defaults.");
+                Self::create_fallback_rutabaga(
+                    mem.clone(),
+                    queue_ctl.clone(),
+                    interrupt.clone(),
+                    fence_state.clone(),
+                )
+                .expect("Fallback rutabaga initialization failed")
+            }
+        };
 
         let display_backend = display_backend
             .create_instance()
