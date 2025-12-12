@@ -21,11 +21,39 @@ mod tsi_stream;
 mod unix;
 
 pub use self::defs::uapi::VIRTIO_ID_VSOCK as TYPE_VSOCK;
+pub use self::defs::TsiFlags;
 pub use self::device::Vsock;
 
+use bitflags::bitflags;
 use vm_memory::GuestMemoryError;
 
 mod defs {
+    use super::bitflags;
+
+    bitflags! {
+        /// TSI (Transparent Socket Impersonation) feature flags.
+        ///
+        /// These flags control which socket families are hijacked by TSI.
+        pub struct TsiFlags: u32 {
+            /// Hijack AF_INET and AF_INET6 sockets
+            const HIJACK_INET = 1 << 0;
+            /// Hijack AF_UNIX sockets
+            const HIJACK_UNIX = 1 << 1;
+        }
+    }
+
+    impl TsiFlags {
+        /// Returns true if any TSI hijacking is enabled.
+        pub fn tsi_enabled(&self) -> bool {
+            !self.is_empty()
+        }
+    }
+
+    impl Default for TsiFlags {
+        fn default() -> Self {
+            TsiFlags::empty()
+        }
+    }
     /// Device ID used in MMIO device identification.
     /// Because Vsock is unique per-vm, this ID can be hardcoded.
     pub const VSOCK_DEV_ID: &str = "vsock";
