@@ -335,6 +335,11 @@ impl VirglRenderer {
             )
         };
 
+        // If the initialization failed, allow the users to try again.
+        if ret != 0 {
+            INIT_ONCE.store(false, Ordering::Release);
+        }
+
         ret_to_res(ret)?;
         Ok(Box::new(VirglRenderer {}))
     }
