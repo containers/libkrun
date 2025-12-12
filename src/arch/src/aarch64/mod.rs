@@ -18,7 +18,9 @@ pub use self::macos::*;
 use std::fmt::Debug;
 
 use crate::{
-    aarch64::layout::{DRAM_MEM_START_EFI, DRAM_MEM_START_KERNEL, FIRMWARE_START},
+    aarch64::layout::{
+        DRAM_MEM_MAX_SIZE, DRAM_MEM_START_EFI, DRAM_MEM_START_KERNEL, FIRMWARE_START,
+    },
     ArchMemoryInfo,
 };
 use vm_memory::{GuestAddress, GuestMemoryMmap};
@@ -52,7 +54,10 @@ pub fn arch_memory_regions(
         DRAM_MEM_START_KERNEL
     };
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
-    let dram_size = align_upwards!(size, page_size);
+    let mut dram_size = align_upwards!(size, page_size);
+    if dram_size > DRAM_MEM_MAX_SIZE as usize {
+        dram_size = DRAM_MEM_MAX_SIZE as usize;
+    }
     let ram_last_addr = ram_start_addr + (dram_size as u64);
     let shm_start_addr = ((ram_last_addr / 0x4000_0000) + 1) * 0x4000_0000;
     let fdt_addr = if firmware_size.is_some() {
