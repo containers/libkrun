@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn test_regions_lt_1024gb() {
-        let (_mem_info, regions) = arch_memory_regions(1usize << 29, 0);
+        let (_mem_info, regions) = arch_memory_regions(1usize << 29, 0, None);
         assert_eq!(1, regions.len());
         assert_eq!(
             GuestAddress(super::layout::DRAM_MEM_START_KERNEL),
@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn test_regions_gt_1024gb() {
-        let (_mem_info, regions) = arch_memory_regions(1usize << 41, 0);
+        let (_mem_info, regions) = arch_memory_regions(1usize << 41, 0, None);
         assert_eq!(1, regions.len());
         assert_eq!(
             GuestAddress(super::layout::DRAM_MEM_START_KERNEL),
