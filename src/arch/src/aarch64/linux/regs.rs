@@ -157,10 +157,9 @@ mod tests {
         let kvm = Kvm::new().unwrap();
         let vm = kvm.create_vm().unwrap();
         let vcpu = vm.create_vcpu(0).unwrap();
-        let (_mem_info, regions) = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000, 0);
-        let mem = GuestMemoryMmap::from_ranges(&regions).expect("Cannot initialize memory");
+        let (mem_info, _regions) = arch_memory_regions(layout::FDT_MAX_SIZE + 0x1000, 0, None);
 
-        match setup_regs(&vcpu, 0, 0x0, &mem).unwrap_err() {
+        match setup_regs(&vcpu, 0, 0x0, &mem_info).unwrap_err() {
             Error::SetCoreRegister(ref e) => assert_eq!(e.errno(), libc::ENOEXEC),
             _ => panic!("Expected to receive Error::SetCoreRegister"),
         }
@@ -168,7 +167,7 @@ mod tests {
         vm.get_preferred_target(&mut kvi).unwrap();
         vcpu.vcpu_init(&kvi).unwrap();
 
-        assert!(setup_regs(&vcpu, 0, 0x0, &mem).is_ok());
+        assert!(setup_regs(&vcpu, 0, 0x0, &mem_info).is_ok());
     }
     #[test]
     fn test_read_mpidr() {
