@@ -1786,6 +1786,12 @@ mod tests {
     use std::sync::{Arc, Barrier};
 
     use super::*;
+    #[cfg(target_arch = "aarch64")]
+    use crate::builder::create_guest_memory;
+    #[cfg(target_arch = "aarch64")]
+    use crate::builder::Payload;
+    #[cfg(target_arch = "aarch64")]
+    use crate::resources::VmResources;
     use devices;
     #[cfg(target_arch = "x86_64")]
     use devices::legacy::KvmIoapic;
@@ -1910,9 +1916,11 @@ mod tests {
     #[test]
     fn test_configure_vcpu() {
         let kvm = KvmContext::new().unwrap();
-        let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
+        let vm_resources = VmResources::default();
+        let (guest_memory, arch_memory_info, _shm_manager, _payload_config) =
+            create_guest_memory(128, &vm_resources, &Payload::Empty).unwrap();
         let mut vm = Vm::new(kvm.fd()).expect("new vm failed");
-        assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
+        assert!(vm.memory_init(&guest_memory, kvm.max_memslots()).is_ok());
 
         // Try it for when vcpu id is 0.
         let mut vcpu = Vcpu::new_aarch64(
@@ -1923,7 +1931,7 @@ mod tests {
         .unwrap();
 
         assert!(vcpu
-            .configure_aarch64(vm.fd(), &gm, GuestAddress(0))
+            .configure_aarch64(vm.fd(), &arch_memory_info, GuestAddress(0))
             .is_ok());
 
         // Try it for when vcpu id is NOT 0.
@@ -1935,7 +1943,7 @@ mod tests {
         .unwrap();
 
         assert!(vcpu
-            .configure_aarch64(vm.fd(), &gm, GuestAddress(0))
+            .configure_aarch64(vm.fd(), &arch_memory_info, GuestAddress(0))
             .is_ok());
     }
 
