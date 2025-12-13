@@ -2,8 +2,7 @@ name: Integration tests
 on: [pull_request]
 
 jobs:
-  # x86_64 only due to virtualization limitations of GitHub Actions
-  integration-tests:
+  integration-tests-x86_64:
     name: Integration Tests (Linux x86_64)
     runs-on: ubuntu-latest
     steps:
@@ -58,7 +57,64 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs
+          name: test-logs-x86_64
+          path: |
+            /tmp/libkrun-tests/
+            !/tmp/libkrun-tests/**/guest-agent
+          if-no-files-found: ignore
+
+  integration-tests-aarch64:
+    name: Integration Tests (Linux aarch64)
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+      
+      - name: Add musl target
+        run: rustup target add aarch64-unknown-linux-musl
+      
+      - name: Build and install libkrun to test prefix
+        run: make test-prefix
+      
+      - name: Clippy (test_cases guest)
+        run: |
+          cd tests
+          cargo clippy --locked -p test_cases --features guest -- -D warnings
+      
+      - name: Clippy (test_cases host)
+        run: |
+          cd tests
+          PKG_CONFIG_PATH="$(realpath ../test-prefix/lib64/pkgconfig/)" LD_LIBRARY_PATH="$(realpath ../test-prefix/lib64/)" cargo clippy --locked -p test_cases --features host -- -D warnings
+      
+      - name: Clippy (runner)
+        run: |
+          cd tests
+          PKG_CONFIG_PATH="$(realpath ../test-prefix/lib64/pkgconfig/)" LD_LIBRARY_PATH="$(realpath ../test-prefix/lib64/)" cargo clippy --locked -p runner -- -D warnings
+      
+      - name: Clippy (guest-agent)
+        run: |
+          cd tests
+          cargo clippy --locked --target aarch64-unknown-linux-musl -p guest-agent -- -D warnings
+      
+      - name: Install additional packages
+        run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools
+      
+      - name: Install libkrunfw
+        run: curl -L -o /tmp/libkrunfw-5.0.0-aarch64.tgz https://github.com/containers/libkrunfw/releases/download/v5.0.0/libkrunfw-5.0.0-aarch64.tgz && mkdir tmp && tar xf /tmp/libkrunfw-5.0.0-aarch64.tgz -C tmp && sudo mv tmp/lib64/* /lib/aarch64-linux-gnu
+
+      - name: Clean up tests directory
+        run: rm -fr /tmp/libkrun-tests
+      
+      - name: Integration tests
+        run: KRUN_ENOMEM_WORKAROUND=1 KRUN_NO_UNSHARE=1 KRUN_TEST_BASE_DIR=/tmp/libkrun-tests make test TEST_FLAGS="--keep-all --github-summary"
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-aarch64
           path: |
             /tmp/libkrun-tests/
             !/tmp/libkrun-tests/**/guest-agent
