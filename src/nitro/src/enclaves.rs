@@ -19,7 +19,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tar::{Archive, HeaderMode};
-use vsock::{VsockAddr, VsockListener, VsockStream};
+use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
 
 type Result<T> = std::result::Result<T, NitroError>;
 
@@ -27,8 +27,6 @@ const KRUN_NITRO_EIF_TAR: &[u8] = include_bytes!("runtime-data/eif.tar.gz");
 const KRUN_NITRO_EIF_FILE_NAME: &str = "krun-nitro.eif";
 
 const ENCLAVE_READY_VSOCK_PORT: u32 = 9000;
-
-const VMADDR_CID_PARENT: u32 = 3;
 
 const HEART_BEAT: u8 = 0xb7;
 
@@ -179,7 +177,7 @@ impl NitroEnclave {
     }
 
     fn start(&mut self) -> Result<(u32, VsockStream)> {
-        let sockaddr = VsockAddr::new(VMADDR_CID_PARENT, ENCLAVE_READY_VSOCK_PORT);
+        let sockaddr = VsockAddr::new(VMADDR_CID_ANY, ENCLAVE_READY_VSOCK_PORT);
         let listener = VsockListener::bind(&sockaddr).map_err(NitroError::HeartbeatBind)?;
         let eif = eif()?;
 

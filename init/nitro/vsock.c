@@ -16,8 +16,7 @@
 #define UINT32_T_SIZE 4
 
 #define HEART_BEAT 0xb7
-#define VSOCK_CID 3
-#define VSOCK_PORT 9000
+#define VSOCK_PORT_CONSOLE 9000
 
 /*
  * Before reading data from the vsock, the vsock sends a 4-byte "header",
@@ -161,8 +160,8 @@ int vsock_hypervisor_signal()
     errno = -EINVAL;
 
     saddr.svm_family = AF_VSOCK;
-    saddr.svm_cid = VSOCK_CID;
-    saddr.svm_port = VSOCK_PORT;
+    saddr.svm_cid = VMADDR_CID_HOST;
+    saddr.svm_port = VSOCK_PORT_CONSOLE;
     saddr.svm_reserved1 = 0;
 
     sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
