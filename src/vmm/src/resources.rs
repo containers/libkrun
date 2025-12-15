@@ -372,12 +372,11 @@ impl VmResources {
 mod tests {
     #[cfg(feature = "gpu")]
     use crate::resources::DisplayBackendConfig;
-    use crate::resources::{DefaultVirtioConsoleConfig, VmResources};
+    use crate::resources::VmResources;
     use crate::vmm_config::kernel_cmdline::KernelCmdlineConfig;
     use crate::vmm_config::machine_config::{CpuFeaturesTemplate, VmConfig, VmConfigError};
     use crate::vmm_config::vsock::tests::{default_config, TempSockFile};
     use crate::vstate::VcpuConfig;
-    use std::collections::HashMap;
     use utils::tempfile::TempFile;
 
     fn default_kernel_cmdline() -> KernelCmdlineConfig {

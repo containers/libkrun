@@ -1002,6 +1002,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[allow(unused)]
     fn test_queue_validation() {
         let m = &GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
         let vq = VirtQueue::new(GuestAddress(0), m, 16);
@@ -1129,11 +1130,11 @@ pub(crate) mod tests {
         assert_eq!(vq.used.idx.get(), 0);
 
         //index too large
-        q.add_used(m, 16, 0x1000);
+        let _ = q.add_used(m, 16, 0x1000);
         assert_eq!(vq.used.idx.get(), 0);
 
         //should be ok
-        q.add_used(m, 1, 0x1000);
+        let _ = q.add_used(m, 1, 0x1000);
         assert_eq!(vq.used.idx.get(), 1);
         let x = vq.used.ring[0].get();
         assert_eq!(x.id, 1);
