@@ -48,7 +48,7 @@ jobs:
         run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools
       
       - name: Install libkrunfw
-        run: curl -L -o /tmp/libkrunfw-5.0.0-x86_64.tgz https://github.com/containers/libkrunfw/releases/download/v5.0.0/libkrunfw-5.0.0-x86_64.tgz && mkdir tmp && tar xf /tmp/libkrunfw-5.0.0-x86_64.tgz -C tmp && sudo mv tmp/lib64/* /lib/x86_64-linux-gnu
+        run: TAG=`curl -sL https://api.github.com/repos/containers/libkrunfw/releases/latest |jq -r .tag_name` && curl -L -o /tmp/libkrunfw-x86_64.tgz https://github.com/containers/libkrunfw/releases/download/$TAG/libkrunfw-x86_64.tgz && mkdir tmp && tar xf /tmp/libkrunfw-x86_64.tgz -C tmp && sudo mv tmp/lib64/* /lib/x86_64-linux-gnu
       
       - name: Integration tests
         run: KRUN_ENOMEM_WORKAROUND=1 KRUN_NO_UNSHARE=1 KRUN_TEST_BASE_DIR=/tmp/libkrun-tests make test TEST_FLAGS="--keep-all --github-summary"
@@ -102,7 +102,7 @@ jobs:
         run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools
       
       - name: Install libkrunfw
-        run: curl -L -o /tmp/libkrunfw-5.0.0-aarch64.tgz https://github.com/containers/libkrunfw/releases/download/v5.0.0/libkrunfw-5.0.0-aarch64.tgz && mkdir tmp && tar xf /tmp/libkrunfw-5.0.0-aarch64.tgz -C tmp && sudo mv tmp/lib64/* /lib/aarch64-linux-gnu
+        run: TAG=`curl -sL https://api.github.com/repos/containers/libkrunfw/releases/latest |jq -r .tag_name` && curl -L -o /tmp/libkrunfw-aarch64.tgz https://github.com/containers/libkrunfw/releases/download/$TAG/libkrunfw-aarch64.tgz && mkdir tmp && tar xf /tmp/libkrunfw-aarch64.tgz -C tmp && sudo mv tmp/lib64/* /lib/aarch64-linux-gnu
 
       - name: Clean up tests directory
         run: rm -fr /tmp/libkrun-tests
