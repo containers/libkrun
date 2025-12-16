@@ -1,0 +1,28 @@
+name: Publish binaries on release
+on:
+  release:
+    types: [published]
+permissions:
+  contents: write
+
+jobs:
+  build-aarch64-prebuilt:
+    name: Generate package with prebuilt init for aarch64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+
+      - name: Build init/init
+        run: make init/init
+
+      - name: Generate and upload aarch64 package
+        run: |
+          cd ..
+          tar czf /tmp/libkrun-prebuilt-aarch64.tgz libkrun
+          gh release upload ${{github.event.release.tag_name}} /tmp/libkrun-prebuilt-aarch64.tgz
+        env:
+          GITHUB_TOKEN: ${{ github.TOKEN }}
+        shell: bash
