@@ -69,7 +69,7 @@ use vm_memory::{
 };
 
 #[cfg(feature = "amd-sev")]
-use sev::launch::snp;
+use super::tee::amdsnp::launch as snp;
 
 /// Signal number (SIGRTMIN) used to kick Vcpus.
 pub(crate) const VCPU_RTSIG_OFFSET: i32 = 0;
