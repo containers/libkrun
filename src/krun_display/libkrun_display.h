@@ -1,5 +1,5 @@
-#ifndef _LIBKRUN_H
-#define _LIBKRUN_H
+#ifndef _LIBKRUN_DISPLAY_H
+#define _LIBKRUN_DISPLAY_H
 
 #include <inttypes.h>
 #include <stddef.h>
@@ -185,4 +185,4 @@ struct krun_display_backend {
 }
 #endif
 
-#endif // _LIBKRUN_H
+#endif // _LIBKRUN_DISPLAY_H
