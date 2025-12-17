@@ -1,6 +1,6 @@
 [package]
 name = "krun-sys"
-version = "1.11.0"
+version = "1.11.1"
 edition = "2021"
 rust-version = "1.77.0"
 description = "Rust bindings for libkrun"
