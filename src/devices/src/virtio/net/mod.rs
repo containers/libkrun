@@ -6,8 +6,13 @@ use virtio_bindings::virtio_net::virtio_net_hdr_v1;
 
 use super::QueueConfig;
 
-pub const MAX_BUFFER_SIZE: usize = 65562;
-const QUEUE_SIZE: u16 = 1024;
+/// Each frame forwarded to a unixstream backend is prepended by a 4 byte "header".
+/// It is interpreted as a big-endian u32 integer and is the length of the following ethernet frame.
+/// In order to avoid unnecessary allocations and copies, the TX buffer is allocated with extra
+/// space to accommodate this header.
+const FRAME_HEADER_LEN: usize = 4;
+pub const MAX_BUFFER_SIZE: usize = 65562 + FRAME_HEADER_LEN;
+pub const QUEUE_SIZE: u16 = 1024;
 pub const NUM_QUEUES: usize = 2;
 pub static QUEUE_CONFIG: [QueueConfig; NUM_QUEUES] = [QueueConfig::new(QUEUE_SIZE); NUM_QUEUES];
 
