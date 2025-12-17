@@ -2,8 +2,6 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() -> Result<(), pkg_config::Error> {
-    println!("cargo::rerun-if-changed=wrapper.h");
-
     let library = pkg_config::probe_library("libkrun")?;
 
     let bindings = bindgen::Builder::default()
@@ -15,6 +13,7 @@ fn main() -> Result<(), pkg_config::Error> {
         )
         .clang_arg("-fretain-comments-from-system-headers")
         .header("wrapper.h")
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()
         .expect("Unable to generate bindings");
 
