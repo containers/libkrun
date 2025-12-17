@@ -326,6 +326,7 @@ int32_t krun_add_virtiofs2(uint32_t ctx_id,
 /* Send the VFKIT magic after establishing the connection,
    as required by gvproxy in vfkit mode. */
 #define NET_FLAG_VFKIT 1 << 0
+#define NET_FLAG_INCLUDE_VNET_HEADER 1 << 1
 
 /* TSI (Transparent Socket Impersonation) feature flags for vsock */
 #define KRUN_TSI_HIJACK_INET  (1 << 0)

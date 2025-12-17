@@ -54,6 +54,7 @@ struct VirtioNetConfig {
     mac: [u8; 6],
     status: u16,
     max_virtqueue_pairs: u16,
+    include_vnet_header: bool,
 }
 
 // Safe because it only has data and has no implicit padding.
@@ -88,6 +89,7 @@ impl Net {
         cfg_backend: VirtioNetBackend,
         mac: [u8; 6],
         features: u32,
+        include_vnet_header: bool,
     ) -> Result<Self> {
         let avail_features = features as u64
             | (1 << VIRTIO_NET_F_MAC)
@@ -98,6 +100,7 @@ impl Net {
             mac,
             status: 0,
             max_virtqueue_pairs: 0,
+            include_vnet_header,
         };
 
         Ok(Net {
@@ -187,6 +190,7 @@ impl VirtioDevice for Net {
             interrupt.clone(),
             mem.clone(),
             self.acked_features,
+            self.config.include_vnet_header,
             self.cfg_backend.clone(),
         ) {
             Ok(worker) => {
