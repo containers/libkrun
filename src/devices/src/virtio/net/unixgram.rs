@@ -8,17 +8,18 @@ use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::path::PathBuf;
 
 use super::backend::{ConnectError, NetBackend, ReadError, WriteError};
-use super::write_virtio_net_hdr;
+use super::{write_virtio_net_hdr, FRAME_HEADER_LEN};
 
 const VFKIT_MAGIC: [u8; 4] = *b"VFKT";
 
 pub struct Unixgram {
     fd: OwnedFd,
+    include_vnet_header: bool,
 }
 
 impl Unixgram {
     /// Create the backend with a pre-established connection to the userspace network proxy.
-    pub fn new(fd: OwnedFd) -> Self {
+    pub fn new(fd: OwnedFd, include_vnet_header: bool) -> Self {
         // Ensure the socket is in non-blocking mode.
         match fcntl(&fd, FcntlArg::F_GETFL) {
             Ok(flags) => match OFlag::from_bits(flags) {
@@ -47,11 +48,18 @@ impl Unixgram {
             };
         }
 
-        Self { fd }
+        Self {
+            fd,
+            include_vnet_header,
+        }
     }
 
     /// Create the backend opening a connection to the userspace network proxy.
-    pub fn open(path: PathBuf, send_vfkit_magic: bool) -> Result<Self, ConnectError> {
+    pub fn open(
+        path: PathBuf,
+        send_vfkit_magic: bool,
+        include_vnet_header: bool,
+    ) -> Result<Self, ConnectError> {
         // We cannot create a non-blocking socket on macOS here. This is done later in new().
         let fd = socket(
             AddressFamily::Unix,
@@ -90,15 +98,24 @@ impl Unixgram {
             getsockopt(&fd, sockopt::RcvBuf)
         );
 
-        Ok(Self::new(fd))
+        Ok(Self::new(fd, include_vnet_header))
     }
 }
 
 impl NetBackend for Unixgram {
     /// Try to read a frame the proxy. If no bytes are available reports ReadError::NothingRead
     fn read_frame(&mut self, buf: &mut [u8]) -> Result<usize, ReadError> {
-        let hdr_len = write_virtio_net_hdr(buf);
-        let frame_length = match recv(self.fd.as_raw_fd(), &mut buf[hdr_len..], MsgFlags::empty()) {
+        let buf_offset = if !self.include_vnet_header {
+            write_virtio_net_hdr(buf)
+        } else {
+            0
+        };
+
+        let frame_length = match recv(
+            self.fd.as_raw_fd(),
+            &mut buf[buf_offset..],
+            MsgFlags::empty(),
+        ) {
             Ok(f) => f,
             #[allow(unreachable_patterns)]
             Err(nix::Error::EAGAIN | nix::Error::EWOULDBLOCK) => {
@@ -109,12 +126,19 @@ impl NetBackend for Unixgram {
             }
         };
         debug!("Read eth frame from proxy: {frame_length} bytes");
-        Ok(hdr_len + frame_length)
+        Ok(buf_offset + frame_length)
     }
 
     /// Try to write a frame to the proxy.
     fn write_frame(&mut self, hdr_len: usize, buf: &mut [u8]) -> Result<(), WriteError> {
-        let ret = send(self.fd.as_raw_fd(), &buf[hdr_len..], MsgFlags::empty())
+        let buf_offset = if !self.include_vnet_header {
+            hdr_len
+        } else {
+            // Unixgram backends don't include the frame length header.
+            FRAME_HEADER_LEN
+        };
+
+        let ret = send(self.fd.as_raw_fd(), &buf[buf_offset..], MsgFlags::empty())
             .map_err(WriteError::Internal)?;
         debug!(
             "Written frame size={}, written={}",

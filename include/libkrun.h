@@ -326,6 +326,7 @@ int32_t krun_add_virtiofs2(uint32_t ctx_id,
 /* Send the VFKIT magic after establishing the connection,
    as required by gvproxy in vfkit mode. */
 #define NET_FLAG_VFKIT 1 << 0
+#define NET_FLAG_INCLUDE_VNET_HEADER 1 << 1
 
 /* Taken from uapi/linux/virtio_net.h */
 #define NET_FEATURE_CSUM 1 << 0
