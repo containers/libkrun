@@ -2,10 +2,9 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    println!("cargo:rerun-if-changed=libkrun_display.h");
-
     let bindings = bindgen::Builder::default()
         .header("libkrun_display.h")
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()
         .expect("Unable to generate bindings");
 
