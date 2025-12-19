@@ -2,7 +2,6 @@
 
 use super::error::NitroError;
 use devices::virtio::net::device::{Net, VirtioNetBackend};
-use fork::Fork;
 use libc::c_int;
 use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
@@ -74,9 +73,8 @@ impl NitroEnclave {
 
         self.write_exec(&mut stream)?;
 
-        match fork::fork().unwrap() {
-            Fork::Parent(_child) => Ok(cid),
-            Fork::Child => {
+        match unsafe { libc::fork() } {
+            0 => {
                 let sockaddr = VsockAddr::new(VMADDR_CID_ANY, ENCLAVE_NET_VSOCK_PORT);
                 let listener = VsockListener::bind(&sockaddr).unwrap();
 
@@ -118,6 +116,7 @@ impl NitroEnclave {
                     }
                 }
             }
+            _ => Ok(cid),
         }
     }
 
