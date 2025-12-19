@@ -2,8 +2,7 @@
 
 use super::error::NitroError;
 use devices::virtio::net::device::{Net, VirtioNetBackend};
-use flate2::read::GzDecoder;
-use fork::{daemon, Fork};
+use fork::Fork;
 use libc::c_int;
 use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
@@ -11,6 +10,7 @@ use nitro_enclaves::{
 };
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout as NixPollTimeout};
 use std::{
+    env,
     ffi::{CString, OsStr},
     fs,
     io::{self, Read, Write},
@@ -22,13 +22,10 @@ use std::{
     str::FromStr,
     sync::{Arc, Mutex},
 };
-use tar::{Archive, HeaderMode};
+use tar::HeaderMode;
 use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
 
 type Result<T> = std::result::Result<T, NitroError>;
-
-const KRUN_NITRO_EIF_TAR: &[u8] = include_bytes!("runtime-data/eif.tar.gz");
-const KRUN_NITRO_EIF_FILE_NAME: &str = "krun-nitro.eif";
 
 const ENCLAVE_READY_VSOCK_PORT: u32 = 9000;
 const ENCLAVE_NET_VSOCK_PORT: u32 = 8080;
@@ -300,24 +297,9 @@ fn vsock_write_bytes(bytes: &[u8], stream: &mut VsockStream) -> Result<()> {
 }
 
 fn eif() -> Result<Vec<u8>> {
-    let gz = GzDecoder::new(KRUN_NITRO_EIF_TAR);
-    let mut archive = Archive::new(gz);
+    let path = env::var("KRUN_NITRO_EIF_PATH").unwrap_or("/usr/share/krun-nitro.eif".to_string());
 
-    let mut buf = Vec::new();
+    let bytes = fs::read(path).unwrap();
 
-    for entry_result in archive.entries().map_err(NitroError::EifTarExtract)? {
-        let mut entry = entry_result.map_err(NitroError::EifTarExtract)?;
-
-        let path = entry.path().map_err(NitroError::EifTarExtract)?;
-        let path_str = path.to_string_lossy();
-
-        if path_str == KRUN_NITRO_EIF_FILE_NAME {
-            entry
-                .read_to_end(&mut buf)
-                .map_err(NitroError::EifTarExtract)?;
-            break;
-        }
-    }
-
-    Ok(buf)
+    Ok(bytes)
 }
