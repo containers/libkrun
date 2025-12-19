@@ -7,7 +7,6 @@ edition = "2021"
 nitro = []
 
 [dependencies]
-flate2 = "1.1.5"
 libc = "0.2.171"
 nix = { version = "0.30.1", features = ["ioctl", "poll"] }
 tar = "0.4.44"

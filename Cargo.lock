@@ -1026,7 +1026,6 @@ name = "nitro"
 version = "0.1.0"
 dependencies = [
  "devices",
- "flate2",
  "fork",
  "libc",
  "nitro-enclaves",
