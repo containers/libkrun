@@ -221,6 +221,11 @@ install: libkrun.pc
 	install -m 644 libkrun.pc $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/pkgconfig
 	install -m 755 $(LIBRARY_RELEASE_$(OS)) $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/
 	cd $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/ ; ln -sf $(KRUN_BINARY_$(OS)) $(KRUN_SONAME_$(OS)) ; ln -sf $(KRUN_SONAME_$(OS)) $(KRUN_BASE_$(OS))
+ifeq ($(OS),Darwin)
+ifeq ($(EFI),1)
+	cd $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/ ; ln -sf libkrun-efi.$(ABI_VERSION).dylib libkrun.dylib
+endif
+endif
 
 clean:
 	rm -f $(INIT_BINARY)
