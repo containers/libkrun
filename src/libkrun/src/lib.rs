@@ -391,17 +391,15 @@ impl TryFrom<ContextConfig> for NitroEnclave {
                 0 => None,
                 1 => {
                     let device = list.pop_front().unwrap();
+                    let device = device.lock().unwrap();
 
-                    match device.lock().unwrap().backend() {
-                        VirtioNetBackend::UnixstreamFd(_) | VirtioNetBackend::UnixstreamPath(_) => {
-                        }
-                        _ => {
-                            error!("configured virtio-net backend must be unix stream");
+                    match nitro::NetProxy::try_from(&*device) {
+                        Ok(net_proxy) => Some(net_proxy),
+                        Err(e) => {
+                            error!("unable to configure network device: {:?}", e);
                             return Err(-libc::EINVAL);
                         }
-                    };
-
-                    Some(device)
+                    }
                 }
                 _ => {
                     error!(

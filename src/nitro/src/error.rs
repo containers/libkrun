@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use super::net;
 use nitro_enclaves::launch::LaunchError;
 use std::{ffi, fmt, io};
 
@@ -29,6 +30,7 @@ pub enum NitroError {
     VsockBytesTooLarge,
     CStringConversion(ffi::NulError),
     EifTarExtract(io::Error),
+    NetError(net::Error),
 }
 
 impl fmt::Display for NitroError {
@@ -84,6 +86,7 @@ impl fmt::Display for NitroError {
             }
             NitroError::CStringConversion(e) => format!("unable to convert String to CString: {e}"),
             NitroError::EifTarExtract(e) => format!("unable to extract EIF from tar archive: {e}"),
+            NitroError::NetError(e) => format!("network proxy error: {:?}", e),
         };
 
         write!(f, "{}", msg)
