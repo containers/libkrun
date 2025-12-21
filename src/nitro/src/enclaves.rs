@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::error::NitroError;
-use devices::virtio::net::device::{Net, VirtioNetBackend};
+use super::{error::NitroError, net::NetProxy};
 use libc::c_int;
 use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
@@ -13,13 +12,9 @@ use std::{
     ffi::{CString, OsStr},
     fs,
     io::{self, Read, Write},
-    os::{
-        fd::{AsFd, FromRawFd, OwnedFd},
-        unix::net::UnixStream,
-    },
+    os::fd::AsFd,
     path::PathBuf,
     str::FromStr,
-    sync::{Arc, Mutex},
 };
 use tar::HeaderMode;
 use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
@@ -27,7 +22,6 @@ use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
 type Result<T> = std::result::Result<T, NitroError>;
 
 const ENCLAVE_READY_VSOCK_PORT: u32 = 9000;
-const ENCLAVE_NET_VSOCK_PORT: u32 = 8080;
 
 const HEART_BEAT: u8 = 0xb7;
 
@@ -58,8 +52,8 @@ pub struct NitroEnclave {
     pub exec_args: String,
     /// Execution environment.
     pub exec_env: String,
-    /// virtio-net builder.
-    pub net: Option<Arc<Mutex<Net>>>,
+    /// Network proxy.
+    pub net: Option<NetProxy>,
 }
 
 impl NitroEnclave {
@@ -75,46 +69,11 @@ impl NitroEnclave {
 
         match unsafe { libc::fork() } {
             0 => {
-                let sockaddr = VsockAddr::new(VMADDR_CID_ANY, ENCLAVE_NET_VSOCK_PORT);
-                let listener = VsockListener::bind(&sockaddr).unwrap();
-
-                let mut vsock_stream = listener.accept().unwrap();
-
-                let mut tun_stream = {
-                    let net = self.net.as_mut().unwrap().lock().unwrap();
-                    match net.cfg_backend {
-                        VirtioNetBackend::UnixstreamFd(fd) => {
-                            let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
-                            UnixStream::from(owned_fd)
-                        }
-                        _ => panic!("not a unixstream FD"),
-                    }
-                };
-
-                let mut vsock_stream_clone = vsock_stream.0.try_clone().unwrap();
-                let mut tun_stream_clone = tun_stream.try_clone().unwrap();
-
-                // vsock
-                std::thread::spawn(move || {
-                    let mut vsock_buf = [0u8; 1500];
-                    loop {
-                        let size = vsock_stream_clone.read(&mut vsock_buf).unwrap();
-                        if size > 0 {
-                            tun_stream_clone.write_all(&vsock_buf[..size]).unwrap();
-                        } else {
-                            std::process::exit(0);
-                        }
-                    }
-                });
-
-                // TUN
-                let mut tun_buf = [0u8; 1500];
-                loop {
-                    let size = tun_stream.read(&mut tun_buf).unwrap();
-                    if size > 0 {
-                        vsock_stream.0.write_all(&tun_buf[..size]).unwrap();
-                    }
+                if let Some(net_proxy) = &self.net {
+                    net_proxy.run().map_err(NitroError::NetError)?;
                 }
+
+                Ok(0)
             }
             _ => Ok(cid),
         }
