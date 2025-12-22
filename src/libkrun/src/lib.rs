@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate log;
 
+use base64::prelude::*;
 use crossbeam_channel::unbounded;
 #[cfg(feature = "blk")]
 use devices::virtio::block::{ImageType, SyncMode};
@@ -1287,6 +1288,24 @@ unsafe fn collapse_str_array(array: &[*const c_char]) -> Result<String, std::str
     Ok(strvec.join(" "))
 }
 
+// unlike collapse_str_array, this doesn't do the UTF-8 conversion
+// and just keeps the null-terminated strings as raw bytes
+unsafe fn flatten_cstr_array(array: &[*const c_char]) -> Vec<u8> {
+    let mut bytevec = Vec::new();
+
+    for item in array.iter().take(MAX_ARGS) {
+        if item.is_null() {
+            break;
+        } else {
+            let cs = CStr::from_ptr(*item);
+            bytevec.extend_from_slice(cs.to_bytes());
+            bytevec.push(0);
+        }
+    }
+
+    bytevec
+}
+
 #[allow(clippy::format_collect)]
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
@@ -1317,7 +1336,14 @@ pub unsafe extern "C" fn krun_set_exec(
         "".to_string()
     };
 
-    let env = if !c_envp.is_null() {
+    let args_raw = if !c_argv.is_null() {
+        let argv_array: &[*const c_char] = slice::from_raw_parts(c_argv, MAX_ARGS);
+        flatten_cstr_array(argv_array)
+    } else {
+        vec![]
+    };
+
+    let mut env = if !c_envp.is_null() {
         let envp_array: &[*const c_char] = slice::from_raw_parts(c_envp, MAX_ARGS);
         match collapse_str_array(envp_array) {
             Ok(s) => s,
@@ -1331,6 +1357,11 @@ pub unsafe extern "C" fn krun_set_exec(
             .map(|(key, value)| format!(" {key}=\"{value}\""))
             .collect()
     };
+
+    // KRUN_INIT_ARGVXX="<base64>" must have at most 128 bytes (KENV_MVALLEN on FreeBSD)
+    for (i, args_part) in args_raw.chunks(78).enumerate() {
+        env += &format!(" KRUN_INIT_ARGV{}={}", i, BASE64_STANDARD.encode(args_part));
+    }
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
