@@ -316,10 +316,28 @@ pub struct virgl_renderer_resource_info {
     pub stride: u32,
     pub drm_fourcc: ::std::os::raw::c_int,
 }
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct virgl_renderer_resource_info_ext {
+    pub version: ::std::os::raw::c_int,
+    pub base: virgl_renderer_resource_info,
+    pub has_dmabuf_export: bool,
+    _padding1: [u8; 3],
+    pub planes: ::std::os::raw::c_int,
+    _padding2: [u8; 4],
+    pub modifiers: u64,
+    pub d3d_tex2d: *mut ::std::os::raw::c_void,
+}
 extern "C" {
     pub fn virgl_renderer_resource_get_info(
         res_handle: ::std::os::raw::c_int,
         info: *mut virgl_renderer_resource_info,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn virgl_renderer_resource_get_info_ext(
+        res_handle: ::std::os::raw::c_int,
+        info: *mut virgl_renderer_resource_info_ext,
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
