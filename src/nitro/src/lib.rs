@@ -5,6 +5,9 @@ pub mod enclaves;
 mod error;
 
 #[cfg(feature = "nitro")]
+mod args_writer;
+
+#[cfg(feature = "nitro")]
 mod net;
 
 #[cfg(feature = "nitro")]

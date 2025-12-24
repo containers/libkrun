@@ -1,29 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{error::NitroError, net::NetProxy};
-use libc::c_int;
+use super::{
+    args_writer::{EnclaveArg, EnclaveArgsWriter},
+    error::NitroError,
+    net::NetProxy,
+};
 use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
     Device,
 };
-use nix::poll::{poll, PollFd, PollFlags, PollTimeout as NixPollTimeout};
-use std::{
-    env,
-    ffi::{CString, OsStr},
-    fs,
-    io::{self, Read, Write},
-    os::fd::AsFd,
-    path::PathBuf,
-    str::FromStr,
-};
+use std::{env, ffi::OsStr, fs, io, path::PathBuf};
 use tar::HeaderMode;
-use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
 
 type Result<T> = std::result::Result<T, NitroError>;
-
-const ENCLAVE_READY_VSOCK_PORT: u32 = 9000;
-
-const HEART_BEAT: u8 = 0xb7;
 
 const ROOTFS_DIR_DENYLIST: [&str; 5] = [
     "proc", // /proc.
@@ -61,11 +50,31 @@ impl NitroEnclave {
     pub fn run(&mut self) -> Result<u32> {
         let rootfs_archive = self.rootfs_archive()?;
 
-        let (cid, mut stream) = self.start()?;
+        let argv: Vec<String> = self
+            .exec_args
+            .replace("\"", "")
+            .split(' ')
+            .map(|s| s.to_string())
+            .collect();
 
-        vsock_write_bytes(&rootfs_archive, &mut stream)?;
+        let envp: Vec<String> = self
+            .exec_env
+            .replace("\"", "")
+            .split(' ')
+            .map(|s| s.to_string())
+            .collect();
 
-        self.write_exec(&mut stream)?;
+        let mut writer = EnclaveArgsWriter::default();
+        writer.args.append(&mut vec![
+            EnclaveArg::RootFilesystem(rootfs_archive.as_slice()),
+            EnclaveArg::ExecPath(self.exec_path.clone()),
+            EnclaveArg::ExecArgv(argv),
+            EnclaveArg::ExecEnvp(envp),
+        ]);
+
+        let (cid, timeout) = self.start()?;
+
+        writer.write_args(cid, timeout)?;
 
         match unsafe { libc::fork() } {
             0 => {
@@ -120,36 +129,17 @@ impl NitroEnclave {
         builder.into_inner().map_err(NitroError::RootFsArchive)
     }
 
-    fn write_exec(&self, stream: &mut VsockStream) -> Result<()> {
-        vsock_write_bytes(&str_cstring_bytes(&self.exec_path)?, stream)?;
+    fn start(&mut self) -> Result<(u32, PollTimeout)> {
+        let eif = eif()?;
 
-        let argv: Vec<String> = self
-            .exec_args
-            .replace("\"", "")
-            .split(' ')
-            .map(|s| s.to_string())
-            .collect();
+        let timeout = PollTimeout::try_from((eif.as_slice(), self.mem_size_mib << 20))
+            .map_err(NitroError::PollTimeoutCalculate)?;
 
-        vsock_write_str_vec(&argv, stream)?;
-
-        let envp: Vec<String> = self
-            .exec_env
-            .replace("\"", "")
-            .split(' ')
-            .map(|s| s.to_string())
-            .collect();
-
-        vsock_write_str_vec(&envp, stream)?;
-
-        Ok(())
-    }
-
-    fn launch(&mut self, eif: &[u8]) -> Result<u32> {
         let device = Device::open().map_err(NitroError::DeviceOpen)?;
 
         let mut launcher = Launcher::new(&device).map_err(NitroError::VmCreate)?;
 
-        let mem = MemoryInfo::new(ImageType::Eif(eif), self.mem_size_mib);
+        let mem = MemoryInfo::new(ImageType::Eif(&eif), self.mem_size_mib);
         launcher.set_memory(mem).map_err(NitroError::VmMemorySet)?;
 
         for _ in 0..self.vcpus {
@@ -160,98 +150,8 @@ impl NitroEnclave {
             .start(self.start_flags, None)
             .map_err(NitroError::VmStart)?;
 
-        Ok(cid.try_into().unwrap()) // Safe to unwrap.
+        Ok((cid.try_into().unwrap(), timeout)) // Safe to unwrap.
     }
-
-    fn poll(&self, listener: &VsockListener, eif: &[u8]) -> Result<()> {
-        let poll_timeout = PollTimeout::try_from((eif, self.mem_size_mib << 20))
-            .map_err(NitroError::PollTimeoutCalculate)?;
-
-        let mut poll_fds = [PollFd::new(listener.as_fd(), PollFlags::POLLIN)];
-        let result = poll(
-            &mut poll_fds,
-            NixPollTimeout::from(c_int::from(poll_timeout) as u16),
-        );
-
-        match result {
-            Ok(0) => Err(NitroError::PollNoSelectedEvents),
-            Ok(x) if x > 1 => Err(NitroError::PollMoreThanOneSelectedEvent),
-            _ => Ok(()),
-        }
-    }
-
-    fn start(&mut self) -> Result<(u32, VsockStream)> {
-        let sockaddr = VsockAddr::new(VMADDR_CID_ANY, ENCLAVE_READY_VSOCK_PORT);
-        let listener = VsockListener::bind(&sockaddr).map_err(NitroError::HeartbeatBind)?;
-        let eif = eif()?;
-
-        let cid = self.launch(&eif)?;
-        self.poll(&listener, &eif)?;
-
-        let mut stream = listener.accept().map_err(NitroError::HeartbeatAccept)?;
-
-        if stream.1.cid() != cid {
-            return Err(NitroError::HeartbeatCidMismatch);
-        }
-
-        let mut buf = [0u8];
-        let bytes = stream.0.read(&mut buf).map_err(NitroError::HeartbeatRead)?;
-
-        if bytes != 1 || buf[0] != HEART_BEAT {
-            return Err(NitroError::EnclaveHeartbeatNotDetected);
-        }
-
-        stream
-            .0
-            .write_all(&buf)
-            .map_err(NitroError::HeartbeatWrite)?;
-
-        Ok((cid, stream.0))
-    }
-}
-
-fn str_cstring_bytes(string: &str) -> Result<Vec<u8>> {
-    let bytes = Vec::from(
-        CString::from_str(string)
-            .map_err(NitroError::CStringConversion)?
-            .as_bytes_with_nul(),
-    );
-
-    Ok(bytes)
-}
-
-fn vsock_write_str_vec(vec: &Vec<String>, stream: &mut VsockStream) -> Result<()> {
-    let len: u32 = vec
-        .len()
-        .try_into()
-        .or(Err(NitroError::VsockBytesTooLarge))?;
-
-    stream
-        .write_all(&len.to_ne_bytes())
-        .map_err(NitroError::VsockBytesLenWrite)?;
-
-    for string in vec {
-        vsock_write_bytes(&str_cstring_bytes(string)?, stream)?;
-    }
-
-    Ok(())
-}
-
-fn vsock_write_bytes(bytes: &[u8], stream: &mut VsockStream) -> Result<()> {
-    let len: u32 = bytes
-        .len()
-        .try_into()
-        .or(Err(NitroError::VsockBytesTooLarge))?;
-
-    stream
-        .write_all(&len.to_ne_bytes())
-        .map_err(NitroError::VsockBytesLenWrite)?;
-
-    stream
-        .write_all(bytes)
-        .map_err(NitroError::VsockBytesWrite)?;
-
-    Ok(())
 }
 
 fn eif() -> Result<Vec<u8>> {
