@@ -20,9 +20,9 @@
 #include <nsm.h>
 
 #include "include/archive.h"
+#include "include/args_reader.h"
 #include "include/fs.h"
 #include "include/tap_afvsock.h"
-#include "include/vsock.h"
 
 #include <linux/vm_sockets.h>
 #include <sys/socket.h>
@@ -356,10 +356,10 @@ out:
 
 int main(int argc, char *argv[])
 {
-    char *exec_path, **exec_argv, **exec_envp;
-    int ret, sock_fd, nsm_fd;
-    uint32_t archive_size;
-    void *rootfs_archive;
+    struct enclave_args args;
+    int ret, nsm_fd;
+
+    memset(&args, 0, sizeof(struct enclave_args));
 
     // Block all signals.
     ret = sig_mask(SIG_BLOCK);
@@ -376,44 +376,9 @@ int main(int argc, char *argv[])
     if (ret < 0)
         goto out;
 
-    /*
-     * Signal to the hypervisor that the enclave is booted and ready to read the
-     * root filesystem. Open the vsock.
-     */
-    sock_fd = vsock_hypervisor_signal();
-    if (sock_fd < 0)
+    ret = args_reader_read(&args);
+    if (ret < 0)
         goto out;
-
-    // Read the rootfs archive from the hypervisor.
-    ret = vsock_rcv(sock_fd, &rootfs_archive, &archive_size);
-    if (ret < 0) {
-        close(sock_fd);
-        goto out;
-    }
-
-    // Read the execution path from the hypervisor.
-    ret = vsock_rcv(sock_fd, (void **)&exec_path, NULL);
-    if (ret < 0) {
-        close(sock_fd);
-        goto out;
-    }
-
-    // Read the execution argv from the hypervisor.
-    ret = vsock_char_list_build(sock_fd, &exec_argv);
-    if (ret < 0) {
-        close(sock_fd);
-        goto out;
-    }
-
-    // Read the execution envp from the hypervisor.
-    ret = vsock_char_list_build(sock_fd, &exec_envp);
-    if (ret < 0) {
-        close(sock_fd);
-        goto out;
-    }
-
-    // Communication with the hypervisor is complete, close the vsock.
-    close(sock_fd);
 
     // Create a handle to the NSM.
     nsm_fd = nsm_lib_init();
@@ -424,12 +389,14 @@ int main(int argc, char *argv[])
     }
 
     // Measure the rootfs and execution variables in the NSM PCRs.
-    ret = nsm_pcrs_exec_path_extend(nsm_fd, exec_path, exec_argv, exec_envp);
+    ret = nsm_pcrs_exec_path_extend(nsm_fd, args.exec_path, args.exec_argv,
+                                    args.exec_envp);
     if (ret < 0)
         goto out;
 
     // Extract the rootfs from memory and write it to the enclave filesystem.
-    ret = archive_extract(nsm_fd, rootfs_archive, archive_size);
+    ret =
+        archive_extract(nsm_fd, args.rootfs_archive, args.rootfs_archive_size);
     if (ret < 0)
         goto out;
 
@@ -466,7 +433,7 @@ int main(int argc, char *argv[])
         goto out;
 
     // Execute the enclave application.
-    ret = launch(exec_argv, exec_envp);
+    ret = launch(args.exec_argv, args.exec_envp);
     if (ret < 0)
         goto out;
 
