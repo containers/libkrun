@@ -59,6 +59,10 @@ impl EnclaveArgsWriter<'_> {
             arg.write(&mut stream.0)?;
         }
 
+        // Notify the enclave that the args are finished being written.
+        let finished = EnclaveArg::Finished;
+        finished.write(&mut stream.0)?;
+
         Ok(())
     }
 
@@ -77,17 +81,34 @@ impl EnclaveArgsWriter<'_> {
     }
 }
 
-#[repr(u8)]
 #[derive(Debug)]
 pub enum EnclaveArg<'a> {
     RootFilesystem(&'a [u8]),
     ExecPath(String),
     ExecArgv(Vec<String>),
     ExecEnvp(Vec<String>),
+    Finished,
+}
+
+impl From<&EnclaveArg<'_>> for u8 {
+    fn from(arg: &EnclaveArg) -> u8 {
+        match arg {
+            EnclaveArg::RootFilesystem(_) => 0,
+            EnclaveArg::ExecPath(_) => 1,
+            EnclaveArg::ExecArgv(_) => 2,
+            EnclaveArg::ExecEnvp(_) => 3,
+
+            EnclaveArg::Finished => 255,
+        }
+    }
 }
 
 impl EnclaveArg<'_> {
     fn write(&self, vsock: &mut VsockStream) -> Result<()> {
+        let id: [u8; 1] = [self.into()];
+
+        vsock.write_all(&id).unwrap();
+
         match self {
             Self::RootFilesystem(buf) => {
                 let len: u32 = buf.len().try_into().unwrap();
@@ -119,6 +140,7 @@ impl EnclaveArg<'_> {
 
                 vsock.write_all(&bytes).unwrap();
             }
+            _ => (),
         }
 
         Ok(())

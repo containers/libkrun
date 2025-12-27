@@ -17,13 +17,13 @@ SNP_INIT_SRC =	init/tee/snp_attest.c		\
 		$(KBS_INIT_SRC)			\
 
 TDX_INIT_SRC = $(KBS_INIT_SRC)
-NITRO_INIT_SRC = init/nitro/include/vsock.h		\
-		init/nitro/include/archive.h		\
+NITRO_INIT_SRC = init/nitro/include/archive.h		\
+		init/nitro/include/args_reader.h	\
 		init/nitro/include/fs.h			\
 		init/nitro/include/tap_afvsock.h	\
 		init/nitro/main.c			\
-		init/nitro/vsock.c			\
 		init/nitro/archive.c			\
+		init/nitro/args_reader.c		\
 		init/nitro/fs.c				\
 		init/nitro/tap_afvsock.c		\
 
