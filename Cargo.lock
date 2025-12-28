@@ -888,6 +888,7 @@ dependencies = [
  "once_cell",
  "polly",
  "rand",
+ "thiserror 1.0.69",
  "utils",
  "vm-memory",
  "vmm",
@@ -1306,6 +1307,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "rust_api"
+version = "0.1.0"
+dependencies = [
+ "libkrun",
 ]
 
 [[package]]
