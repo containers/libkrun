@@ -87,6 +87,7 @@ pub enum EnclaveArg<'a> {
     ExecPath(String),
     ExecArgv(Vec<String>),
     ExecEnvp(Vec<String>),
+    NetworkProxy,
     Finished,
 }
 
@@ -97,6 +98,7 @@ impl From<&EnclaveArg<'_>> for u8 {
             EnclaveArg::ExecPath(_) => 1,
             EnclaveArg::ExecArgv(_) => 2,
             EnclaveArg::ExecEnvp(_) => 3,
+            EnclaveArg::NetworkProxy => 4,
 
             EnclaveArg::Finished => 255,
         }
