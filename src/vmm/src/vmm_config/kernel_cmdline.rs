@@ -3,10 +3,6 @@
 
 use std::fmt::{Display, Formatter, Result};
 
-#[cfg(target_os = "linux")]
-pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 \
-                                          rootfstype=virtiofs rw quiet no-kvmapf";
-#[cfg(target_os = "macos")]
 pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 \
                                           rootfstype=virtiofs rw quiet no-kvmapf";
 
@@ -14,9 +10,8 @@ pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 nomodu
 /// microvm.
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct KernelCmdlineConfig {
-    pub prolog: Option<String>,
-    pub krun_env: Option<String>,
-    pub epilog: Option<String>,
+    pub cmdline: Vec<String>,
+    pub args: Vec<String>,
 }
 
 /// Errors associated with actions on `KernelCmdlineConfig`.
@@ -36,3 +31,5 @@ impl Display for KernelCmdlineConfigError {
         }
     }
 }
+
+impl std::error::Error for KernelCmdlineConfigError {}

@@ -1,0 +1,8 @@
+[package]
+name = "rust_api"
+description = "Reference implementation of using the libkrun rust API"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libkrun = { path = "../../src/libkrun" }

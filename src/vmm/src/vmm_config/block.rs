@@ -22,6 +22,8 @@ impl fmt::Display for BlockConfigError {
     }
 }
 
+impl std::error::Error for BlockConfigError {}
+
 type Result<T> = std::result::Result<T, BlockConfigError>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

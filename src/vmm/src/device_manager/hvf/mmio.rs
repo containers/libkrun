@@ -442,6 +442,10 @@ mod tests {
         fn is_activated(&self) -> bool {
             false
         }
+
+        fn device_name(&self) -> &str {
+            ""
+        }
     }
 
     #[test]

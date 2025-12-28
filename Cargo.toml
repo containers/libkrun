@@ -1,5 +1,5 @@
 [workspace]
-members = ["src/libkrun", "src/krun_input"]
+members = ["src/libkrun", "src/krun_input", "examples/rust_api"]
 exclude = ["examples/gtk_display"]
 resolver = "2"
 

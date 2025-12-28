@@ -237,7 +237,7 @@ static int jsmn_parse_string(jsmn_parser *parser, char *js, const size_t len,
             case 't':
                 break;
             /* Allows escaped symbol \uXXXX */
-            case 'u':
+            case 'u': {
                 char unicode[5];
                 long ascii;
 
@@ -270,6 +270,7 @@ static int jsmn_parse_string(jsmn_parser *parser, char *js, const size_t len,
                 parser->pos--;
                 js[parser->pos] = (char)ascii;
                 break;
+            }
             /* Unexpected symbol */
             default:
                 parser->pos = start;

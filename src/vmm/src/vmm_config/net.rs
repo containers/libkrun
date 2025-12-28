@@ -39,6 +39,8 @@ impl fmt::Display for NetworkInterfaceError {
     }
 }
 
+impl std::error::Error for NetworkInterfaceError {}
+
 type Result<T> = result::Result<T, NetworkInterfaceError>;
 
 /// Builder for a list of network devices.
