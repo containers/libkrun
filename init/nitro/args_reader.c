@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +22,7 @@ enum {
     ENCLAVE_ARG_ID_EXEC_PATH,
     ENCLAVE_ARG_ID_EXEC_ARGV,
     ENCLAVE_ARG_ID_EXEC_ENVP,
+    ENCLAVE_ARG_ID_NETWORK_PROXY,
 
     ENCLAVE_ARGS_FINISHED = 255,
 };
@@ -243,6 +245,9 @@ static int __args_reader_read(int sock_fd, struct enclave_args *args)
             break;
         case ENCLAVE_ARG_ID_EXEC_ENVP:
             ret = args_reader_char_list_build(sock_fd, &args->exec_envp);
+            break;
+        case ENCLAVE_ARG_ID_NETWORK_PROXY:
+            args->network_proxy = true;
             break;
 
         /*

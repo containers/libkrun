@@ -428,9 +428,11 @@ int main(int argc, char *argv[])
         goto out;
 
     // Initialize the network TAP device.
-    ret = tap_afvsock_init();
-    if (ret < 0)
-        goto out;
+    if (args.network_proxy) {
+        ret = tap_afvsock_init();
+        if (ret < 0)
+            goto out;
+    }
 
     // Execute the enclave application.
     ret = launch(args.exec_argv, args.exec_envp);

@@ -72,6 +72,10 @@ impl NitroEnclave {
             EnclaveArg::ExecEnvp(envp),
         ]);
 
+        if self.net.is_some() {
+            writer.args.push(EnclaveArg::NetworkProxy);
+        }
+
         let (cid, timeout) = self.start()?;
 
         writer.write_args(cid, timeout)?;
