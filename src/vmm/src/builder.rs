@@ -1450,9 +1450,13 @@ pub fn create_guest_memory(
                 };
             arch::arch_memory_regions(mem_size, Some(kernel_guest_addr), kernel_size, 0, None)
         }
-        Payload::ExternalKernel(external_kernel) => {
-            arch::arch_memory_regions(mem_size, None, 0, external_kernel.initramfs_size, None)
-        }
+        Payload::ExternalKernel(external_kernel) => arch::arch_memory_regions(
+            mem_size,
+            None,
+            0,
+            external_kernel.initramfs_size,
+            firmware_size,
+        ),
         #[cfg(feature = "tee")]
         Payload::Tee => {
             let (kernel_guest_addr, kernel_size) =
