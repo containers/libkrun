@@ -1500,10 +1500,14 @@ pub fn create_guest_memory(
     let (guest_mem, entry_addr, initrd_config, cmdline) =
         load_payload(vm_resources, guest_mem, &arch_mem_info, payload)?;
 
-    if let Some(firmware_data) = firmware_data.as_ref() {
-        guest_mem
-            .write(firmware_data, GuestAddress(arch_mem_info.firmware_addr))
-            .map_err(StartMicrovmError::FirmwareInvalidAddress)?;
+    // Only write firmware if data exists AND this isn't an ExternalKernel payload
+    // (ExternalKernel does direct kernel boot and doesn't use EFI firmware)
+    if !matches!(payload, Payload::ExternalKernel(_)) {
+        if let Some(firmware_data) = firmware_data.as_ref() {
+            guest_mem
+                .write(firmware_data, GuestAddress(arch_mem_info.firmware_addr))
+                .map_err(StartMicrovmError::FirmwareInvalidAddress)?;
+        }
     }
 
     let payload_config = PayloadConfig {
