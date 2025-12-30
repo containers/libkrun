@@ -62,8 +62,12 @@ impl NetProxy {
                     unix_stream_clone_write
                         .write_all(&vsock_buf[..size])
                         .map_err(Error::UnixWrite)?;
+                } else {
+                    break;
                 }
             }
+
+            Ok(())
         });
 
         let mut unix_stream_clone_read = self.unix_stream.try_clone().unwrap();
