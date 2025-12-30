@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/eventfd.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
@@ -356,8 +357,9 @@ out:
 
 int main(int argc, char *argv[])
 {
+    int ret, nsm_fd, shutdown_fd, pid, app_status;
     struct enclave_args args;
-    int ret, nsm_fd;
+    uint64_t sfd_val;
 
     memset(&args, 0, sizeof(struct enclave_args));
 
@@ -427,19 +429,51 @@ int main(int argc, char *argv[])
     if (ret < 0)
         goto out;
 
+    shutdown_fd = eventfd(0, 0);
+    if (shutdown_fd < 0) {
+        perror("creating shutdown FD");
+        ret = -errno;
+        goto out;
+    }
+
     // Initialize the network TAP device.
     if (args.network_proxy) {
-        ret = tap_afvsock_init();
+        ret = tap_afvsock_init(shutdown_fd);
         if (ret < 0)
             goto out;
     }
 
-    // Execute the enclave application.
-    ret = launch(args.exec_argv, args.exec_envp);
-    if (ret < 0)
-        goto out;
+    pid = fork();
+    switch (pid) {
+    case -1:
+        perror("launch fork");
+        ret = -errno;
+        break;
+    case 0:
+        // Execute the enclave application.
+        ret = launch(args.exec_argv, args.exec_envp);
+        break;
+    default:
+        sfd_val = 1;
+        wait(&app_status);
 
-    ret = 0;
+        ret = write(shutdown_fd, &sfd_val, sizeof(uint64_t));
+        if (ret < 0) {
+            perror("write shutdown FD");
+            ret = -errno;
+            goto out;
+        }
+
+        /*
+         * TODO: Remove this call to sleep. Instead, receive a signal from the
+         * network proxy that the vsock and TUN file descriptors have been
+         * closed before exiting the parent process (i.e. the VM in general).
+         */
+        sleep(5);
+
+        ret = app_status;
+        break;
+    }
 
 out:
     exit(ret);

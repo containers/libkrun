@@ -5,6 +5,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,10 +41,12 @@ static void sig_handler(int sig)
         proxy_ready = 1;
 }
 
-static int tap_vsock_forward(int tun_fd, int vsock_fd, char *tap_name)
+static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
+                             char *tap_name)
 {
-    struct pollfd pfds[2];
+    struct pollfd pfds[3];
     unsigned char *buf;
+    bool event_found;
     struct ifreq ifr;
     ssize_t nread;
     int ret, sock_fd;
@@ -78,9 +81,13 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, char *tap_name)
     pfds[1].fd = tun_fd;
     pfds[1].events = POLLIN;
 
+    pfds[2].fd = shutdown_fd;
+    pfds[2].events = POLLIN;
+
     kill(getppid(), SIGUSR1);
 
-    while (poll(pfds, 2, -1) > 0) {
+    while (poll(pfds, 3, -1) > 0) {
+        event_found = false;
         if (pfds[0].revents & POLLIN) {
             unsigned int sz;
             nread = read(vsock_fd, &sz, 4);
@@ -91,6 +98,8 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, char *tap_name)
 
             nread = read(vsock_fd, buf, len);
             write(tun_fd, buf, nread);
+
+            event_found = true;
         }
 
         if (pfds[1].revents & POLLIN) {
@@ -100,7 +109,19 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, char *tap_name)
                 write(vsock_fd, (void *)&sz, 4);
                 write(vsock_fd, buf, nread);
             }
+
+            event_found = true;
         }
+
+        if (event_found)
+            continue;
+
+        /*
+         * No events on network proxy sockets, check shutdown FD and shut down
+         * if event found.
+         */
+        if (pfds[2].revents & POLLIN)
+            break;
     }
 
     close(vsock_fd);
@@ -299,7 +320,7 @@ static int tap_alloc(char *name)
     return fd;
 }
 
-int tap_afvsock_init(void)
+int tap_afvsock_init(int shutdown_fd)
 {
     int ret, tun_fd, vsock_fd;
     struct sockaddr_vm saddr;
@@ -365,7 +386,7 @@ int tap_afvsock_init(void)
             exit(EXIT_FAILURE);
         }
 
-        ret = tap_vsock_forward(tun_fd, vsock_fd, tap_name);
+        ret = tap_vsock_forward(tun_fd, vsock_fd, shutdown_fd, tap_name);
         if (ret < 0)
             exit(EXIT_FAILURE);
     default:
