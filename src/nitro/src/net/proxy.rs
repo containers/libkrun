@@ -3,12 +3,14 @@
 use super::error::Error;
 use devices::virtio::{net::device::VirtioNetBackend, Net};
 use std::{
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     os::{
         fd::{FromRawFd, OwnedFd},
         unix::net::UnixStream,
     },
+    sync::mpsc::{self, RecvTimeoutError},
     thread::{self, JoinHandle},
+    time::Duration,
 };
 use vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY};
 
@@ -51,6 +53,8 @@ impl NetProxy {
         let mut vsock_stream_clone = vsock_stream.0.try_clone().map_err(Error::VsockClone)?;
         let mut unix_stream_clone_write = self.unix_stream.try_clone().map_err(Error::UnixClone)?;
 
+        let (tx, rx) = mpsc::channel::<()>();
+
         // vsock
         let vsock_thread: JoinHandle<Result<()>> = thread::spawn(move || {
             let mut vsock_buf = [0u8; 1500];
@@ -63,6 +67,7 @@ impl NetProxy {
                         .write_all(&vsock_buf[..size])
                         .map_err(Error::UnixWrite)?;
                 } else {
+                    tx.send(()).unwrap();
                     break;
                 }
             }
@@ -71,20 +76,43 @@ impl NetProxy {
         });
 
         let mut unix_stream_clone_read = self.unix_stream.try_clone().unwrap();
+        unix_stream_clone_read
+            .set_read_timeout(Some(Duration::from_millis(250)))
+            .unwrap();
         // Unix
         let unix_thread: JoinHandle<Result<()>> = thread::spawn(move || {
             let mut unix_buf = [0u8; 1500];
             loop {
-                let size = unix_stream_clone_read
-                    .read(&mut unix_buf)
-                    .map_err(Error::UnixRead)?;
-                if size > 0 {
-                    vsock_stream
-                        .0
-                        .write_all(&unix_buf[..size])
-                        .map_err(Error::VsockWrite)?;
+                match unix_stream_clone_read.read(&mut unix_buf) {
+                    Ok(size) => {
+                        if size > 0 {
+                            vsock_stream
+                                .0
+                                .write_all(&unix_buf[..size])
+                                .map_err(Error::VsockWrite)?;
+                        } else {
+                            break;
+                        }
+                    }
+                    Err(ref e)
+                        if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::WouldBlock =>
+                    {
+                        match rx.recv_timeout(Duration::from_micros(500)) {
+                            Ok(_) => break,
+                            Err(e) => {
+                                if e == RecvTimeoutError::Timeout {
+                                    continue;
+                                } else {
+                                    panic!();
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => panic!(),
                 }
             }
+
+            Ok(())
         });
 
         if let Ok(Err(err)) = vsock_thread.join() {
