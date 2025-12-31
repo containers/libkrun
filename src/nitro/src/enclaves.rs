@@ -86,7 +86,7 @@ impl NitroEnclave {
                     net_proxy.run().map_err(NitroError::NetError)?;
                 }
 
-                Ok(0)
+                std::process::exit(0);
             }
             _ => Ok(cid),
         }
