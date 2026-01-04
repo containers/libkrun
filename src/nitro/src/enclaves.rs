@@ -4,6 +4,7 @@ use super::{
     args_writer::{EnclaveArg, EnclaveArgsWriter},
     error::NitroError,
     net::NetProxy,
+    output::output_proxy,
 };
 use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
@@ -49,6 +50,8 @@ pub struct NitroEnclave {
     pub exec_env: String,
     /// Network proxy.
     pub net: Option<NetProxy>,
+    /// Path to redirect enclave output to.
+    pub output_path: PathBuf,
 }
 
 impl NitroEnclave {
@@ -94,8 +97,19 @@ impl NitroEnclave {
             Ok(())
         });
 
+        let output_proxy_thread: JoinHandle<Result<()>> = thread::spawn(move || {
+            output_proxy(&self.output_path).map_err(NitroError::OutputError)?;
+
+            Ok(())
+        });
+
         if let Ok(Err(err)) = net_proxy_thread.join() {
             log::error!("error with network vsock stream listener thread: {:?}", err);
+            return Err(err);
+        }
+
+        if let Ok(Err(err)) = output_proxy_thread.join() {
+            log::error!("error with enclave output proxy: {:?}", err);
             return Err(err);
         }
 

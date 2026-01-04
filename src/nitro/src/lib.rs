@@ -8,6 +8,9 @@ mod error;
 mod args_writer;
 
 #[cfg(feature = "nitro")]
+mod output;
+
+#[cfg(feature = "nitro")]
 mod net;
 
 #[cfg(feature = "nitro")]
