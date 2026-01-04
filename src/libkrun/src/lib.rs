@@ -2698,7 +2698,7 @@ fn krun_start_enter_nitro(ctx_id: u32) -> i32 {
         None => return -libc::ENOENT,
     };
 
-    let Ok(mut enclave) = NitroEnclave::try_from(ctx_cfg) else {
+    let Ok(enclave) = NitroEnclave::try_from(ctx_cfg) else {
         return -libc::EINVAL;
     };
 
