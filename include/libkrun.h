@@ -1171,9 +1171,6 @@ int32_t krun_set_root_disk_remount(uint32_t ctx_id, const char *device, const ch
  *  code once the microVM shuts down. If an error occurred before running the workload the process
  *  will exit() with an error exit code.
  *
- *  In the nitro flavor, this function always returns. Upon success, this function will return the
- *  CID of the nitro enclave that was started.
- *
  * Error exit codes:
  *  125     - "init" cannot set up the environment inside the microVM.
  *  126     - "init" can find the executable to be run inside the microVM but cannot execute it.

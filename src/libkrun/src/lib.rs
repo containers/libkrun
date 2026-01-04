@@ -2702,9 +2702,8 @@ fn krun_start_enter_nitro(ctx_id: u32) -> i32 {
         return -libc::EINVAL;
     };
 
-    // Return enclave CID if successfully ran.
     match enclave.run() {
-        Ok(cid) => cid.try_into().unwrap(), // Safe to unwrap.
+        Ok(()) => KRUN_SUCCESS,
         Err(e) => {
             error!("Error running nitro enclave: {e}");
 
