@@ -9,7 +9,13 @@ use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
     Device,
 };
-use std::{env, ffi::OsStr, fs, io, path::PathBuf};
+use std::{
+    env,
+    ffi::OsStr,
+    fs, io,
+    path::PathBuf,
+    thread::{self, JoinHandle},
+};
 use tar::HeaderMode;
 
 type Result<T> = std::result::Result<T, NitroError>;
@@ -47,7 +53,7 @@ pub struct NitroEnclave {
 
 impl NitroEnclave {
     /// Run the enclave.
-    pub fn run(&mut self) -> Result<u32> {
+    pub fn run(mut self) -> Result<u32> {
         let rootfs_archive = self.rootfs_archive()?;
 
         let argv: Vec<String> = self
@@ -80,16 +86,20 @@ impl NitroEnclave {
 
         writer.write_args(cid, timeout)?;
 
-        match unsafe { libc::fork() } {
-            0 => {
-                if let Some(net_proxy) = &self.net {
-                    net_proxy.run().map_err(NitroError::NetError)?;
-                }
-
-                std::process::exit(0);
+        let net_proxy_thread: JoinHandle<Result<()>> = thread::spawn(move || {
+            if let Some(net_proxy) = &self.net {
+                net_proxy.run().map_err(NitroError::NetError)?;
             }
-            _ => Ok(cid),
+
+            Ok(())
+        });
+
+        if let Ok(Err(err)) = net_proxy_thread.join() {
+            log::error!("error with network vsock stream listener thread: {:?}", err);
+            return Err(err);
         }
+
+        Ok(cid)
     }
 
     fn rootfs_archive(&self) -> Result<Vec<u8>> {
