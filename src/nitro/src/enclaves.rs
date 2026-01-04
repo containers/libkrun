@@ -53,7 +53,7 @@ pub struct NitroEnclave {
 
 impl NitroEnclave {
     /// Run the enclave.
-    pub fn run(mut self) -> Result<u32> {
+    pub fn run(mut self) -> Result<()> {
         let rootfs_archive = self.rootfs_archive()?;
 
         let argv: Vec<String> = self
@@ -99,7 +99,7 @@ impl NitroEnclave {
             return Err(err);
         }
 
-        Ok(cid)
+        Ok(())
     }
 
     fn rootfs_archive(&self) -> Result<Vec<u8>> {
