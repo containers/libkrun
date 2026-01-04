@@ -410,6 +410,11 @@ impl TryFrom<ContextConfig> for NitroEnclave {
             }
         };
 
+        let Some(output_path) = ctx.console_output else {
+            error!("console output path not specified");
+            return Err(-libc::EINVAL);
+        };
+
         Ok(Self {
             _image_path: ctx.nitro_image_path,
             mem_size_mib,
@@ -420,6 +425,7 @@ impl TryFrom<ContextConfig> for NitroEnclave {
             exec_args,
             exec_env,
             net,
+            output_path,
         })
     }
 }
