@@ -31,9 +31,6 @@ const ROOTFS_DIR_DENYLIST: [&str; 5] = [
 
 /// Nitro Enclave data.
 pub struct NitroEnclave {
-    /// Path to configurable enclave image. Will default to KRUN_NITRO_ENCLAVE_EIF if one external
-    /// enclave provided.
-    pub _image_path: Option<PathBuf>,
     /// Amount of RAM (in MiB).
     pub mem_size_mib: usize,
     /// Number of vCPUs.
