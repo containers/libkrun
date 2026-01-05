@@ -163,8 +163,6 @@ struct ContextConfig {
     vmm_uid: Option<libc::uid_t>,
     vmm_gid: Option<libc::gid_t>,
     #[cfg(feature = "nitro")]
-    nitro_image_path: Option<PathBuf>,
-    #[cfg(feature = "nitro")]
     nitro_start_flags: StartFlags,
 }
 
@@ -335,11 +333,6 @@ impl ContextConfig {
     }
 
     #[cfg(feature = "nitro")]
-    fn set_nitro_image(&mut self, image_path: PathBuf) {
-        self.nitro_image_path = Some(image_path);
-    }
-
-    #[cfg(feature = "nitro")]
     fn set_nitro_start_flags(&mut self, start_flags: StartFlags) {
         self.nitro_start_flags = start_flags;
     }
@@ -416,7 +409,6 @@ impl TryFrom<ContextConfig> for NitroEnclave {
         };
 
         Ok(Self {
-            _image_path: ctx.nitro_image_path,
             mem_size_mib,
             vcpus,
             rootfs,
@@ -2166,26 +2158,6 @@ pub extern "C" fn krun_setgid(ctx_id: u32, gid: libc::gid_t) -> i32 {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             cfg.set_vmm_gid(gid);
-        }
-        Entry::Vacant(_) => return -libc::ENOENT,
-    }
-
-    KRUN_SUCCESS
-}
-
-#[cfg(feature = "nitro")]
-#[allow(clippy::missing_safety_doc)]
-#[no_mangle]
-pub unsafe extern "C" fn krun_nitro_set_image(ctx_id: u32, c_image_filepath: *const c_char) -> i32 {
-    let filepath = match CStr::from_ptr(c_image_filepath).to_str() {
-        Ok(f) => PathBuf::from(f.to_string()),
-        Err(_) => return -libc::EINVAL,
-    };
-
-    match CTX_MAP.lock().unwrap().entry(ctx_id) {
-        Entry::Occupied(mut ctx_cfg) => {
-            let cfg = ctx_cfg.get_mut();
-            cfg.set_nitro_image(filepath);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
