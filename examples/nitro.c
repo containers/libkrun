@@ -205,7 +205,7 @@ int main(int argc, char *const argv[])
     }
 
     // Configure the enclave's execution environment.
-    if (err = krun_set_exec(ctx_id, "ls", default_argv, default_envp)) {
+    if (err = krun_set_exec(ctx_id, default_argv[0], default_argv, default_envp)) {
         errno = -err;
         perror("Error configuring enclave execution path");
         return -1;
