@@ -972,16 +972,6 @@ int32_t krun_get_max_vcpus(void);
 */
 int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
 
-#define KRUN_NITRO_START_FLAG_DEBUG (1 << 0)
-/**
- * Configure a Nitro Enclave's start flags.
- *
- * Arguments:
- *  "ctx_id" - the configuration context ID.
- *  "start_flags" - Start flags.
- */
-int32_t krun_nitro_set_start_flags(uint32_t ctx_id, uint64_t start_flags);
-
 /*
  * Do not create an implicit console device in the guest. By using this API,
  * libkrun will create zero console devices on behalf of the user. Any

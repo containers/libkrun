@@ -157,8 +157,6 @@ int main(int argc, char *const argv[])
     struct cmdline cmdline;
     pthread_t debug_console_thread, app_thread;
 
-    int nitro_start_flags = KRUN_NITRO_START_FLAG_DEBUG;
-
     if (!parse_cmdline(argc, argv, &cmdline)) {
         putchar('\n');
         print_help(argv[0]);
@@ -196,13 +194,6 @@ int main(int argc, char *const argv[])
     if (err = krun_set_console_output(ctx_id, "/dev/stdout")) {
         errno = -err;
         perror("Error configuring the console output");
-        return -1;
-    }
-
-    // Configure the nitro enclave to run in debug mode.
-    if (err = krun_nitro_set_start_flags(ctx_id, nitro_start_flags)) {
-        errno = -err;
-        perror("Error configuring nitro enclave start flags");
         return -1;
     }
 
