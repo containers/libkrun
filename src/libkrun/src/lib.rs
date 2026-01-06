@@ -331,11 +331,6 @@ impl ContextConfig {
     fn set_vmm_gid(&mut self, vmm_gid: libc::gid_t) {
         self.vmm_gid = Some(vmm_gid);
     }
-
-    #[cfg(feature = "nitro")]
-    fn set_nitro_start_flags(&mut self, start_flags: StartFlags) {
-        self.nitro_start_flags = start_flags;
-    }
 }
 
 #[cfg(feature = "nitro")]
@@ -2158,30 +2153,6 @@ pub extern "C" fn krun_setgid(ctx_id: u32, gid: libc::gid_t) -> i32 {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             cfg.set_vmm_gid(gid);
-        }
-        Entry::Vacant(_) => return -libc::ENOENT,
-    }
-
-    KRUN_SUCCESS
-}
-
-#[cfg(feature = "nitro")]
-#[allow(clippy::missing_safety_doc)]
-#[no_mangle]
-pub unsafe extern "C" fn krun_nitro_set_start_flags(ctx_id: u32, start_flags: u64) -> i32 {
-    let mut flags = StartFlags::empty();
-
-    // Only debug mode is supported at the moment. To avoid doing conversion and
-    // checking if the "start_flags" argument is valid, set the flags to debug mode
-    // if the "start_flags" argument is greater than zero.
-    if start_flags > 0 {
-        flags |= StartFlags::DEBUG;
-    }
-
-    match CTX_MAP.lock().unwrap().entry(ctx_id) {
-        Entry::Occupied(mut ctx_cfg) => {
-            let cfg = ctx_cfg.get_mut();
-            cfg.set_nitro_start_flags(flags);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
