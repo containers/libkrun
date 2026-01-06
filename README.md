@@ -33,7 +33,7 @@ It integrates a VMM (Virtual Machine Monitor, the userspace side of an Hyperviso
 
 ## Variants
 
-This project provides two different variants of the library:
+This project provides the following variants of the library:
 
 - **libkrun**: Generic variant compatible with all Virtualization-capable systems.
 - **libkrun-sev**: Variant including support for AMD SEV (SEV, SEV-ES and SEV-SNP) memory encryption and remote attestation. Requires an SEV-capable CPU.
