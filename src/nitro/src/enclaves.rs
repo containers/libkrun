@@ -37,8 +37,6 @@ pub struct NitroEnclave {
     pub vcpus: u8,
     /// Enclave rootfs.
     pub rootfs: String,
-    /// Enclave start flags.
-    pub start_flags: StartFlags,
     /// Execution path.
     pub exec_path: String,
     /// Execution args.
@@ -49,6 +47,8 @@ pub struct NitroEnclave {
     pub net: Option<NetProxy>,
     /// Path to redirect enclave output to.
     pub output_path: PathBuf,
+    // Output kernel and initramfs debug logs from enclave.
+    pub debug: bool,
 }
 
 impl NitroEnclave {
@@ -78,6 +78,10 @@ impl NitroEnclave {
             EnclaveArg::ExecEnvp(envp),
         ]);
 
+        if self.debug {
+            writer.args.push(EnclaveArg::Debug);
+        }
+
         if self.net.is_some() {
             writer.args.push(EnclaveArg::NetworkProxy);
         }
@@ -95,7 +99,9 @@ impl NitroEnclave {
         });
 
         let output_proxy_thread: JoinHandle<Result<()>> = thread::spawn(move || {
-            output_proxy(&self.output_path).map_err(NitroError::OutputError)?;
+            let debug_cid = if self.debug { Some(cid) } else { None };
+
+            output_proxy(&self.output_path, debug_cid).map_err(NitroError::OutputError)?;
 
             Ok(())
         });
@@ -171,8 +177,14 @@ impl NitroEnclave {
             launcher.add_vcpu(None).map_err(NitroError::VcpuAdd)?;
         }
 
+        let mut start_flags = StartFlags::empty();
+
+        if self.debug {
+            start_flags |= StartFlags::DEBUG;
+        }
+
         let cid = launcher
-            .start(self.start_flags, None)
+            .start(start_flags, None)
             .map_err(NitroError::VmStart)?;
 
         Ok((cid.try_into().unwrap(), timeout)) // Safe to unwrap.

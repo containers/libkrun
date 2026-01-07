@@ -193,44 +193,12 @@ static int rootfs_mount()
     return 0;
 }
 
-/*
- * Launch the application specified with argv and envp.
- */
-pid_t launch(char **argv, char **envp)
+static int app_stdio_output(void)
 {
-    int ret, pid, sock_fd;
+    int streams[3] = {STDOUT_FILENO, STDIN_FILENO, STDERR_FILENO};
     struct sockaddr_vm addr;
     struct timeval timeval;
-    int streams[3] = {STDOUT_FILENO, STDIN_FILENO, STDERR_FILENO};
-
-    // Fork the process.
-    pid = fork();
-    if (pid < 0) {
-        perror("launch fork");
-        return -errno;
-    } else if (pid != 0) {
-        // Parent process. Wait for the child to end before exiting.
-        wait(NULL);
-        return 0;
-    }
-
-    // Unblock all signals.
-    ret = sig_mask(SIG_UNBLOCK);
-    if (ret < 0)
-        return ret;
-
-    // Create a new session and set the process group ID.
-    setsid();
-
-    // Set the PGID to the same as the process ID.
-    setpgid(0, 0);
-
-    // Add the envp to the environment variables.
-    ret = putenv(envp[0]);
-    if (ret < 0) {
-        perror("initialize default path environment");
-        return -errno;
-    }
+    int ret, sock_fd;
 
     sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
     if (sock_fd < 0) {
@@ -269,6 +237,45 @@ pid_t launch(char **argv, char **envp)
             close(sock_fd);
             return -errno;
         }
+    }
+
+    return 0;
+}
+
+/*
+ * Launch the application specified with argv and envp.
+ */
+pid_t launch(char **argv, char **envp)
+{
+    int ret, pid;
+
+    // Fork the process.
+    pid = fork();
+    if (pid < 0) {
+        perror("launch fork");
+        return -errno;
+    } else if (pid != 0) {
+        // Parent process. Wait for the child to end before exiting.
+        wait(NULL);
+        return 0;
+    }
+
+    // Unblock all signals.
+    ret = sig_mask(SIG_UNBLOCK);
+    if (ret < 0)
+        return ret;
+
+    // Create a new session and set the process group ID.
+    setsid();
+
+    // Set the PGID to the same as the process ID.
+    setpgid(0, 0);
+
+    // Add the envp to the environment variables.
+    ret = putenv(envp[0]);
+    if (ret < 0) {
+        perror("initialize default path environment");
+        return -errno;
     }
 
     // Execute the process.
@@ -439,6 +446,12 @@ int main(int argc, char *argv[])
     // Initialize the network TAP device.
     if (args.network_proxy) {
         ret = tap_afvsock_init(shutdown_fd);
+        if (ret < 0)
+            goto out;
+    }
+
+    if (!args.debug) {
+        ret = app_stdio_output();
         if (ret < 0)
             goto out;
     }

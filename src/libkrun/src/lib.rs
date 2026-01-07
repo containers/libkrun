@@ -65,8 +65,6 @@ use nitro::enclaves::NitroEnclave;
 use devices::virtio::display::{DisplayInfoEdid, PhysicalSize, MAX_DISPLAYS};
 #[cfg(feature = "input")]
 use krun_input::{InputConfigBackend, InputEventProviderBackend};
-#[cfg(feature = "nitro")]
-use nitro_enclaves::launch::StartFlags;
 
 // Value returned on success. We use libc's errors otherwise.
 const KRUN_SUCCESS: i32 = 0;
@@ -82,6 +80,9 @@ const KRUNFW_NAME: &str = "libkrunfw-sev.so.5";
 const KRUNFW_NAME: &str = "libkrunfw-tdx.so.5";
 #[cfg(target_os = "macos")]
 const KRUNFW_NAME: &str = "libkrunfw.5.dylib";
+
+#[cfg(feature = "nitro")]
+static KRUN_NITRO_DEBUG: Mutex<bool> = Mutex::new(false);
 
 // Path to the init binary to be executed inside the VM.
 const INIT_PATH: &str = "/init.krun";
@@ -162,8 +163,6 @@ struct ContextConfig {
     console_output: Option<PathBuf>,
     vmm_uid: Option<libc::uid_t>,
     vmm_gid: Option<libc::gid_t>,
-    #[cfg(feature = "nitro")]
-    nitro_start_flags: StartFlags,
 }
 
 impl ContextConfig {
@@ -403,16 +402,18 @@ impl TryFrom<ContextConfig> for NitroEnclave {
             return Err(-libc::EINVAL);
         };
 
+        let debug = KRUN_NITRO_DEBUG.lock().unwrap();
+
         Ok(Self {
             mem_size_mib,
             vcpus,
             rootfs,
-            start_flags: ctx.nitro_start_flags,
             exec_path,
             exec_args,
             exec_env,
             net,
             output_path,
+            debug: *debug,
         })
     }
 }
@@ -444,6 +445,17 @@ fn log_level_to_filter_str(level: u32) -> &'static str {
 pub extern "C" fn krun_set_log_level(level: u32) -> i32 {
     let filter = log_level_to_filter_str(level);
     env_logger::Builder::from_env(Env::default().default_filter_or(filter)).init();
+
+    #[cfg(feature = "nitro")]
+    {
+        // Notify krun-nitro to enable debug for log level.
+        if level == 4 {
+            let mut debug = KRUN_NITRO_DEBUG.lock().unwrap();
+
+            *debug = true;
+        }
+    }
+
     KRUN_SUCCESS
 }
 
