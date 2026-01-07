@@ -516,6 +516,8 @@ impl Display for StartMicrovmError {
     }
 }
 
+impl std::error::Error for StartMicrovmError {}
+
 pub enum Payload {
     #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
     KernelMmap,
@@ -584,15 +586,17 @@ pub fn build_microvm(
     let mut kernel_cmdline = Cmdline::new(arch::CMDLINE_MAX_SIZE);
     if let Some(cmdline) = payload_config.kernel_cmdline {
         kernel_cmdline.insert_str(cmdline.as_str()).unwrap();
-    } else if let Some(cmdline) = &vm_resources.kernel_cmdline.prolog {
-        kernel_cmdline.insert_str(cmdline).unwrap();
+    } else if !vm_resources.kernel_cmdline.cmdline.is_empty() {
+        for part in vm_resources.kernel_cmdline.cmdline.iter() {
+            kernel_cmdline.insert_str(part).unwrap();
+        }
     } else {
         kernel_cmdline.insert_str(DEFAULT_KERNEL_CMDLINE).unwrap();
     }
 
-    if let Some(cmdline) = &vm_resources.kernel_cmdline.krun_env {
-        kernel_cmdline.insert_str(cmdline.as_str()).unwrap();
-    }
+    // if let Some(cmdline) = &vm_resources.kernel_cmdline.krun_env {
+    //     kernel_cmdline.insert_str(cmdline.as_str()).unwrap();
+    // }
 
     if let Some(kernel_console) = &vm_resources.kernel_console {
         let cmdline = kernel_cmdline.as_str();
@@ -1062,8 +1066,10 @@ pub fn build_microvm(
         attach_snd_device(&mut vmm, intc.clone())?;
     }
 
-    if let Some(s) = &vm_resources.kernel_cmdline.epilog {
-        vmm.kernel_cmdline.insert_str(s).unwrap();
+    if !vm_resources.kernel_cmdline.args.is_empty() {
+        for arg in &vm_resources.kernel_cmdline.args {
+            vmm.kernel_cmdline.insert_str(arg).unwrap();
+        }
     };
 
     // Write the kernel command line to guest memory. This is x86_64 specific, since on
