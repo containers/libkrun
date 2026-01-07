@@ -6,8 +6,9 @@ use std::{
     io::{self, Read, Write},
     path::PathBuf,
 };
-use vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY};
+use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY, VMADDR_CID_HYPERVISOR};
 
+const ENCLAVE_VSOCK_PORT_CONSOLE_OFFSET: u32 = 10000;
 const ENCLAVE_VSOCK_PORT_OUTPUT: u32 = 8081;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -18,6 +19,7 @@ pub enum Error {
     FileWrite(io::Error),
     VsockAccept(io::Error),
     VsockBind(io::Error),
+    VsockConnect(io::Error),
     VsockRead(io::Error),
 }
 
@@ -35,6 +37,10 @@ impl fmt::Display for Error {
             Self::VsockBind(cause) => {
                 format!("unable to bind to enclave output vsock: {:?}", cause)
             }
+            Self::VsockConnect(cause) => format!(
+                "uanble to connect to enclave console port vsock: {:?}",
+                cause
+            ),
             Self::VsockRead(cause) => {
                 format!("unable to read from enclave output vsock: {:?}", cause)
             }
@@ -44,23 +50,34 @@ impl fmt::Display for Error {
     }
 }
 
-pub fn output_proxy(path: &PathBuf) -> Result<()> {
+pub fn output_proxy(path: &PathBuf, cid_debug: Option<u32>) -> Result<()> {
     let mut file = OpenOptions::new()
         .read(false)
         .write(true)
         .open(path)
         .map_err(Error::FileOpen)?;
 
-    let vsock_listener =
-        VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, ENCLAVE_VSOCK_PORT_OUTPUT))
-            .map_err(Error::VsockBind)?;
+    let mut vsock_stream = match cid_debug {
+        Some(cid) => VsockStream::connect(&VsockAddr::new(
+            VMADDR_CID_HYPERVISOR,
+            cid + ENCLAVE_VSOCK_PORT_CONSOLE_OFFSET,
+        ))
+        .map_err(Error::VsockConnect)?,
+        None => {
+            let vsock_listener =
+                VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, ENCLAVE_VSOCK_PORT_OUTPUT))
+                    .map_err(Error::VsockBind)?;
 
-    let mut vsock_stream = vsock_listener.accept().map_err(Error::VsockAccept)?;
+            let (vsock_stream, _vsock_addr) =
+                vsock_listener.accept().map_err(Error::VsockAccept)?;
+
+            vsock_stream
+        }
+    };
 
     let mut vsock_buf = [0u8; 1500];
     loop {
         let size = vsock_stream
-            .0
             .read(&mut vsock_buf)
             .map_err(Error::VsockRead)?;
 

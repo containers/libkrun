@@ -13,6 +13,7 @@ struct enclave_args {
     char **exec_argv;
     char **exec_envp;
     bool network_proxy;
+    bool debug;
 };
 
 int args_reader_read(struct enclave_args *);

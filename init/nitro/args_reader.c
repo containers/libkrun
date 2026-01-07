@@ -23,6 +23,7 @@ enum {
     ENCLAVE_ARG_ID_EXEC_ARGV,
     ENCLAVE_ARG_ID_EXEC_ENVP,
     ENCLAVE_ARG_ID_NETWORK_PROXY,
+    ENCLAVE_ARG_ID_DEBUG,
 
     ENCLAVE_ARGS_FINISHED = 255,
 };
@@ -248,6 +249,9 @@ static int __args_reader_read(int sock_fd, struct enclave_args *args)
             break;
         case ENCLAVE_ARG_ID_NETWORK_PROXY:
             args->network_proxy = true;
+            break;
+        case ENCLAVE_ARG_ID_DEBUG:
+            args->debug = true;
             break;
 
         /*
