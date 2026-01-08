@@ -34,6 +34,7 @@ static void print_help(char *const name)
         "OPTIONS: \n"
         "        -h    --help                Show help\n"
         "              --net                 Enable networking with passt"
+        "              --debug               Show kernel and initramfs debug output"
         "\n"
         "NEWROOT:           The root directory of the VM\n"
         "NVCPUS:            The amount of vCPUs for running the enclave\n"
@@ -45,6 +46,7 @@ static void print_help(char *const name)
 static const struct option long_options[] = {
     { "help", no_argument, NULL, 'h' },
     { "net", no_argument, NULL, 'n' },
+    { "debug", no_argument, NULL, 'd'},
     { NULL, 0, NULL, 0 }
 };
 
@@ -54,6 +56,7 @@ struct cmdline {
     unsigned int nvcpus;
     unsigned int ram_mib;
     bool net;
+    bool debug;
 };
 
 bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
@@ -66,6 +69,7 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
     *cmdline = (struct cmdline){
         .show_help = false,
         .net = false,
+        .debug = false,
     };
 
     // the '+' in optstring is a GNU extension that disables permutating argv
@@ -76,6 +80,9 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
             return true;
         case 'n':
             cmdline->net = true;
+            break;
+        case 'd':
+            cmdline->debug = true;
             break;
         case '?':
             return false;
@@ -153,9 +160,8 @@ int start_passt()
 
 int main(int argc, char *const argv[])
 {
-    int ret, cid, ctx_id, err, passt_fd;
+    int ret, cid, ctx_id, err, passt_fd, log_level;
     struct cmdline cmdline;
-    pthread_t debug_console_thread, app_thread;
 
     if (!parse_cmdline(argc, argv, &cmdline)) {
         putchar('\n');
@@ -168,8 +174,9 @@ int main(int argc, char *const argv[])
         return 0;
     }
 
-    // Set the log level to "off".
-    err = krun_init_log(KRUN_LOG_TARGET_DEFAULT, KRUN_LOG_LEVEL_OFF, KRUN_LOG_STYLE_AUTO, 0);
+    // Enable debug output if configured.
+    log_level = (cmdline.debug) ? KRUN_LOG_LEVEL_DEBUG : KRUN_LOG_LEVEL_OFF;
+    err = krun_set_log_level(log_level);
     if (err) {
         errno = -err;
         perror("Error configuring log level");
