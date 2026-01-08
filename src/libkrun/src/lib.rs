@@ -34,8 +34,8 @@ use std::os::fd::{BorrowedFd, FromRawFd, RawFd};
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::LazyLock;
 use std::sync::Mutex;
+use std::sync::{Arc, LazyLock};
 use utils::eventfd::EventFd;
 use vmm::resources::{
     DefaultVirtioConsoleConfig, PortConfig, SerialConsoleConfig, TsiFlags, VirtioConsoleConfigMode,
@@ -57,6 +57,7 @@ use vmm::vmm_config::machine_config::VmConfig;
 #[cfg(feature = "net")]
 use vmm::vmm_config::net::NetworkInterfaceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
+use vmm::Vmm;
 
 #[cfg(feature = "nitro")]
 use nitro::enclaves::NitroEnclave;
@@ -428,7 +429,13 @@ fn with_cfg(ctx_id: u32, f: impl FnOnce(&mut ContextConfig) -> i32) -> i32 {
     }
 }
 
+// Vmm configuration(s) to be started
 static CTX_MAP: Lazy<Mutex<HashMap<u32, ContextConfig>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+// Running vmm instances
+static RUNNING_CTX_MAP: Lazy<Mutex<HashMap<u32, Arc<Mutex<Vmm>>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
 static CTX_IDS: AtomicI32 = AtomicI32::new(0);
 
 fn log_level_to_filter_str(level: u32) -> &'static str {
@@ -2654,7 +2661,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     let (sender, _receiver) = unbounded();
 
-    let _vmm = match vmm::builder::build_microvm(
+    let vmm = match vmm::builder::build_microvm(
         &ctx_cfg.vmr,
         &mut event_manager,
         ctx_cfg.shutdown_efd,
@@ -2667,18 +2674,20 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         }
     };
 
+    RUNNING_CTX_MAP.lock().unwrap().insert(ctx_id, vmm.clone());
+
     #[cfg(target_os = "macos")]
     if ctx_cfg.gpu_virgl_flags.is_some() {
-        vmm::worker::start_worker_thread(_vmm.clone(), _receiver).unwrap();
+        vmm::worker::start_worker_thread(vmm.clone(), _receiver).unwrap();
     }
 
     #[cfg(target_arch = "x86_64")]
     if ctx_cfg.vmr.split_irqchip {
-        vmm::worker::start_worker_thread(_vmm.clone(), _receiver.clone()).unwrap();
+        vmm::worker::start_worker_thread(vmm.clone(), _receiver.clone()).unwrap();
     }
 
     #[cfg(any(feature = "amd-sev", feature = "tdx"))]
-    vmm::worker::start_worker_thread(_vmm.clone(), _receiver.clone()).unwrap();
+    vmm::worker::start_worker_thread(vmm.clone(), _receiver.clone()).unwrap();
 
     loop {
         match event_manager.run() {
