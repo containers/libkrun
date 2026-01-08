@@ -192,7 +192,8 @@ impl NitroEnclave {
 }
 
 fn eif() -> Result<Vec<u8>> {
-    let path = env::var("KRUN_NITRO_EIF_PATH").unwrap_or("/usr/share/krun-nitro.eif".to_string());
+    let path = env::var("KRUN_NITRO_EIF_PATH")
+        .unwrap_or("/usr/share/krun-nitro/krun-nitro.eif".to_string());
 
     let bytes = fs::read(path).unwrap();
 
