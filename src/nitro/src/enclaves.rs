@@ -21,12 +21,13 @@ use tar::HeaderMode;
 
 type Result<T> = std::result::Result<T, NitroError>;
 
-const ROOTFS_DIR_DENYLIST: [&str; 5] = [
+const ROOTFS_DIR_DENYLIST: [&str; 6] = [
     "proc", // /proc.
     "run",  // /run.
     "tmp",  // /tmp.
     "dev",  // /dev.
     "sys",  // /sys.
+    "usr/share/krun-nitro",
 ];
 
 /// Nitro Enclave data.
