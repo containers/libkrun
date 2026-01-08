@@ -242,6 +242,13 @@ static int app_stdio_output(void)
     return sock_fd;
 }
 
+static void app_stdio_close(int output_vsock)
+{
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+    close(output_vsock);
+}
+
 /*
  * Launch the application specified with argv and envp.
  */
@@ -364,7 +371,7 @@ out:
 
 int main(int argc, char *argv[])
 {
-    int ret, nsm_fd, shutdown_fd, pid, app_status;
+    int ret, nsm_fd, shutdown_fd, pid, app_status, output_vsock;
     struct enclave_args args;
     uint64_t sfd_val;
 
@@ -450,9 +457,10 @@ int main(int argc, char *argv[])
             goto out;
     }
 
+    output_vsock = -1;
     if (!args.debug) {
-        ret = app_stdio_output();
-        if (ret < 0)
+        output_vsock = app_stdio_output();
+        if (output_vsock < 0)
             goto out;
     }
 
@@ -476,6 +484,9 @@ int main(int argc, char *argv[])
             ret = -errno;
             goto out;
         }
+
+        if (output_vsock >= 0)
+            app_stdio_close(output_vsock);
 
         /*
          * TODO: Remove this call to sleep. Instead, receive a signal from the
