@@ -195,10 +195,10 @@ static int rootfs_mount()
 
 static int app_stdio_output(void)
 {
-    int streams[3] = {STDOUT_FILENO, STDIN_FILENO, STDERR_FILENO};
+    int streams[2] = {STDOUT_FILENO, STDERR_FILENO};
     struct sockaddr_vm addr;
     struct timeval timeval;
-    int ret, sock_fd;
+    int ret, sock_fd, i;
 
     sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
     if (sock_fd < 0) {
@@ -229,7 +229,7 @@ static int app_stdio_output(void)
         return -errno;
     }
 
-    for (size_t i = 0; i < 3; i++) {
+    for (i = 0; i < 2; i++) {
         ret = dup2(sock_fd, streams[i]);
         if (ret < 0) {
             fprintf(stderr, "unable to redirect stream [%d] to socket: %s\n",
@@ -239,7 +239,7 @@ static int app_stdio_output(void)
         }
     }
 
-    return 0;
+    return sock_fd;
 }
 
 /*
