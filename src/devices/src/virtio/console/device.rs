@@ -1,13 +1,3 @@
-use std::cmp;
-use std::io::Write;
-use std::iter::zip;
-use std::mem::{size_of, size_of_val};
-use std::os::unix::io::{AsRawFd, RawFd};
-use std::sync::Arc;
-
-use utils::eventfd::EventFd;
-use vm_memory::{ByteValued, Bytes, GuestMemoryMmap};
-
 use super::super::{
     ActivateError, ActivateResult, ConsoleError, DeviceState, Queue as VirtQueue, VirtioDevice,
 };
@@ -21,6 +11,16 @@ use crate::virtio::console::port_queue_mapping::{
     num_queues, port_id_to_queue_idx, QueueDirection,
 };
 use crate::virtio::{InterruptTransport, PortDescription, VmmExitObserver};
+use std::cmp;
+use std::io::Write;
+use std::iter::zip;
+use std::mem::{size_of, size_of_val};
+use std::os::fd::BorrowedFd;
+use std::os::unix::io::{AsRawFd, RawFd};
+use std::sync::{Arc, Mutex};
+use thiserror::Error;
+use utils::eventfd::EventFd;
+use vm_memory::{ByteValued, Bytes, GuestMemoryMmap};
 
 pub(crate) const CONTROL_RXQ_INDEX: usize = 2;
 pub(crate) const CONTROL_TXQ_INDEX: usize = 3;
@@ -67,17 +67,75 @@ pub struct Console {
     pub(crate) sigwinch_evt: EventFd,
 
     config: VirtioConsoleConfig,
+    ready: bool,
     console_ready_evt: Arc<EventFd>,
+}
+
+#[derive(Error, Debug)]
+#[repr(i32)]
+pub enum ConsoleControllerError {
+    #[error("Console device is not ready to ")]
+    NotReady,
+
+    #[error("Backend implementation error")]
+    OutOfPorts,
+}
+
+#[derive(Clone)]
+pub struct ConsoleController {
+    console: Arc<Mutex<Console>>,
+}
+
+impl ConsoleController {
+    pub fn console_ready_fd(&self) -> BorrowedFd<'_> {
+        unsafe {
+            BorrowedFd::borrow_raw(self.console.lock().unwrap().console_ready_evt.as_raw_fd())
+        }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.console.lock().unwrap().ready
+    }
+
+    pub fn add_port(
+        &self,
+        port_description: PortDescription,
+    ) -> Result<(), ConsoleControllerError> {
+        let mut console = self.console.lock().unwrap();
+        if !console.ready {
+            return Err(ConsoleControllerError::NotReady);
+        }
+
+        if console.ports.len() as u32 >= console.config.max_nr_ports {
+            return Err(ConsoleControllerError::OutOfPorts);
+        }
+
+        let port_id = console.ports.len() as u32;
+        console.ports.push(Port::new(port_id, port_description));
+
+        // Notify the guest we have added a port
+        // From this point forward, we will automatically set up the port as open and start worker
+        // threads once we receive the VIRTIO_CONSOLE_PORT_READY
+        console.control.port_add(port_id);
+        Ok(())
+    }
 }
 
 impl Console {
     pub fn new(
         ports: Vec<PortDescription>,
+        reserved_port_count: u32,
         console_ready_evt: Arc<EventFd>,
     ) -> super::Result<Console> {
-        assert!(!ports.is_empty(), "Expected at least 1 port");
+        assert!(
+            !ports.is_empty() || reserved_port_count > 0,
+            "Expected at least 1 port or reserved port"
+        );
 
-        let num_queues = num_queues(ports.len());
+        let max_ports = ports.len() as u32 + reserved_port_count;
+
+        // Pre-allocate queues for all potential ports
+        let num_queues = num_queues(max_ports as usize);
         let queues = vec![VirtQueue::new(QUEUE_SIZE); num_queues];
 
         let mut queue_events = Vec::new();
@@ -90,11 +148,13 @@ impl Console {
             .map(|(port_id, description)| Port::new(port_id, description))
             .collect();
 
-        let (cols, rows) = ports[0]
-            .terminal()
+        let (cols, rows) = ports
+            .first()
+            .and_then(|p| p.terminal())
             .map(|t| t.get_win_size())
             .unwrap_or((0, 0));
-        let config = VirtioConsoleConfig::new(cols, rows, ports.len() as u32);
+
+        let config = VirtioConsoleConfig::new(cols, rows, max_ports);
 
         Ok(Console {
             control: ConsoleControl::new(),
@@ -109,8 +169,22 @@ impl Console {
                 .map_err(ConsoleError::EventFd)?,
             device_state: DeviceState::Inactive,
             config,
+            ready: false,
             console_ready_evt,
         })
+    }
+
+    pub fn with_controller(
+        ports: Vec<PortDescription>,
+        reserved_port_count: u32,
+        console_ready_evt: Arc<EventFd>,
+    ) -> super::Result<(Arc<Mutex<Console>>, ConsoleController)> {
+        let console = Arc::new(Mutex::new(Self::new(
+            ports,
+            reserved_port_count,
+            console_ready_evt,
+        )?));
+        Ok((console.clone(), ConsoleController { console }))
     }
 
     pub fn id(&self) -> &str {
@@ -203,6 +277,8 @@ impl Console {
                     if let Err(e) = self.console_ready_evt.write(1) {
                         warn!("Failed to trigger console_ready_evt: {e:?}");
                     }
+                    self.console_ready_evt.write(1).unwrap();
+                    self.ready = true;
                 }
                 control_event::VIRTIO_CONSOLE_PORT_READY => {
                     if cmd.value != 1 {
@@ -242,12 +318,19 @@ impl Console {
                         }
                     };
 
-                    if !opened {
+                    if opened {
+                        ports_to_start.push(cmd.id);
+                    } else if let Some(port) = self.ports.get_mut(cmd.id as usize) {
                         log::debug!("Guest closed port {}", cmd.id);
-                        continue;
+                        port.shutdown();
+                        // TODO: close the underlying file descriptors for the port
+                        // (note that it requires an API for being able to reopen the ports!)
+                    } else {
+                        warn!(
+                            "Guest tried to close port {} but we don't have such port!",
+                            cmd.id
+                        );
                     }
-
-                    ports_to_start.push(cmd.id as usize);
                 }
                 _ => log::warn!("Unknown console control event {:x}", cmd.event),
             }
@@ -255,13 +338,15 @@ impl Console {
 
         for port_id in ports_to_start {
             log::trace!("Starting port io for port {port_id}");
-            self.ports[port_id].start(
-                mem.clone(),
-                self.queues[port_id_to_queue_idx(QueueDirection::Rx, port_id)].clone(),
-                self.queues[port_id_to_queue_idx(QueueDirection::Tx, port_id)].clone(),
-                interrupt.clone(),
-                self.control.clone(),
-            );
+            if let Some(port) = self.ports.get_mut(port_id as usize) {
+                port.start(
+                    mem.clone(),
+                    self.queues[port_id_to_queue_idx(QueueDirection::Rx, port_id as usize)].clone(),
+                    self.queues[port_id_to_queue_idx(QueueDirection::Tx, port_id as usize)].clone(),
+                    interrupt.clone(),
+                    self.control.clone(),
+                );
+            }
         }
 
         raise_irq
@@ -343,9 +428,10 @@ impl VirtioDevice for Console {
         // the device, but we don't support any scenario in which
         // neither GuestMemory nor the queue events would change,
         // so let's avoid doing any unnecessary work.
-        for port in &mut self.ports {
+        for port in self.ports.iter_mut() {
             port.shutdown();
         }
+        self.ready = false;
         true
     }
 }

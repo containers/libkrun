@@ -100,7 +100,11 @@ pub struct DefaultVirtioConsoleConfig {
 
 pub enum VirtioConsoleConfigMode {
     Autoconfigure(DefaultVirtioConsoleConfig),
-    Explicit(Vec<PortConfig>),
+    Explicit {
+        ports: Vec<PortConfig>,
+        /// Number of additional reserved port slots for dynamic addition after VM start
+        reserved_count: u32,
+    },
 }
 
 pub struct VirtioConsoleConfig {

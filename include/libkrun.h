@@ -1110,6 +1110,23 @@ int32_t krun_add_serial_console_default(uint32_t ctx_id,
 int32_t krun_add_virtio_console_multiport(uint32_t ctx_id);
 
 /*
+ * Reserves additional port slots on a multi-port virtio-console device for dynamic addition
+ * after the VM has started.
+ *
+ * This function must be called before krun_start_enter(). The reserved ports can be populated
+ * later by calling krun_add_console_port_tty() or krun_add_console_port_inout() on a running VM.
+ *
+ * Arguments:
+ *  "ctx_id"     - the configuration context ID.
+ *  "console_id" - the console ID returned by krun_add_virtio_console_multiport().
+ *  "num_ports"  - the number of additional port slots to reserve.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_console_reserve_ports(uint32_t ctx_id, uint32_t console_id, uint32_t num_ports);
+
+/*
  * Returns an eventfd that becomes readable when the virtio-console device is ready
  * to accept dynamically added ports.
  *

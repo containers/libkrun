@@ -28,7 +28,6 @@ use std::ffi::CString;
 use std::ffi::{c_void, CStr};
 use std::fs::File;
 use std::io::IsTerminal;
-#[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::os::fd::{BorrowedFd, FromRawFd, RawFd};
 use std::path::PathBuf;
@@ -39,7 +38,7 @@ use std::sync::{Arc, LazyLock};
 use utils::eventfd::EventFd;
 use vmm::resources::{
     DefaultVirtioConsoleConfig, PortConfig, SerialConsoleConfig, TsiFlags, VirtioConsoleConfig,
-    VirtioConsoleConfigMode, VmResources, VsockConfig
+    VirtioConsoleConfigMode, VmResources, VsockConfig,
 };
 #[cfg(feature = "blk")]
 use vmm::vmm_config::block::{BlockDeviceConfig, BlockRootConfig};
@@ -64,6 +63,7 @@ use nitro::enclaves::NitroEnclave;
 
 #[cfg(feature = "gpu")]
 use devices::virtio::display::{DisplayInfoEdid, PhysicalSize, MAX_DISPLAYS};
+use devices::virtio::{port_io, ConsoleControllerError, PortDescription};
 #[cfg(feature = "input")]
 use krun_input::{InputConfigBackend, InputEventProviderBackend};
 
@@ -2365,7 +2365,10 @@ pub unsafe extern "C" fn krun_add_virtio_console_multiport(ctx_id: u32) -> i32 {
                     .expect("Failed to create console_ready_evt"),
             );
             cfg.vmr.virtio_consoles.push(VirtioConsoleConfig {
-                mode: VirtioConsoleConfigMode::Explicit(Vec::new()),
+                mode: VirtioConsoleConfigMode::Explicit {
+                    ports: Vec::new(),
+                    reserved_count: 0,
+                },
                 console_ready_evt,
             });
 
@@ -2377,7 +2380,46 @@ pub unsafe extern "C" fn krun_add_virtio_console_multiport(ctx_id: u32) -> i32 {
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+pub unsafe extern "C" fn krun_console_reserve_ports(
+    ctx_id: u32,
+    console_id: u32,
+    num_ports: u32,
+) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            match ctx_cfg
+                .get_mut()
+                .vmr
+                .virtio_consoles
+                .get_mut(console_id as usize)
+            {
+                Some(VirtioConsoleConfig {
+                    mode: VirtioConsoleConfigMode::Explicit { reserved_count, .. },
+                    ..
+                }) => {
+                    *reserved_count += num_ports;
+                    KRUN_SUCCESS
+                }
+                _ => -libc::EINVAL,
+            }
+        }
+        Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
 pub unsafe extern "C" fn krun_get_console_ready_fd(ctx_id: u32, console_id: u32) -> i32 {
+    // Check if VM is running
+    if let Some(vmm) = RUNNING_CTX_MAP.lock().unwrap().get(&ctx_id).cloned() {
+        let vmm = vmm.lock().unwrap();
+        let Some(console) = vmm.console_controller(console_id) else {
+            error!("krun_get_console_ready_fd: Invalid console id={console_id}");
+            return -libc::ENOENT;
+        };
+        return console.console_ready_fd().as_raw_fd();
+    }
+
     // VM not running yet, get the pre-created eventfd from CTX_MAP
     match CTX_MAP.lock().unwrap().get(&ctx_id) {
         Some(ctx_cfg) => match ctx_cfg.vmr.virtio_consoles.get(console_id as usize) {
@@ -2416,13 +2458,34 @@ pub unsafe extern "C" fn krun_add_console_port_tty(
         return -libc::ENOTTY;
     }
 
+    if let Some(vmm) = RUNNING_CTX_MAP.lock().unwrap().get(&ctx_id) {
+        let mut vmm = vmm.lock().unwrap();
+        vmm.setup_terminal_raw_mode(unsafe { BorrowedFd::borrow_raw(tty_fd) }, false);
+
+        let Some(console) = vmm.console_controller(console_id) else {
+            error!("krun_add_console_port_tty: Invalid console id={console_id}");
+            return -libc::ENOENT;
+        };
+
+        return match console.add_port(PortDescription {
+            name: name_str.into(),
+            input: Some(port_io::input_to_raw_fd_dup(tty_fd).unwrap()),
+            output: Some(port_io::output_to_raw_fd_dup(tty_fd).unwrap()),
+            terminal: Some(port_io::term_fd(tty_fd).unwrap()),
+        }) {
+            Ok(()) => KRUN_SUCCESS,
+            Err(ConsoleControllerError::NotReady) => -libc::EAGAIN,
+            Err(ConsoleControllerError::OutOfPorts) => -libc::ENOMEM,
+        };
+    }
+
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
 
             match cfg.vmr.virtio_consoles.get_mut(console_id as usize) {
                 Some(VirtioConsoleConfig {
-                    mode: VirtioConsoleConfigMode::Explicit(ports),
+                    mode: VirtioConsoleConfigMode::Explicit { ports, .. },
                     ..
                 }) => {
                     ports.push(PortConfig::Tty {
@@ -2456,13 +2519,32 @@ pub unsafe extern "C" fn krun_add_console_port_inout(
         }
     };
 
+    if let Some(vmm) = RUNNING_CTX_MAP.lock().unwrap().get(&ctx_id) {
+        let vmm = vmm.lock().unwrap();
+        let Some(console) = vmm.console_controller(console_id) else {
+            error!("krun_add_console_port_tty: Invalid console id={console_id}");
+            return -libc::ENOENT;
+        };
+
+        return match console.add_port(PortDescription {
+            name: name_str.into(),
+            input: Some(port_io::input_to_raw_fd_dup(input_fd).unwrap()),
+            output: Some(port_io::output_to_raw_fd_dup(output_fd).unwrap()),
+            terminal: None,
+        }) {
+            Ok(()) => KRUN_SUCCESS,
+            Err(ConsoleControllerError::NotReady) => -libc::EAGAIN,
+            Err(ConsoleControllerError::OutOfPorts) => -libc::ENOMEM,
+        };
+    }
+
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
 
             match cfg.vmr.virtio_consoles.get_mut(console_id as usize) {
                 Some(VirtioConsoleConfig {
-                    mode: VirtioConsoleConfigMode::Explicit(ports),
+                    mode: VirtioConsoleConfigMode::Explicit { ports, .. },
                     ..
                 }) => {
                     ports.push(PortConfig::InOut {
