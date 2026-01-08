@@ -501,7 +501,6 @@ int main(int argc, char *argv[])
 
 out:
     exit(ret);
-    reboot(RB_AUTOBOOT);
 
     // Unreachable.
     return -1;
