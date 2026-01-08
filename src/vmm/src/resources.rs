@@ -9,6 +9,9 @@ use std::fs::File;
 use std::io::BufReader;
 use std::os::fd::RawFd;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+use utils::eventfd::EventFd;
 
 #[cfg(feature = "tee")]
 use serde::{Deserialize, Serialize};
@@ -100,6 +103,12 @@ pub enum VirtioConsoleConfigMode {
     Explicit(Vec<PortConfig>),
 }
 
+pub struct VirtioConsoleConfig {
+    pub mode: VirtioConsoleConfigMode,
+    /// EventFd that will be signaled when the console device is ready
+    pub console_ready_evt: Arc<EventFd>,
+}
+
 pub enum PortConfig {
     Tty {
         name: String,
@@ -188,7 +197,7 @@ pub struct VmResources {
     /// Serial consoles to attach to the guest
     pub serial_consoles: Vec<SerialConsoleConfig>,
     /// Virtio consoles to attach to the guest
-    pub virtio_consoles: Vec<VirtioConsoleConfigMode>,
+    pub virtio_consoles: Vec<VirtioConsoleConfig>,
 }
 
 impl VmResources {

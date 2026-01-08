@@ -25,6 +25,7 @@ use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
 use crate::resources::{
     DefaultVirtioConsoleConfig, PortConfig, TsiFlags, VirtioConsoleConfigMode, VmResources,
+    VirtioConsoleConfig
 };
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(feature = "net")]
@@ -2113,25 +2114,38 @@ fn attach_console_devices(
     event_manager: &mut EventManager,
     intc: IrqChip,
     vm_resources: &VmResources,
-    cfg: Option<&VirtioConsoleConfigMode>,
+    cfg: Option<&VirtioConsoleConfig>,
     id_number: u32,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
     let creating_implicit_console = cfg.is_none();
 
+    let console_ready_evt = match cfg {
+        Some(VirtioConsoleConfig { console_ready_evt, .. }) => console_ready_evt.clone(),
+        None => Arc::new(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap()),
+    };
+
     let ports = match cfg {
         None => autoconfigure_console_ports(vmm, vm_resources, None, creating_implicit_console)?,
-        Some(VirtioConsoleConfigMode::Autoconfigure(autocfg)) => autoconfigure_console_ports(
+        Some(VirtioConsoleConfig {
+            mode: VirtioConsoleConfigMode::Autoconfigure(autocfg),
+            ..
+        }) => autoconfigure_console_ports(
             vmm,
             vm_resources,
             Some(autocfg),
             creating_implicit_console,
         )?,
-        Some(VirtioConsoleConfigMode::Explicit(ports)) => create_explicit_ports(vmm, ports)?,
+        Some(VirtioConsoleConfig {
+            mode: VirtioConsoleConfigMode::Explicit(ports),
+            ..
+        }) => create_explicit_ports(vmm, ports)?,
     };
 
-    let console = Arc::new(Mutex::new(devices::virtio::Console::new(ports).unwrap()));
+    let console = Arc::new(Mutex::new(
+        devices::virtio::Console::new(ports, console_ready_evt).unwrap(),
+    ));
 
     vmm.exit_observers.push(console.clone());
 

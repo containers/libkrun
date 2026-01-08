@@ -67,10 +67,14 @@ pub struct Console {
     pub(crate) sigwinch_evt: EventFd,
 
     config: VirtioConsoleConfig,
+    console_ready_evt: Arc<EventFd>,
 }
 
 impl Console {
-    pub fn new(ports: Vec<PortDescription>) -> super::Result<Console> {
+    pub fn new(
+        ports: Vec<PortDescription>,
+        console_ready_evt: Arc<EventFd>,
+    ) -> super::Result<Console> {
         assert!(!ports.is_empty(), "Expected at least 1 port");
 
         let num_queues = num_queues(ports.len());
@@ -105,6 +109,7 @@ impl Console {
                 .map_err(ConsoleError::EventFd)?,
             device_state: DeviceState::Inactive,
             config,
+            console_ready_evt,
         })
     }
 
@@ -194,6 +199,9 @@ impl Console {
                     );
                     for port_id in 0..self.ports.len() {
                         self.control.port_add(port_id as u32);
+                    }
+                    if let Err(e) = self.console_ready_evt.write(1) {
+                        warn!("Failed to trigger console_ready_evt: {e:?}");
                     }
                 }
                 control_event::VIRTIO_CONSOLE_PORT_READY => {

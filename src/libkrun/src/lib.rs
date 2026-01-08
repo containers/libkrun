@@ -38,8 +38,8 @@ use std::sync::Mutex;
 use std::sync::{Arc, LazyLock};
 use utils::eventfd::EventFd;
 use vmm::resources::{
-    DefaultVirtioConsoleConfig, PortConfig, SerialConsoleConfig, TsiFlags, VirtioConsoleConfigMode,
-    VmResources, VsockConfig,
+    DefaultVirtioConsoleConfig, PortConfig, SerialConsoleConfig, TsiFlags, VirtioConsoleConfig,
+    VirtioConsoleConfigMode, VmResources, VsockConfig
 };
 #[cfg(feature = "blk")]
 use vmm::vmm_config::block::{BlockDeviceConfig, BlockRootConfig};
@@ -2333,15 +2333,18 @@ pub unsafe extern "C" fn krun_add_virtio_console_default(
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
 
-            cfg.vmr
-                .virtio_consoles
-                .push(VirtioConsoleConfigMode::Autoconfigure(
-                    DefaultVirtioConsoleConfig {
-                        input_fd,
-                        output_fd,
-                        err_fd,
-                    },
-                ));
+            let console_ready_evt = Arc::new(
+                EventFd::new(utils::eventfd::EFD_NONBLOCK)
+                    .expect("Failed to create console_ready_evt"),
+            );
+            cfg.vmr.virtio_consoles.push(VirtioConsoleConfig {
+                mode: VirtioConsoleConfigMode::Autoconfigure(DefaultVirtioConsoleConfig {
+                    input_fd,
+                    output_fd,
+                    err_fd,
+                }),
+                console_ready_evt,
+            });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -2357,13 +2360,34 @@ pub unsafe extern "C" fn krun_add_virtio_console_multiport(ctx_id: u32) -> i32 {
             let cfg = ctx_cfg.get_mut();
             let console_id = cfg.vmr.virtio_consoles.len() as i32;
 
-            cfg.vmr
-                .virtio_consoles
-                .push(VirtioConsoleConfigMode::Explicit(Vec::new()));
+            let console_ready_evt = Arc::new(
+                EventFd::new(utils::eventfd::EFD_NONBLOCK)
+                    .expect("Failed to create console_ready_evt"),
+            );
+            cfg.vmr.virtio_consoles.push(VirtioConsoleConfig {
+                mode: VirtioConsoleConfigMode::Explicit(Vec::new()),
+                console_ready_evt,
+            });
 
             console_id
         }
         Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_get_console_ready_fd(ctx_id: u32, console_id: u32) -> i32 {
+    // VM not running yet, get the pre-created eventfd from CTX_MAP
+    match CTX_MAP.lock().unwrap().get(&ctx_id) {
+        Some(ctx_cfg) => match ctx_cfg.vmr.virtio_consoles.get(console_id as usize) {
+            Some(console_cfg) => console_cfg.console_ready_evt.as_raw_fd(),
+            None => {
+                error!("krun_get_console_ready_fd: Invalid console id={console_id}");
+                -libc::ENOENT
+            }
+        },
+        None => -libc::ENOENT,
     }
 }
 
@@ -2397,7 +2421,10 @@ pub unsafe extern "C" fn krun_add_console_port_tty(
             let cfg = ctx_cfg.get_mut();
 
             match cfg.vmr.virtio_consoles.get_mut(console_id as usize) {
-                Some(VirtioConsoleConfigMode::Explicit(ports)) => {
+                Some(VirtioConsoleConfig {
+                    mode: VirtioConsoleConfigMode::Explicit(ports),
+                    ..
+                }) => {
                     ports.push(PortConfig::Tty {
                         name: name_str,
                         tty_fd,
@@ -2434,7 +2461,10 @@ pub unsafe extern "C" fn krun_add_console_port_inout(
             let cfg = ctx_cfg.get_mut();
 
             match cfg.vmr.virtio_consoles.get_mut(console_id as usize) {
-                Some(VirtioConsoleConfigMode::Explicit(ports)) => {
+                Some(VirtioConsoleConfig {
+                    mode: VirtioConsoleConfigMode::Explicit(ports),
+                    ..
+                }) => {
                     ports.push(PortConfig::InOut {
                         name: name_str,
                         input_fd,
