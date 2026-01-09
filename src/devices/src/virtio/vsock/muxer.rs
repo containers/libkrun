@@ -238,11 +238,11 @@ impl VsockMuxer {
         match update.remove_proxy {
             ProxyRemoval::Keep => {}
             ProxyRemoval::Immediate => {
-                warn!("immediately removing proxy: {id}");
+                info!("immediately removing proxy: {id}");
                 self.proxy_map.write().unwrap().remove(&id);
             }
             ProxyRemoval::Deferred => {
-                warn!("deferring proxy removal: {id}");
+                info!("deferring proxy removal: {id}");
                 if let Some(reaper_sender) = &self.reaper_sender {
                     if reaper_sender.send(id).is_err() {
                         self.proxy_map.write().unwrap().remove(&id);
