@@ -144,7 +144,7 @@ int start_passt()
 
         printf("passing fd %s to passt", fd_as_str);
 
-        if (execlp("passt", "passt", "-f", "--fd", fd_as_str, NULL) < 0) {
+        if (execlp("passt", "passt", "-t", "all", "-f", "--fd", fd_as_str, NULL) < 0) {
             perror("execlp");
             return -1;
         }
