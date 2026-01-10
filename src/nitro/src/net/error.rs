@@ -12,5 +12,4 @@ pub enum Error {
     VsockBind(io::Error),
     VsockClone(io::Error),
     VsockRead(io::Error),
-    VsockWrite(io::Error),
 }

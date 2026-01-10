@@ -86,10 +86,9 @@ impl NetProxy {
                 match unix_stream_clone_read.read(&mut unix_buf) {
                     Ok(size) => {
                         if size > 0 {
-                            vsock_stream
-                                .0
-                                .write_all(&unix_buf[..size])
-                                .map_err(Error::VsockWrite)?;
+                            if vsock_stream.0.write_all(&unix_buf[..size]).is_err() {
+                                continue;
+                            }
                         } else {
                             break;
                         }
