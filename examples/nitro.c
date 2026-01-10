@@ -3,19 +3,19 @@
  * libkrun.
  */
 
+#include <assert.h>
 #include <errno.h>
+#include <getopt.h>
+#include <libkrun.h>
+#include <linux/vm_sockets.h>
+#include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/un.h>
-#include <linux/vm_sockets.h>
-#include <libkrun.h>
-#include <getopt.h>
-#include <stdbool.h>
-#include <assert.h>
-#include <pthread.h>
 
 #define MAX_ARGS_LEN 4096
 #ifndef MAX_PATH
@@ -29,26 +29,25 @@
 
 static void print_help(char *const name)
 {
-    fprintf(stderr,
+    fprintf(
+        stderr,
         "Usage: %s ENCLAVE_IMAGE NEWROOT NVCPUS RAM_MIB\n"
         "OPTIONS: \n"
         "        -h    --help                Show help\n"
         "              --net                 Enable networking with passt"
-        "              --debug               Show kernel and initramfs debug output"
+        "              --debug               Show kernel and initramfs debug "
+        "output"
         "\n"
         "NEWROOT:           The root directory of the VM\n"
         "NVCPUS:            The amount of vCPUs for running the enclave\n"
         "RAM_MIB:           The amount of RAM (MiB) allocated for enclave\n",
-        name
-    );
+        name);
 }
 
-static const struct option long_options[] = {
-    { "help", no_argument, NULL, 'h' },
-    { "net", no_argument, NULL, 'n' },
-    { "debug", no_argument, NULL, 'd'},
-    { NULL, 0, NULL, 0 }
-};
+static const struct option long_options[] = {{"help", no_argument, NULL, 'h'},
+                                             {"net", no_argument, NULL, 'n'},
+                                             {"debug", no_argument, NULL, 'd'},
+                                             {NULL, 0, NULL, 0}};
 
 struct cmdline {
     bool show_help;
@@ -73,7 +72,8 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
     };
 
     // the '+' in optstring is a GNU extension that disables permutating argv
-    while ((c = getopt_long(argc, argv, "+h", long_options, &option_index)) != -1) {
+    while ((c = getopt_long(argc, argv, "+h", long_options, &option_index)) !=
+           -1) {
         switch (c) {
         case 'h':
             cmdline->show_help = true;
@@ -87,7 +87,10 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         case '?':
             return false;
         default:
-            fprintf(stderr, "internal argument parsing error (returned character code 0x%x)\n", c);
+            fprintf(stderr,
+                    "internal argument parsing error (returned character code "
+                    "0x%x)\n",
+                    c);
             return false;
         }
     }
@@ -109,7 +112,7 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
     return false;
 }
 
-const char *const default_argv[] = { "cat", "/etc/os-release", NULL };
+const char *const default_argv[] = {"cat", "/etc/os-release", NULL};
 
 #define DEFAULT_PATH_ENV "PATH=/sbin:/usr/sbin:/bin:/usr/bin"
 const char *const default_envp[] = {
@@ -144,7 +147,8 @@ int start_passt()
 
         printf("passing fd %s to passt", fd_as_str);
 
-        if (execlp("passt", "passt", "-t", "all", "-f", "--fd", fd_as_str, NULL) < 0) {
+        if (execlp("passt", "passt", "-t", "all", "-f", "--fd", fd_as_str,
+                   NULL) < 0) {
             perror("execlp");
             return -1;
         }
@@ -169,7 +173,7 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    if (cmdline.show_help){
+    if (cmdline.show_help) {
         print_help(argv[0]);
         return 0;
     }
@@ -194,7 +198,8 @@ int main(int argc, char *const argv[])
     // Configure the number of vCPUs and amount of RAM.
     if (err = krun_set_vm_config(ctx_id, cmdline.nvcpus, cmdline.ram_mib)) {
         errno = -err;
-        perror("Error configuring the number of vCPUs and/or the amount of RAM");
+        perror(
+            "Error configuring the number of vCPUs and/or the amount of RAM");
         return -1;
     }
 
@@ -212,14 +217,15 @@ int main(int argc, char *const argv[])
     }
 
     // Configure the enclave's execution environment.
-    if (err = krun_set_exec(ctx_id, default_argv[0], default_argv, default_envp)) {
+    if (err = krun_set_exec(ctx_id, default_argv[0], default_argv,
+                            default_envp)) {
         errno = -err;
         perror("Error configuring enclave execution path");
         return -1;
     }
 
     if (cmdline.net) {
-        uint8_t mac[] = { 0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee };
+        uint8_t mac[] = {0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee};
 
         passt_fd = start_passt();
         if (passt_fd < 0) {
@@ -227,7 +233,8 @@ int main(int argc, char *const argv[])
             return -1;
         }
 
-        if (err = krun_add_net_unixstream(ctx_id, NULL, passt_fd, &mac[0], COMPAT_NET_FEATURES, 0)) {
+        if (err = krun_add_net_unixstream(ctx_id, NULL, passt_fd, &mac[0],
+                                          COMPAT_NET_FEATURES, 0)) {
             errno = -err;
             perror("Error configuring net mode");
             return -1;
