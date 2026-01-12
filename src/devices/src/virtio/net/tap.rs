@@ -14,6 +14,7 @@ use virtio_bindings::virtio_net::{
 };
 
 use super::backend::{ConnectError, NetBackend, ReadError, WriteError};
+use super::{write_virtio_net_hdr, FRAME_HEADER_LEN};
 
 ioctl_write_ptr!(tunsetiff, b'T', 202, c_int);
 ioctl_write_int!(tunsetoffload, b'T', 208);
@@ -21,11 +22,16 @@ ioctl_write_ptr!(tunsetvnethdrsz, b'T', 216, c_int);
 
 pub struct Tap {
     fd: OwnedFd,
+    include_vnet_header: bool,
 }
 
 impl Tap {
     /// Create an endpoint using the file descriptor of a tap device
-    pub fn new(tap_name: String, vnet_features: u64) -> Result<Self, ConnectError> {
+    pub fn new(
+        tap_name: String,
+        vnet_features: u64,
+        include_vnet_header: bool,
+    ) -> Result<Self, ConnectError> {
         let fd = match open("/dev/net/tun", OFlag::O_RDWR, Mode::empty()) {
             Ok(fd) => fd,
             Err(err) => return Err(ConnectError::OpenNetTun(err)),
@@ -41,7 +47,10 @@ impl Tap {
             );
         }
 
-        req.ifr_ifru.ifru_flags = IFF_TAP as i16 | IFF_NO_PI as i16 | IFF_VNET_HDR as i16;
+        req.ifr_ifru.ifru_flags = IFF_TAP as i16 | IFF_NO_PI as i16;
+        if include_vnet_header {
+            req.ifr_ifru.ifru_flags |= IFF_VNET_HDR as i16;
+        }
 
         let mut offload_flags: u64 = 0;
         if (vnet_features & (1 << VIRTIO_NET_F_GUEST_CSUM)) != 0 {
@@ -84,7 +93,10 @@ impl Tap {
             Err(e) => error!("couldn't obtain fd flags id={fd:?}, err={e}"),
         };
 
-        Ok(Self { fd })
+        Ok(Self {
+            fd,
+            include_vnet_header,
+        })
     }
 }
 
@@ -92,7 +104,13 @@ impl NetBackend for Tap {
     /// Try to read a frame from the tap devie. If no bytes are available reports
     /// ReadError::NothingRead.
     fn read_frame(&mut self, buf: &mut [u8]) -> Result<usize, ReadError> {
-        let frame_length = match read(&self.fd, buf) {
+        let buf_offset = if !self.include_vnet_header {
+            write_virtio_net_hdr(buf)
+        } else {
+            0
+        };
+
+        let frame_length = match read(&self.fd, &mut buf[buf_offset..]) {
             Ok(f) => f,
             #[allow(unreachable_patterns)]
             Err(nix::Error::EAGAIN | nix::Error::EWOULDBLOCK) => {
@@ -103,12 +121,17 @@ impl NetBackend for Tap {
             }
         };
         debug!("Read eth frame from tap: {frame_length} bytes");
-        Ok(frame_length)
+        Ok(buf_offset + frame_length)
     }
 
     /// Try to write a frame to the tap device.
-    fn write_frame(&mut self, _hdr_len: usize, buf: &mut [u8]) -> Result<(), WriteError> {
-        let ret = write(&self.fd, buf).map_err(WriteError::Internal)?;
+    fn write_frame(&mut self, hdr_len: usize, buf: &mut [u8]) -> Result<(), WriteError> {
+        let buf_offset = if !self.include_vnet_header {
+            hdr_len
+        } else {
+            FRAME_HEADER_LEN
+        };
+        let ret = write(&self.fd, buf[buf_offset..]).map_err(WriteError::Internal)?;
         debug!("Written frame size={}, written={}", buf.len(), ret);
         Ok(())
     }
