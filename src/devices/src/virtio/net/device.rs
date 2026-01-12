@@ -4,11 +4,12 @@
 // Portions Copyright 2017 The Chromium OS Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
-use crate::virtio::net::{Error, Result};
-use crate::virtio::net::{QUEUE_SIZES, RX_INDEX, TX_INDEX};
+use crate::virtio::net::Result;
+use crate::virtio::net::{NUM_QUEUES, QUEUE_CONFIG};
 use crate::virtio::queue::Error as QueueError;
 use crate::virtio::{
-    ActivateError, ActivateResult, DeviceState, InterruptTransport, Queue, VirtioDevice, TYPE_NET,
+    ActivateError, ActivateResult, DeviceQueue, DeviceState, InterruptTransport, QueueConfig,
+    VirtioDevice, TYPE_NET,
 };
 use crate::Error as DeviceError;
 
@@ -19,7 +20,6 @@ use std::cmp;
 use std::io::Write;
 use std::os::fd::RawFd;
 use std::path::PathBuf;
-use utils::eventfd::{EventFd, EFD_NONBLOCK};
 use virtio_bindings::virtio_net::VIRTIO_NET_F_MAC;
 use virtio_bindings::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 use vm_memory::{ByteValued, GuestMemoryError, GuestMemoryMmap};
@@ -76,9 +76,6 @@ pub struct Net {
     avail_features: u64,
     acked_features: u64,
 
-    queues: Vec<Queue>,
-    queue_evts: Vec<EventFd>,
-
     pub(crate) device_state: DeviceState,
 
     config: VirtioNetConfig,
@@ -97,13 +94,6 @@ impl Net {
             | (1 << VIRTIO_RING_F_EVENT_IDX)
             | (1 << VIRTIO_F_VERSION_1);
 
-        let mut queue_evts = Vec::new();
-        for _ in QUEUE_SIZES.iter() {
-            queue_evts.push(EventFd::new(EFD_NONBLOCK).map_err(Error::EventFd)?);
-        }
-
-        let queues = QUEUE_SIZES.iter().map(|&s| Queue::new(s)).collect();
-
         let config = VirtioNetConfig {
             mac,
             status: 0,
@@ -117,8 +107,6 @@ impl Net {
             avail_features,
             acked_features: 0u64,
 
-            queues,
-            queue_evts,
             device_state: DeviceState::Inactive,
             config,
         })
@@ -156,16 +144,8 @@ impl VirtioDevice for Net {
         "net"
     }
 
-    fn queues(&self) -> &[Queue] {
-        &self.queues
-    }
-
-    fn queues_mut(&mut self) -> &mut [Queue] {
-        &mut self.queues
-    }
-
-    fn queue_events(&self) -> &[EventFd] {
-        &self.queue_evts
+    fn queue_config(&self) -> &[QueueConfig] {
+        &QUEUE_CONFIG
     }
 
     fn read_config(&self, offset: u64, mut data: &mut [u8]) {
@@ -190,20 +170,24 @@ impl VirtioDevice for Net {
         );
     }
 
-    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult {
-        let event_idx: bool = (self.acked_features & (1 << VIRTIO_RING_F_EVENT_IDX)) != 0;
-        self.queues[RX_INDEX].set_event_idx(event_idx);
-        self.queues[TX_INDEX].set_event_idx(event_idx);
+    fn activate(
+        &mut self,
+        mem: GuestMemoryMmap,
+        interrupt: InterruptTransport,
+        queues: Vec<DeviceQueue>,
+    ) -> ActivateResult {
+        let [mut rx_q, mut tx_q]: [_; NUM_QUEUES] = queues.try_into().map_err(|_| {
+            error!("Cannot perform activate. Expected {} queue(s)", NUM_QUEUES);
+            ActivateError::BadActivate
+        })?;
 
-        let queue_evts = self
-            .queue_evts
-            .iter()
-            .map(|e| e.try_clone().unwrap())
-            .collect();
+        let event_idx: bool = (self.acked_features & (1 << VIRTIO_RING_F_EVENT_IDX)) != 0;
+        rx_q.queue.set_event_idx(event_idx);
+        tx_q.queue.set_event_idx(event_idx);
 
         match NetWorker::new(
-            self.queues.clone(),
-            queue_evts,
+            rx_q,
+            tx_q,
             interrupt.clone(),
             mem.clone(),
             self.acked_features,

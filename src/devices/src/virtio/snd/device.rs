@@ -5,7 +5,7 @@ use utils::eventfd::EventFd;
 use virtio_bindings::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
-use super::super::{ActivateError, ActivateResult, Queue as VirtQueue, VirtioDevice};
+use super::super::{ActivateError, ActivateResult, DeviceQueue, QueueConfig, VirtioDevice};
 use super::virtio_sound::VirtioSoundConfig;
 use super::worker::SndWorker;
 use super::{defs, defs::uapi, defs::QUEUE_INDEXES, Error};
@@ -16,8 +16,6 @@ use crate::virtio::{DeviceState, InterruptTransport};
 pub(crate) const AVAIL_FEATURES: u64 = 1 << uapi::VIRTIO_F_VERSION_1 as u64;
 
 pub struct Snd {
-    pub(crate) queues: Vec<VirtQueue>,
-    pub(crate) queue_events: Vec<EventFd>,
     pub(crate) avail_features: u64,
     pub(crate) acked_features: u64,
     pub(crate) activate_evt: EventFd,
@@ -27,16 +25,8 @@ pub struct Snd {
 }
 
 impl Snd {
-    pub(crate) fn with_queues(queues: Vec<VirtQueue>) -> super::Result<Snd> {
-        let mut queue_events = Vec::new();
-        for _ in 0..queues.len() {
-            queue_events
-                .push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(Error::EventFdCreate)?);
-        }
-
+    pub fn new() -> super::Result<Snd> {
         Ok(Snd {
-            queues,
-            queue_events,
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
             activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
@@ -46,14 +36,6 @@ impl Snd {
             worker_stopfd: EventFd::new(utils::eventfd::EFD_NONBLOCK)
                 .map_err(Error::EventFdCreate)?,
         })
-    }
-
-    pub fn new() -> super::Result<Snd> {
-        let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
-            .iter()
-            .map(|&max_size| VirtQueue::new(max_size))
-            .collect();
-        Self::with_queues(queues)
     }
 
     pub fn id(&self) -> &str {
@@ -82,16 +64,8 @@ impl VirtioDevice for Snd {
         "snd"
     }
 
-    fn queues(&self) -> &[VirtQueue] {
-        &self.queues
-    }
-
-    fn queues_mut(&mut self) -> &mut [VirtQueue] {
-        &mut self.queues
-    }
-
-    fn queue_events(&self) -> &[EventFd] {
-        &self.queue_events
+    fn queue_config(&self) -> &[QueueConfig] {
+        &defs::QUEUE_CONFIG
     }
 
     fn read_config(&self, offset: u64, mut data: &mut [u8]) {
@@ -122,33 +96,32 @@ impl VirtioDevice for Snd {
         );
     }
 
-    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult {
+    fn activate(
+        &mut self,
+        mem: GuestMemoryMmap,
+        interrupt: InterruptTransport,
+        mut queues: Vec<DeviceQueue>,
+    ) -> ActivateResult {
         if self.worker_thread.is_some() {
             panic!("virtio_snd: worker thread already exists");
         }
 
-        if self.queues.len() != defs::NUM_QUEUES {
+        if queues.len() != defs::NUM_QUEUES {
             error!(
                 "Cannot perform activate. Expected {} queue(s), got {}",
                 defs::NUM_QUEUES,
-                self.queues.len()
+                queues.len()
             );
             return Err(ActivateError::BadActivate);
         }
 
         let event_idx: bool = (self.acked_features & (1 << VIRTIO_RING_F_EVENT_IDX)) != 0;
         for idx in QUEUE_INDEXES {
-            self.queues[idx].set_event_idx(event_idx);
+            queues[idx].queue.set_event_idx(event_idx);
         }
 
-        let queue_evts = self
-            .queue_events
-            .iter()
-            .map(|e| e.try_clone().unwrap())
-            .collect();
         let worker = SndWorker::new(
-            self.queues.clone(),
-            queue_evts,
+            queues,
             interrupt.clone(),
             mem.clone(),
             self.worker_stopfd.try_clone().unwrap(),

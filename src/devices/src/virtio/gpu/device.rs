@@ -6,8 +6,8 @@ use utils::eventfd::EventFd;
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::super::{
-    fs::ExportTable, ActivateError, ActivateResult, DeviceState, GpuError, Queue as VirtQueue,
-    VirtioDevice, VirtioShmRegion,
+    fs::ExportTable, ActivateError, ActivateResult, DeviceQueue, DeviceState, GpuError,
+    Queue as VirtQueue, QueueConfig, VirtioDevice, VirtioShmRegion,
 };
 use super::defs;
 use super::defs::uapi;
@@ -19,11 +19,6 @@ use krun_display::DisplayBackend;
 #[cfg(target_os = "macos")]
 use utils::worker_message::WorkerMessage;
 
-// Control queue.
-pub(crate) const CTL_INDEX: usize = 0;
-// Cursor queue.
-pub(crate) const CUR_INDEX: usize = 1;
-
 // Supported features.
 pub(crate) const AVAIL_FEATURES: u64 = (1u64 << uapi::VIRTIO_F_VERSION_1)
     | (1u64 << uapi::VIRTIO_GPU_F_VIRGL)
@@ -32,11 +27,15 @@ pub(crate) const AVAIL_FEATURES: u64 = (1u64 << uapi::VIRTIO_F_VERSION_1)
     | (1u64 << uapi::VIRTIO_GPU_F_RESOURCE_BLOB)
     | (1u64 << uapi::VIRTIO_GPU_F_CONTEXT_INIT);
 
+const QUEUE_SIZE: u16 = 256;
+static QUEUE_CONFIG: [QueueConfig; defs::NUM_QUEUES] =
+    [QueueConfig::new(QUEUE_SIZE); defs::NUM_QUEUES];
+
 pub struct Gpu {
-    pub(crate) queue_ctl: Arc<Mutex<VirtQueue>>,
-    pub(crate) queue_cur: Arc<Mutex<VirtQueue>>,
-    pub(crate) queues: Vec<VirtQueue>,
-    pub(crate) queue_events: Vec<EventFd>,
+    pub(crate) queue_ctl: Option<Arc<Mutex<VirtQueue>>>,
+    // Queue events stored for event handler - these are shared with DeviceQueue
+    pub(crate) ctl_event: Option<Arc<EventFd>>,
+    pub(crate) cur_event: Option<Arc<EventFd>>,
     pub(crate) avail_features: u64,
     pub(crate) acked_features: u64,
     pub(crate) activate_evt: EventFd,
@@ -52,27 +51,16 @@ pub struct Gpu {
 }
 
 impl Gpu {
-    pub(crate) fn with_queues(
-        queues: Vec<VirtQueue>,
+    pub fn new(
         virgl_flags: u32,
         displays: Box<[DisplayInfo]>,
         display_backend: DisplayBackend<'static>,
         #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
     ) -> super::Result<Gpu> {
-        let mut queue_events = Vec::new();
-        for _ in 0..queues.len() {
-            queue_events
-                .push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(GpuError::EventFd)?);
-        }
-
-        let queue_ctl = Arc::new(Mutex::new(queues[CTL_INDEX].clone()));
-        let queue_cur = Arc::new(Mutex::new(queues[CUR_INDEX].clone()));
-
         Ok(Gpu {
-            queue_ctl,
-            queue_cur,
-            queues,
-            queue_events,
+            queue_ctl: None,
+            ctl_event: None,
+            cur_event: None,
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
             activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(GpuError::EventFd)?,
@@ -86,26 +74,6 @@ impl Gpu {
             displays,
             display_backend,
         })
-    }
-
-    pub fn new(
-        virgl_flags: u32,
-        displays: Box<[DisplayInfo]>,
-        display_backend: DisplayBackend<'static>,
-        #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
-    ) -> super::Result<Gpu> {
-        let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
-            .iter()
-            .map(|&max_size| VirtQueue::new(max_size))
-            .collect();
-        Self::with_queues(
-            queues,
-            virgl_flags,
-            displays,
-            display_backend,
-            #[cfg(target_os = "macos")]
-            map_sender,
-        )
     }
 
     pub fn id(&self) -> &str {
@@ -198,16 +166,8 @@ impl VirtioDevice for Gpu {
         "gpu"
     }
 
-    fn queues(&self) -> &[VirtQueue] {
-        &self.queues
-    }
-
-    fn queues_mut(&mut self) -> &mut [VirtQueue] {
-        &mut self.queues
-    }
-
-    fn queue_events(&self) -> &[EventFd] {
-        &self.queue_events
+    fn queue_config(&self) -> &[QueueConfig] {
+        &QUEUE_CONFIG
     }
 
     fn read_config(&self, offset: u64, mut data: &mut [u8]) {
@@ -239,29 +199,36 @@ impl VirtioDevice for Gpu {
         );
     }
 
-    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult {
-        if self.queues.len() != defs::NUM_QUEUES {
+    fn activate(
+        &mut self,
+        mem: GuestMemoryMmap,
+        interrupt: InterruptTransport,
+        queues: Vec<DeviceQueue>,
+    ) -> ActivateResult {
+        let [control_q, cursor_q]: [_; defs::NUM_QUEUES] = queues.try_into().map_err(|_| {
             error!(
-                "Cannot perform activate. Expected {} queue(s), got {}",
-                defs::NUM_QUEUES,
-                self.queues.len()
+                "Cannot perform activate. Expected {} queue(s)",
+                defs::NUM_QUEUES
             );
-            return Err(ActivateError::BadActivate);
-        }
+            ActivateError::BadActivate
+        })?;
 
         let shm_region = match self.shm_region.as_ref() {
             Some(s) => s.clone(),
             None => panic!("virtio_gpu: missing SHM region"),
         };
 
-        self.queue_ctl = Arc::new(Mutex::new(self.queues[CTL_INDEX].clone()));
-        self.queue_cur = Arc::new(Mutex::new(self.queues[CUR_INDEX].clone()));
+        self.ctl_event = Some(control_q.event.clone());
+        self.cur_event = Some(cursor_q.event.clone());
+        let queue_ctl = Arc::new(Mutex::new(control_q.queue));
+        self.queue_ctl = Some(queue_ctl.clone());
+        // cursor queue not used by worker
 
         let (sender, receiver) = unbounded();
         let worker = Worker::new(
             receiver,
             mem.clone(),
-            self.queue_ctl.clone(),
+            queue_ctl,
             interrupt.clone(),
             shm_region,
             self.virgl_flags,

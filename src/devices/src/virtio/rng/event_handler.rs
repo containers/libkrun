@@ -16,7 +16,7 @@ impl Rng {
             return;
         }
 
-        if let Err(e) = self.queue_events[REQ_INDEX].read() {
+        if let Err(e) = self.queue_event(REQ_INDEX).read() {
             error!("Failed to read request queue event: {e:?}");
         } else if self.process_req() {
             self.device_state.signal_used_queue();
@@ -37,11 +37,8 @@ impl Rng {
 
         event_manager
             .register(
-                self.queue_events[REQ_INDEX].as_raw_fd(),
-                EpollEvent::new(
-                    EventSet::IN,
-                    self.queue_events[REQ_INDEX].as_raw_fd() as u64,
-                ),
+                self.queue_event(REQ_INDEX).as_raw_fd(),
+                EpollEvent::new(EventSet::IN, self.queue_event(REQ_INDEX).as_raw_fd() as u64),
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
@@ -59,7 +56,7 @@ impl Rng {
 impl Subscriber for Rng {
     fn process(&mut self, event: &EpollEvent, event_manager: &mut EventManager) {
         let source = event.fd();
-        let req = self.queue_events[REQ_INDEX].as_raw_fd();
+        let req = self.queue_event(REQ_INDEX).as_raw_fd();
         let activate_evt = self.activate_evt.as_raw_fd();
 
         if self.is_activated() {

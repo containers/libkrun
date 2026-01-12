@@ -8,7 +8,7 @@ use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 use vm_memory::{ByteValued, Bytes, GuestMemoryMmap};
 
-use super::super::Queue;
+use super::super::DeviceQueue;
 use super::audio_backends::{alloc_audio_backend, AudioBackend};
 use super::defs::{CTL_INDEX, EVT_INDEX, QUEUE_INDEXES, RXQ_INDEX, TXQ_INDEX};
 use super::stream::{Error as StreamError, Stream};
@@ -28,7 +28,7 @@ use crate::virtio::{DescriptorChain, InterruptTransport};
 
 pub struct SndWorker {
     vrings: Vec<Arc<Mutex<Vring>>>,
-    queue_evts: Vec<EventFd>,
+    queue_events: Vec<Arc<EventFd>>,
     interrupt: InterruptTransport,
     mem: GuestMemoryMmap,
     streams: Arc<RwLock<Vec<Stream>>>,
@@ -40,10 +40,8 @@ pub struct SndWorker {
 }
 
 impl SndWorker {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        queues: Vec<Queue>,
-        queue_evts: Vec<EventFd>,
+        queues: Vec<DeviceQueue>,
         interrupt: InterruptTransport,
         mem: GuestMemoryMmap,
         stop_fd: EventFd,
@@ -86,18 +84,20 @@ impl SndWorker {
             RwLock::new(alloc_audio_backend(BackendType::Pipewire, streams.clone()).unwrap());
 
         let mut vrings: Vec<Arc<Mutex<Vring>>> = Vec::new();
+        let mut queue_events: Vec<Arc<EventFd>> = Vec::new();
 
-        for idx in QUEUE_INDEXES {
+        for dq in queues {
             vrings.push(Arc::new(Mutex::new(Vring {
                 mem: mem.clone(),
-                queue: queues[idx].clone(),
+                queue: dq.queue,
                 interrupt: interrupt.clone(),
             })));
+            queue_events.push(dq.event);
         }
 
         Self {
             vrings,
-            queue_evts,
+            queue_events,
             interrupt,
             mem,
             streams,
@@ -120,7 +120,7 @@ impl SndWorker {
         let epoll = Epoll::new().unwrap();
 
         for idx in QUEUE_INDEXES {
-            let fd = self.queue_evts[idx].as_raw_fd();
+            let fd = self.queue_events[idx].as_raw_fd();
             epoll
                 .ctl(
                     ControlOperation::Add,
@@ -173,7 +173,7 @@ impl SndWorker {
 
     fn handle_event(&mut self, queue_index: usize) {
         debug!("Fs: queue event: {queue_index}");
-        if let Err(e) = self.queue_evts[queue_index].read() {
+        if let Err(e) = self.queue_events[queue_index].read() {
             error!("Failed to get queue event: {e:?}");
         }
 

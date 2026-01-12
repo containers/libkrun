@@ -22,16 +22,19 @@ use super::{Descriptor, InterruptTransport, Queue};
 use crate::virtio::snd::virtio_sound::{VirtioSoundHeader, VirtioSoundPcmStatus};
 
 mod defs {
+    use super::super::QueueConfig;
     use super::virtio_sound::*;
 
     pub const SND_DEV_ID: &str = "virtio_snd";
     pub const NUM_QUEUES: usize = 4;
-    pub const QUEUE_SIZES: &[u16] = &[256; NUM_QUEUES];
     pub const CTL_INDEX: usize = 0;
     pub const EVT_INDEX: usize = 1;
     pub const TXQ_INDEX: usize = 2;
     pub const RXQ_INDEX: usize = 3;
     pub const QUEUE_INDEXES: [usize; 4] = [CTL_INDEX, EVT_INDEX, TXQ_INDEX, RXQ_INDEX];
+
+    const QUEUE_SIZE: u16 = 256;
+    pub static QUEUE_CONFIG: [QueueConfig; NUM_QUEUES] = [QueueConfig::new(QUEUE_SIZE); NUM_QUEUES];
 
     pub const SUPPORTED_FORMATS: u64 = (1 << VIRTIO_SND_PCM_FMT_U8)
         | (1 << VIRTIO_SND_PCM_FMT_S16)
