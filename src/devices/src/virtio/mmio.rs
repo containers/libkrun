@@ -5,11 +5,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
-use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+
+use utils::eventfd::EFD_NONBLOCK;
+use virtio_bindings::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 
 use super::device_status;
 use super::*;
@@ -66,7 +68,14 @@ pub struct MmioTransport {
     pub(crate) device_status: u32,
     pub(crate) config_generation: u32,
     mem: GuestMemoryMmap,
-    queue_evts: HashMap<u32, EventFd>,
+    // Queues owned by the transport during negotiation.
+    // These are moved to the device on activation.
+    queues: Option<Vec<Queue>>,
+    // Queue eventfds - kept by transport to send notifications.
+    // Arc clones are passed to the device on activation.
+    queue_evts: Vec<Arc<EventFd>>,
+    // Stored queue config from device for recreating queues after reset.
+    queue_config: Vec<QueueConfig>,
     shm_region_select: u32,
     interrupt: InterruptTransport,
 }
@@ -160,16 +169,16 @@ impl MmioTransport {
         intc: IrqChip,
         device: Arc<Mutex<dyn VirtioDevice>>,
     ) -> Result<MmioTransport, CreateMmioTransportError> {
-        let debug_log_target = format!(
-            "{}[{}]",
-            module_path!(),
-            device
-                .try_lock()
-                .expect(
-                    "Mutex of VirtioDevice should not be locked when calling MmioTransport::new"
-                )
-                .device_name()
-        );
+        let locked = device
+            .try_lock()
+            .expect("Mutex of VirtioDevice should not be locked when calling MmioTransport::new");
+
+        let debug_log_target = format!("{}[{}]", module_path!(), locked.device_name());
+        let queue_config: Vec<QueueConfig> = locked.queue_config().to_vec();
+        drop(locked);
+
+        let queues = Self::create_queues(&queue_config);
+        let queue_evts = Self::create_queue_evts(queue_config.len())?;
 
         Ok(MmioTransport {
             interrupt: InterruptTransport::new(intc, debug_log_target)?,
@@ -180,9 +189,28 @@ impl MmioTransport {
             device_status: device_status::INIT,
             config_generation: 0,
             mem,
-            queue_evts: HashMap::new(),
+            queues: Some(queues),
+            queue_evts,
+            queue_config,
             shm_region_select: 0,
         })
+    }
+
+    /// Create queues from queue configuration.
+    fn create_queues(queue_config: &[QueueConfig]) -> Vec<Queue> {
+        queue_config.iter().map(|c| Queue::new(c.size)).collect()
+    }
+
+    /// Create eventfds for queue notifications.
+    fn create_queue_evts(count: usize) -> Result<Vec<Arc<EventFd>>, CreateMmioTransportError> {
+        let mut queue_evts = Vec::with_capacity(count);
+        for _ in 0..count {
+            queue_evts.push(Arc::new(
+                EventFd::new(EFD_NONBLOCK)
+                    .map_err(CreateMmioTransportError::CreateInterruptEventFd)?,
+            ));
+        }
+        Ok(queue_evts)
     }
 
     /// Set the irq line for the device.
@@ -204,8 +232,10 @@ impl MmioTransport {
         self.device.clone()
     }
 
-    pub fn register_queue_evt(&mut self, queue_evt: EventFd, id: u32) {
-        self.queue_evts.insert(id, queue_evt);
+    /// Returns a reference to the queue eventfds. Used by the VMM to register
+    /// queue notifications with KVM.
+    pub fn queue_evts(&self) -> &[Arc<EventFd>] {
+        &self.queue_evts
     }
 
     fn check_device_status(&self, set: u32, clr: u32) -> bool {
@@ -216,31 +246,32 @@ impl MmioTransport {
     where
         F: FnOnce(&Queue) -> U,
     {
-        match self
-            .locked_device()
-            .queues()
-            .get(self.queue_select as usize)
-        {
-            Some(queue) => f(queue),
+        match &self.queues {
+            Some(queues) => match queues.get(self.queue_select as usize) {
+                Some(queue) => f(queue),
+                None => d,
+            },
             None => d,
         }
     }
 
     fn with_queue_mut<F: FnOnce(&mut Queue)>(&mut self, f: F) -> bool {
-        if let Some(queue) = self
-            .locked_device()
-            .queues_mut()
-            .get_mut(self.queue_select as usize)
-        {
-            f(queue);
-            true
-        } else {
-            false
+        match &mut self.queues {
+            Some(queues) => {
+                if let Some(queue) = queues.get_mut(self.queue_select as usize) {
+                    f(queue);
+                    true
+                } else {
+                    false
+                }
+            }
+            None => false,
         }
     }
 
     fn update_queue_field<F: FnOnce(&mut Queue)>(&mut self, f: F) {
         if self.check_device_status(device_status::FEATURES_OK, device_status::FAILED) {
+            // FIXME: check if activated!
             self.with_queue_mut(f);
         } else {
             warn!(
@@ -259,13 +290,29 @@ impl MmioTransport {
         self.queue_select = 0;
         self.interrupt.0.status.store(0, Ordering::SeqCst);
         self.device_status = device_status::INIT;
-        // . Keep interrupt_evt and queue_evts as is. There may be pending
-        //   notifications in those eventfds, but nothing will happen other
-        //   than supurious wakeups.
+        // Do not reset config_generation and keep it monotonically increasing.
+        // Recreate queues from queue_config for the next negotiation cycle.
+        // Keep queue_evts as is - they are reused across reset cycles.
+        // TODO: consider resting the events when we refactor event handling
+        self.queues = Some(Self::create_queues(&self.queue_config));
         // . Do not reset config_generation and keep it monotonically increasing
-        for queue in self.locked_device().queues_mut() {
-            *queue = Queue::new(queue.get_max_size());
-        }
+    }
+
+    fn activate(&mut self) {
+        let Some(queues) = self.queues.take() else {
+            return;
+        };
+
+        let mut device_queues: Vec<DeviceQueue> = queues
+            .into_iter()
+            .zip(self.queue_evts.iter().cloned())
+            .map(|(queue, event)| DeviceQueue::new(queue, event))
+            .collect();
+
+        let mut locked_device = self.locked_device();
+        locked_device
+            .activate(self.mem.clone(), self.interrupt.clone(), device_queues)
+            .expect("Failed to activate device");
     }
 
     /// Update device status according to the state machine defined by VirtIO Spec 1.0.
@@ -293,9 +340,7 @@ impl MmioTransport {
                 self.device_status = status;
                 let device_activated = self.locked_device().is_activated();
                 if !device_activated {
-                    self.locked_device()
-                        .activate(self.mem.clone(), self.interrupt.clone())
-                        .expect("Failed to activate device");
+                    self.activate();
                 }
             }
             _ if (status & FAILED) != 0 => {
@@ -418,8 +463,11 @@ impl BusDevice for MmioTransport {
                     0x38 => self.update_queue_field(|q| q.size = v as u16),
                     0x44 => self.update_queue_field(|q| q.ready = v == 1),
                     0x50 => {
-                        if let Some(eventfd) = self.queue_evts.get(&v) {
-                            eventfd.write(v as u64).unwrap();
+                        // Queue notification - write to the eventfd for the specified queue.
+                        if let Some(eventfd) = self.queue_evts.get(v as usize) {
+                            eventfd.write(1).unwrap();
+                        } else {
+                            warn!("invalid queue index for notification: {v}");
                         }
                     }
                     0x64 => {
@@ -477,14 +525,13 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::legacy::DummyIrqChip;
-    use utils::eventfd::EventFd;
     use vm_memory::GuestMemoryMmap;
+
+    static QUEUE_CONFIG: [QueueConfig; 2] = [QueueConfig::new(16), QueueConfig::new(32)];
 
     pub(crate) struct DummyDevice {
         acked_features: u64,
         avail_features: u64,
-        queue_evts: Vec<EventFd>,
-        queues: Vec<Queue>,
         device_activated: bool,
         config_bytes: [u8; 0xeff],
     }
@@ -494,11 +541,6 @@ pub(crate) mod tests {
             DummyDevice {
                 acked_features: 0,
                 avail_features: 0,
-                queue_evts: vec![
-                    EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-                    EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-                ],
-                queues: vec![Queue::new(16), Queue::new(32)],
                 device_activated: false,
                 config_bytes: [0; 0xeff],
             }
@@ -540,25 +582,18 @@ pub(crate) mod tests {
             self.acked_features = acked_features;
         }
 
+        fn queue_config(&self) -> &[QueueConfig] {
+            &QUEUE_CONFIG
+        }
+
         fn activate(
             &mut self,
             _mem: GuestMemoryMmap,
             _interrupt: InterruptTransport,
+            _queues: Vec<DeviceQueue>,
         ) -> ActivateResult {
             self.device_activated = true;
             Ok(())
-        }
-
-        fn queues(&self) -> &[Queue] {
-            &self.queues
-        }
-
-        fn queues_mut(&mut self) -> &mut [Queue] {
-            &mut self.queues
-        }
-
-        fn queue_events(&self) -> &[EventFd] {
-            &self.queue_evts
         }
 
         fn is_activated(&self) -> bool {
@@ -582,17 +617,18 @@ pub(crate) mod tests {
         // We just make sure here that the implementation of a mmio device behaves as we expect,
         // given a known virtio device implementation (the dummy device).
 
-        assert_eq!(d.locked_device().queue_events().len(), 2);
+        // Transport now owns the queue_evts.
+        assert_eq!(d.queue_evts().len(), 2);
 
         d.queue_select = 0;
         assert_eq!(d.with_queue(0, Queue::get_max_size), 16);
         assert!(d.with_queue_mut(|q| q.size = 16));
-        assert_eq!(d.locked_device().queues()[d.queue_select as usize].size, 16);
+        assert_eq!(d.queues.as_ref().unwrap()[d.queue_select as usize].size, 16);
 
         d.queue_select = 1;
         assert_eq!(d.with_queue(0, Queue::get_max_size), 32);
         assert!(d.with_queue_mut(|q| q.size = 16));
-        assert_eq!(d.locked_device().queues()[d.queue_select as usize].size, 16);
+        assert_eq!(d.queues.as_ref().unwrap()[d.queue_select as usize].size, 16);
 
         d.queue_select = 2;
         assert_eq!(d.with_queue(0, Queue::get_max_size), 0);
@@ -764,42 +800,42 @@ pub(crate) mod tests {
         assert_eq!(d.queue_select, 3);
 
         d.queue_select = 0;
-        assert_eq!(d.locked_device().queues()[0].size, 0);
+        assert_eq!(d.queues.as_ref().unwrap()[0].size, 0);
         write_le_u32(&mut buf[..], 16);
         d.write(0, 0x38, &buf[..]);
-        assert_eq!(d.locked_device().queues()[0].size, 16);
+        assert_eq!(d.queues.as_ref().unwrap()[0].size, 16);
 
-        assert!(!d.locked_device().queues()[0].ready);
+        assert!(!d.queues.as_ref().unwrap()[0].ready);
         write_le_u32(&mut buf[..], 1);
         d.write(0, 0x44, &buf[..]);
-        assert!(d.locked_device().queues()[0].ready);
+        assert!(d.queues.as_ref().unwrap()[0].ready);
 
-        assert_eq!(d.locked_device().queues()[0].desc_table.0, 0);
+        assert_eq!(d.queues.as_ref().unwrap()[0].desc_table.0, 0);
         write_le_u32(&mut buf[..], 123);
         d.write(0, 0x80, &buf[..]);
-        assert_eq!(d.locked_device().queues()[0].desc_table.0, 123);
+        assert_eq!(d.queues.as_ref().unwrap()[0].desc_table.0, 123);
         d.write(0, 0x84, &buf[..]);
         assert_eq!(
-            d.locked_device().queues()[0].desc_table.0,
+            d.queues.as_ref().unwrap()[0].desc_table.0,
             123 + (123 << 32)
         );
 
-        assert_eq!(d.locked_device().queues()[0].avail_ring.0, 0);
+        assert_eq!(d.queues.as_ref().unwrap()[0].avail_ring.0, 0);
         write_le_u32(&mut buf[..], 124);
         d.write(0, 0x90, &buf[..]);
-        assert_eq!(d.locked_device().queues()[0].avail_ring.0, 124);
+        assert_eq!(d.queues.as_ref().unwrap()[0].avail_ring.0, 124);
         d.write(0, 0x94, &buf[..]);
         assert_eq!(
-            d.locked_device().queues()[0].avail_ring.0,
+            d.queues.as_ref().unwrap()[0].avail_ring.0,
             124 + (124 << 32)
         );
 
-        assert_eq!(d.locked_device().queues()[0].used_ring.0, 0);
+        assert_eq!(d.queues.as_ref().unwrap()[0].used_ring.0, 0);
         write_le_u32(&mut buf[..], 125);
         d.write(0, 0xa0, &buf[..]);
-        assert_eq!(d.locked_device().queues()[0].used_ring.0, 125);
+        assert_eq!(d.queues.as_ref().unwrap()[0].used_ring.0, 125);
         d.write(0, 0xa4, &buf[..]);
-        assert_eq!(d.locked_device().queues()[0].used_ring.0, 125 + (125 << 32));
+        assert_eq!(d.queues.as_ref().unwrap()[0].used_ring.0, 125 + (125 << 32));
 
         set_device_status(
             &mut d,
@@ -880,7 +916,7 @@ pub(crate) mod tests {
         );
 
         let mut buf = [0; 4];
-        let queue_len = d.locked_device().queues().len();
+        let queue_len = d.queues.as_ref().unwrap().len();
         for q in 0..queue_len {
             d.queue_select = q as u32;
             write_le_u32(&mut buf[..], 16);
@@ -924,7 +960,7 @@ pub(crate) mod tests {
 
         // Setup queue data structures
         let mut buf = [0; 4];
-        let queues_count = d.locked_device().queues().len();
+        let queues_count = d.queues.as_ref().unwrap().len();
         for q in 0..queues_count {
             d.queue_select = q as u32;
             write_le_u32(&mut buf[..], 16);

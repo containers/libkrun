@@ -130,12 +130,7 @@ impl MMIODeviceManager {
             return Err(Error::IrqsExhausted);
         }
 
-        for (i, queue_evt) in mmio_device
-            .locked_device()
-            .queue_events()
-            .iter()
-            .enumerate()
-        {
+        for (i, queue_evt) in mmio_device.queue_evts().iter().enumerate() {
             let io_addr = IoEventAddress::Mmio(
                 self.mmio_base + u64::from(devices::virtio::NOTIFY_REG_OFFSET),
             );
@@ -324,13 +319,14 @@ mod tests {
     use devices::legacy::KvmGicV3;
     #[cfg(target_arch = "x86_64")]
     use devices::legacy::KvmIoapic;
-    use devices::virtio::{ActivateResult, InterruptTransport, Queue, VirtioDevice};
+    use devices::virtio::{
+        ActivateResult, DeviceQueue, InterruptTransport, QueueConfig, VirtioDevice,
+    };
     use std::sync::Arc;
     use utils::errno;
-    use utils::eventfd::EventFd;
     use vm_memory::{GuestAddress, GuestMemoryMmap};
 
-    const QUEUE_SIZES: &[u16] = &[64];
+    const QUEUE_CONFIG: &[QueueConfig] = &[QueueConfig::new(64)];
 
     impl MMIODeviceManager {
         fn register_virtio_device(
@@ -356,22 +352,11 @@ mod tests {
     #[allow(dead_code)]
     struct DummyDevice {
         dummy: u32,
-        queues: Vec<Queue>,
-        queue_evts: [EventFd; 1],
-        interrupt_evt: EventFd,
     }
 
     impl DummyDevice {
         pub fn new() -> Self {
-            DummyDevice {
-                dummy: 0,
-                queues: QUEUE_SIZES.iter().map(|&s| Queue::new(s)).collect(),
-                queue_evts: [
-                    EventFd::new(utils::eventfd::EFD_NONBLOCK).expect("cannot create eventFD")
-                ],
-                interrupt_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
-                    .expect("cannot create eventFD"),
-            }
+            DummyDevice { dummy: 0 }
         }
     }
 
@@ -394,21 +379,8 @@ mod tests {
             "dummy"
         }
 
-        fn queues(&self) -> &[Queue] {
-            &self.queues
-        }
-
-        fn queues_mut(&mut self) -> &mut [Queue] {
-            &mut self.queues
-        }
-
-        fn queue_events(&self) -> &[EventFd] {
-            &self.queue_evts
-        }
-
-        fn ack_features_by_page(&mut self, page: u32, value: u32) {
-            let _ = page;
-            let _ = value;
+        fn queue_config(&self) -> &[QueueConfig] {
+            &QUEUE_CONFIG
         }
 
         fn read_config(&self, offset: u64, data: &mut [u8]) {
@@ -421,7 +393,12 @@ mod tests {
             let _ = data;
         }
 
-        fn activate(&mut self, _mem: GuestMemoryMmap, _intc: InterruptTransport) -> ActivateResult {
+        fn activate(
+            &mut self,
+            _mem: GuestMemoryMmap,
+            _intc: InterruptTransport,
+            _queues: Vec<DeviceQueue>,
+        ) -> ActivateResult {
             Ok(())
         }
 
@@ -502,7 +479,7 @@ mod tests {
     fn test_dummy_device() {
         let dummy = DummyDevice::new();
         assert_eq!(dummy.device_type(), 0);
-        assert_eq!(dummy.queues().len(), QUEUE_SIZES.len());
+        assert_eq!(dummy.queue_config().len(), QUEUE_CONFIG.len());
     }
 
     #[test]

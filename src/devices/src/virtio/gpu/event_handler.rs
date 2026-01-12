@@ -3,7 +3,7 @@ use std::os::unix::io::AsRawFd;
 use polly::event_manager::{EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
 
-use super::device::{Gpu, CTL_INDEX, CUR_INDEX};
+use super::device::Gpu;
 use crate::virtio::device::VirtioDevice;
 
 impl Gpu {
@@ -16,10 +16,11 @@ impl Gpu {
             return;
         }
 
-        if let Err(e) = self.queue_events[CTL_INDEX].read() {
+        let ctl_event = self.ctl_event.as_ref().unwrap();
+        if let Err(e) = ctl_event.read() {
             error!("Failed to read request queue event: {e:?}");
-        } else if let Err(e) = self.sender.as_ref().unwrap().send(CTL_INDEX as u64) {
-            error!("Failed to signal worker for queue {CTL_INDEX}: {e:?}");
+        } else if let Err(e) = self.sender.as_ref().unwrap().send(0) {
+            error!("Failed to signal worker for ctl queue: {e:?}");
         }
     }
 
@@ -32,10 +33,11 @@ impl Gpu {
             return;
         }
 
-        if let Err(e) = self.queue_events[CUR_INDEX].read() {
+        let cur_event = self.cur_event.as_ref().unwrap();
+        if let Err(e) = cur_event.read() {
             error!("Failed to read request queue event: {e:?}");
-        } else if let Err(e) = self.sender.as_ref().unwrap().send(CUR_INDEX as u64) {
-            error!("Failed to signal worker for queue {CUR_INDEX}: {e:?}");
+        } else if let Err(e) = self.sender.as_ref().unwrap().send(1) {
+            error!("Failed to signal worker for cur queue: {e:?}");
         }
     }
 
@@ -51,13 +53,13 @@ impl Gpu {
             .subscriber(self.activate_evt.as_raw_fd())
             .unwrap();
 
+        let ctl_event = self.ctl_event.as_ref().unwrap();
+        let cur_event = self.cur_event.as_ref().unwrap();
+
         event_manager
             .register(
-                self.queue_events[CTL_INDEX].as_raw_fd(),
-                EpollEvent::new(
-                    EventSet::IN,
-                    self.queue_events[CTL_INDEX].as_raw_fd() as u64,
-                ),
+                ctl_event.as_raw_fd(),
+                EpollEvent::new(EventSet::IN, ctl_event.as_raw_fd() as u64),
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
@@ -66,11 +68,8 @@ impl Gpu {
 
         event_manager
             .register(
-                self.queue_events[CUR_INDEX].as_raw_fd(),
-                EpollEvent::new(
-                    EventSet::IN,
-                    self.queue_events[CUR_INDEX].as_raw_fd() as u64,
-                ),
+                cur_event.as_raw_fd(),
+                EpollEvent::new(EventSet::IN, cur_event.as_raw_fd() as u64),
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
@@ -88,11 +87,11 @@ impl Gpu {
 impl Subscriber for Gpu {
     fn process(&mut self, event: &EpollEvent, event_manager: &mut EventManager) {
         let source = event.fd();
-        let ctl = self.queue_events[CTL_INDEX].as_raw_fd();
-        let cur = self.queue_events[CUR_INDEX].as_raw_fd();
         let activate_evt = self.activate_evt.as_raw_fd();
 
         if self.is_activated() {
+            let ctl = self.ctl_event.as_ref().unwrap().as_raw_fd();
+            let cur = self.cur_event.as_ref().unwrap().as_raw_fd();
             match source {
                 _ if source == ctl => self.handle_ctl_event(event),
                 _ if source == cur => self.handle_cur_event(event),

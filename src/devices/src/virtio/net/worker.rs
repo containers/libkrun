@@ -3,8 +3,8 @@ use crate::virtio::net::backend::ConnectError;
 use crate::virtio::net::tap::Tap;
 use crate::virtio::net::unixgram::Unixgram;
 use crate::virtio::net::unixstream::Unixstream;
-use crate::virtio::net::{MAX_BUFFER_SIZE, QUEUE_SIZE, RX_INDEX, TX_INDEX};
-use crate::virtio::{InterruptTransport, Queue};
+use crate::virtio::net::{MAX_BUFFER_SIZE, QUEUE_SIZE};
+use crate::virtio::{DeviceQueue, InterruptTransport};
 
 use super::backend::{NetBackend, ReadError, WriteError};
 use super::device::{FrontendError, RxError, TxError, VirtioNetBackend};
@@ -14,12 +14,11 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::thread;
 use std::{cmp, result};
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
-use utils::eventfd::EventFd;
 use vm_memory::{Bytes, GuestAddress, GuestMemoryMmap};
 
 pub struct NetWorker {
-    queues: Vec<Queue>,
-    queue_evts: Vec<EventFd>,
+    rx_q: DeviceQueue,
+    tx_q: DeviceQueue,
     interrupt: InterruptTransport,
 
     mem: GuestMemoryMmap,
@@ -35,10 +34,9 @@ pub struct NetWorker {
 }
 
 impl NetWorker {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        queues: Vec<Queue>,
-        queue_evts: Vec<EventFd>,
+        rx_q: DeviceQueue,
+        tx_q: DeviceQueue,
         interrupt: InterruptTransport,
         mem: GuestMemoryMmap,
         _vnet_features: u64,
@@ -70,8 +68,8 @@ impl NetWorker {
         };
 
         Ok(Self {
-            queues,
-            queue_evts,
+            rx_q,
+            tx_q,
 
             mem,
             backend,
@@ -95,8 +93,8 @@ impl NetWorker {
     }
 
     fn work(mut self) {
-        let virtq_rx_ev_fd = self.queue_evts[RX_INDEX].as_raw_fd();
-        let virtq_tx_ev_fd = self.queue_evts[TX_INDEX].as_raw_fd();
+        let virtq_rx_ev_fd = self.rx_q.event.as_raw_fd();
+        let virtq_tx_ev_fd = self.tx_q.event.as_raw_fd();
         let backend_socket = self.backend.raw_socket_fd();
 
         let epoll = Epoll::new().unwrap();
@@ -166,22 +164,22 @@ impl NetWorker {
     }
 
     pub(crate) fn process_rx_queue_event(&mut self) {
-        if let Err(e) = self.queue_evts[RX_INDEX].read() {
+        if let Err(e) = self.rx_q.event.read() {
             log::error!("Failed to get rx event from queue: {e:?}");
         }
-        if let Err(e) = self.queues[RX_INDEX].disable_notification(&self.mem) {
+        if let Err(e) = self.rx_q.queue.disable_notification(&self.mem) {
             error!("error disabling queue notifications: {e:?}");
         }
         if let Err(e) = self.process_rx() {
             log::error!("Failed to process rx: {e:?} (triggered by queue event)")
         };
-        if let Err(e) = self.queues[RX_INDEX].enable_notification(&self.mem) {
+        if let Err(e) = self.rx_q.queue.enable_notification(&self.mem) {
             error!("error disabling queue notifications: {e:?}");
         }
     }
 
     pub(crate) fn process_tx_queue_event(&mut self) {
-        match self.queue_evts[TX_INDEX].read() {
+        match self.tx_q.event.read() {
             Ok(_) => self.process_tx_loop(),
             Err(e) => {
                 log::error!("Failed to get tx queue event from queue: {e:?}");
@@ -190,13 +188,13 @@ impl NetWorker {
     }
 
     pub(crate) fn process_backend_socket_readable(&mut self) {
-        if let Err(e) = self.queues[RX_INDEX].enable_notification(&self.mem) {
+        if let Err(e) = self.rx_q.queue.enable_notification(&self.mem) {
             error!("error disabling queue notifications: {e:?}");
         }
         if let Err(e) = self.process_rx() {
             log::error!("Failed to process rx: {e:?} (triggered by backend socket readable)");
         };
-        if let Err(e) = self.queues[RX_INDEX].disable_notification(&self.mem) {
+        if let Err(e) = self.rx_q.queue.disable_notification(&self.mem) {
             error!("error disabling queue notifications: {e:?}");
         }
     }
@@ -259,25 +257,20 @@ impl NetWorker {
 
     fn process_tx_loop(&mut self) {
         loop {
-            self.queues[TX_INDEX]
-                .disable_notification(&self.mem)
-                .unwrap();
+            self.tx_q.queue.disable_notification(&self.mem).unwrap();
 
             if let Err(e) = self.process_tx() {
                 log::error!("Failed to process rx: {e:?} (triggered by backend socket readable)");
             };
 
-            if !self.queues[TX_INDEX]
-                .enable_notification(&self.mem)
-                .unwrap()
-            {
+            if !self.tx_q.queue.enable_notification(&self.mem).unwrap() {
                 break;
             }
         }
     }
 
     fn process_tx(&mut self) -> result::Result<(), TxError> {
-        let tx_queue = &mut self.queues[TX_INDEX];
+        let tx_queue = &mut self.tx_q.queue;
 
         if self.backend.has_unfinished_write()
             && self
@@ -379,7 +372,7 @@ impl NetWorker {
     fn write_frame_to_guest_impl(&mut self) -> result::Result<(), FrontendError> {
         let mut result: std::result::Result<(), FrontendError> = Ok(());
 
-        let queue = &mut self.queues[RX_INDEX];
+        let queue = &mut self.rx_q.queue;
         let head_descriptor = queue.pop(&self.mem).ok_or(FrontendError::EmptyQueue)?;
         let head_index = head_descriptor.index;
 
@@ -427,7 +420,7 @@ impl NetWorker {
     // Copies a single frame from `self.rx_frame_buf` into the guest. In case of an error retries
     // the operation if possible. Returns true if the operation was successfull.
     fn write_frame_to_guest(&mut self) -> bool {
-        let max_iterations = self.queues[RX_INDEX].actual_size();
+        let max_iterations = self.rx_q.queue.actual_size();
         for _ in 0..max_iterations {
             match self.write_frame_to_guest_impl() {
                 Ok(()) => return true,

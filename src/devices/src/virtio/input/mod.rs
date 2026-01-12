@@ -5,12 +5,16 @@ mod worker;
 pub use self::defs::uapi::VIRTIO_ID_INPUT as TYPE_INPUT;
 pub use self::device::Input;
 
+use super::QueueConfig;
+
 mod defs {
+    use super::QueueConfig;
+
     pub const INPUT_DEV_ID: &str = "virtio_input";
     pub const NUM_QUEUES: usize = 2;
-    pub const EVENTQ_IDX: usize = 0; // Event queue (device -> guest)
-    pub const STATUSQ_IDX: usize = 1; // Status queue (guest -> device)
-    pub const QUEUE_SIZES: &[u16] = &[256; NUM_QUEUES];
+
+    const QUEUE_SIZE: u16 = 256;
+    pub static QUEUE_CONFIG: [QueueConfig; NUM_QUEUES] = [QueueConfig::new(QUEUE_SIZE); NUM_QUEUES];
 
     pub mod uapi {
         pub const VIRTIO_F_VERSION_1: u32 = 32;

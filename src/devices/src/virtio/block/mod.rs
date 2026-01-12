@@ -8,12 +8,14 @@ pub use self::device::{Block, CacheType};
 
 use vm_memory::GuestMemoryError;
 
+use super::QueueConfig;
+
 pub const CONFIG_SPACE_SIZE: usize = 8;
 pub const SECTOR_SHIFT: u8 = 9;
 pub const SECTOR_SIZE: u64 = (0x01_u64) << SECTOR_SHIFT;
-pub const QUEUE_SIZE: u16 = 256;
+const QUEUE_SIZE: u16 = 256;
 pub const NUM_QUEUES: usize = 1;
-pub const QUEUE_SIZES: &[u16] = &[QUEUE_SIZE];
+pub static QUEUE_CONFIG: [QueueConfig; NUM_QUEUES] = [QueueConfig::new(QUEUE_SIZE)];
 
 #[derive(Debug)]
 pub enum Error {
