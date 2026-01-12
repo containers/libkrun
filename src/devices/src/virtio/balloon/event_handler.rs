@@ -7,6 +7,10 @@ use super::device::{Balloon, DFQ_INDEX, FRQ_INDEX, IFQ_INDEX, PHQ_INDEX, STQ_IND
 use crate::virtio::device::VirtioDevice;
 
 impl Balloon {
+    fn queue_event(&self, idx: usize) -> &std::sync::Arc<utils::eventfd::EventFd> {
+        &self.queues.as_ref().expect("queues should exist")[idx].event
+    }
+
     pub(crate) fn handle_ifq_event(&mut self, event: &EpollEvent) {
         error!("balloon: unsupported inflate queue event");
 
@@ -16,7 +20,7 @@ impl Balloon {
             return;
         }
 
-        if let Err(e) = self.queue_events[IFQ_INDEX].read() {
+        if let Err(e) = self.queue_event(IFQ_INDEX).read() {
             error!("Failed to read balloon inflate queue event: {e:?}");
         }
     }
@@ -30,7 +34,7 @@ impl Balloon {
             return;
         }
 
-        if let Err(e) = self.queue_events[DFQ_INDEX].read() {
+        if let Err(e) = self.queue_event(DFQ_INDEX).read() {
             error!("Failed to read balloon inflate queue event: {e:?}");
         }
     }
@@ -44,7 +48,7 @@ impl Balloon {
             return;
         }
 
-        if let Err(e) = self.queue_events[STQ_INDEX].read() {
+        if let Err(e) = self.queue_event(STQ_INDEX).read() {
             error!("Failed to read balloon stats queue event: {e:?}");
         }
     }
@@ -58,7 +62,7 @@ impl Balloon {
             return;
         }
 
-        if let Err(e) = self.queue_events[PHQ_INDEX].read() {
+        if let Err(e) = self.queue_event(PHQ_INDEX).read() {
             error!("Failed to read balloon page-hinting queue event: {e:?}");
         }
     }
@@ -72,7 +76,7 @@ impl Balloon {
             return;
         }
 
-        if let Err(e) = self.queue_events[FRQ_INDEX].read() {
+        if let Err(e) = self.queue_event(FRQ_INDEX).read() {
             error!("Failed to read balloon free-page reporting queue event: {e:?}");
         } else if self.process_frq() {
             self.device_state.signal_used_queue();
@@ -93,11 +97,8 @@ impl Balloon {
 
         event_manager
             .register(
-                self.queue_events[IFQ_INDEX].as_raw_fd(),
-                EpollEvent::new(
-                    EventSet::IN,
-                    self.queue_events[IFQ_INDEX].as_raw_fd() as u64,
-                ),
+                self.queue_event(IFQ_INDEX).as_raw_fd(),
+                EpollEvent::new(EventSet::IN, self.queue_event(IFQ_INDEX).as_raw_fd() as u64),
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
@@ -106,11 +107,8 @@ impl Balloon {
 
         event_manager
             .register(
-                self.queue_events[DFQ_INDEX].as_raw_fd(),
-                EpollEvent::new(
-                    EventSet::IN,
-                    self.queue_events[DFQ_INDEX].as_raw_fd() as u64,
-                ),
+                self.queue_event(DFQ_INDEX).as_raw_fd(),
+                EpollEvent::new(EventSet::IN, self.queue_event(DFQ_INDEX).as_raw_fd() as u64),
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
@@ -119,11 +117,8 @@ impl Balloon {
 
         event_manager
             .register(
-                self.queue_events[STQ_INDEX].as_raw_fd(),
-                EpollEvent::new(
-                    EventSet::IN,
-                    self.queue_events[STQ_INDEX].as_raw_fd() as u64,
-                ),
+                self.queue_event(STQ_INDEX).as_raw_fd(),
+                EpollEvent::new(EventSet::IN, self.queue_event(STQ_INDEX).as_raw_fd() as u64),
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
@@ -132,11 +127,8 @@ impl Balloon {
 
         event_manager
             .register(
-                self.queue_events[PHQ_INDEX].as_raw_fd(),
-                EpollEvent::new(
-                    EventSet::IN,
-                    self.queue_events[PHQ_INDEX].as_raw_fd() as u64,
-                ),
+                self.queue_event(PHQ_INDEX).as_raw_fd(),
+                EpollEvent::new(EventSet::IN, self.queue_event(PHQ_INDEX).as_raw_fd() as u64),
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
@@ -145,11 +137,8 @@ impl Balloon {
 
         event_manager
             .register(
-                self.queue_events[FRQ_INDEX].as_raw_fd(),
-                EpollEvent::new(
-                    EventSet::IN,
-                    self.queue_events[FRQ_INDEX].as_raw_fd() as u64,
-                ),
+                self.queue_event(FRQ_INDEX).as_raw_fd(),
+                EpollEvent::new(EventSet::IN, self.queue_event(FRQ_INDEX).as_raw_fd() as u64),
                 self_subscriber.clone(),
             )
             .unwrap_or_else(|e| {
@@ -167,11 +156,11 @@ impl Balloon {
 impl Subscriber for Balloon {
     fn process(&mut self, event: &EpollEvent, event_manager: &mut EventManager) {
         let source = event.fd();
-        let ifq = self.queue_events[IFQ_INDEX].as_raw_fd();
-        let dfq = self.queue_events[DFQ_INDEX].as_raw_fd();
-        let stq = self.queue_events[STQ_INDEX].as_raw_fd();
-        let phq = self.queue_events[PHQ_INDEX].as_raw_fd();
-        let frq = self.queue_events[FRQ_INDEX].as_raw_fd();
+        let ifq = self.queue_event(IFQ_INDEX).as_raw_fd();
+        let dfq = self.queue_event(DFQ_INDEX).as_raw_fd();
+        let stq = self.queue_event(STQ_INDEX).as_raw_fd();
+        let phq = self.queue_event(PHQ_INDEX).as_raw_fd();
+        let frq = self.queue_event(FRQ_INDEX).as_raw_fd();
         let activate_evt = self.activate_evt.as_raw_fd();
 
         if self.is_activated() {

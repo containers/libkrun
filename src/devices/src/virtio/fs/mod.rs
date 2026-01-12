@@ -28,9 +28,12 @@ pub use self::device::Fs;
 pub use self::filesystem::ExportTable;
 
 mod defs {
+    use super::super::QueueConfig;
+
     pub const FS_DEV_ID: &str = "virtio_fs";
     pub const NUM_QUEUES: usize = 2;
-    pub const QUEUE_SIZES: &[u16] = &[1024; NUM_QUEUES];
+    pub const QUEUE_SIZE: u16 = 1024;
+    pub static QUEUE_CONFIG: [QueueConfig; NUM_QUEUES] = [QueueConfig::new(QUEUE_SIZE); NUM_QUEUES];
     // High priority queue.
     pub const HPQ_INDEX: usize = 0;
     // Request queue.

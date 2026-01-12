@@ -58,11 +58,14 @@ mod defs {
     /// Because Vsock is unique per-vm, this ID can be hardcoded.
     pub const VSOCK_DEV_ID: &str = "vsock";
 
+    use crate::virtio::QueueConfig;
+
     /// Number of virtio queues.
     pub const NUM_QUEUES: usize = 3;
-    /// Virtio queue sizes, in number of descriptor chain heads.
+    const QUEUE_SIZE: u16 = 256;
+    /// Virtio queue config.
     /// There are 3 queues for a virtio device (in this order): RX, TX, Event
-    pub const QUEUE_SIZES: &[u16] = &[256; NUM_QUEUES];
+    pub static QUEUE_CONFIG: [QueueConfig; NUM_QUEUES] = [QueueConfig::new(QUEUE_SIZE); NUM_QUEUES];
 
     /// Max vsock packet data/buffer size.
     pub const MAX_PKT_BUF_SIZE: usize = 64 * 1024;

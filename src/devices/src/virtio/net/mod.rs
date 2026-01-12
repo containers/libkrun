@@ -4,14 +4,12 @@
 use std::{io, mem, result};
 use virtio_bindings::virtio_net::virtio_net_hdr_v1;
 
+use super::QueueConfig;
+
 pub const MAX_BUFFER_SIZE: usize = 65562;
-pub const QUEUE_SIZE: u16 = 1024;
+const QUEUE_SIZE: u16 = 1024;
 pub const NUM_QUEUES: usize = 2;
-pub const QUEUE_SIZES: &[u16] = &[QUEUE_SIZE; NUM_QUEUES];
-// The index of the rx queue from Net device queues/queues_evts vector.
-pub const RX_INDEX: usize = 0;
-// The index of the tx queue from Net device queues/queues_evts vector.
-pub const TX_INDEX: usize = 1;
+pub static QUEUE_CONFIG: [QueueConfig; NUM_QUEUES] = [QueueConfig::new(QUEUE_SIZE); NUM_QUEUES];
 
 mod backend;
 pub mod device;

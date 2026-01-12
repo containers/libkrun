@@ -21,7 +21,7 @@ use crate::virtio::{InterruptTransport, VirtioShmRegion};
 
 pub struct FsWorker {
     queues: Vec<Queue>,
-    queue_evts: Vec<EventFd>,
+    queue_evts: Vec<Arc<EventFd>>,
     interrupt: InterruptTransport,
     mem: GuestMemoryMmap,
     shm_region: Option<VirtioShmRegion>,
@@ -36,7 +36,7 @@ impl FsWorker {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         queues: Vec<Queue>,
-        queue_evts: Vec<EventFd>,
+        queue_evts: Vec<Arc<EventFd>>,
         interrupt: InterruptTransport,
         mem: GuestMemoryMmap,
         shm_region: Option<VirtioShmRegion>,

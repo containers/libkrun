@@ -6,12 +6,14 @@ use log::{debug, error};
 use utils::eventfd::{EventFd, EFD_NONBLOCK};
 use vm_memory::GuestMemoryMmap;
 
-use super::super::{ActivateError, ActivateResult, DeviceState, Queue as VirtQueue, VirtioDevice};
+use super::super::{
+    ActivateError, ActivateResult, DeviceQueue, DeviceState, QueueConfig, VirtioDevice,
+};
 use super::worker::InputWorker;
 use super::{defs, defs::uapi, InputError};
 
+use crate::virtio::input::defs::config_select;
 use crate::virtio::input::defs::config_select::VIRTIO_INPUT_CFG_UNSET;
-use crate::virtio::input::defs::{config_select, EVENTQ_IDX, STATUSQ_IDX};
 use crate::virtio::InterruptTransport;
 use krun_input::{
     InputAbsInfo, InputConfigBackend, InputConfigInstance, InputDeviceIds,
@@ -118,8 +120,6 @@ union ConfigPayload {
 
 /// VirtIO Input device state
 pub struct Input {
-    queues: Vec<VirtQueue>,
-    queue_events: Vec<EventFd>,
     avail_features: u64,
     acked_features: u64,
     device_state: DeviceState,
@@ -132,20 +132,11 @@ pub struct Input {
 }
 
 impl Input {
-    pub(crate) fn with_queues(
-        queues: Vec<VirtQueue>,
+    pub fn new(
         config_backend: InputConfigBackend<'static>,
         events_backend: InputEventProviderBackend<'static>,
     ) -> super::Result<Input> {
-        debug!("input: with_queues");
-        let mut queue_events = Vec::new();
-        for _ in 0..queues.len() {
-            queue_events.push(EventFd::new(EFD_NONBLOCK).map_err(InputError::EventFd)?);
-        }
-
         Ok(Input {
-            queues,
-            queue_events,
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
             event_provider_backend: events_backend,
@@ -155,17 +146,6 @@ impl Input {
             worker_thread: None,
             worker_stopfd: EventFd::new(EFD_NONBLOCK).map_err(InputError::EventFd)?,
         })
-    }
-
-    pub fn new(
-        config_backend: InputConfigBackend<'static>,
-        events_backend: InputEventProviderBackend<'static>,
-    ) -> super::Result<Input> {
-        let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
-            .iter()
-            .map(|&max_size| VirtQueue::new(max_size))
-            .collect();
-        Self::with_queues(queues, config_backend, events_backend)
     }
 
     pub fn id(&self) -> &str {
@@ -196,16 +176,8 @@ impl VirtioDevice for Input {
         "input"
     }
 
-    fn queues(&self) -> &[VirtQueue] {
-        &self.queues
-    }
-
-    fn queues_mut(&mut self) -> &mut [VirtQueue] {
-        &mut self.queues
-    }
-
-    fn queue_events(&self) -> &[EventFd] {
-        &self.queue_events
+    fn queue_config(&self) -> &[QueueConfig] {
+        &defs::QUEUE_CONFIG
     }
 
     fn read_config(&self, offset: u64, mut data: &mut [u8]) {
@@ -242,21 +214,23 @@ impl VirtioDevice for Input {
             .update_select(&self.config_instance, select, subsel);
     }
 
-    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult {
-        if self.queues.len() != defs::NUM_QUEUES {
+    fn activate(
+        &mut self,
+        mem: GuestMemoryMmap,
+        interrupt: InterruptTransport,
+        queues: Vec<DeviceQueue>,
+    ) -> ActivateResult {
+        let [event_q, status_q]: [_; defs::NUM_QUEUES] = queues.try_into().map_err(|_| {
             error!(
-                "Cannot perform activate. Expected {} queue(s), got {}",
-                defs::NUM_QUEUES,
-                self.queues.len()
+                "Cannot perform activate. Expected {} queue(s)",
+                defs::NUM_QUEUES
             );
-            return Err(ActivateError::BadActivate);
-        }
+            ActivateError::BadActivate
+        })?;
 
         let worker = InputWorker::new(
-            self.queues[EVENTQ_IDX].clone(),
-            self.queue_events[EVENTQ_IDX].try_clone().unwrap(),
-            self.queues[STATUSQ_IDX].clone(),
-            self.queue_events[STATUSQ_IDX].try_clone().unwrap(),
+            event_q,
+            status_q,
             interrupt.clone(),
             mem.clone(),
             self.event_provider_backend,

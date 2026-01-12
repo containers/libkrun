@@ -31,8 +31,8 @@ use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::worker::BlockWorker;
 use super::{
-    super::{ActivateResult, DeviceState, Queue, VirtioDevice, TYPE_BLOCK},
-    Error, QUEUE_SIZES, SECTOR_SHIFT, SECTOR_SIZE,
+    super::{ActivateResult, DeviceQueue, DeviceState, QueueConfig, VirtioDevice, TYPE_BLOCK},
+    Error, NUM_QUEUES, QUEUE_CONFIG, SECTOR_SHIFT, SECTOR_SIZE,
 };
 
 use crate::virtio::{
@@ -216,8 +216,6 @@ pub struct Block {
     config: VirtioBlkConfig,
 
     // Transport related fields.
-    pub(crate) queues: Vec<Queue>,
-    pub(crate) queue_evts: [EventFd; 1],
     pub(crate) device_state: DeviceState,
 
     // Implementation specific fields.
@@ -302,10 +300,6 @@ impl Block {
             avail_features |= 1u64 << VIRTIO_BLK_F_RO;
         };
 
-        let queue_evts = [EventFd::new(EFD_NONBLOCK)?];
-
-        let queues = QUEUE_SIZES.iter().map(|&s| Queue::new(s)).collect();
-
         let config = VirtioBlkConfig {
             capacity: disk_properties.nsectors(),
             size_max: 0,
@@ -330,8 +324,6 @@ impl Block {
             disk_image_id,
             avail_features,
             acked_features: 0u64,
-            queue_evts,
-            queues,
             device_state: DeviceState::Inactive,
             worker_thread: None,
             worker_stopfd: EventFd::new(EFD_NONBLOCK)?,
@@ -363,16 +355,8 @@ impl VirtioDevice for Block {
         "block"
     }
 
-    fn queues(&self) -> &[Queue] {
-        &self.queues
-    }
-
-    fn queues_mut(&mut self) -> &mut [Queue] {
-        &mut self.queues
-    }
-
-    fn queue_events(&self) -> &[EventFd] {
-        &self.queue_evts
+    fn queue_config(&self) -> &[QueueConfig] {
+        &QUEUE_CONFIG
     }
 
     fn avail_features(&self) -> u64 {
@@ -409,13 +393,23 @@ impl VirtioDevice for Block {
         self.device_state.is_activated()
     }
 
-    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult {
+    fn activate(
+        &mut self,
+        mem: GuestMemoryMmap,
+        interrupt: InterruptTransport,
+        queues: Vec<DeviceQueue>,
+    ) -> ActivateResult {
         if self.worker_thread.is_some() {
             panic!("virtio_blk: worker thread already exists");
         }
 
+        let [mut blk_q]: [_; NUM_QUEUES] = queues.try_into().map_err(|_| {
+            error!("Cannot perform activate. Expected {} queue(s)", NUM_QUEUES);
+            ActivateError::BadActivate
+        })?;
+
         let event_idx: bool = (self.acked_features & (1 << VIRTIO_RING_F_EVENT_IDX)) != 0;
-        self.queues[0].set_event_idx(event_idx);
+        blk_q.queue.set_event_idx(event_idx);
 
         let disk = match self.disk.take() {
             Some(d) => d,
@@ -428,8 +422,7 @@ impl VirtioDevice for Block {
         };
 
         let worker = BlockWorker::new(
-            self.queues[0].clone(),
-            self.queue_evts[0].try_clone().unwrap(),
+            blk_q,
             interrupt.clone(),
             mem.clone(),
             disk,

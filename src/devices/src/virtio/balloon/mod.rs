@@ -5,9 +5,12 @@ pub use self::defs::uapi::VIRTIO_ID_BALLOON as TYPE_BALLOON;
 pub use self::device::Balloon;
 
 mod defs {
+    use super::super::QueueConfig;
+
     pub const BALLOON_DEV_ID: &str = "virtio_balloon";
     pub const NUM_QUEUES: usize = 5;
-    pub const QUEUE_SIZES: &[u16] = &[256; NUM_QUEUES];
+    pub const QUEUE_SIZE: u16 = 256;
+    pub static QUEUE_CONFIG: [QueueConfig; NUM_QUEUES] = [QueueConfig::new(QUEUE_SIZE); NUM_QUEUES];
 
     pub mod uapi {
         pub const VIRTIO_F_VERSION_1: u32 = 32;

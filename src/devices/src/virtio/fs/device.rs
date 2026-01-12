@@ -13,7 +13,7 @@ use virtio_bindings::{virtio_config::VIRTIO_F_VERSION_1, virtio_ring::VIRTIO_RIN
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::super::{
-    ActivateResult, DeviceState, FsError, Queue as VirtQueue, VirtioDevice, VirtioShmRegion,
+    ActivateResult, DeviceQueue, DeviceState, FsError, QueueConfig, VirtioDevice, VirtioShmRegion,
 };
 use super::passthrough;
 use super::worker::FsWorker;
@@ -40,8 +40,6 @@ impl Default for VirtioFsConfig {
 unsafe impl ByteValued for VirtioFsConfig {}
 
 pub struct Fs {
-    queues: Vec<VirtQueue>,
-    queue_events: Vec<EventFd>,
     avail_features: u64,
     acked_features: u64,
     device_state: DeviceState,
@@ -56,18 +54,7 @@ pub struct Fs {
 }
 
 impl Fs {
-    pub(crate) fn with_queues(
-        fs_id: String,
-        shared_dir: String,
-        exit_code: Arc<AtomicI32>,
-        queues: Vec<VirtQueue>,
-    ) -> super::Result<Fs> {
-        let mut queue_events = Vec::new();
-        for _ in 0..queues.len() {
-            queue_events
-                .push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(FsError::EventFd)?);
-        }
-
+    pub fn new(fs_id: String, shared_dir: String, exit_code: Arc<AtomicI32>) -> super::Result<Fs> {
         let avail_features = (1u64 << VIRTIO_F_VERSION_1) | (1u64 << VIRTIO_RING_F_EVENT_IDX);
 
         let tag = fs_id.into_bytes();
@@ -81,8 +68,6 @@ impl Fs {
         };
 
         Ok(Fs {
-            queues,
-            queue_events,
             avail_features,
             acked_features: 0,
             device_state: DeviceState::Inactive,
@@ -95,14 +80,6 @@ impl Fs {
             #[cfg(target_os = "macos")]
             map_sender: None,
         })
-    }
-
-    pub fn new(fs_id: String, shared_dir: String, exit_code: Arc<AtomicI32>) -> super::Result<Fs> {
-        let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
-            .iter()
-            .map(|&max_size| VirtQueue::new(max_size))
-            .collect();
-        Self::with_queues(fs_id, shared_dir, exit_code, queues)
     }
 
     pub fn id(&self) -> &str {
@@ -149,16 +126,8 @@ impl VirtioDevice for Fs {
         "fs"
     }
 
-    fn queues(&self) -> &[VirtQueue] {
-        &self.queues
-    }
-
-    fn queues_mut(&mut self) -> &mut [VirtQueue] {
-        &mut self.queues
-    }
-
-    fn queue_events(&self) -> &[EventFd] {
-        &self.queue_events
+    fn queue_config(&self) -> &[QueueConfig] {
+        &defs::QUEUE_CONFIG
     }
 
     fn read_config(&self, offset: u64, mut data: &mut [u8]) {
@@ -183,22 +152,29 @@ impl VirtioDevice for Fs {
         );
     }
 
-    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult {
+    fn activate(
+        &mut self,
+        mem: GuestMemoryMmap,
+        interrupt: InterruptTransport,
+        queues: Vec<DeviceQueue>,
+    ) -> ActivateResult {
         if self.worker_thread.is_some() {
             panic!("virtio_fs: worker thread already exists");
         }
 
         let event_idx: bool = (self.acked_features & (1 << VIRTIO_RING_F_EVENT_IDX)) != 0;
-        self.queues[defs::HPQ_INDEX].set_event_idx(event_idx);
-        self.queues[defs::REQ_INDEX].set_event_idx(event_idx);
 
-        let queue_evts = self
-            .queue_events
-            .iter()
-            .map(|e| e.try_clone().unwrap())
-            .collect();
+        // Extract queues and eventfds from DeviceQueues.
+        let mut worker_queues = Vec::with_capacity(queues.len());
+        let mut queue_evts = Vec::with_capacity(queues.len());
+        for mut dq in queues {
+            dq.queue.set_event_idx(event_idx);
+            worker_queues.push(dq.queue);
+            queue_evts.push(dq.event);
+        }
+
         let worker = FsWorker::new(
-            self.queues.clone(),
+            worker_queues,
             queue_evts,
             interrupt.clone(),
             mem.clone(),
