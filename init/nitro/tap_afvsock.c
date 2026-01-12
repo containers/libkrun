@@ -194,7 +194,7 @@ static int tap_assign_ipaddr(char *name)
 
     addr = (struct sockaddr_in *)&ifr.ifr_addr;
     addr->sin_family = AF_INET;
-    inet_pton(AF_INET, "10.0.0.1", &addr->sin_addr);
+    inet_pton(AF_INET, "172.31.10.83", &addr->sin_addr);
 
     ret = ioctl(sock_fd, SIOCSIFADDR, &ifr);
     if (ret < 0) {
@@ -259,7 +259,7 @@ static int tap_assign_ipaddr(char *name)
     // Set the gateway IP.
     addr = (struct sockaddr_in *)&route.rt_gateway;
     addr->sin_family = AF_INET;
-    addr->sin_addr.s_addr = inet_addr("10.0.0.1");
+    addr->sin_addr.s_addr = inet_addr("172.31.10.83");
 
     // Set the destination to 0.0.0.0 (default route).
     addr = (struct sockaddr_in *)&route.rt_dst;
