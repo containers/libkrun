@@ -1,6 +1,6 @@
 use crate::virtio::descriptor_utils::{Reader, Writer};
 
-use super::super::Queue;
+use super::super::DeviceQueue;
 use super::device::{CacheType, DiskProperties};
 
 use crate::virtio::InterruptTransport;
@@ -56,8 +56,7 @@ pub struct DiscardWriteData {
 unsafe impl ByteValued for DiscardWriteData {}
 
 pub struct BlockWorker {
-    queue: Queue,
-    queue_evt: EventFd,
+    device_queue: DeviceQueue,
     interrupt: InterruptTransport,
     mem: GuestMemoryMmap,
     disk: DiskProperties,
@@ -65,18 +64,15 @@ pub struct BlockWorker {
 }
 
 impl BlockWorker {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        queue: Queue,
-        queue_evt: EventFd,
+        device_queue: DeviceQueue,
         interrupt: InterruptTransport,
         mem: GuestMemoryMmap,
         disk: DiskProperties,
         stop_fd: EventFd,
     ) -> Self {
         Self {
-            queue,
-            queue_evt,
+            device_queue,
             interrupt,
             mem,
             disk,
@@ -92,7 +88,7 @@ impl BlockWorker {
     }
 
     fn work(mut self) {
-        let virtq_ev_fd = self.queue_evt.as_raw_fd();
+        let virtq_ev_fd = self.device_queue.event.as_raw_fd();
         let stop_ev_fd = self.stop_fd.as_raw_fd();
 
         let epoll = Epoll::new().unwrap();
@@ -141,7 +137,7 @@ impl BlockWorker {
     }
 
     fn process_queue_event(&mut self) {
-        if let Err(e) = self.queue_evt.read() {
+        if let Err(e) = self.device_queue.event.read() {
             error!("Failed to get queue event: {e:?}");
         } else {
             self.process_virtio_queues();
@@ -152,18 +148,18 @@ impl BlockWorker {
     fn process_virtio_queues(&mut self) {
         let mem = self.mem.clone();
         loop {
-            self.queue.disable_notification(&mem).unwrap();
+            self.device_queue.queue.disable_notification(&mem).unwrap();
 
             self.process_queue(&mem);
 
-            if !self.queue.enable_notification(&mem).unwrap() {
+            if !self.device_queue.queue.enable_notification(&mem).unwrap() {
                 break;
             }
         }
     }
 
     fn process_queue(&mut self, mem: &GuestMemoryMmap) {
-        while let Some(head) = self.queue.pop(mem) {
+        while let Some(head) = self.device_queue.queue.pop(mem) {
             let mut reader = match Reader::new(mem, head.clone()) {
                 Ok(r) => r,
                 Err(e) => {
@@ -199,11 +195,15 @@ impl BlockWorker {
                 error!("Failed to write virtio block status: {e:?}")
             }
 
-            if let Err(e) = self.queue.add_used(mem, head.index, len as u32) {
+            if let Err(e) = self
+                .device_queue
+                .queue
+                .add_used(mem, head.index, len as u32)
+            {
                 error!("failed to add used elements to the queue: {e:?}");
             }
 
-            if self.queue.needs_notification(mem).unwrap() {
+            if self.device_queue.queue.needs_notification(mem).unwrap() {
                 if let Err(e) = self.interrupt.try_signal_used_queue() {
                     error!("error signalling queue: {e:?}");
                 }

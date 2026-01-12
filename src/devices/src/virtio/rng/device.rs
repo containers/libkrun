@@ -1,9 +1,9 @@
 use rand::{rngs::OsRng, TryRngCore};
-use utils::eventfd::EventFd;
+use utils::eventfd::{EventFd, EFD_NONBLOCK};
 use vm_memory::{Bytes, GuestMemoryMmap};
 
 use super::super::{
-    ActivateError, ActivateResult, DeviceState, Queue as VirtQueue, RngError, VirtioDevice,
+    ActivateError, ActivateResult, DeviceQueue, DeviceState, QueueConfig, VirtioDevice,
 };
 use super::{defs, defs::uapi};
 use crate::virtio::InterruptTransport;
@@ -15,8 +15,8 @@ pub(crate) const REQ_INDEX: usize = 0;
 pub(crate) const AVAIL_FEATURES: u64 = 1 << uapi::VIRTIO_F_VERSION_1 as u64;
 
 pub struct Rng {
-    pub(crate) queues: Vec<VirtQueue>,
-    pub(crate) queue_events: Vec<EventFd>,
+    queue_config: Vec<QueueConfig>,
+    pub(crate) queues: Option<Vec<DeviceQueue>>,
     pub(crate) avail_features: u64,
     pub(crate) acked_features: u64,
     pub(crate) activate_evt: EventFd,
@@ -24,29 +24,24 @@ pub struct Rng {
 }
 
 impl Rng {
-    pub(crate) fn with_queues(queues: Vec<VirtQueue>) -> super::Result<Rng> {
-        let mut queue_events = Vec::new();
-        for _ in 0..queues.len() {
-            queue_events
-                .push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(RngError::EventFd)?);
-        }
-
-        Ok(Rng {
-            queues,
-            queue_events,
-            avail_features: AVAIL_FEATURES,
-            acked_features: 0,
-            activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(RngError::EventFd)?,
-            device_state: DeviceState::Inactive,
-        })
+    pub(crate) fn queue_event(&self, idx: usize) -> &std::sync::Arc<utils::eventfd::EventFd> {
+        &self.queues.as_ref().expect("queues should exist")[idx].event
     }
 
     pub fn new() -> super::Result<Rng> {
-        let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
+        let queue_config: Vec<QueueConfig> = defs::QUEUE_SIZES
             .iter()
-            .map(|&max_size| VirtQueue::new(max_size))
+            .map(|&size| QueueConfig::new(size))
             .collect();
-        Self::with_queues(queues)
+
+        Ok(Rng {
+            queue_config,
+            queues: None,
+            avail_features: AVAIL_FEATURES,
+            acked_features: 0,
+            activate_evt: EventFd::new(EFD_NONBLOCK).map_err(super::RngError::EventFd)?,
+            device_state: DeviceState::Inactive,
+        })
     }
 
     pub fn id(&self) -> &str {
@@ -61,28 +56,32 @@ impl Rng {
             DeviceState::Inactive => unreachable!(),
         };
 
+        let queues = self
+            .queues
+            .as_mut()
+            .expect("queues should exist when activated");
         let mut have_used = false;
 
-        while let Some(head) = self.queues[REQ_INDEX].pop(mem) {
+        while let Some(head) = queues[REQ_INDEX].queue.pop(mem) {
             let index = head.index;
             let mut written = 0;
             for desc in head.into_iter() {
                 let mut rand_bytes = vec![0u8; desc.len as usize];
                 if let Err(e) = OsRng.try_fill_bytes(&mut rand_bytes) {
                     error!("Failed to fill buffer with random data: {e:?}");
-                    self.queues[REQ_INDEX].go_to_previous_position();
+                    queues[REQ_INDEX].queue.go_to_previous_position();
                     break;
                 }
                 if let Err(e) = mem.write_slice(&rand_bytes[..], desc.addr) {
                     error!("Failed to write slice: {e:?}");
-                    self.queues[REQ_INDEX].go_to_previous_position();
+                    queues[REQ_INDEX].queue.go_to_previous_position();
                     break;
                 }
                 written += desc.len;
             }
 
             have_used = true;
-            if let Err(e) = self.queues[REQ_INDEX].add_used(mem, index, written) {
+            if let Err(e) = queues[REQ_INDEX].queue.add_used(mem, index, written) {
                 error!("failed to add used elements to the queue: {e:?}");
             }
         }
@@ -112,16 +111,8 @@ impl VirtioDevice for Rng {
         "rng"
     }
 
-    fn queues(&self) -> &[VirtQueue] {
-        &self.queues
-    }
-
-    fn queues_mut(&mut self) -> &mut [VirtQueue] {
-        &mut self.queues
-    }
-
-    fn queue_events(&self) -> &[EventFd] {
-        &self.queue_events
+    fn queue_config(&self) -> &[QueueConfig] {
+        &self.queue_config
     }
 
     fn read_config(&self, _offset: u64, _data: &mut [u8]) {
@@ -136,12 +127,17 @@ impl VirtioDevice for Rng {
         );
     }
 
-    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult {
-        if self.queues.len() != defs::NUM_QUEUES {
+    fn activate(
+        &mut self,
+        mem: GuestMemoryMmap,
+        interrupt: InterruptTransport,
+        queues: Vec<DeviceQueue>,
+    ) -> ActivateResult {
+        if queues.len() != defs::NUM_QUEUES {
             error!(
                 "Cannot perform activate. Expected {} queue(s), got {}",
                 defs::NUM_QUEUES,
-                self.queues.len()
+                queues.len()
             );
             return Err(ActivateError::BadActivate);
         }
@@ -151,6 +147,7 @@ impl VirtioDevice for Rng {
             return Err(ActivateError::BadActivate);
         }
 
+        self.queues = Some(queues);
         self.device_state = DeviceState::Activated(mem, interrupt);
 
         Ok(())
@@ -161,10 +158,8 @@ impl VirtioDevice for Rng {
     }
 
     fn reset(&mut self) -> bool {
-        // Strictly speaking, we should unsubscribe the queue events resubscribe
-        // the activate eventfd and deactivate the device, but we don't support
-        // any scenario in which neither GuestMemory nor the queue events would
-        // change, so let's avoid doing any unnecessary work.
+        self.queues = None;
+        self.device_state = DeviceState::Inactive;
         true
     }
 }
