@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::error::Error;
+use crate::enclaves::VsockPortOffset;
 use devices::virtio::{net::device::VirtioNetBackend, Net};
 use std::{
     io::{ErrorKind, Read, Write},
@@ -14,13 +15,10 @@ use std::{
 };
 use vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY};
 
-const ENCLAVE_VSOCK_PORT_NET: u32 = 8080;
-
 type Result<T> = std::result::Result<T, Error>;
 
 pub struct NetProxy {
     unix_stream: UnixStream,
-    vsock_addr: VsockAddr,
 }
 
 impl TryFrom<&Net> for NetProxy {
@@ -34,19 +32,18 @@ impl TryFrom<&Net> for NetProxy {
             _ => return Err(Error::InvalidInterface),
         };
 
-        let vsock_addr = VsockAddr::new(VMADDR_CID_ANY, ENCLAVE_VSOCK_PORT_NET);
-
-        Ok(Self {
-            unix_stream,
-            vsock_addr,
-        })
+        Ok(Self { unix_stream })
     }
 }
 
 impl NetProxy {
     #[allow(unreachable_code)]
-    pub fn run(&self) -> Result<()> {
-        let vsock_listener = VsockListener::bind(&self.vsock_addr).map_err(Error::VsockBind)?;
+    pub fn run(&self, cid: u32) -> Result<()> {
+        let vsock_listener = VsockListener::bind(&VsockAddr::new(
+            VMADDR_CID_ANY,
+            cid + (VsockPortOffset::Net as u32),
+        ))
+        .map_err(Error::VsockBind)?;
 
         let mut vsock_stream = vsock_listener.accept().map_err(Error::VsockAccept)?;
 

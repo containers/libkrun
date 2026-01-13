@@ -30,6 +30,16 @@ const ROOTFS_DIR_DENYLIST: [&str; 6] = [
     "usr/share/krun-nitro",
 ];
 
+#[repr(u32)]
+pub enum VsockPortOffset {
+    ArgsReader = 1,
+    Net = 2,
+    AppOutput = 3,
+
+    // Not set by krun-nitro.
+    Console = 10000,
+}
+
 /// Nitro Enclave data.
 pub struct NitroEnclave {
     /// Amount of RAM (in MiB).
@@ -93,16 +103,14 @@ impl NitroEnclave {
 
         let net_proxy_thread: JoinHandle<Result<()>> = thread::spawn(move || {
             if let Some(net_proxy) = &self.net {
-                net_proxy.run().map_err(NitroError::NetError)?;
+                net_proxy.run(cid).map_err(NitroError::NetError)?;
             }
 
             Ok(())
         });
 
         let output_proxy_thread: JoinHandle<Result<()>> = thread::spawn(move || {
-            let debug_cid = if self.debug { Some(cid) } else { None };
-
-            output_proxy(&self.output_path, debug_cid).map_err(NitroError::OutputError)?;
+            output_proxy(&self.output_path, cid, self.debug).map_err(NitroError::OutputError)?;
 
             Ok(())
         });

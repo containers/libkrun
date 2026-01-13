@@ -16,6 +16,6 @@ struct enclave_args {
     bool debug;
 };
 
-int args_reader_read(struct enclave_args *);
+int args_reader_read(struct enclave_args *, unsigned int);
 
 #endif // _KRUN_NITRO_INIT_ARGS_READER_H

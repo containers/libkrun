@@ -35,6 +35,12 @@
 
 #define NSM_PCR_CHUNK_SIZE 0x800 // 2 KiB.
 
+enum {
+    VSOCK_PORT_OFFSET_ARGS_READER = 1,
+    VSOCK_PORT_OFFSET_NET = 2,
+    VSOCK_PORT_OFFSET_OUTPUT = 3,
+};
+
 /*
  * Block or unblock signals.
  *
@@ -193,7 +199,7 @@ static int rootfs_mount()
     return 0;
 }
 
-static int app_stdio_output(void)
+static int app_stdio_output(unsigned int vsock_port)
 {
     int streams[2] = {STDOUT_FILENO, STDERR_FILENO};
     struct sockaddr_vm addr;
@@ -209,7 +215,7 @@ static int app_stdio_output(void)
     bzero((char *)&addr, sizeof(struct sockaddr_vm));
     addr.svm_family = AF_VSOCK;
     addr.svm_cid = VMADDR_CID_HOST;
-    addr.svm_port = 8081;
+    addr.svm_port = vsock_port;
 
     memset(&timeval, 0, sizeof(struct timeval));
     timeval.tv_sec = 5;
@@ -422,7 +428,7 @@ int main(int argc, char *argv[])
     if (ret < 0)
         goto out;
 
-    ret = args_reader_read(&args);
+    ret = args_reader_read(&args, cid + VSOCK_PORT_OFFSET_ARGS_READER);
     if (ret < 0)
         goto out;
 
@@ -482,14 +488,14 @@ int main(int argc, char *argv[])
 
     // Initialize the network TAP device.
     if (args.network_proxy) {
-        ret = tap_afvsock_init(shutdown_fd);
+        ret = tap_afvsock_init(shutdown_fd, cid + VSOCK_PORT_OFFSET_NET);
         if (ret < 0)
             goto out;
     }
 
     output_vsock = -1;
     if (!args.debug) {
-        output_vsock = app_stdio_output();
+        output_vsock = app_stdio_output(cid + VSOCK_PORT_OFFSET_OUTPUT);
         if (output_vsock < 0)
             goto out;
     }

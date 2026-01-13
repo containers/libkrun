@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::error::NitroError;
+use crate::{enclaves::VsockPortOffset, error::NitroError};
 use libc::c_int;
 use nitro_enclaves::launch::PollTimeout;
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout as NixPollTimeout};
@@ -12,29 +12,22 @@ use std::{
 };
 use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
 
-const ENCLAVE_VSOCK_PORT_LAUNCH_ARGS: u32 = 9000;
 const ENCLAVE_VSOCK_LAUNCH_ARGS_READY: u8 = 0xb7;
 
 type Result<T> = std::result::Result<T, NitroError>;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct EnclaveArgsWriter<'a> {
-    vsock_addr: VsockAddr,
     pub args: Vec<EnclaveArg<'a>>,
-}
-
-impl Default for EnclaveArgsWriter<'_> {
-    fn default() -> Self {
-        Self {
-            vsock_addr: VsockAddr::new(VMADDR_CID_ANY, ENCLAVE_VSOCK_PORT_LAUNCH_ARGS),
-            args: Vec::new(),
-        }
-    }
 }
 
 impl EnclaveArgsWriter<'_> {
     pub fn write_args(&self, cid: u32, timeout: PollTimeout) -> Result<()> {
-        let listener = VsockListener::bind(&self.vsock_addr).unwrap();
+        let listener = VsockListener::bind(&VsockAddr::new(
+            VMADDR_CID_ANY,
+            cid + (VsockPortOffset::ArgsReader as u32),
+        ))
+        .unwrap();
         self.poll(&listener, timeout)?;
 
         let mut stream = listener.accept().unwrap();
