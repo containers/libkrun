@@ -14,7 +14,6 @@
 
 #include "include/args_reader.h"
 
-#define ENCLAVE_VSOCK_PORT_LAUNCH_ARGS 9000
 #define ENCLAVE_VSOCK_LAUNCH_ARGS_READY 0xb7
 
 enum {
@@ -161,7 +160,7 @@ static int args_reader_char_list_build(int sock_fd, char ***buf_ptr)
  * Signal to the host that the enclave is ready to receive the enclave
  * arguments.
  */
-static int args_reader_signal()
+static int args_reader_signal(unsigned int vsock_port)
 {
     uint8_t buf[1];
     struct sockaddr_vm saddr;
@@ -172,7 +171,7 @@ static int args_reader_signal()
 
     saddr.svm_family = AF_VSOCK;
     saddr.svm_cid = VMADDR_CID_HOST;
-    saddr.svm_port = ENCLAVE_VSOCK_PORT_LAUNCH_ARGS;
+    saddr.svm_port = vsock_port;
     saddr.svm_reserved1 = 0;
 
     sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
@@ -267,7 +266,7 @@ static int __args_reader_read(int sock_fd, struct enclave_args *args)
     }
 }
 
-int args_reader_read(struct enclave_args *args)
+int args_reader_read(struct enclave_args *args, unsigned int vsock_port)
 {
     int ret, sock_fd;
 
@@ -275,7 +274,7 @@ int args_reader_read(struct enclave_args *args)
      * Open the arguments reader and signal to the hypervisor that the enclave
      * is booted and ready to read the arguments.
      */
-    sock_fd = args_reader_signal();
+    sock_fd = args_reader_signal(vsock_port);
     if (sock_fd < 0)
         return sock_fd;
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::enclaves::VsockPortOffset;
 use std::{
     fmt,
     fs::OpenOptions,
@@ -7,9 +8,6 @@ use std::{
     path::PathBuf,
 };
 use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY, VMADDR_CID_HYPERVISOR};
-
-const ENCLAVE_VSOCK_PORT_CONSOLE_OFFSET: u32 = 10000;
-const ENCLAVE_VSOCK_PORT_OUTPUT: u32 = 8081;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -50,29 +48,29 @@ impl fmt::Display for Error {
     }
 }
 
-pub fn output_proxy(path: &PathBuf, cid_debug: Option<u32>) -> Result<()> {
+pub fn output_proxy(path: &PathBuf, cid: u32, debug: bool) -> Result<()> {
     let mut file = OpenOptions::new()
         .read(false)
         .write(true)
         .open(path)
         .map_err(Error::FileOpen)?;
 
-    let mut vsock_stream = match cid_debug {
-        Some(cid) => VsockStream::connect(&VsockAddr::new(
+    let mut vsock_stream = if debug {
+        VsockStream::connect(&VsockAddr::new(
             VMADDR_CID_HYPERVISOR,
-            cid + ENCLAVE_VSOCK_PORT_CONSOLE_OFFSET,
+            cid + (VsockPortOffset::Console as u32),
         ))
-        .map_err(Error::VsockConnect)?,
-        None => {
-            let vsock_listener =
-                VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, ENCLAVE_VSOCK_PORT_OUTPUT))
-                    .map_err(Error::VsockBind)?;
+        .map_err(Error::VsockConnect)?
+    } else {
+        let vsock_listener = VsockListener::bind(&VsockAddr::new(
+            VMADDR_CID_ANY,
+            cid + (VsockPortOffset::AppOutput as u32),
+        ))
+        .map_err(Error::VsockBind)?;
 
-            let (vsock_stream, _vsock_addr) =
-                vsock_listener.accept().map_err(Error::VsockAccept)?;
+        let (vsock_stream, _vsock_addr) = vsock_listener.accept().map_err(Error::VsockAccept)?;
 
-            vsock_stream
-        }
+        vsock_stream
     };
 
     let mut vsock_buf = [0u8; 1500];

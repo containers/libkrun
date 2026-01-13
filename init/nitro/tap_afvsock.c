@@ -31,8 +31,6 @@
 #define TUN_DEV_MAJOR 10
 #define TUN_DEV_MINOR 200
 
-#define VSOCK_NET_PORT 8080
-
 volatile sig_atomic_t proxy_ready = 0;
 
 static void sig_handler(int sig)
@@ -320,7 +318,7 @@ static int tap_alloc(char *name)
     return fd;
 }
 
-int tap_afvsock_init(int shutdown_fd)
+int tap_afvsock_init(int shutdown_fd, unsigned int vsock_port)
 {
     int ret, tun_fd, vsock_fd;
     struct sockaddr_vm saddr;
@@ -377,7 +375,7 @@ int tap_afvsock_init(int shutdown_fd)
         memset(&saddr, 0, sizeof(struct sockaddr_vm));
         saddr.svm_family = AF_VSOCK;
         saddr.svm_cid = VMADDR_CID_HOST;
-        saddr.svm_port = VSOCK_NET_PORT;
+        saddr.svm_port = vsock_port;
         saddr.svm_reserved1 = 0;
 
         ret = connect(vsock_fd, (struct sockaddr *)&saddr, sizeof(saddr));

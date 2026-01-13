@@ -16,4 +16,4 @@ devices = { path = "../devices" }
 log = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nitro-enclaves = "0.5.0"
+nitro-enclaves = "0.6.0"
