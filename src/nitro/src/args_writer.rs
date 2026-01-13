@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{enclaves::VsockPortOffset, error::NitroError};
+use crate::{device::VsockPortOffset, error::NitroError};
 use libc::c_int;
 use nitro_enclaves::launch::PollTimeout;
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout as NixPollTimeout};
