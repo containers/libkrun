@@ -1,19 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(feature = "nitro")]
+mod args_writer;
+
+#[cfg(feature = "nitro")]
+mod device;
+
+#[cfg(feature = "nitro")]
 pub mod enclaves;
 
 #[cfg(feature = "nitro")]
 mod error;
 
 #[cfg(feature = "nitro")]
-mod args_writer;
-
-#[cfg(feature = "nitro")]
-mod output;
-
-#[cfg(feature = "nitro")]
-mod net;
-
-#[cfg(feature = "nitro")]
-pub use net::NetProxy;
+pub use device::net::NetProxy;

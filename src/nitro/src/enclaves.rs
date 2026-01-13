@@ -2,9 +2,8 @@
 
 use super::{
     args_writer::{EnclaveArg, EnclaveArgsWriter},
+    device::{net::NetProxy, output::OutputProxy, DeviceProxy},
     error::NitroError,
-    net::NetProxy,
-    output::output_proxy,
 };
 use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
@@ -29,16 +28,6 @@ const ROOTFS_DIR_DENYLIST: [&str; 6] = [
     "sys",  // /sys.
     "usr/share/krun-nitro",
 ];
-
-#[repr(u32)]
-pub enum VsockPortOffset {
-    ArgsReader = 1,
-    Net = 2,
-    AppOutput = 3,
-
-    // Not set by krun-nitro.
-    Console = 10000,
-}
 
 /// Nitro Enclave data.
 pub struct NitroEnclave {
@@ -102,15 +91,18 @@ impl NitroEnclave {
         writer.write_args(cid, timeout)?;
 
         let net_proxy_thread: JoinHandle<Result<()>> = thread::spawn(move || {
-            if let Some(net_proxy) = &self.net {
-                net_proxy.run(cid).map_err(NitroError::NetError)?;
+            if let Some(mut net_proxy) = self.net {
+                net_proxy.start(cid).map_err(NitroError::DeviceError)?;
             }
 
             Ok(())
         });
 
         let output_proxy_thread: JoinHandle<Result<()>> = thread::spawn(move || {
-            output_proxy(&self.output_path, cid, self.debug).map_err(NitroError::OutputError)?;
+            let mut output_proxy =
+                OutputProxy::new(&self.output_path, self.debug).map_err(NitroError::DeviceError)?;
+
+            output_proxy.start(cid).map_err(NitroError::DeviceError)?;
 
             Ok(())
         });
