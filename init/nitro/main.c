@@ -369,12 +369,37 @@ out:
     return -ret;
 }
 
+unsigned int cid_fetch(void)
+{
+    unsigned int cid;
+    int ret, fd;
+
+    fd = open("/dev/vsock", O_RDONLY);
+    if (fd < 0) {
+        perror("unable to open /dev/vsock to fetch enclave CID:");
+        return 0;
+    }
+
+    ret = ioctl(fd, IOCTL_VM_SOCKETS_GET_LOCAL_CID, &cid);
+    if (ret < 0) {
+        close(fd);
+        perror("unable to fetch VM CID:");
+        return 0;
+    }
+
+    close(fd);
+
+    return cid;
+}
+
 int main(int argc, char *argv[])
 {
     int ret, nsm_fd, shutdown_fd, pid, app_status, output_vsock;
     struct enclave_args args;
+    unsigned int cid;
     uint64_t sfd_val;
 
+    ret = -1;
     memset(&args, 0, sizeof(struct enclave_args));
 
     // Block all signals.
@@ -385,6 +410,11 @@ int main(int argc, char *argv[])
     // Initialize early debug output with /dev/console.
     ret = console_init();
     if (ret < 0)
+        goto out;
+
+    // Get the enclave's context ID.
+    cid = cid_fetch();
+    if (cid == 0)
         goto out;
 
     // Initialize the NSM kernel module.
