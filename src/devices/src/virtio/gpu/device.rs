@@ -1,13 +1,12 @@
 use std::io::Write;
-use std::sync::{Arc, Mutex};
 
-use crossbeam_channel::{unbounded, Sender};
-use utils::eventfd::EventFd;
+#[cfg(target_os = "macos")]
+use crossbeam_channel::Sender;
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::super::{
-    fs::ExportTable, ActivateError, ActivateResult, DeviceQueue, DeviceState, GpuError,
-    Queue as VirtQueue, QueueConfig, VirtioDevice, VirtioShmRegion,
+    fs::ExportTable, ActivateError, ActivateResult, DeviceQueue, DeviceState, QueueConfig,
+    VirtioDevice, VirtioShmRegion,
 };
 use super::defs;
 use super::defs::uapi;
@@ -32,16 +31,10 @@ static QUEUE_CONFIG: [QueueConfig; defs::NUM_QUEUES] =
     [QueueConfig::new(QUEUE_SIZE); defs::NUM_QUEUES];
 
 pub struct Gpu {
-    pub(crate) queue_ctl: Option<Arc<Mutex<VirtQueue>>>,
-    // Queue events stored for event handler - these are shared with DeviceQueue
-    pub(crate) ctl_event: Option<Arc<EventFd>>,
-    pub(crate) cur_event: Option<Arc<EventFd>>,
     pub(crate) avail_features: u64,
     pub(crate) acked_features: u64,
-    pub(crate) activate_evt: EventFd,
     pub(crate) device_state: DeviceState,
     shm_region: Option<VirtioShmRegion>,
-    pub(crate) sender: Option<Sender<u64>>,
     virgl_flags: u32,
     #[cfg(target_os = "macos")]
     map_sender: Sender<WorkerMessage>,
@@ -58,15 +51,10 @@ impl Gpu {
         #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
     ) -> super::Result<Gpu> {
         Ok(Gpu {
-            queue_ctl: None,
-            ctl_event: None,
-            cur_event: None,
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
-            activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(GpuError::EventFd)?,
             device_state: DeviceState::Inactive,
             shm_region: None,
-            sender: None,
             virgl_flags,
             #[cfg(target_os = "macos")]
             map_sender,
@@ -205,7 +193,7 @@ impl VirtioDevice for Gpu {
         interrupt: InterruptTransport,
         queues: Vec<DeviceQueue>,
     ) -> ActivateResult {
-        let [control_q, cursor_q]: [_; defs::NUM_QUEUES] = queues.try_into().map_err(|_| {
+        let [control_q, _cursor_q]: [_; defs::NUM_QUEUES] = queues.try_into().map_err(|_| {
             error!(
                 "Cannot perform activate. Expected {} queue(s)",
                 defs::NUM_QUEUES
@@ -218,17 +206,10 @@ impl VirtioDevice for Gpu {
             None => panic!("virtio_gpu: missing SHM region"),
         };
 
-        self.ctl_event = Some(control_q.event.clone());
-        self.cur_event = Some(cursor_q.event.clone());
-        let queue_ctl = Arc::new(Mutex::new(control_q.queue));
-        self.queue_ctl = Some(queue_ctl.clone());
         // cursor queue not used by worker
-
-        let (sender, receiver) = unbounded();
         let worker = Worker::new(
-            receiver,
+            control_q,
             mem.clone(),
-            queue_ctl,
             interrupt.clone(),
             shm_region,
             self.virgl_flags,
@@ -239,13 +220,6 @@ impl VirtioDevice for Gpu {
             self.display_backend,
         );
         worker.run();
-
-        self.sender = Some(sender);
-
-        if self.activate_evt.write(1).is_err() {
-            error!("Cannot write to activate_evt",);
-            return Err(ActivateError::BadActivate);
-        }
 
         self.device_state = DeviceState::Activated(mem, interrupt);
 
