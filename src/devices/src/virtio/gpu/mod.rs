@@ -1,7 +1,6 @@
 mod device;
 pub mod display;
 mod edid;
-mod event_handler;
 mod protocol;
 mod virtio_gpu;
 mod worker;

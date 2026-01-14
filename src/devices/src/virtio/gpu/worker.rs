@@ -1,8 +1,11 @@
 use std::io::Read;
+use std::os::fd::{AsRawFd, BorrowedFd};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use crossbeam_channel::Receiver;
+use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use utils::eventfd::EventFd;
+
 #[cfg(target_os = "macos")]
 use crossbeam_channel::Sender;
 use rutabaga_gfx::{
@@ -14,7 +17,7 @@ use utils::worker_message::WorkerMessage;
 use vm_memory::{GuestAddress, GuestMemoryMmap};
 
 use super::super::descriptor_utils::{Reader, Writer};
-use super::super::{GpuError, Queue as VirtQueue};
+use super::super::{DeviceQueue, GpuError, Queue as VirtQueue};
 use super::protocol::{
     virtio_gpu_ctrl_hdr, virtio_gpu_mem_entry, GpuCommand, GpuResponse, VirtioGpuResult,
 };
@@ -28,9 +31,9 @@ use krun_display::DisplayBackend;
 use krun_display::Rect;
 
 pub struct Worker {
-    receiver: Receiver<u64>,
+    control_evt: EventFd,
+    control_queue: Arc<Mutex<VirtQueue>>,
     mem: GuestMemoryMmap,
-    queue_ctl: Arc<Mutex<VirtQueue>>,
     interrupt: InterruptTransport,
     shm_region: VirtioShmRegion,
     virgl_flags: u32,
@@ -44,9 +47,8 @@ pub struct Worker {
 impl Worker {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        receiver: Receiver<u64>,
+        control_q: DeviceQueue,
         mem: GuestMemoryMmap,
-        queue_ctl: Arc<Mutex<VirtQueue>>,
         interrupt: InterruptTransport,
         shm_region: VirtioShmRegion,
         virgl_flags: u32,
@@ -55,10 +57,17 @@ impl Worker {
         displays: Box<[DisplayInfo]>,
         display_backend: DisplayBackend<'static>,
     ) -> Self {
+        // Clone the eventfd so we have our own file description, then set it to blocking mode.
+        let control_evt = control_q.event.try_clone().unwrap();
+        // SAFETY: control_evt is valid for the duration of the fcntl calls.
+        let fd = unsafe { BorrowedFd::borrow_raw(control_evt.as_raw_fd()) };
+        let flags = OFlag::from_bits_retain(fcntl(fd, FcntlArg::F_GETFL).unwrap()) & !OFlag::O_NONBLOCK;
+        fcntl(fd, FcntlArg::F_SETFL(flags)).unwrap();
+
         Self {
-            receiver,
+            control_evt,
+            control_queue: Arc::new(Mutex::new(control_q.queue)),
             mem,
-            queue_ctl,
             interrupt,
             shm_region,
             virgl_flags,
@@ -80,7 +89,7 @@ impl Worker {
     fn work(mut self) {
         let mut virtio_gpu = VirtioGpu::new(
             self.mem.clone(),
-            self.queue_ctl.clone(),
+            self.control_queue.clone(),
             self.interrupt.clone(),
             self.virgl_flags,
             #[cfg(target_os = "macos")]
@@ -91,8 +100,11 @@ impl Worker {
         );
 
         loop {
-            let _ = self.receiver.recv().unwrap();
-            if self.process_queue(&mut virtio_gpu, 0) {
+            if let Err(e) = self.control_evt.read() {
+                error!("Failed to read control_evt: {e:?}");
+                continue;
+            }
+            if self.process_queue(&mut virtio_gpu, &self.control_queue.clone()) {
                 if let Err(e) = self.interrupt.try_signal_used_queue() {
                     error!("Error signaling queue: {e:?}");
                 }
@@ -333,12 +345,16 @@ impl Worker {
         }
     }
 
-    pub fn process_queue(&mut self, virtio_gpu: &mut VirtioGpu, _queue_index: usize) -> bool {
+    fn process_queue(
+        &mut self,
+        virtio_gpu: &mut VirtioGpu,
+        control_queue: &Arc<Mutex<VirtQueue>>,
+    ) -> bool {
         let mut used_any = false;
         let mem = self.mem.clone();
 
         loop {
-            let head = self.queue_ctl.lock().unwrap().pop(&mem);
+            let head = control_queue.lock().unwrap().pop(&mem);
 
             if let Some(head) = head {
                 let mut reader = Reader::new(&mem, head.clone())
@@ -419,8 +435,7 @@ impl Worker {
                 }
 
                 if add_to_queue {
-                    if let Err(e) = self
-                        .queue_ctl
+                    if let Err(e) = control_queue
                         .lock()
                         .unwrap()
                         .add_used(&mem, head.index, len)
