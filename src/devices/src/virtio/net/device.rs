@@ -176,14 +176,10 @@ impl VirtioDevice for Net {
         interrupt: InterruptTransport,
         queues: Vec<DeviceQueue>,
     ) -> ActivateResult {
-        let [mut rx_q, mut tx_q]: [_; NUM_QUEUES] = queues.try_into().map_err(|_| {
+        let [rx_q, tx_q]: [_; NUM_QUEUES] = queues.try_into().map_err(|_| {
             error!("Cannot perform activate. Expected {} queue(s)", NUM_QUEUES);
             ActivateError::BadActivate
         })?;
-
-        let event_idx: bool = (self.acked_features & (1 << VIRTIO_RING_F_EVENT_IDX)) != 0;
-        rx_q.queue.set_event_idx(event_idx);
-        tx_q.queue.set_event_idx(event_idx);
 
         match NetWorker::new(
             rx_q,

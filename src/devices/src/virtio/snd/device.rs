@@ -2,13 +2,12 @@ use std::io::Write;
 use std::thread::JoinHandle;
 
 use utils::eventfd::EventFd;
-use virtio_bindings::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::super::{ActivateError, ActivateResult, DeviceQueue, QueueConfig, VirtioDevice};
 use super::virtio_sound::VirtioSoundConfig;
 use super::worker::SndWorker;
-use super::{defs, defs::uapi, defs::QUEUE_INDEXES, Error};
+use super::{defs, defs::uapi, Error};
 
 use crate::virtio::{DeviceState, InterruptTransport};
 
@@ -100,7 +99,7 @@ impl VirtioDevice for Snd {
         &mut self,
         mem: GuestMemoryMmap,
         interrupt: InterruptTransport,
-        mut queues: Vec<DeviceQueue>,
+        queues: Vec<DeviceQueue>,
     ) -> ActivateResult {
         if self.worker_thread.is_some() {
             panic!("virtio_snd: worker thread already exists");
@@ -113,11 +112,6 @@ impl VirtioDevice for Snd {
                 queues.len()
             );
             return Err(ActivateError::BadActivate);
-        }
-
-        let event_idx: bool = (self.acked_features & (1 << VIRTIO_RING_F_EVENT_IDX)) != 0;
-        for idx in QUEUE_INDEXES {
-            queues[idx].queue.set_event_idx(event_idx);
         }
 
         let worker = SndWorker::new(
