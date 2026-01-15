@@ -403,13 +403,10 @@ impl VirtioDevice for Block {
             panic!("virtio_blk: worker thread already exists");
         }
 
-        let [mut blk_q]: [_; NUM_QUEUES] = queues.try_into().map_err(|_| {
+        let [blk_q]: [_; NUM_QUEUES] = queues.try_into().map_err(|_| {
             error!("Cannot perform activate. Expected {} queue(s)", NUM_QUEUES);
             ActivateError::BadActivate
         })?;
-
-        let event_idx: bool = (self.acked_features & (1 << VIRTIO_RING_F_EVENT_IDX)) != 0;
-        blk_q.queue.set_event_idx(event_idx);
 
         let disk = match self.disk.take() {
             Some(d) => d,

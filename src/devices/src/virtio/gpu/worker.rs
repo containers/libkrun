@@ -61,7 +61,8 @@ impl Worker {
         let control_evt = control_q.event.try_clone().unwrap();
         // SAFETY: control_evt is valid for the duration of the fcntl calls.
         let fd = unsafe { BorrowedFd::borrow_raw(control_evt.as_raw_fd()) };
-        let flags = OFlag::from_bits_retain(fcntl(fd, FcntlArg::F_GETFL).unwrap()) & !OFlag::O_NONBLOCK;
+        let flags =
+            OFlag::from_bits_retain(fcntl(fd, FcntlArg::F_GETFL).unwrap()) & !OFlag::O_NONBLOCK;
         fcntl(fd, FcntlArg::F_SETFL(flags)).unwrap();
 
         Self {

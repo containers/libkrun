@@ -310,6 +310,11 @@ impl MmioTransport {
             .collect();
 
         let mut locked_device = self.locked_device();
+        let event_idx_enabled =
+            (locked_device.acked_features() & (1 << VIRTIO_RING_F_EVENT_IDX)) != 0;
+        for dq in &mut device_queues {
+            dq.queue.set_event_idx(event_idx_enabled);
+        }
         locked_device
             .activate(self.mem.clone(), self.interrupt.clone(), device_queues)
             .expect("Failed to activate device");

@@ -162,13 +162,10 @@ impl VirtioDevice for Fs {
             panic!("virtio_fs: worker thread already exists");
         }
 
-        let event_idx: bool = (self.acked_features & (1 << VIRTIO_RING_F_EVENT_IDX)) != 0;
-
         // Extract queues and eventfds from DeviceQueues.
         let mut worker_queues = Vec::with_capacity(queues.len());
         let mut queue_evts = Vec::with_capacity(queues.len());
-        for mut dq in queues {
-            dq.queue.set_event_idx(event_idx);
+        for dq in queues {
             worker_queues.push(dq.queue);
             queue_evts.push(dq.event);
         }
