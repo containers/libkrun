@@ -4,19 +4,23 @@ mod devices;
 
 pub use devices::*;
 
+use crate::args_writer::EnclaveArg;
 use std::{fmt, io};
 
 type Result<T> = std::result::Result<T, Error>;
 
 pub trait DeviceProxy {
+    fn enclave_arg(&self) -> Option<EnclaveArg<'_>>;
+    fn vsock_port_offset(&self) -> VsockPortOffset;
     fn start(&mut self, cid: u32) -> Result<()> {
         let port = cid + (self.vsock_port_offset() as u32);
 
         self._start(port)
     }
     fn _start(&mut self, vsock_port: u32) -> Result<()>;
-    fn vsock_port_offset(&self) -> VsockPortOffset;
 }
+
+pub struct DeviceProxyList(pub Vec<Box<dyn DeviceProxy>>);
 
 #[repr(u32)]
 pub enum VsockPortOffset {

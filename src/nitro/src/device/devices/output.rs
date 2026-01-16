@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::device::{DeviceProxy, Error, VsockPortOffset};
+use crate::{
+    args_writer::EnclaveArg,
+    device::{DeviceProxy, Error, VsockPortOffset},
+};
 use std::{
     fs::File,
     fs::OpenOptions,
@@ -29,6 +32,13 @@ impl OutputProxy {
 }
 
 impl DeviceProxy for OutputProxy {
+    fn enclave_arg(&self) -> Option<EnclaveArg<'_>> {
+        match self.debug {
+            true => Some(EnclaveArg::Debug),
+            false => None,
+        }
+    }
+
     fn vsock_port_offset(&self) -> VsockPortOffset {
         match self.debug {
             true => VsockPortOffset::Console,
