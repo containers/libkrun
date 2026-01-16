@@ -5,7 +5,10 @@ mod devices;
 pub use devices::*;
 
 use crate::args_writer::EnclaveArg;
-use std::{fmt, io};
+use std::{
+    fmt, io,
+    thread::{self, JoinHandle},
+};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -20,7 +23,30 @@ pub trait DeviceProxy {
     fn _start(&mut self, vsock_port: u32) -> Result<()>;
 }
 
-pub struct DeviceProxyList(pub Vec<Box<dyn DeviceProxy>>);
+pub struct DeviceProxyList(pub Vec<Box<dyn Send + DeviceProxy>>);
+
+impl DeviceProxyList {
+    pub fn start(self, cid: u32) {
+        let mut handles: Vec<JoinHandle<Result<()>>> = Vec::new();
+
+        for mut device in self.0 {
+            let handle: JoinHandle<Result<()>> = thread::spawn(move || {
+                device.start(cid)?;
+
+                Ok(())
+            });
+
+            handles.push(handle);
+        }
+
+        for handle in handles.into_iter() {
+            let res = handle.join().unwrap();
+            if let Err(err) = res {
+                log::error!("error running enclave device proxy: {:?}", err);
+            }
+        }
+    }
+}
 
 #[repr(u32)]
 pub enum VsockPortOffset {

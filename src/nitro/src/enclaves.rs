@@ -9,13 +9,7 @@ use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
     Device,
 };
-use std::{
-    env,
-    ffi::OsStr,
-    fs, io,
-    path::PathBuf,
-    thread::{self, JoinHandle},
-};
+use std::{env, ffi::OsStr, fs, io, path::PathBuf};
 use tar::HeaderMode;
 
 type Result<T> = std::result::Result<T, NitroError>;
@@ -57,6 +51,7 @@ impl NitroEnclave {
         let rootfs_archive = self.rootfs_archive()?;
 
         let devices = self.devices()?;
+
         let writer = EnclaveArgsWriter::new(
             &rootfs_archive,
             &self.exec_path,
@@ -69,32 +64,7 @@ impl NitroEnclave {
 
         writer.write_args(cid, timeout)?;
 
-        let net_proxy_thread: JoinHandle<Result<()>> = thread::spawn(move || {
-            if let Some(mut net_proxy) = self.net {
-                net_proxy.start(cid).map_err(NitroError::DeviceError)?;
-            }
-
-            Ok(())
-        });
-
-        let output_proxy_thread: JoinHandle<Result<()>> = thread::spawn(move || {
-            let mut output_proxy =
-                OutputProxy::new(&self.output_path, self.debug).map_err(NitroError::DeviceError)?;
-
-            output_proxy.start(cid).map_err(NitroError::DeviceError)?;
-
-            Ok(())
-        });
-
-        if let Ok(Err(err)) = net_proxy_thread.join() {
-            log::error!("error with network vsock stream listener thread: {:?}", err);
-            return Err(err);
-        }
-
-        if let Ok(Err(err)) = output_proxy_thread.join() {
-            log::error!("error with enclave output proxy: {:?}", err);
-            return Err(err);
-        }
+        devices.start(cid);
 
         Ok(())
     }
@@ -171,7 +141,7 @@ impl NitroEnclave {
     }
 
     fn devices(&self) -> Result<DeviceProxyList> {
-        let mut proxies: Vec<Box<dyn DeviceProxy>> = vec![];
+        let mut proxies: Vec<Box<dyn Send + DeviceProxy>> = vec![];
 
         let output =
             OutputProxy::new(&self.output_path, self.debug).map_err(NitroError::DeviceError)?;
