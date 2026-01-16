@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::device::{DeviceProxy, Error, Result, VsockPortOffset};
+use crate::{
+    args_writer::EnclaveArg,
+    device::{DeviceProxy, Error, Result, VsockPortOffset},
+};
 use devices::virtio::{net::device::VirtioNetBackend, Net};
 use std::{
     io::{ErrorKind, Read, Write},
@@ -121,5 +124,9 @@ impl DeviceProxy for NetProxy {
         }
 
         Ok(())
+    }
+
+    fn enclave_arg(&self) -> Option<EnclaveArg<'_>> {
+        Some(EnclaveArg::NetworkProxy)
     }
 }

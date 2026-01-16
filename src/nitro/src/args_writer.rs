@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{device::VsockPortOffset, error::NitroError};
+use crate::{
+    device::{DeviceProxyList, VsockPortOffset},
+    error::NitroError,
+};
 use libc::c_int;
 use nitro_enclaves::launch::PollTimeout;
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout as NixPollTimeout};
@@ -21,7 +24,43 @@ pub struct EnclaveArgsWriter<'a> {
     pub args: Vec<EnclaveArg<'a>>,
 }
 
-impl EnclaveArgsWriter<'_> {
+impl<'a> EnclaveArgsWriter<'a> {
+    pub fn new(
+        rootfs_archive: &'a [u8],
+        exec_path: &str,
+        argv_str: &str,
+        envp_str: &str,
+        devices: &'a DeviceProxyList,
+    ) -> Self {
+        let mut args: Vec<EnclaveArg<'a>> = Vec::new();
+
+        let argv: Vec<String> = argv_str
+            .replace("\"", "")
+            .split(' ')
+            .map(|s| s.to_string())
+            .collect();
+
+        let envp: Vec<String> = envp_str
+            .replace("\"", "")
+            .split(' ')
+            .map(|s| s.to_string())
+            .collect();
+
+        args.append(&mut vec![
+            EnclaveArg::RootFilesystem(rootfs_archive),
+            EnclaveArg::ExecPath(exec_path.to_string()),
+            EnclaveArg::ExecArgv(argv),
+            EnclaveArg::ExecEnvp(envp),
+        ]);
+
+        for device in &devices.0 {
+            if let Some(arg) = device.enclave_arg() {
+                args.push(arg);
+            }
+        }
+
+        Self { args }
+    }
     pub fn write_args(&self, cid: u32, timeout: PollTimeout) -> Result<()> {
         let listener = VsockListener::bind(&VsockAddr::new(
             VMADDR_CID_ANY,

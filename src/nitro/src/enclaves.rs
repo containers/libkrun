@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
-    args_writer::{EnclaveArg, EnclaveArgsWriter},
-    device::{net::NetProxy, output::OutputProxy, DeviceProxy},
+    args_writer::EnclaveArgsWriter,
+    device::{net::NetProxy, output::OutputProxy, DeviceProxy, DeviceProxyList},
     error::NitroError,
 };
 use nitro_enclaves::{
@@ -56,37 +56,15 @@ impl NitroEnclave {
     pub fn run(mut self) -> Result<()> {
         let rootfs_archive = self.rootfs_archive()?;
 
-        let argv: Vec<String> = self
-            .exec_args
-            .replace("\"", "")
-            .split(' ')
-            .map(|s| s.to_string())
-            .collect();
+        let devices = self.devices()?;
+        let writer = EnclaveArgsWriter::new(
+            &rootfs_archive,
+            &self.exec_path,
+            &self.exec_args,
+            &self.exec_env,
+            &devices,
+        );
 
-        let envp: Vec<String> = self
-            .exec_env
-            .replace("\"", "")
-            .split(' ')
-            .map(|s| s.to_string())
-            .collect();
-
-        let mut writer = EnclaveArgsWriter::default();
-        writer.args.append(&mut vec![
-            EnclaveArg::RootFilesystem(rootfs_archive.as_slice()),
-            EnclaveArg::ExecPath(self.exec_path.clone()),
-            EnclaveArg::ExecArgv(argv),
-            EnclaveArg::ExecEnvp(envp),
-        ]);
-
-        if self.debug {
-            writer.args.push(EnclaveArg::Debug);
-        }
-
-        if self.net.is_some() {
-            writer.args.push(EnclaveArg::NetworkProxy);
-        }
-
-        let _devices = self.devices()?;
         let (cid, timeout) = self.start()?;
 
         writer.write_args(cid, timeout)?;
@@ -192,7 +170,7 @@ impl NitroEnclave {
         Ok((cid.try_into().unwrap(), timeout)) // Safe to unwrap.
     }
 
-    fn devices(&self) -> Result<Vec<Box<dyn DeviceProxy>>> {
+    fn devices(&self) -> Result<DeviceProxyList> {
         let mut proxies: Vec<Box<dyn DeviceProxy>> = vec![];
 
         let output =
@@ -203,7 +181,7 @@ impl NitroEnclave {
             proxies.push(Box::new(net));
         }
 
-        Ok(proxies)
+        Ok(DeviceProxyList(proxies))
     }
 }
 
