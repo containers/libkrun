@@ -86,6 +86,7 @@ impl NitroEnclave {
             writer.args.push(EnclaveArg::NetworkProxy);
         }
 
+        let _devices = self.devices()?;
         let (cid, timeout) = self.start()?;
 
         writer.write_args(cid, timeout)?;
@@ -189,6 +190,20 @@ impl NitroEnclave {
             .map_err(NitroError::VmStart)?;
 
         Ok((cid.try_into().unwrap(), timeout)) // Safe to unwrap.
+    }
+
+    fn devices(&self) -> Result<Vec<Box<dyn DeviceProxy>>> {
+        let mut proxies: Vec<Box<dyn DeviceProxy>> = vec![];
+
+        let output =
+            OutputProxy::new(&self.output_path, self.debug).map_err(NitroError::DeviceError)?;
+        proxies.push(Box::new(output));
+
+        if let Some(net) = self.net.clone() {
+            proxies.push(Box::new(net));
+        }
+
+        Ok(proxies)
     }
 }
 

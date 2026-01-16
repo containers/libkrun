@@ -5,7 +5,7 @@ use devices::virtio::{net::device::VirtioNetBackend, Net};
 use std::{
     io::{ErrorKind, Read, Write},
     os::{
-        fd::{FromRawFd, OwnedFd},
+        fd::{FromRawFd, OwnedFd, RawFd},
         unix::net::UnixStream,
     },
     sync::mpsc::{self, RecvTimeoutError},
@@ -14,22 +14,21 @@ use std::{
 };
 use vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY};
 
+#[derive(Clone)]
 pub struct NetProxy {
-    unix_stream: UnixStream,
+    fd: RawFd,
 }
 
 impl TryFrom<&Net> for NetProxy {
     type Error = Error;
 
     fn try_from(net: &Net) -> Result<Self> {
-        let unix_stream = match net.cfg_backend {
-            VirtioNetBackend::UnixstreamFd(fd) => unsafe {
-                UnixStream::from(OwnedFd::from_raw_fd(fd))
-            },
+        let fd = match net.cfg_backend {
+            VirtioNetBackend::UnixstreamFd(fd) => RawFd::from(fd),
             _ => return Err(Error::InvalidNetInterface),
         };
 
-        Ok(Self { unix_stream })
+        Ok(Self { fd })
     }
 }
 
@@ -46,7 +45,9 @@ impl DeviceProxy for NetProxy {
         let mut vsock_stream = vsock_listener.accept().map_err(Error::VsockAccept)?;
 
         let mut vsock_stream_clone = vsock_stream.0.try_clone().map_err(Error::VsockClone)?;
-        let mut unix_stream_clone_write = self.unix_stream.try_clone().map_err(Error::UnixClone)?;
+
+        let unix_stream = unsafe { UnixStream::from(OwnedFd::from_raw_fd(self.fd)) };
+        let mut unix_stream_clone_write = unix_stream.try_clone().map_err(Error::UnixClone)?;
 
         let (tx, rx) = mpsc::channel::<()>();
 
@@ -70,7 +71,7 @@ impl DeviceProxy for NetProxy {
             Ok(())
         });
 
-        let mut unix_stream_clone_read = self.unix_stream.try_clone().unwrap();
+        let mut unix_stream_clone_read = unix_stream.try_clone().unwrap();
         unix_stream_clone_read
             .set_read_timeout(Some(Duration::from_millis(250)))
             .unwrap();
