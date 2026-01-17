@@ -29,6 +29,7 @@ pub enum NitroError {
     VsockBytesWrite(io::Error),
     VsockBytesTooLarge,
     CStringConversion(ffi::NulError),
+    EifRead(io::Error),
     EifTarExtract(io::Error),
     DeviceError(device::Error),
 }
@@ -85,6 +86,7 @@ impl fmt::Display for NitroError {
                 "vsock write byte buffer size is larger than 64 bytes".to_string()
             }
             NitroError::CStringConversion(e) => format!("unable to convert String to CString: {e}"),
+            NitroError::EifRead(e) => format!("unable to read cached EIF file: {e}"),
             NitroError::EifTarExtract(e) => format!("unable to extract EIF from tar archive: {e}"),
             NitroError::DeviceError(e) => format!("device proxy error: {:?}", e),
         };
