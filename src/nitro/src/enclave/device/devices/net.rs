@@ -2,7 +2,8 @@
 
 use crate::enclave::{
     args_writer::EnclaveArg,
-    device::{DeviceProxy, Error, Result, VsockPortOffset},
+    device::{DeviceProxy, Error, Result},
+    VsockPortOffset,
 };
 use devices::virtio::{net::device::VirtioNetBackend, Net};
 use std::{
