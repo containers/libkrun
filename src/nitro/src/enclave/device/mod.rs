@@ -4,7 +4,7 @@ mod devices;
 
 pub use devices::*;
 
-use crate::enclave::args_writer::EnclaveArg;
+use crate::enclave::{args_writer::EnclaveArg, VsockPortOffset};
 use std::{
     fmt, io,
     thread::{self, JoinHandle},
@@ -46,16 +46,6 @@ impl DeviceProxyList {
             }
         }
     }
-}
-
-#[repr(u32)]
-pub enum VsockPortOffset {
-    ArgsReader = 1,
-    Net = 2,
-    AppOutput = 3,
-
-    // Not set by krun-nitro.
-    Console = 10000,
 }
 
 #[derive(Debug)]

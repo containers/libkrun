@@ -2,7 +2,8 @@
 
 use crate::enclave::{
     args_writer::EnclaveArg,
-    device::{DeviceProxy, Error, VsockPortOffset},
+    device::{DeviceProxy, Error},
+    VsockPortOffset,
 };
 use std::{
     fs::File,

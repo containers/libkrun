@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    enclave::device::{DeviceProxyList, VsockPortOffset},
+    enclave::{device::DeviceProxyList, VsockPortOffset},
     error::NitroError,
 };
 use libc::c_int;

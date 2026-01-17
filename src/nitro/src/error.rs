@@ -6,6 +6,7 @@ use std::{ffi, fmt, io};
 
 #[derive(Debug)]
 pub enum NitroError {
+    AppReturn(i32),
     DeviceOpen(io::Error),
     VmCreate(LaunchError),
     VmMemorySet(LaunchError),
@@ -37,6 +38,7 @@ pub enum NitroError {
 impl fmt::Display for NitroError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let msg = match self {
+            NitroError::AppReturn(ret) => format!("app returned non-zero return code: {ret}"),
             NitroError::DeviceOpen(e) => format!("unable to open nitro enclaves device: {e}"),
             NitroError::VmCreate(e) => format!("unable to create enclave VM: {e}"),
             NitroError::VmMemorySet(e) => format!("unable to set enclave memory regions: {e}"),

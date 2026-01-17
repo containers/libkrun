@@ -39,6 +39,7 @@ enum {
     VSOCK_PORT_OFFSET_ARGS_READER = 1,
     VSOCK_PORT_OFFSET_NET = 2,
     VSOCK_PORT_OFFSET_OUTPUT = 3,
+    VSOCK_PORT_OFFSET_APP_RET_CODE = 4,
 };
 
 /*
@@ -398,9 +399,59 @@ unsigned int cid_fetch(void)
     return cid;
 }
 
+static int app_ret_write(int code, unsigned int cid)
+{
+    int ret, sock_fd;
+    unsigned int vsock_port;
+    struct sockaddr_vm addr;
+    struct timeval timeval;
+
+    sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
+    if (sock_fd < 0) {
+        perror("unable to open application return vsock");
+        return -errno;
+    }
+
+    vsock_port = cid + VSOCK_PORT_OFFSET_APP_RET_CODE;
+
+    bzero((char *)&addr, sizeof(struct sockaddr_vm));
+    addr.svm_family = AF_VSOCK;
+    addr.svm_cid = VMADDR_CID_HOST;
+    addr.svm_port = vsock_port;
+
+    memset(&timeval, 0, sizeof(struct timeval));
+    timeval.tv_sec = 5;
+
+    ret = setsockopt(sock_fd, AF_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
+                     (void *)&timeval, sizeof(struct timeval));
+    if (ret < 0) {
+        perror("unable to set application return vsock connect timeout");
+        close(sock_fd);
+        return -errno;
+    }
+
+    ret = connect(sock_fd, (struct sockaddr *)&addr, sizeof(addr));
+    if (ret < 0) {
+        perror("unable to connect to application return vsock");
+        close(sock_fd);
+        return -errno;
+    }
+
+    ret = write(sock_fd, (void *)&code, sizeof(int));
+    if (ret < sizeof(int)) {
+        perror("unable to write application return code");
+        close(sock_fd);
+        return -errno;
+    }
+
+    close(sock_fd);
+
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
-    int ret, nsm_fd, shutdown_fd, pid, app_status, output_vsock;
+    int ret, nsm_fd, shutdown_fd, pid, ret_code, output_vsock;
     struct enclave_args args;
     unsigned int cid;
     uint64_t sfd_val;
@@ -512,7 +563,7 @@ int main(int argc, char *argv[])
         break;
     default:
         sfd_val = 1;
-        wait(&app_status);
+        waitpid(pid, &ret_code, 0);
 
         ret = write(shutdown_fd, &sfd_val, sizeof(uint64_t));
         if (ret < 0) {
@@ -524,20 +575,12 @@ int main(int argc, char *argv[])
         if (output_vsock)
             app_stdio_close(output_vsock);
 
-        /*
-         * TODO: Remove this call to sleep. Instead, receive a signal from the
-         * network proxy that the vsock and TUN file descriptors have been
-         * closed before exiting the parent process (i.e. the VM in general).
-         */
-        sleep(5);
+        ret = app_ret_write(ret_code, cid);
 
-        ret = app_status;
-        break;
+        // Allow the host to read the return code before exiting the enclave.
+        sleep(1);
     }
 
 out:
-    exit(ret);
-
-    // Unreachable.
-    return -1;
+    return ret;
 }
