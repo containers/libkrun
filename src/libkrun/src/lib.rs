@@ -59,7 +59,7 @@ use vmm::vmm_config::net::NetworkInterfaceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
 #[cfg(feature = "nitro")]
-use nitro::enclaves::NitroEnclave;
+use nitro::enclave::NitroEnclave;
 
 #[cfg(feature = "gpu")]
 use devices::virtio::display::{DisplayInfoEdid, PhysicalSize, MAX_DISPLAYS};

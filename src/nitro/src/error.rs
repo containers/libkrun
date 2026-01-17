@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::device;
+use super::enclave::device;
 use nitro_enclaves::launch::LaunchError;
 use std::{ffi, fmt, io};
 
