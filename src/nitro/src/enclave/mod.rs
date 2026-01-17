@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{
-    args_writer::EnclaveArgsWriter,
-    device::{net::NetProxy, output::OutputProxy, DeviceProxy, DeviceProxyList},
-    error::NitroError,
-};
+pub mod args_writer;
+pub mod device;
+
+use args_writer::EnclaveArgsWriter;
+use device::{net::NetProxy, output::OutputProxy, DeviceProxy, DeviceProxyList};
 use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
     Device,
 };
 use std::{env, ffi::OsStr, fs, io, path::PathBuf};
+
+use super::error::NitroError;
 use tar::HeaderMode;
 
 type Result<T> = std::result::Result<T, NitroError>;

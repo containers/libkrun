@@ -4,7 +4,7 @@ mod devices;
 
 pub use devices::*;
 
-use crate::args_writer::EnclaveArg;
+use crate::enclave::args_writer::EnclaveArg;
 use std::{
     fmt, io,
     thread::{self, JoinHandle},
