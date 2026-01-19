@@ -31,14 +31,6 @@
 #define TUN_DEV_MAJOR 10
 #define TUN_DEV_MINOR 200
 
-volatile sig_atomic_t proxy_ready = 0;
-
-static void sig_handler(int sig)
-{
-    if (sig == SIGUSR1)
-        proxy_ready = 1;
-}
-
 static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
                              char *tap_name)
 {
@@ -318,13 +310,12 @@ static int tap_alloc(char *name)
     return fd;
 }
 
-int tap_afvsock_init(int shutdown_fd, unsigned int vsock_port)
+int tap_afvsock_init(unsigned int vsock_port, int shutdown_fd)
 {
     int ret, tun_fd, vsock_fd;
     struct sockaddr_vm saddr;
     char tap_name[IFNAMSIZ];
     struct timeval timeval;
-    struct sigaction sa;
     pid_t pid;
 
     // Ensure that /dev/net/tun is initialized. If not, initialize the device.
@@ -337,18 +328,6 @@ int tap_afvsock_init(int shutdown_fd, unsigned int vsock_port)
     tun_fd = tap_alloc(tap_name);
     if (ret < 0)
         return ret;
-
-    memset(&sa, 0, sizeof(struct sigaction));
-    sa.sa_handler = sig_handler;
-    sigemptyset(&sa.sa_mask);
-    sigaddset(&sa.sa_mask, SIGUSR1);
-    sigprocmask(SIG_UNBLOCK, &sa.sa_mask, NULL);
-
-    ret = sigaction(SIGUSR1, &sa, NULL);
-    if (ret < 0) {
-        perror("sigaction");
-        return -errno;
-    }
 
     pid = fork();
     switch (pid) {
@@ -387,9 +366,6 @@ int tap_afvsock_init(int shutdown_fd, unsigned int vsock_port)
         ret = tap_vsock_forward(tun_fd, vsock_fd, shutdown_fd, tap_name);
         if (ret < 0)
             exit(EXIT_FAILURE);
-    default:
-        while (!proxy_ready)
-            ;
     }
 
     return 0;

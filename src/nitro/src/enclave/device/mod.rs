@@ -60,6 +60,7 @@ pub enum Error {
     VsockClone(io::Error),
     VsockConnect(io::Error),
     VsockRead(io::Error),
+    VsockWrite(io::Error),
 }
 
 impl fmt::Display for Error {
@@ -85,8 +86,9 @@ impl fmt::Display for Error {
             Self::VsockConnect(cause) => format!("uanble to connect to enclave vsock: {:?}", cause),
             Self::VsockClone(cause) => format!("unable to clone enclave vsock: {:?}", cause),
             Self::VsockRead(cause) => {
-                format!("unable to read from enclave ovsock: {:?}", cause)
+                format!("unable to read from enclave vsock: {:?}", cause)
             }
+            Self::VsockWrite(cause) => format!("unable to write to enclave vsock: {:?}", cause),
         };
 
         write!(f, "{}", msg)

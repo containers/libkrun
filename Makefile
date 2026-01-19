@@ -27,6 +27,7 @@ NITRO_INIT_SRC = \
 		init/nitro/device/app_stdio_output.c	\
 		init/nitro/device/device.c              \
 		init/nitro/device/net_tap_afvsock.c	\
+		init/nitro/device/signal.c		\
 
 KBS_LD_FLAGS =	-lcurl -lidn2 -lssl -lcrypto -lzstd -lz -lbrotlidec-static \
 		-lbrotlicommon-static
