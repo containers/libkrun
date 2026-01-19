@@ -17,15 +17,16 @@ SNP_INIT_SRC =	init/tee/snp_attest.c		\
 		$(KBS_INIT_SRC)			\
 
 TDX_INIT_SRC = $(KBS_INIT_SRC)
-NITRO_INIT_SRC = init/nitro/include/archive.h		\
-		init/nitro/include/args_reader.h	\
-		init/nitro/include/fs.h			\
-		init/nitro/include/tap_afvsock.h	\
-		init/nitro/main.c			\
-		init/nitro/archive.c			\
-		init/nitro/args_reader.c		\
-		init/nitro/fs.c				\
-		init/nitro/tap_afvsock.c		\
+NITRO_INIT_SRC = \
+		init/nitro/include/*        	  	\
+        init/nitro/main.c				\
+        init/nitro/archive.c				\
+        init/nitro/args_reader.c			\
+        init/nitro/fs.c				\
+        init/nitro/device/include/*			\
+		init/nitro/device/app_stdio_output.c	\
+		init/nitro/device/device.c              \
+		init/nitro/device/net_tap_afvsock.c	\
 
 KBS_LD_FLAGS =	-lcurl -lidn2 -lssl -lcrypto -lzstd -lz -lbrotlidec-static \
 		-lbrotlicommon-static

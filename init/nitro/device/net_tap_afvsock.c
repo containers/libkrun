@@ -26,7 +26,7 @@
 #include <linux/if_tun.h>
 #include <linux/vm_sockets.h>
 
-#include "include/tap_afvsock.h"
+#include "include/device.h"
 
 #define TUN_DEV_MAJOR 10
 #define TUN_DEV_MINOR 200
