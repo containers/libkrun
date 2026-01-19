@@ -4,7 +4,9 @@ pub mod args_writer;
 pub mod device;
 
 use args_writer::EnclaveArgsWriter;
-use device::{net::NetProxy, output::OutputProxy, DeviceProxy, DeviceProxyList};
+use device::{
+    net::NetProxy, output::OutputProxy, signal_handler::SignalHandler, DeviceProxy, DeviceProxyList,
+};
 use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
     Device,
@@ -137,6 +139,8 @@ impl NitroEnclave {
             proxies.push(Box::new(net));
         }
 
+        proxies.push(Box::new(SignalHandler));
+
         Ok(DeviceProxyList(proxies))
     }
 
@@ -206,6 +210,7 @@ pub enum VsockPortOffset {
     Net = 2,
     AppOutput = 3,
     ReturnCode = 4,
+    SignalHandler = 5,
     // Not set by krun-nitro.
     Console = 10000,
 }

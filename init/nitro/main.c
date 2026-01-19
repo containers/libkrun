@@ -38,37 +38,8 @@ enum {
     VSOCK_PORT_OFFSET_NET = 2,
     VSOCK_PORT_OFFSET_OUTPUT = 3,
     VSOCK_PORT_OFFSET_APP_RET_CODE = 4,
+    VSOCK_PORT_OFFSET_SIGNAL_HANDLER = 5,
 };
-
-/*
- * Block or unblock signals.
- *
- * NOTE: All signals are blocked before the devies or console are set up.
- *       Therefore, perror output may not be displayed if a failure occurs
- *       during this setup.
- */
-int sig_mask(int mask)
-{
-    sigset_t set;
-    int ret;
-
-    // Initialize the signal set to the complete set of supported signals.
-    ret = sigfillset(&set);
-    if (ret < 0) {
-        perror("sigfillset");
-        return -errno;
-    }
-
-    // Block/unblock the signals. This essentially blocks/unblocks all signals
-    // to the process.
-    ret = sigprocmask(mask, &set, 0);
-    if (ret < 0) {
-        perror("sigprocmask");
-        return -errno;
-    }
-
-    return 0;
-}
 
 /*
  * Initialize /dev/console and redirect std{err, in, out} to it for early debug
@@ -204,11 +175,6 @@ static int rootfs_mount()
 pid_t launch(char **argv, char **envp)
 {
     int ret;
-
-    // Unblock all signals.
-    ret = sig_mask(SIG_UNBLOCK);
-    if (ret < 0)
-        return ret;
 
     // Create a new session and set the process group ID.
     setsid();
@@ -382,7 +348,25 @@ static int app_ret_write(int code, unsigned int cid)
 
 static int devices_init(int cid, struct enclave_args *args, int shutdown_fd)
 {
+    struct sigaction sa;
     int ret;
+
+    memset(&sa, 0, sizeof(struct sigaction));
+    sa.sa_handler = device_proxy_sig_handler;
+    sigemptyset(&sa.sa_mask);
+    sigaddset(&sa.sa_mask, SIGUSR1);
+    sigprocmask(SIG_UNBLOCK, &sa.sa_mask, NULL);
+
+    ret = sigaction(SIGUSR1, &sa, NULL);
+    if (ret < 0) {
+        perror("sigaction enable SIGUSR1 for device proxies");
+        return -errno;
+    }
+
+    if (!args->debug) {
+        ret = device_init(KRUN_NE_DEV_APP_OUTPUT_STDIO,
+                          cid + VSOCK_PORT_OFFSET_OUTPUT, shutdown_fd);
+    }
 
     if (args->network_proxy) {
         ret = device_init(KRUN_NE_DEV_NET_TAP_AF_VSOCK,
@@ -391,44 +375,66 @@ static int devices_init(int cid, struct enclave_args *args, int shutdown_fd)
             return ret;
     }
 
-    if (!args->debug) {
-        ret = device_init(KRUN_NE_DEV_APP_OUTPUT_STDIO,
-                          cid + VSOCK_PORT_OFFSET_OUTPUT, shutdown_fd);
-    }
+    ret = device_init(KRUN_NE_DEV_SIGNAL_HANDLER,
+                      cid + VSOCK_PORT_OFFSET_SIGNAL_HANDLER, shutdown_fd);
+    if (ret < 0)
+        return ret;
 
     return ret;
 }
 
 static int devices_exit(struct enclave_args *args, int shutdown_fd)
 {
+    uint64_t sfd_val;
     int ret;
 
-    if (args->network_proxy) {
-        ret = device_exit(KRUN_NE_DEV_NET_TAP_AF_VSOCK, shutdown_fd);
-        if (ret < 0)
-            return ret;
+    sfd_val = 1;
+    ret = write(shutdown_fd, &sfd_val, sizeof(uint64_t));
+    if (ret < 0) {
+        perror("write shutdown FD");
+        ret = -errno;
     }
 
-    if (!args->debug) {
-        ret = device_exit(KRUN_NE_DEV_APP_OUTPUT_STDIO, shutdown_fd);
-    }
+    if (!args->debug)
+        app_stdio_close();
 
     return ret;
+}
+
+static pid_t KRUN_NITRO_APP_PID = -1;
+static bool KRUN_NITRO_SIGTERM_CAUGHT = false;
+
+void shutdown_sig_handler(int sig)
+{
+    if ((sig == SIGTERM) && (KRUN_NITRO_APP_PID > 0)) {
+        kill(KRUN_NITRO_APP_PID, sig);
+        KRUN_NITRO_SIGTERM_CAUGHT = true;
+    }
 }
 
 int main(int argc, char *argv[])
 {
     int ret, nsm_fd, shutdown_fd, pid, ret_code;
     struct enclave_args args;
+    struct sigaction sa;
     unsigned int cid;
+    sigset_t sigset;
 
     ret = -1;
     memset(&args, 0, sizeof(struct enclave_args));
 
     // Block all signals.
-    ret = sig_mask(SIG_BLOCK);
-    if (ret < 0)
-        goto out;
+    ret = sigfillset(&sigset);
+    if (ret < 0) {
+        perror("sigfillset");
+        return -errno;
+    }
+
+    ret = sigprocmask(SIG_BLOCK, &sigset, 0);
+    if (ret < 0) {
+        perror("sigprocmask");
+        return -errno;
+    }
 
     // Initialize early debug output with /dev/console.
     ret = console_init();
@@ -507,6 +513,13 @@ int main(int argc, char *argv[])
     if (ret < 0)
         goto out;
 
+    // Unblock all signals.
+    ret = sigprocmask(SIG_UNBLOCK, &sigset, 0);
+    if (ret < 0) {
+        perror("sigprocmask unblock all signals");
+        return -errno;
+    }
+
     pid = fork();
     switch (pid) {
     case -1:
@@ -518,12 +531,21 @@ int main(int argc, char *argv[])
         ret = launch(args.exec_argv, args.exec_envp);
         break;
     default:
-        // Unblock all signals.
-        ret = sig_mask(SIG_UNBLOCK);
-        if (ret < 0)
-            return ret;
+        KRUN_NITRO_APP_PID = pid;
+
+        memset(&sa, 0, sizeof(struct sigaction));
+        sa.sa_handler = shutdown_sig_handler;
+
+        ret = sigaction(SIGTERM, &sa, NULL);
+        if (ret < 0) {
+            perror("sigaction enable SIGUSR1 for device proxies");
+            return -errno;
+        }
 
         waitpid(pid, &ret_code, 0);
+
+        if (KRUN_NITRO_SIGTERM_CAUGHT)
+            ret_code = 0;
 
         ret = devices_exit(&args, shutdown_fd);
         if (ret < 0)
