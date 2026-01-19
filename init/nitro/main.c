@@ -493,7 +493,7 @@ int main(int argc, char *argv[])
             goto out;
     }
 
-    output_vsock = -1;
+    output_vsock = 0;
     if (!args.debug) {
         output_vsock = app_stdio_output(cid + VSOCK_PORT_OFFSET_OUTPUT);
         if (output_vsock < 0)
@@ -521,7 +521,7 @@ int main(int argc, char *argv[])
             goto out;
         }
 
-        if (output_vsock >= 0)
+        if (output_vsock)
             app_stdio_close(output_vsock);
 
         /*
