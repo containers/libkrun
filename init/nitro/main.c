@@ -3,6 +3,8 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/vm_sockets.h>
+#include <nsm.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -12,21 +14,17 @@
 #include <sys/eventfd.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <nsm.h>
-
+#include "device/include/device.h"
 #include "include/archive.h"
 #include "include/args_reader.h"
 #include "include/fs.h"
-#include "include/tap_afvsock.h"
-
-#include <linux/vm_sockets.h>
-#include <sys/socket.h>
 
 #define finit_module(fd, param_values, flags)                                  \
     (int)syscall(__NR_finit_module, fd, param_values, flags)
@@ -200,79 +198,12 @@ static int rootfs_mount()
     return 0;
 }
 
-static int app_stdio_output(unsigned int vsock_port)
-{
-    int streams[2] = {STDOUT_FILENO, STDERR_FILENO};
-    struct sockaddr_vm addr;
-    struct timeval timeval;
-    int ret, sock_fd, i;
-
-    sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
-    if (sock_fd < 0) {
-        perror("unable to create guest socket");
-        return -errno;
-    }
-
-    bzero((char *)&addr, sizeof(struct sockaddr_vm));
-    addr.svm_family = AF_VSOCK;
-    addr.svm_cid = VMADDR_CID_HOST;
-    addr.svm_port = vsock_port;
-
-    memset(&timeval, 0, sizeof(struct timeval));
-    timeval.tv_sec = 5;
-
-    ret = setsockopt(sock_fd, AF_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
-                     (void *)&timeval, sizeof(struct timeval));
-    if (ret < 0) {
-        perror("unable to connect to host socket");
-        close(sock_fd);
-        return -errno;
-    }
-
-    ret = connect(sock_fd, (struct sockaddr *)&addr, sizeof(addr));
-    if (ret < 0) {
-        perror("unable to connect to host socket");
-        close(sock_fd);
-        return -errno;
-    }
-
-    for (i = 0; i < 2; i++) {
-        ret = dup2(sock_fd, streams[i]);
-        if (ret < 0) {
-            fprintf(stderr, "unable to redirect stream [%d] to socket: %s\n",
-                    streams[i], strerror(errno));
-            close(sock_fd);
-            return -errno;
-        }
-    }
-
-    return sock_fd;
-}
-
-static void app_stdio_close(int output_vsock)
-{
-    close(STDOUT_FILENO);
-    close(STDERR_FILENO);
-    close(output_vsock);
-}
-
 /*
  * Launch the application specified with argv and envp.
  */
 pid_t launch(char **argv, char **envp)
 {
-    int ret, pid;
-
-    // Fork the process.
-    pid = fork();
-    if (pid < 0) {
-        perror("launch fork");
-        return -errno;
-    } else if (pid != 0) {
-        // Parent process. Wait for the child to end before exiting.
-        wait(NULL);
-        return 0;
-    }
+    int ret;
 
     // Unblock all signals.
     ret = sig_mask(SIG_UNBLOCK);
@@ -299,7 +230,7 @@ pid_t launch(char **argv, char **envp)
         return -errno;
     }
 
-    return 0;
+    return ret;
 }
 
 /*
@@ -449,12 +380,47 @@ static int app_ret_write(int code, unsigned int cid)
     return 0;
 }
 
+static int devices_init(int cid, struct enclave_args *args, int shutdown_fd)
+{
+    int ret;
+
+    if (args->network_proxy) {
+        ret = device_init(KRUN_NE_DEV_NET_TAP_AF_VSOCK,
+                          cid + VSOCK_PORT_OFFSET_NET, shutdown_fd);
+        if (ret < 0)
+            return ret;
+    }
+
+    if (!args->debug) {
+        ret = device_init(KRUN_NE_DEV_APP_OUTPUT_STDIO,
+                          cid + VSOCK_PORT_OFFSET_OUTPUT, shutdown_fd);
+    }
+
+    return ret;
+}
+
+static int devices_exit(struct enclave_args *args, int shutdown_fd)
+{
+    int ret;
+
+    if (args->network_proxy) {
+        ret = device_exit(KRUN_NE_DEV_NET_TAP_AF_VSOCK, shutdown_fd);
+        if (ret < 0)
+            return ret;
+    }
+
+    if (!args->debug) {
+        ret = device_exit(KRUN_NE_DEV_APP_OUTPUT_STDIO, shutdown_fd);
+    }
+
+    return ret;
+}
+
 int main(int argc, char *argv[])
 {
-    int ret, nsm_fd, shutdown_fd, pid, ret_code, output_vsock;
+    int ret, nsm_fd, shutdown_fd, pid, ret_code;
     struct enclave_args args;
     unsigned int cid;
-    uint64_t sfd_val;
 
     ret = -1;
     memset(&args, 0, sizeof(struct enclave_args));
@@ -537,19 +503,9 @@ int main(int argc, char *argv[])
         goto out;
     }
 
-    // Initialize the network TAP device.
-    if (args.network_proxy) {
-        ret = tap_afvsock_init(shutdown_fd, cid + VSOCK_PORT_OFFSET_NET);
-        if (ret < 0)
-            goto out;
-    }
-
-    output_vsock = 0;
-    if (!args.debug) {
-        output_vsock = app_stdio_output(cid + VSOCK_PORT_OFFSET_OUTPUT);
-        if (output_vsock < 0)
-            goto out;
-    }
+    ret = devices_init(cid, &args, shutdown_fd);
+    if (ret < 0)
+        goto out;
 
     pid = fork();
     switch (pid) {
@@ -562,18 +518,16 @@ int main(int argc, char *argv[])
         ret = launch(args.exec_argv, args.exec_envp);
         break;
     default:
-        sfd_val = 1;
+        // Unblock all signals.
+        ret = sig_mask(SIG_UNBLOCK);
+        if (ret < 0)
+            return ret;
+
         waitpid(pid, &ret_code, 0);
 
-        ret = write(shutdown_fd, &sfd_val, sizeof(uint64_t));
-        if (ret < 0) {
-            perror("write shutdown FD");
-            ret = -errno;
+        ret = devices_exit(&args, shutdown_fd);
+        if (ret < 0)
             goto out;
-        }
-
-        if (output_vsock)
-            app_stdio_close(output_vsock);
 
         ret = app_ret_write(ret_code, cid);
 
