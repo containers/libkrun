@@ -9,7 +9,7 @@ license = "Apache-2.0"
 links = "krun"
 
 [build-dependencies]
-bindgen = { version = "0.69.4", default-features = false }
+bindgen = { version = "0.72.1", default-features = false }
 pkg-config = { version = "0.3", default-features = false }
 
 [features]
