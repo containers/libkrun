@@ -7,6 +7,7 @@ pub use devices::*;
 use crate::enclave::{args_writer::EnclaveArg, VsockPortOffset};
 use std::{
     fmt, io,
+    sync::mpsc,
     thread::{self, JoinHandle},
 };
 
@@ -53,7 +54,11 @@ pub enum Error {
     FileOpen(io::Error),
     FileWrite(io::Error),
     InvalidNetInterface,
+    ShutdownSignalReceive(mpsc::RecvTimeoutError),
+    SignalRegister(io::Error),
     UnixClone(io::Error),
+    UnixRead(io::Error),
+    UnixReadTimeoutSet(io::Error),
     UnixWrite(io::Error),
     VsockAccept(io::Error),
     VsockBind(io::Error),
@@ -66,29 +71,30 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let msg = match self {
-            Self::FileOpen(cause) => format!("unable to open file: {:?}", cause),
-            Self::FileWrite(cause) => {
-                format!("unable to write buffer to output file: {:?}", cause)
+            Self::FileOpen(e) => format!("unable to open file: {e}"),
+            Self::FileWrite(e) => format!("unable to write buffer to output file: {e}"),
+            Self::ShutdownSignalReceive(e) => {
+                format!("error while receiving read proxy shutdown signal: {e}")
+            }
+            Self::SignalRegister(e) => {
+                format!("unable to register signal in signal handler proxy: {e}")
             }
             Self::InvalidNetInterface => {
-                "invalid network proxy interface, must supply unix stream file descriptor"
+                "invalid network proxy interface, must supply UNIX stream file descriptor"
                     .to_string()
             }
-            Self::UnixClone(cause) => format!("unable to clone unix stream: {:?}", cause),
-            Self::UnixWrite(cause) => format!("unable to write to unix stream: {:?}", cause),
-            Self::VsockAccept(cause) => format!(
-                "unable to accept connection from enclave vsock: {:?}",
-                cause
-            ),
-            Self::VsockBind(cause) => {
-                format!("unable to bind to enclave vsock: {:?}", cause)
+            Self::UnixClone(e) => format!("unable to clone unix stream: {e}"),
+            Self::UnixRead(e) => format!("unable to read from unix stream: {e}"),
+            Self::UnixReadTimeoutSet(e) => {
+                format!("unable to set read timeout for unix stream: {e}")
             }
-            Self::VsockConnect(cause) => format!("uanble to connect to enclave vsock: {:?}", cause),
-            Self::VsockClone(cause) => format!("unable to clone enclave vsock: {:?}", cause),
-            Self::VsockRead(cause) => {
-                format!("unable to read from enclave vsock: {:?}", cause)
-            }
-            Self::VsockWrite(cause) => format!("unable to write to enclave vsock: {:?}", cause),
+            Self::UnixWrite(e) => format!("unable to write to unix stream: {e}"),
+            Self::VsockAccept(e) => format!("unable to accept connection from vsock: {e}"),
+            Self::VsockBind(e) => format!("unable to bind to vsock: {e}"),
+            Self::VsockConnect(e) => format!("unable to connect to vsock: {e}"),
+            Self::VsockClone(e) => format!("unable to clone vsock: {e}"),
+            Self::VsockRead(e) => format!("unable to read from vsock: {e}"),
+            Self::VsockWrite(e) => format!("unable to write to vsock: {e}"),
         };
 
         write!(f, "{}", msg)

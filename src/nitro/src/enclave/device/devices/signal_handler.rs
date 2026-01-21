@@ -31,7 +31,7 @@ impl DeviceProxy for SignalHandler {
 
     fn _start(&mut self, vsock_port: u32) -> Result<()> {
         let term = Arc::new(AtomicBool::new(false));
-        signal_hook::flag::register(SIGTERM, Arc::clone(&term)).unwrap();
+        signal_hook::flag::register(SIGTERM, Arc::clone(&term)).map_err(Error::SignalRegister)?;
 
         let vsock_listener = VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, vsock_port))
             .map_err(Error::VsockBind)?;

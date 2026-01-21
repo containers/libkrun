@@ -67,7 +67,7 @@ impl DeviceProxy for NetProxy {
                         .write_all(&vsock_buf[..size])
                         .map_err(Error::UnixWrite)?;
                 } else {
-                    tx.send(()).unwrap();
+                    let _ = tx.send(());
                     break;
                 }
             }
@@ -75,10 +75,10 @@ impl DeviceProxy for NetProxy {
             Ok(())
         });
 
-        let mut unix_stream_clone_read = unix_stream.try_clone().unwrap();
+        let mut unix_stream_clone_read = unix_stream.try_clone().map_err(Error::UnixClone)?;
         unix_stream_clone_read
             .set_read_timeout(Some(Duration::from_millis(250)))
-            .unwrap();
+            .map_err(Error::UnixReadTimeoutSet)?;
         // Unix
         let unix_thread: JoinHandle<Result<()>> = thread::spawn(move || {
             let mut unix_buf = [0u8; 1500];
@@ -102,12 +102,12 @@ impl DeviceProxy for NetProxy {
                                 if e == RecvTimeoutError::Timeout {
                                     continue;
                                 } else {
-                                    panic!();
+                                    return Err(Error::ShutdownSignalReceive(e))?;
                                 }
                             }
                         }
                     }
-                    Err(_) => panic!(),
+                    Err(e) => return Err(Error::UnixRead(e)),
                 }
             }
 
