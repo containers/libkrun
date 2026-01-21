@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    enclave::{device::DeviceProxyList, VsockPortOffset},
-    error::NitroError,
-};
+use crate::enclave::{device::DeviceProxyList, VsockPortOffset};
 use libc::c_int;
 use nitro_enclaves::launch::PollTimeout;
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout as NixPollTimeout};
 use std::{
-    ffi::CString,
-    io::{Read, Write},
+    ffi::{self, CString},
+    fmt,
+    io::{self, Read, Write},
+    num::TryFromIntError,
     os::fd::AsFd,
     str::FromStr,
 };
@@ -17,7 +16,7 @@ use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
 
 const ENCLAVE_VSOCK_LAUNCH_ARGS_READY: u8 = 0xb7;
 
-type Result<T> = std::result::Result<T, NitroError>;
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Default)]
 pub struct EnclaveArgsWriter<'a> {
@@ -66,26 +65,24 @@ impl<'a> EnclaveArgsWriter<'a> {
             VMADDR_CID_ANY,
             cid + (VsockPortOffset::ArgsReader as u32),
         ))
-        .unwrap();
+        .map_err(Error::VsockBind)?;
+
         self.poll(&listener, timeout)?;
 
-        let mut stream = listener.accept().unwrap();
+        let mut stream = listener.accept().map_err(Error::VsockAccept)?;
 
         if stream.1.cid() != cid {
-            return Err(NitroError::HeartbeatCidMismatch);
+            return Err(Error::VsockCidMismatch);
         }
 
         let mut buf = [0u8];
-        let bytes = stream.0.read(&mut buf).map_err(NitroError::HeartbeatRead)?;
+        let bytes = stream.0.read(&mut buf).map_err(Error::VsockRead)?;
 
         if bytes != 1 || buf[0] != ENCLAVE_VSOCK_LAUNCH_ARGS_READY {
-            return Err(NitroError::EnclaveHeartbeatNotDetected);
+            return Err(Error::ReadySignalNotDetected);
         }
 
-        stream
-            .0
-            .write_all(&buf)
-            .map_err(NitroError::HeartbeatWrite)?;
+        stream.0.write_all(&buf).map_err(Error::VsockWrite)?;
 
         for arg in &self.args {
             arg.write(&mut stream.0)?;
@@ -106,8 +103,8 @@ impl<'a> EnclaveArgsWriter<'a> {
         );
 
         match result {
-            Ok(0) => Err(NitroError::PollNoSelectedEvents),
-            Ok(x) if x > 1 => Err(NitroError::PollMoreThanOneSelectedEvent),
+            Ok(0) => Err(Error::PollNoEvents),
+            Ok(x) if x > 1 => Err(Error::PollMoreThanOneSelectedEvent),
             _ => Ok(()),
         }
     }
@@ -143,42 +140,101 @@ impl EnclaveArg<'_> {
     fn write(&self, vsock: &mut VsockStream) -> Result<()> {
         let id: [u8; 1] = [self.into()];
 
-        vsock.write_all(&id).unwrap();
+        vsock.write_all(&id).map_err(Error::VsockWrite)?;
 
         match self {
             Self::RootFilesystem(buf) => {
-                let len: u64 = buf.len().try_into().unwrap();
+                let len: u64 = buf.len().try_into().map_err(Error::VsockBufferLenConvert)?;
 
-                vsock.write_all(&len.to_ne_bytes()).unwrap();
+                vsock
+                    .write_all(&len.to_ne_bytes())
+                    .map_err(Error::VsockWrite)?;
 
-                vsock.write_all(buf).unwrap();
+                vsock.write_all(buf).map_err(Error::VsockWrite)?;
             }
             Self::ExecArgv(vec) | Self::ExecEnvp(vec) => {
-                let len: u64 = vec.len().try_into().unwrap();
+                let len: u64 = vec.len().try_into().map_err(Error::VsockBufferLenConvert)?;
 
-                vsock.write_all(&len.to_ne_bytes()).unwrap();
+                vsock
+                    .write_all(&len.to_ne_bytes())
+                    .map_err(Error::VsockWrite)?;
 
                 for string in vec {
-                    let bytes = Vec::from(CString::from_str(string).unwrap().as_bytes_with_nul());
+                    let bytes = Vec::from(
+                        CString::from_str(string)
+                            .map_err(Error::CStringConvert)?
+                            .as_bytes_with_nul(),
+                    );
 
-                    let len: u64 = bytes.len().try_into().unwrap();
+                    let len: u64 = bytes
+                        .len()
+                        .try_into()
+                        .map_err(Error::VsockBufferLenConvert)?;
 
-                    vsock.write_all(&len.to_ne_bytes()).unwrap();
+                    vsock
+                        .write_all(&len.to_ne_bytes())
+                        .map_err(Error::VsockWrite)?;
 
-                    vsock.write_all(&bytes).unwrap();
+                    vsock.write_all(&bytes).map_err(Error::VsockWrite)?;
                 }
             }
             Self::ExecPath(buf) => {
-                let bytes = Vec::from(CString::from_str(buf).unwrap().as_bytes_with_nul());
-                let len: u64 = bytes.len().try_into().unwrap();
+                let bytes = Vec::from(
+                    CString::from_str(buf)
+                        .map_err(Error::CStringConvert)?
+                        .as_bytes_with_nul(),
+                );
+                let len: u64 = bytes
+                    .len()
+                    .try_into()
+                    .map_err(Error::VsockBufferLenConvert)?;
 
-                vsock.write_all(&len.to_ne_bytes()).unwrap();
+                vsock
+                    .write_all(&len.to_ne_bytes())
+                    .map_err(Error::VsockWrite)?;
 
-                vsock.write_all(&bytes).unwrap();
+                vsock.write_all(&bytes).map_err(Error::VsockWrite)?;
             }
             _ => (),
         }
 
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub enum Error {
+    CStringConvert(ffi::NulError),
+    PollNoEvents,
+    PollMoreThanOneSelectedEvent,
+    ReadySignalNotDetected,
+    VsockAccept(io::Error),
+    VsockBind(io::Error),
+    VsockBufferLenConvert(TryFromIntError),
+    VsockCidMismatch,
+    VsockRead(io::Error),
+    VsockWrite(io::Error),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let msg = match self {
+            Self::CStringConvert(e) => format!("unable to convert string to CString: {e}"),
+            Self::PollNoEvents => "no events on vsock detected".to_string(),
+            Self::PollMoreThanOneSelectedEvent => {
+                "more than one event on vsock detected".to_string()
+            }
+            Self::ReadySignalNotDetected => "ready signal not detected".to_string(),
+            Self::VsockAccept(e) => format!("unable to accept vsock connection: {e}"),
+            Self::VsockBind(e) => format!("unable to bind to vsock: {e}"),
+            Self::VsockBufferLenConvert(e) => {
+                format!("unable to convert vsock buffer size to u64: {e}")
+            }
+            Self::VsockCidMismatch => "CID mismatch on vsock".to_string(),
+            Self::VsockRead(e) => format!("unable to read from vsock: {e}"),
+            Self::VsockWrite(e) => format!("unable to write to vsock: {e}"),
+        };
+
+        write!(f, "{}", msg)
     }
 }

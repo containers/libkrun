@@ -1,98 +1,93 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::enclave::device;
-use nitro_enclaves::launch::LaunchError;
-use std::{ffi, fmt, io};
+use super::enclave::{args_writer, device};
+use std::{fmt, io};
 
 #[derive(Debug)]
-pub enum NitroError {
+pub enum Error {
     AppReturn(i32),
-    DeviceOpen(io::Error),
-    VmCreate(LaunchError),
-    VmMemorySet(LaunchError),
-    VcpuAdd(LaunchError),
-    HeartbeatAccept(io::Error),
-    HeartbeatBind(io::Error),
-    HeartbeatRead(io::Error),
-    HeartbeatWrite(io::Error),
-    VmStart(LaunchError),
-    PollTimeoutCalculate(LaunchError),
-    PollNoSelectedEvents,
-    PollMoreThanOneSelectedEvent,
-    EnclaveHeartbeatNotDetected,
+    ArgsWrite(args_writer::Error),
+    Device(device::Error),
+    ReturnCodeListener(return_code::Error),
     RootFsArchive(io::Error),
-    HeartbeatCidMismatch,
-    VsockCreate,
-    VsockSetTimeout,
-    VsockConnect,
-    IpcWrite(io::Error),
-    VsockBytesLenWrite(io::Error),
-    VsockBytesWrite(io::Error),
-    VsockBytesTooLarge,
-    CStringConversion(ffi::NulError),
-    EifRead(io::Error),
-    EifTarExtract(io::Error),
-    DeviceError(device::Error),
+    Start(start::Error),
 }
 
-impl fmt::Display for NitroError {
+impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let msg = match self {
-            NitroError::AppReturn(ret) => format!("app returned non-zero return code: {ret}"),
-            NitroError::DeviceOpen(e) => format!("unable to open nitro enclaves device: {e}"),
-            NitroError::VmCreate(e) => format!("unable to create enclave VM: {e}"),
-            NitroError::VmMemorySet(e) => format!("unable to set enclave memory regions: {e}"),
-            NitroError::VcpuAdd(e) => format!("unable to add vCPU to enclave: {e}"),
-            NitroError::HeartbeatAccept(e) => {
-                format!("unable to accept enclave heartbeat vsock: {e}")
+            Self::AppReturn(ret) => format!("app returned non-zero return code: {ret}"),
+            Self::ArgsWrite(e) => format!("enclave VM argument writer error: {e}"),
+            Self::Device(e) => format!("device proxy error: {e}"),
+            Self::ReturnCodeListener(e) => {
+                format!("error with enclave VM return code listener: {e}")
             }
-            NitroError::HeartbeatBind(e) => {
-                format!("unable to bind to enclave heartbeat vsock: {e}")
-            }
-            NitroError::HeartbeatRead(e) => format!("unable to read enclave heartbeat vsock: {e}"),
-            NitroError::HeartbeatWrite(e) => {
-                format!("unable to write to enclave heartbeat vsock: {e}")
-            }
-            NitroError::VmStart(e) => format!("unable to start enclave: {e}"),
-            NitroError::PollTimeoutCalculate(e) => {
-                format!("unable to calculate vsock poll timeout: {e}")
-            }
-            NitroError::PollNoSelectedEvents => {
-                "no selected poll fds for heartbeat vsock found".to_string()
-            }
-            NitroError::PollMoreThanOneSelectedEvent => {
-                "more than one selected pollfd for heartbeat vsock found".to_string()
-            }
-            NitroError::EnclaveHeartbeatNotDetected => {
-                "enclave heartbeat message not detected".to_string()
-            }
-            NitroError::HeartbeatCidMismatch => "enclave heartbeat vsock CID mismatch".to_string(),
-            NitroError::VsockCreate => "unable to create enclave vsock".to_string(),
-            NitroError::VsockSetTimeout => {
-                "unable to set poll timeout for enclave vsock".to_string()
-            }
-            NitroError::VsockConnect => "unable to connect to enclave vsock".to_string(),
-            NitroError::RootFsArchive(e) => {
+            Self::RootFsArchive(e) => {
                 format!("unable to archive rootfs: {e}")
             }
-            NitroError::IpcWrite(e) => {
-                format!("unable to write enclave vsock data to UNIX IPC socket: {e}")
-            }
-            NitroError::VsockBytesLenWrite(e) => {
-                format!("unable to write rootfs archive length to enclave: {e}")
-            }
-            NitroError::VsockBytesWrite(e) => {
-                format!("unable to write rootfs archive to enclave: {e}")
-            }
-            NitroError::VsockBytesTooLarge => {
-                "vsock write byte buffer size is larger than 64 bytes".to_string()
-            }
-            NitroError::CStringConversion(e) => format!("unable to convert String to CString: {e}"),
-            NitroError::EifRead(e) => format!("unable to read cached EIF file: {e}"),
-            NitroError::EifTarExtract(e) => format!("unable to extract EIF from tar archive: {e}"),
-            NitroError::DeviceError(e) => format!("device proxy error: {:?}", e),
+            Self::Start(e) => format!("error launching enclave VM: {e}"),
         };
 
         write!(f, "{}", msg)
+    }
+}
+
+pub mod start {
+    use super::*;
+    use nitro_enclaves::launch::LaunchError;
+
+    #[derive(Debug)]
+    pub enum Error {
+        DeviceOpen(io::Error),
+        EifRead(io::Error),
+        PollTimeoutCalculate(LaunchError),
+        VcpuAdd(LaunchError),
+        VmCreate(LaunchError),
+        VmMemorySet(LaunchError),
+        VmStart(LaunchError),
+    }
+
+    impl fmt::Display for Error {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let msg = match self {
+                Self::DeviceOpen(e) => format!("unable to open nitro enclaves device: {e}"),
+                Self::EifRead(e) => format!("unable to read cached EIF file: {e}"),
+                Self::PollTimeoutCalculate(e) => {
+                    format!("unable to calculate vsock poll timeout for enclave VM: {e}")
+                }
+                Self::VcpuAdd(e) => format!("unable to add vCPU to enclave VM: {e}"),
+                Self::VmCreate(e) => format!("unable to create enclave VM: {e}"),
+                Self::VmMemorySet(e) => {
+                    format!("unable to set enclave VM memory regions: {e}")
+                }
+                Self::VmStart(e) => format!("unable to start enclave VM: {e}"),
+            };
+
+            write!(f, "{}", msg)
+        }
+    }
+}
+
+pub mod return_code {
+    use super::*;
+
+    #[derive(Debug)]
+    #[allow(clippy::enum_variant_names)]
+    pub enum Error {
+        VsockAccept(io::Error),
+        VsockBind(io::Error),
+        VsockRead(io::Error),
+    }
+
+    impl fmt::Display for Error {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let msg = match self {
+                Self::VsockAccept(e) => format!("unable to accept vsock connection: {e}"),
+                Self::VsockBind(e) => format!("unable to bind to vsock: {e}"),
+                Self::VsockRead(e) => format!("unable to read from vsock: {e}"),
+            };
+
+            write!(f, "{}", msg)
+        }
     }
 }
