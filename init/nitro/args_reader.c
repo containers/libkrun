@@ -30,22 +30,22 @@ enum {
 /*
  * Before reading data from the vsock, the vsock sends a 4-byte "header",
  * representing the size (in bytes) of the object that will be written over the
- * stream. Read this size and store it within a uint32_t variable.
+ * stream. Read this size and store it within a uint64_t variable.
  */
-static int args_reader_len_read(int sock_fd, uint32_t *size)
+static int args_reader_len_read(int sock_fd, uint64_t *size)
 {
-    uint8_t bytes[sizeof(uint32_t)];
+    uint8_t bytes[sizeof(uint64_t)];
     ssize_t ret;
 
     // Read the bytes (representing the size) from the vsock.
-    ret = read(sock_fd, bytes, sizeof(uint32_t));
-    if (ret < sizeof(uint32_t)) {
+    ret = read(sock_fd, bytes, sizeof(uint64_t));
+    if (ret < sizeof(uint64_t)) {
         perror("vsock byte buffer length read");
         return -errno;
     }
 
     // Store the size within the "size" argument.
-    memcpy(size, bytes, sizeof(uint32_t));
+    memcpy(size, bytes, sizeof(uint64_t));
 
     return 0;
 }
@@ -66,9 +66,9 @@ static void char_list_free(char **buf)
 /*
  * Read and store an object from the vsock stream.
  */
-static int args_reader_rcv(int sock_fd, void **buf_ptr, uint32_t *size)
+static int args_reader_rcv(int sock_fd, void **buf_ptr, uint64_t *size)
 {
-    uint32_t len, idx;
+    uint64_t len, idx;
     ssize_t read_len;
     uint8_t *buf;
     int ret;
@@ -122,7 +122,7 @@ static int args_reader_rcv(int sock_fd, void **buf_ptr, uint32_t *size)
  */
 static int args_reader_char_list_build(int sock_fd, char ***buf_ptr)
 {
-    uint32_t size;
+    uint64_t size;
     char **buf;
     int ret, i;
 

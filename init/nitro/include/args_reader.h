@@ -8,7 +8,7 @@
 
 struct enclave_args {
     void *rootfs_archive;
-    uint32_t rootfs_archive_size;
+    uint64_t rootfs_archive_size;
     char *exec_path;
     char **exec_argv;
     char **exec_envp;
