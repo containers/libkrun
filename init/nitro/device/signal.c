@@ -95,6 +95,7 @@ int sig_handler_init(unsigned int vsock_port, int shutdown_fd)
             close(vsock_fd);
             return ret;
         }
-
-        return 0;
     }
+
+    return 0;
+}
