@@ -147,21 +147,21 @@ impl EnclaveArg<'_> {
 
         match self {
             Self::RootFilesystem(buf) => {
-                let len: u32 = buf.len().try_into().unwrap();
+                let len: u64 = buf.len().try_into().unwrap();
 
                 vsock.write_all(&len.to_ne_bytes()).unwrap();
 
                 vsock.write_all(buf).unwrap();
             }
             Self::ExecArgv(vec) | Self::ExecEnvp(vec) => {
-                let len: u32 = vec.len().try_into().unwrap();
+                let len: u64 = vec.len().try_into().unwrap();
 
                 vsock.write_all(&len.to_ne_bytes()).unwrap();
 
                 for string in vec {
                     let bytes = Vec::from(CString::from_str(string).unwrap().as_bytes_with_nul());
 
-                    let len: u32 = bytes.len().try_into().unwrap();
+                    let len: u64 = bytes.len().try_into().unwrap();
 
                     vsock.write_all(&len.to_ne_bytes()).unwrap();
 
@@ -170,7 +170,7 @@ impl EnclaveArg<'_> {
             }
             Self::ExecPath(buf) => {
                 let bytes = Vec::from(CString::from_str(buf).unwrap().as_bytes_with_nul());
-                let len: u32 = bytes.len().try_into().unwrap();
+                let len: u64 = bytes.len().try_into().unwrap();
 
                 vsock.write_all(&len.to_ne_bytes()).unwrap();
 
