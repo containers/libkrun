@@ -70,6 +70,9 @@ impl NitroEnclave {
             &devices,
         );
 
+        // Disable signals to launch enclave VM.
+        self.signals(false);
+
         let (cid, timeout) = self.start().map_err(Error::Start)?;
 
         writer.write_args(cid, timeout).map_err(Error::ArgsWrite)?;
@@ -80,6 +83,9 @@ impl NitroEnclave {
         ))
         .map_err(ReturnCodeListenerError::VsockBind)
         .map_err(Error::ReturnCodeListener)?;
+
+        // Enable signals now that enclave VM is started.
+        self.signals(true);
 
         devices.start(cid);
 
@@ -199,6 +205,21 @@ impl NitroEnclave {
             .map_err(ReturnCodeListenerError::VsockRead)?;
 
         Ok(i32::from_ne_bytes(buf))
+    }
+
+    // Enable or disable all signals.
+    fn signals(&self, enable: bool) {
+        let sig = if enable {
+            libc::SIG_UNBLOCK
+        } else {
+            libc::SIG_BLOCK
+        };
+
+        let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
+        unsafe {
+            libc::sigfillset(&mut set);
+            libc::pthread_sigmask(sig, &set, std::ptr::null_mut());
+        }
     }
 }
 
