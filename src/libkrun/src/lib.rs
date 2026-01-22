@@ -372,7 +372,7 @@ impl TryFrom<ContextConfig> for NitroEnclave {
             return Err(-libc::EINVAL);
         };
 
-        let net = {
+        let net_unixfd = {
             let mut list = ctx.vmr.net.list;
             let len = list.len();
             match len {
@@ -381,13 +381,12 @@ impl TryFrom<ContextConfig> for NitroEnclave {
                     let device = list.pop_front().unwrap();
                     let device = device.lock().unwrap();
 
-                    match nitro::NetProxy::try_from(&*device) {
-                        Ok(net_proxy) => Some(net_proxy),
-                        Err(e) => {
-                            error!("unable to configure network device: {:?}", e);
-                            return Err(-libc::EINVAL);
-                        }
-                    }
+                    let fd = match device.cfg_backend {
+                        VirtioNetBackend::UnixstreamFd(fd) => RawFd::from(fd),
+                        _ => return Err(libc::EINVAL),
+                    };
+
+                    Some(fd)
                 }
                 _ => {
                     error!(
@@ -412,7 +411,7 @@ impl TryFrom<ContextConfig> for NitroEnclave {
             exec_path,
             exec_args,
             exec_env,
-            net,
+            net_unixfd,
             output_path,
             debug: *debug,
         })

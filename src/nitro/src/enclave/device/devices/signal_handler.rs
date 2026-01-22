@@ -9,77 +9,58 @@ use std::{
     io::{Read, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, RecvTimeoutError},
         Arc,
     },
-    thread::{self, JoinHandle},
-    time::Duration,
 };
-use vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY};
+use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
 
-#[derive(Default)]
-pub struct SignalHandler;
+#[derive(Clone)]
+pub struct SignalHandler {
+    sig: Arc<AtomicBool>,
+    buf: [u8; 1],
+}
+
+impl SignalHandler {
+    pub fn new() -> Result<Self> {
+        let sig = Arc::new(AtomicBool::new(false));
+        signal_hook::flag::register(SIGTERM, Arc::clone(&sig)).map_err(Error::SignalRegister)?;
+
+        let buf = [0u8; 1];
+
+        Ok(Self { sig, buf })
+    }
+}
 
 impl DeviceProxy for SignalHandler {
+    fn clone(&self) -> Result<Option<Box<dyn DeviceProxy>>> {
+        Ok(Some(Box::new(Clone::clone(self))))
+    }
     fn enclave_arg(&self) -> Option<EnclaveArg<'_>> {
         None
     }
-
-    fn vsock_port_offset(&self) -> VsockPortOffset {
+    fn port_offset(&self) -> VsockPortOffset {
         VsockPortOffset::SignalHandler
     }
+    fn rcv(&mut self, vsock: &mut VsockStream) -> Result<usize> {
+        vsock.read(&mut self.buf).map_err(Error::VsockRead)
+    }
 
-    fn _start(&mut self, vsock_port: u32) -> Result<()> {
-        let term = Arc::new(AtomicBool::new(false));
-        signal_hook::flag::register(SIGTERM, Arc::clone(&term)).map_err(Error::SignalRegister)?;
-
-        let vsock_listener = VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, vsock_port))
-            .map_err(Error::VsockBind)?;
-
-        let (mut vsock_stream, _vsock_addr) =
-            vsock_listener.accept().map_err(Error::VsockAccept)?;
-
-        let (tx, rx) = mpsc::channel::<()>();
-        let mut vsock_stream_clone = vsock_stream.try_clone().map_err(Error::VsockClone)?;
-
-        let signal_handler: JoinHandle<Result<()>> = thread::spawn(move || {
-            while !term.load(Ordering::Relaxed) {
-                match rx.recv_timeout(Duration::from_micros(500)) {
-                    Ok(_) => return Ok(()),
-                    Err(e) => {
-                        if e == RecvTimeoutError::Timeout {
-                            continue;
-                        }
-                    }
-                }
-            }
-
-            let sig = libc::SIGTERM;
-            vsock_stream
-                .write(&sig.to_ne_bytes())
-                .map_err(Error::VsockWrite)?;
-
-            Ok(())
-        });
-
-        let shutdown_listener: JoinHandle<Result<()>> = thread::spawn(move || {
-            let mut vsock_buf = [0u8; 1];
-            let _ = vsock_stream_clone
-                .read(&mut vsock_buf)
-                .map_err(Error::VsockRead)?;
-            let _ = tx.send(());
-
-            Ok(())
-        });
-
-        if let Ok(Err(e)) = signal_handler.join() {
-            log::error!("error in signal handler proxy: {e}");
+    fn send(&mut self, vsock: &mut VsockStream) -> Result<usize> {
+        if !self.sig.load(Ordering::Relaxed) {
+            return Ok(0);
         }
 
-        if let Ok(Err(e)) = shutdown_listener.join() {
-            log::error!("error in signal handler device proxy shutdown listener: {e}");
-        }
+        let sig = libc::SIGTERM;
+        vsock.write(&sig.to_ne_bytes()).map_err(Error::VsockWrite)?;
 
-        Ok(())
+        Ok(0)
+    }
+    fn vsock(&self, port: u32) -> Result<VsockStream> {
+        let listener =
+            VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, port)).map_err(Error::VsockBind)?;
+
+        let (vsock, _) = listener.accept().map_err(Error::VsockAccept)?;
+
+        Ok(vsock)
     }
 }

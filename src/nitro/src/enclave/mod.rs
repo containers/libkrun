@@ -19,6 +19,7 @@ use std::{
     ffi::OsStr,
     fs,
     io::{self, Read},
+    os::fd::RawFd,
     path::PathBuf,
 };
 use tar::HeaderMode;
@@ -48,7 +49,7 @@ pub struct NitroEnclave {
     /// Execution environment.
     pub exec_env: String,
     /// Network proxy.
-    pub net: Option<NetProxy>,
+    pub net_unixfd: Option<RawFd>,
     /// Path to redirect enclave output to.
     pub output_path: PathBuf,
     // Output kernel and initramfs debug logs from enclave.
@@ -87,7 +88,7 @@ impl NitroEnclave {
         // Enable signals now that enclave VM is started.
         self.signals(true);
 
-        devices.start(cid);
+        devices.start(cid).map_err(Error::Device)?;
 
         /*
          * In debug mode, the console device doesn't shut down until the enclave
@@ -146,11 +147,12 @@ impl NitroEnclave {
         let output = OutputProxy::new(&self.output_path, self.debug)?;
         proxies.push(Box::new(output));
 
-        if let Some(net) = self.net.clone() {
+        if let Some(fd) = self.net_unixfd {
+            let net = NetProxy::try_from(fd)?;
             proxies.push(Box::new(net));
         }
 
-        proxies.push(Box::new(SignalHandler));
+        proxies.push(Box::new(SignalHandler::new()?));
 
         Ok(DeviceProxyList(proxies))
     }

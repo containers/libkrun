@@ -5,129 +5,84 @@ use crate::enclave::{
     device::{DeviceProxy, Error, Result},
     VsockPortOffset,
 };
-use devices::virtio::{net::device::VirtioNetBackend, Net};
 use std::{
     io::{ErrorKind, Read, Write},
     os::{
         fd::{FromRawFd, OwnedFd, RawFd},
         unix::net::UnixStream,
     },
-    sync::mpsc::{self, RecvTimeoutError},
-    thread::{self, JoinHandle},
     time::Duration,
 };
-use vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY};
+use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
 
-#[derive(Clone)]
 pub struct NetProxy {
-    fd: RawFd,
+    buf: [u8; 1500],
+    unix: UnixStream,
 }
 
-impl TryFrom<&Net> for NetProxy {
+impl TryFrom<RawFd> for NetProxy {
     type Error = Error;
 
-    fn try_from(net: &Net) -> Result<Self> {
-        let fd = match net.cfg_backend {
-            VirtioNetBackend::UnixstreamFd(fd) => RawFd::from(fd),
-            _ => return Err(Error::InvalidNetInterface),
-        };
+    fn try_from(fd: RawFd) -> Result<Self> {
+        let buf = [0u8; 1500];
 
-        Ok(Self { fd })
+        let unix = unsafe { UnixStream::from(OwnedFd::from_raw_fd(fd)) };
+        unix.set_read_timeout(Some(Duration::from_millis(250)))
+            .map_err(Error::UnixReadTimeoutSet)?;
+
+        Ok(Self { buf, unix })
     }
 }
 
 impl DeviceProxy for NetProxy {
-    fn vsock_port_offset(&self) -> VsockPortOffset {
+    fn clone(&self) -> Result<Option<Box<dyn DeviceProxy>>> {
+        let unix = self.unix.try_clone().map_err(Error::UnixClone)?;
+
+        Ok(Some(Box::new(Self {
+            buf: self.buf,
+            unix,
+        })))
+    }
+    fn enclave_arg(&self) -> Option<EnclaveArg<'_>> {
+        Some(EnclaveArg::NetworkProxy)
+    }
+
+    fn port_offset(&self) -> VsockPortOffset {
         VsockPortOffset::Net
     }
 
-    #[allow(unreachable_code)]
-    fn _start(&mut self, vsock_port: u32) -> Result<()> {
-        let vsock_listener = VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, vsock_port))
-            .map_err(Error::VsockBind)?;
+    fn rcv(&mut self, vsock: &mut VsockStream) -> Result<usize> {
+        let size = vsock.read(&mut self.buf).map_err(Error::VsockRead)?;
+        if size > 0 {
+            self.unix
+                .write_all(&self.buf[..size])
+                .map_err(Error::UnixWrite)?;
+        }
 
-        let mut vsock_stream = vsock_listener.accept().map_err(Error::VsockAccept)?;
-
-        let mut vsock_stream_clone = vsock_stream.0.try_clone().map_err(Error::VsockClone)?;
-
-        let unix_stream = unsafe { UnixStream::from(OwnedFd::from_raw_fd(self.fd)) };
-        let mut unix_stream_clone_write = unix_stream.try_clone().map_err(Error::UnixClone)?;
-
-        let (tx, rx) = mpsc::channel::<()>();
-
-        // vsock
-        let vsock_thread: JoinHandle<Result<()>> = thread::spawn(move || {
-            let mut vsock_buf = [0u8; 1500];
-            loop {
-                let size = vsock_stream_clone
-                    .read(&mut vsock_buf)
-                    .map_err(Error::VsockRead)?;
+        Ok(size)
+    }
+    fn send(&mut self, vsock: &mut VsockStream) -> Result<usize> {
+        match self.unix.read(&mut self.buf) {
+            Ok(size) => {
                 if size > 0 {
-                    unix_stream_clone_write
-                        .write_all(&vsock_buf[..size])
-                        .map_err(Error::UnixWrite)?;
-                } else {
-                    let _ = tx.send(());
-                    break;
+                    let _ = vsock.write_all(&self.buf[..size]);
                 }
+
+                Ok(size)
             }
-
-            Ok(())
-        });
-
-        let mut unix_stream_clone_read = unix_stream.try_clone().map_err(Error::UnixClone)?;
-        unix_stream_clone_read
-            .set_read_timeout(Some(Duration::from_millis(250)))
-            .map_err(Error::UnixReadTimeoutSet)?;
-        // Unix
-        let unix_thread: JoinHandle<Result<()>> = thread::spawn(move || {
-            let mut unix_buf = [0u8; 1500];
-            loop {
-                match unix_stream_clone_read.read(&mut unix_buf) {
-                    Ok(size) => {
-                        if size > 0 {
-                            if vsock_stream.0.write_all(&unix_buf[..size]).is_err() {
-                                continue;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-                    Err(ref e)
-                        if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::WouldBlock =>
-                    {
-                        match rx.recv_timeout(Duration::from_micros(500)) {
-                            Ok(_) => break,
-                            Err(e) => {
-                                if e == RecvTimeoutError::Timeout {
-                                    continue;
-                                } else {
-                                    return Err(Error::ShutdownSignalReceive(e))?;
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => return Err(Error::UnixRead(e)),
-                }
+            Err(ref e) if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::WouldBlock => {
+                Ok(0)
             }
-
-            Ok(())
-        });
-
-        if let Ok(Err(err)) = vsock_thread.join() {
-            log::error!("error with network vsock stream listener thread: {:?}", err);
-            return Err(err);
+            Err(e) => Err(Error::UnixRead(e)),
         }
-
-        if let Ok(Err(err)) = unix_thread.join() {
-            log::error!("error with network UNIX stream listener thread: {:?}", err);
-            return Err(err);
-        }
-
-        Ok(())
     }
 
-    fn enclave_arg(&self) -> Option<EnclaveArg<'_>> {
-        Some(EnclaveArg::NetworkProxy)
+    fn vsock(&self, port: u32) -> Result<VsockStream> {
+        let listener =
+            VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, port)).map_err(Error::VsockBind)?;
+
+        let (vsock, _) = listener.accept().map_err(Error::VsockAccept)?;
+
+        Ok(vsock)
     }
 }

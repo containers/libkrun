@@ -7,32 +7,81 @@ pub use devices::*;
 use crate::enclave::{args_writer::EnclaveArg, VsockPortOffset};
 use std::{
     fmt, io,
-    sync::mpsc,
+    sync::mpsc::{self, RecvTimeoutError},
     thread::{self, JoinHandle},
+    time::Duration,
 };
+use vsock::*;
 
 type Result<T> = std::result::Result<T, Error>;
 
-pub trait DeviceProxy {
+pub trait DeviceProxy: Send {
+    fn clone(&self) -> Result<Option<Box<dyn DeviceProxy>>>;
     fn enclave_arg(&self) -> Option<EnclaveArg<'_>>;
-    fn vsock_port_offset(&self) -> VsockPortOffset;
-    fn start(&mut self, cid: u32) -> Result<()> {
-        let port = cid + (self.vsock_port_offset() as u32);
-
-        self._start(port)
-    }
-    fn _start(&mut self, vsock_port: u32) -> Result<()>;
+    fn rcv(&mut self, vsock: &mut VsockStream) -> Result<usize>;
+    fn send(&mut self, vsock: &mut VsockStream) -> Result<usize>;
+    fn port_offset(&self) -> VsockPortOffset;
+    fn vsock(&self, port: u32) -> Result<VsockStream>;
 }
 
 pub struct DeviceProxyList(pub Vec<Box<dyn Send + DeviceProxy>>);
 
 impl DeviceProxyList {
-    pub fn start(self, cid: u32) {
+    pub fn start(self, cid: u32) -> Result<()> {
         let mut handles: Vec<JoinHandle<Result<()>>> = Vec::new();
 
         for mut device in self.0 {
+            let mut vsock_rcv = device.vsock(cid + (device.port_offset() as u32))?;
+
             let handle: JoinHandle<Result<()>> = thread::spawn(move || {
-                device.start(cid)?;
+                let clone = device.clone()?;
+                let mut vsock_send = vsock_rcv.try_clone().map_err(Error::VsockClone)?;
+
+                let (tx, rx) = mpsc::channel::<()>();
+
+                let rcv: JoinHandle<Result<()>> = thread::spawn(move || loop {
+                    match device.rcv(&mut vsock_rcv) {
+                        Ok(0) => {
+                            let _ = tx.send(());
+                            return Ok(());
+                        }
+                        Ok(_) => continue,
+                        Err(e) => {
+                            let _ = tx.send(());
+                            return Err(e);
+                        }
+                    }
+                });
+
+                let send: JoinHandle<Result<()>> = thread::spawn(move || {
+                    if let Some(mut sender) = clone {
+                        loop {
+                            let size = sender.send(&mut vsock_send)?;
+                            if size == 0 {
+                                match rx.recv_timeout(Duration::from_micros(500)) {
+                                    Ok(_) => break,
+                                    Err(e) => {
+                                        if e == RecvTimeoutError::Timeout {
+                                            continue;
+                                        } else {
+                                            return Err(Error::ShutdownSignalReceive(e))?;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Ok(())
+                });
+
+                if let Ok(Err(e)) = rcv.join() {
+                    log::error!("error in device proxy receive thread: {e}");
+                }
+
+                if let Ok(Err(e)) = send.join() {
+                    log::error!("error in device proxy send thread: {e}");
+                }
 
                 Ok(())
             });
@@ -46,6 +95,8 @@ impl DeviceProxyList {
                 log::error!("error running enclave device proxy: {:?}", err);
             }
         }
+
+        Ok(())
     }
 }
 
@@ -53,7 +104,6 @@ impl DeviceProxyList {
 pub enum Error {
     FileOpen(io::Error),
     FileWrite(io::Error),
-    InvalidNetInterface,
     ShutdownSignalReceive(mpsc::RecvTimeoutError),
     SignalRegister(io::Error),
     UnixClone(io::Error),
@@ -78,10 +128,6 @@ impl fmt::Display for Error {
             }
             Self::SignalRegister(e) => {
                 format!("unable to register signal in signal handler proxy: {e}")
-            }
-            Self::InvalidNetInterface => {
-                "invalid network proxy interface, must supply UNIX stream file descriptor"
-                    .to_string()
             }
             Self::UnixClone(e) => format!("unable to clone unix stream: {e}"),
             Self::UnixRead(e) => format!("unable to read from unix stream: {e}"),
