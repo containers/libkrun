@@ -41,8 +41,8 @@ impl DeviceProxyList {
         }
 
         for handle in handles.into_iter() {
-            let res = handle.join().unwrap();
-            if let Err(err) = res {
+            let res = handle.join();
+            if let Ok(Err(err)) = res {
                 log::error!("error running enclave device proxy: {:?}", err);
             }
         }

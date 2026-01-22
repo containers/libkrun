@@ -72,8 +72,13 @@ impl DeviceProxy for SignalHandler {
             Ok(())
         });
 
-        let _ = signal_handler.join().unwrap();
-        let _ = shutdown_listener.join().unwrap();
+        if let Ok(Err(e)) = signal_handler.join() {
+            log::error!("error in signal handler proxy: {e}");
+        }
+
+        if let Ok(Err(e)) = shutdown_listener.join() {
+            log::error!("error in signal handler device proxy shutdown listener: {e}");
+        }
 
         Ok(())
     }
