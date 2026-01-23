@@ -6,7 +6,8 @@ use utils::eventfd::EventFd;
 use vm_memory::{ByteValued, GuestMemory, GuestMemoryMmap};
 
 use super::super::{
-    ActivateError, ActivateResult, BalloonError, DeviceState, Queue as VirtQueue, VirtioDevice,
+    ActivateError, ActivateResult, BalloonError, DeviceQueue, DeviceState, QueueConfig,
+    VirtioDevice,
 };
 use super::{defs, defs::uapi};
 use crate::virtio::InterruptTransport;
@@ -45,8 +46,7 @@ pub struct VirtioBalloonConfig {
 unsafe impl ByteValued for VirtioBalloonConfig {}
 
 pub struct Balloon {
-    pub(crate) queues: Vec<VirtQueue>,
-    pub(crate) queue_events: Vec<EventFd>,
+    pub(crate) queues: Option<Vec<DeviceQueue>>,
     pub(crate) avail_features: u64,
     pub(crate) acked_features: u64,
     pub(crate) activate_evt: EventFd,
@@ -55,33 +55,16 @@ pub struct Balloon {
 }
 
 impl Balloon {
-    pub(crate) fn with_queues(queues: Vec<VirtQueue>) -> super::Result<Balloon> {
-        let mut queue_events = Vec::new();
-        for _ in 0..queues.len() {
-            queue_events
-                .push(EventFd::new(utils::eventfd::EFD_NONBLOCK).map_err(BalloonError::EventFd)?);
-        }
-
-        let config = VirtioBalloonConfig::default();
-
+    pub fn new() -> super::Result<Balloon> {
         Ok(Balloon {
-            queues,
-            queue_events,
+            queues: None,
             avail_features: AVAIL_FEATURES,
             acked_features: 0,
             activate_evt: EventFd::new(utils::eventfd::EFD_NONBLOCK)
                 .map_err(BalloonError::EventFd)?,
             device_state: DeviceState::Inactive,
-            config,
+            config: VirtioBalloonConfig::default(),
         })
-    }
-
-    pub fn new() -> super::Result<Balloon> {
-        let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
-            .iter()
-            .map(|&max_size| VirtQueue::new(max_size))
-            .collect();
-        Self::with_queues(queues)
     }
 
     pub fn id(&self) -> &str {
@@ -96,9 +79,13 @@ impl Balloon {
             DeviceState::Inactive => unreachable!(),
         };
 
+        let queues = self
+            .queues
+            .as_mut()
+            .expect("queues should exist when activated");
         let mut have_used = false;
 
-        while let Some(head) = self.queues[FRQ_INDEX].pop(mem) {
+        while let Some(head) = queues[FRQ_INDEX].queue.pop(mem) {
             let index = head.index;
             for desc in head.into_iter() {
                 let host_addr = mem.get_host_address(desc.addr).unwrap();
@@ -116,7 +103,7 @@ impl Balloon {
             }
 
             have_used = true;
-            if let Err(e) = self.queues[FRQ_INDEX].add_used(mem, index, 0) {
+            if let Err(e) = queues[FRQ_INDEX].queue.add_used(mem, index, 0) {
                 error!("failed to add used elements to the queue: {e:?}");
             }
         }
@@ -146,16 +133,8 @@ impl VirtioDevice for Balloon {
         "balloon"
     }
 
-    fn queues(&self) -> &[VirtQueue] {
-        &self.queues
-    }
-
-    fn queues_mut(&mut self) -> &mut [VirtQueue] {
-        &mut self.queues
-    }
-
-    fn queue_events(&self) -> &[EventFd] {
-        &self.queue_events
+    fn queue_config(&self) -> &[QueueConfig] {
+        &defs::QUEUE_CONFIG
     }
 
     fn read_config(&self, offset: u64, mut data: &mut [u8]) {
@@ -180,12 +159,17 @@ impl VirtioDevice for Balloon {
         );
     }
 
-    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult {
-        if self.queues.len() != defs::NUM_QUEUES {
+    fn activate(
+        &mut self,
+        mem: GuestMemoryMmap,
+        interrupt: InterruptTransport,
+        queues: Vec<DeviceQueue>,
+    ) -> ActivateResult {
+        if queues.len() != defs::NUM_QUEUES {
             error!(
                 "Cannot perform activate. Expected {} queue(s), got {}",
                 defs::NUM_QUEUES,
-                self.queues.len()
+                queues.len()
             );
             return Err(ActivateError::BadActivate);
         }
@@ -195,6 +179,7 @@ impl VirtioDevice for Balloon {
             return Err(ActivateError::BadActivate);
         }
 
+        self.queues = Some(queues);
         self.device_state = DeviceState::Activated(mem, interrupt);
 
         Ok(())

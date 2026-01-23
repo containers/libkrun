@@ -1,7 +1,6 @@
 mod device;
 pub mod display;
 mod edid;
-mod event_handler;
 mod protocol;
 mod virtio_gpu;
 mod worker;
@@ -14,7 +13,6 @@ pub use self::device::Gpu;
 mod defs {
     pub const GPU_DEV_ID: &str = "virtio_gpu";
     pub const NUM_QUEUES: usize = 2;
-    pub const QUEUE_SIZES: &[u16] = &[256; NUM_QUEUES];
 
     #[allow(dead_code)]
     pub mod uapi {

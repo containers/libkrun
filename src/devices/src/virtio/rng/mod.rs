@@ -5,9 +5,12 @@ pub use self::defs::uapi::VIRTIO_ID_RNG as TYPE_RNG;
 pub use self::device::Rng;
 
 mod defs {
+    use crate::virtio::QueueConfig;
+
     pub const RNG_DEV_ID: &str = "virtio_rng";
     pub const NUM_QUEUES: usize = 1;
-    pub const QUEUE_SIZES: &[u16] = &[256; NUM_QUEUES];
+    const QUEUE_SIZE: u16 = 256;
+    pub static QUEUE_CONFIG: [QueueConfig; NUM_QUEUES] = [QueueConfig::new(QUEUE_SIZE); NUM_QUEUES];
 
     pub mod uapi {
         pub const VIRTIO_F_VERSION_1: u32 = 32;

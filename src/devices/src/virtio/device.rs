@@ -5,10 +5,40 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
+use std::sync::Arc;
+
 use super::{ActivateResult, InterruptTransport, Queue};
 use crate::virtio::AsAny;
 use utils::eventfd::EventFd;
 use vm_memory::GuestMemoryMmap;
+
+/// Configuration for a single virtqueue.
+/// This is used by devices to declare their queue requirements,
+/// and by the transport to construct the actual queues.
+#[derive(Clone, Copy, Debug)]
+pub struct QueueConfig {
+    /// Maximum size of the queue.
+    pub size: u16,
+}
+
+impl QueueConfig {
+    pub const fn new(size: u16) -> Self {
+        Self { size }
+    }
+}
+
+/// A virtqueue combined with its notification eventfd.
+/// This is passed to devices during activation.
+pub struct DeviceQueue {
+    pub queue: Queue,
+    pub event: Arc<EventFd>,
+}
+
+impl DeviceQueue {
+    pub fn new(queue: Queue, event: Arc<EventFd>) -> Self {
+        Self { queue, event }
+    }
+}
 
 /// Enum that indicates if a VirtioDevice is inactive or has been activated
 /// and memory attached to it.
@@ -44,8 +74,9 @@ pub struct VirtioShmRegion {
 /// Trait for virtio devices to be driven by a virtio transport.
 ///
 /// The lifecycle of a virtio device is to be moved to a virtio transport, which will then query the
-/// device. The virtio devices needs to create queues, events and event fds for interrupts and expose
-/// them to the transport via get_queues/get_queue_events
+/// device. The transport constructs queues based on queue_config() and passes them to the device
+/// during activation, transferring ownership. After reset, the transport recreates queues
+/// from queue_config() for the next negotiation cycle.
 pub trait VirtioDevice: AsAny + Send {
     /// Get the available features offered by device.
     fn avail_features(&self) -> u64;
@@ -64,14 +95,9 @@ pub trait VirtioDevice: AsAny + Send {
     /// Device name used for logging information about the device at the transport layer
     fn device_name(&self) -> &str;
 
-    /// Returns the device queues.
-    fn queues(&self) -> &[Queue];
-
-    /// Returns a mutable reference to the device queues.
-    fn queues_mut(&mut self) -> &mut [Queue];
-
-    /// Returns the device queues event fds.
-    fn queue_events(&self) -> &[EventFd];
+    /// Returns the queue configuration for this device.
+    /// The transport uses this to construct the queues during initialization and after reset.
+    fn queue_config(&self) -> &[QueueConfig];
 
     /// The set of feature bits shifted by `page * 32`.
     fn avail_features_by_page(&self, page: u32) -> u32 {
@@ -117,13 +143,19 @@ pub trait VirtioDevice: AsAny + Send {
     fn write_config(&mut self, offset: u64, data: &[u8]);
 
     /// Performs the formal activation for a device, which can be verified also with `is_activated`.
-    fn activate(&mut self, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> ActivateResult;
+    /// Ownership of the queues is transferred to the device.
+    fn activate(
+        &mut self,
+        mem: GuestMemoryMmap,
+        interrupt: InterruptTransport,
+        queues: Vec<DeviceQueue>,
+    ) -> ActivateResult;
 
     /// Checks if the resources of this device are activated.
     fn is_activated(&self) -> bool;
 
-    /// Optionally deactivates this device and returns ownership of the guest memory map, interrupt
-    /// event, and queue events.
+    /// Optionally deactivates this device. The device should drop its queues.
+    /// After reset, the transport will recreate queues from queue_config().
     fn reset(&mut self) -> bool {
         false
     }

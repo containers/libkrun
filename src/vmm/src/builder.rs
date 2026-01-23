@@ -1013,7 +1013,6 @@ pub fn build_microvm(
 
         attach_gpu_device(
             &mut vmm,
-            event_manager,
             &mut _shm_manager,
             #[cfg(not(feature = "tee"))]
             export_table.clone(),
@@ -2251,7 +2250,6 @@ fn attach_rng_device(
 #[allow(clippy::too_many_arguments)]
 fn attach_gpu_device(
     vmm: &mut Vmm,
-    event_manager: &mut EventManager,
     shm_manager: &mut ShmManager,
     #[cfg(not(feature = "tee"))] mut export_table: Option<ExportTable>,
     intc: IrqChip,
@@ -2272,10 +2270,6 @@ fn attach_gpu_device(
         )
         .unwrap(),
     ));
-
-    event_manager
-        .add_subscriber(gpu.clone())
-        .map_err(RegisterEvent)?;
 
     let id = String::from(gpu.lock().unwrap().id());
 

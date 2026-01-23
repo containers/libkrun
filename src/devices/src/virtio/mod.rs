@@ -43,7 +43,9 @@ pub use self::balloon::*;
 #[cfg(feature = "blk")]
 pub use self::block::{Block, CacheType};
 pub use self::console::*;
-pub use self::device::*;
+pub use self::device::{
+    DeviceQueue, DeviceState, QueueConfig, VirtioDevice, VirtioShmRegion, VmmExitObserver,
+};
 #[cfg(not(any(feature = "tee", feature = "nitro")))]
 pub use self::fs::*;
 #[cfg(feature = "gpu")]
