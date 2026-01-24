@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::enclave::{device::DeviceProxyList, VsockPortOffset};
+use crate::enclave::{proxy::DeviceProxyList, VsockPortOffset};
 use libc::c_int;
 use nitro_enclaves::launch::PollTimeout;
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout as NixPollTimeout};
@@ -29,7 +29,7 @@ impl<'a> EnclaveArgsWriter<'a> {
         exec_path: &str,
         argv_str: &str,
         envp_str: &str,
-        devices: &'a DeviceProxyList,
+        proxies: &'a DeviceProxyList,
     ) -> Self {
         let mut args: Vec<EnclaveArg<'a>> = Vec::new();
 
@@ -52,8 +52,8 @@ impl<'a> EnclaveArgsWriter<'a> {
             EnclaveArg::ExecEnvp(envp),
         ]);
 
-        for device in &devices.0 {
-            if let Some(arg) = device.arg() {
+        for proxy in &proxies.0 {
+            if let Some(arg) = proxy.arg() {
                 args.push(arg);
             }
         }
