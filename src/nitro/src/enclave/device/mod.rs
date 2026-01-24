@@ -16,8 +16,8 @@ use vsock::*;
 type Result<T> = std::result::Result<T, Error>;
 
 pub trait DeviceProxy: Send {
+    fn arg(&self) -> Option<EnclaveArg<'_>>;
     fn clone(&self) -> Result<Option<Box<dyn DeviceProxy>>>;
-    fn enclave_arg(&self) -> Option<EnclaveArg<'_>>;
     fn rcv(&mut self, vsock: &mut VsockStream) -> Result<usize>;
     fn send(&mut self, vsock: &mut VsockStream) -> Result<usize>;
     fn vsock(&self, cid: u32) -> Result<VsockStream>;

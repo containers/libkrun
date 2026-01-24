@@ -53,7 +53,7 @@ impl<'a> EnclaveArgsWriter<'a> {
         ]);
 
         for device in &devices.0 {
-            if let Some(arg) = device.enclave_arg() {
+            if let Some(arg) = device.arg() {
                 args.push(arg);
             }
         }

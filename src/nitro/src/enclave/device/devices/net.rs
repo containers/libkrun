@@ -35,6 +35,9 @@ impl TryFrom<RawFd> for NetProxy {
 }
 
 impl DeviceProxy for NetProxy {
+    fn arg(&self) -> Option<EnclaveArg<'_>> {
+        Some(EnclaveArg::NetworkProxy)
+    }
     fn clone(&self) -> Result<Option<Box<dyn DeviceProxy>>> {
         let unix = self.unix.try_clone().map_err(Error::UnixClone)?;
 
@@ -42,9 +45,6 @@ impl DeviceProxy for NetProxy {
             buf: self.buf,
             unix,
         })))
-    }
-    fn enclave_arg(&self) -> Option<EnclaveArg<'_>> {
-        Some(EnclaveArg::NetworkProxy)
     }
     fn rcv(&mut self, vsock: &mut VsockStream) -> Result<usize> {
         let size = vsock.read(&mut self.buf).map_err(Error::VsockRead)?;

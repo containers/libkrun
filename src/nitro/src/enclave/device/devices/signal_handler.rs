@@ -32,11 +32,11 @@ impl SignalHandler {
 }
 
 impl DeviceProxy for SignalHandler {
+    fn arg(&self) -> Option<EnclaveArg<'_>> {
+        None
+    }
     fn clone(&self) -> Result<Option<Box<dyn DeviceProxy>>> {
         Ok(Some(Box::new(Clone::clone(self))))
-    }
-    fn enclave_arg(&self) -> Option<EnclaveArg<'_>> {
-        None
     }
     fn rcv(&mut self, vsock: &mut VsockStream) -> Result<usize> {
         vsock.read(&mut self.buf).map_err(Error::VsockRead)
