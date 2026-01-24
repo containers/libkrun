@@ -3,13 +3,20 @@
 use super::enclave::{args_writer, proxy};
 use std::{fmt, io};
 
+/// Error in the running of a nitro enclave.
 #[derive(Debug)]
 pub enum Error {
+    // Application running within the enclave returned a non-zero return code.
     AppReturn(i32),
+    // Argument writing process.
     ArgsWrite(args_writer::Error),
+    // Error in device proxy execution.
     DeviceProxy(proxy::Error),
+    // Error in listener for application return code.
     ReturnCodeListener(return_code::Error),
+    // Error in rootfs tar archiving.
     RootFsArchive(io::Error),
+    // Error in launching the enclave.
     Start(start::Error),
 }
 
@@ -36,14 +43,22 @@ pub mod start {
     use super::*;
     use nitro_enclaves::launch::LaunchError;
 
+    /// Error in launching the enclave.
     #[derive(Debug)]
     pub enum Error {
+        // Opening the /dev/nitro_enclaves device.
         DeviceOpen(io::Error),
+        // Reading the cached EIF.
         EifRead(io::Error),
+        // Calculating the poll timeout.
         PollTimeoutCalculate(LaunchError),
+        // Adding a vCPU to an enclave VM.
         VcpuAdd(LaunchError),
+        // Creating the enclave VM.
         VmCreate(LaunchError),
+        // Setting the enclave VM's memory.
         VmMemorySet(LaunchError),
+        // Starting the enclave VM.
         VmStart(LaunchError),
     }
 
@@ -71,11 +86,15 @@ pub mod start {
 pub mod return_code {
     use super::*;
 
+    /// Error in listener for application return code.
     #[derive(Debug)]
     #[allow(clippy::enum_variant_names)]
     pub enum Error {
+        // Accepting the vsock connection.
         VsockAccept(io::Error),
+        // Binding to the vsock.
         VsockBind(io::Error),
+        // Reading from the vsock.
         VsockRead(io::Error),
     }
 
