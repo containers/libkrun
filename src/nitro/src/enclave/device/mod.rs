@@ -4,7 +4,7 @@ mod devices;
 
 pub use devices::*;
 
-use crate::enclave::{args_writer::EnclaveArg, VsockPortOffset};
+use crate::enclave::args_writer::EnclaveArg;
 use std::{
     fmt, io,
     sync::mpsc::{self, RecvTimeoutError},
@@ -20,8 +20,7 @@ pub trait DeviceProxy: Send {
     fn enclave_arg(&self) -> Option<EnclaveArg<'_>>;
     fn rcv(&mut self, vsock: &mut VsockStream) -> Result<usize>;
     fn send(&mut self, vsock: &mut VsockStream) -> Result<usize>;
-    fn port_offset(&self) -> VsockPortOffset;
-    fn vsock(&self, port: u32) -> Result<VsockStream>;
+    fn vsock(&self, cid: u32) -> Result<VsockStream>;
 }
 
 pub struct DeviceProxyList(pub Vec<Box<dyn Send + DeviceProxy>>);
@@ -31,7 +30,7 @@ impl DeviceProxyList {
         let mut handles: Vec<JoinHandle<Result<()>>> = Vec::new();
 
         for mut device in self.0 {
-            let mut vsock_rcv = device.vsock(cid + (device.port_offset() as u32))?;
+            let mut vsock_rcv = device.vsock(cid)?;
 
             let handle: JoinHandle<Result<()>> = thread::spawn(move || {
                 let clone = device.clone()?;

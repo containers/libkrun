@@ -38,9 +38,6 @@ impl DeviceProxy for SignalHandler {
     fn enclave_arg(&self) -> Option<EnclaveArg<'_>> {
         None
     }
-    fn port_offset(&self) -> VsockPortOffset {
-        VsockPortOffset::SignalHandler
-    }
     fn rcv(&mut self, vsock: &mut VsockStream) -> Result<usize> {
         vsock.read(&mut self.buf).map_err(Error::VsockRead)
     }
@@ -55,7 +52,9 @@ impl DeviceProxy for SignalHandler {
 
         Ok(0)
     }
-    fn vsock(&self, port: u32) -> Result<VsockStream> {
+    fn vsock(&self, cid: u32) -> Result<VsockStream> {
+        let port = cid + (VsockPortOffset::SignalHandler as u32);
+
         let listener =
             VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, port)).map_err(Error::VsockBind)?;
 

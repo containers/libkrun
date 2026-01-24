@@ -46,11 +46,6 @@ impl DeviceProxy for NetProxy {
     fn enclave_arg(&self) -> Option<EnclaveArg<'_>> {
         Some(EnclaveArg::NetworkProxy)
     }
-
-    fn port_offset(&self) -> VsockPortOffset {
-        VsockPortOffset::Net
-    }
-
     fn rcv(&mut self, vsock: &mut VsockStream) -> Result<usize> {
         let size = vsock.read(&mut self.buf).map_err(Error::VsockRead)?;
         if size > 0 {
@@ -77,7 +72,9 @@ impl DeviceProxy for NetProxy {
         }
     }
 
-    fn vsock(&self, port: u32) -> Result<VsockStream> {
+    fn vsock(&self, cid: u32) -> Result<VsockStream> {
+        let port = cid + (VsockPortOffset::Net as u32);
+
         let listener =
             VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, port)).map_err(Error::VsockBind)?;
 

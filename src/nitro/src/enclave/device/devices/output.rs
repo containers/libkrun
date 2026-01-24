@@ -45,12 +45,6 @@ impl DeviceProxy for OutputProxy {
             false => None,
         }
     }
-    fn port_offset(&self) -> VsockPortOffset {
-        match self.debug {
-            true => VsockPortOffset::Console,
-            false => VsockPortOffset::AppOutput,
-        }
-    }
     fn rcv(&mut self, vsock: &mut VsockStream) -> Result<usize> {
         let size = vsock.read(&mut self.buf).map_err(Error::VsockRead)?;
         if size > 0 {
@@ -64,7 +58,15 @@ impl DeviceProxy for OutputProxy {
     fn send(&mut self, _vsock: &mut VsockStream) -> Result<usize> {
         Ok(0)
     }
-    fn vsock(&self, port: u32) -> Result<VsockStream> {
+    fn vsock(&self, cid: u32) -> Result<VsockStream> {
+        let port = {
+            let offset = match self.debug {
+                true => VsockPortOffset::Console,
+                false => VsockPortOffset::AppOutput,
+            };
+
+            cid + (offset as u32)
+        };
         let vsock = if self.debug {
             VsockStream::connect(&VsockAddr::new(VMADDR_CID_HYPERVISOR, port))
                 .map_err(Error::VsockConnect)?
