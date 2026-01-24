@@ -88,7 +88,7 @@ impl NitroEnclave {
         // Enable signals now that enclave VM is started.
         self.signals(true);
 
-        devices.start(cid).map_err(Error::Device)?;
+        devices.run(cid).map_err(Error::Device)?;
 
         /*
          * In debug mode, the console device doesn't shut down until the enclave

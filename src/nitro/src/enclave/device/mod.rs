@@ -26,7 +26,7 @@ pub trait DeviceProxy: Send {
 pub struct DeviceProxyList(pub Vec<Box<dyn Send + DeviceProxy>>);
 
 impl DeviceProxyList {
-    pub fn start(self, cid: u32) -> Result<()> {
+    pub fn run(self, cid: u32) -> Result<()> {
         let mut handles: Vec<JoinHandle<Result<()>>> = Vec::new();
 
         for mut device in self.0 {
