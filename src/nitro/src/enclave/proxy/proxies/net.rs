@@ -15,9 +15,13 @@ use std::{
 };
 use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
 
+/// Network proxy. Forwards data to/from a UNIX socket and vsock within an enclave to provide
+/// network access.
 pub struct NetProxy {
-    buf: [u8; 1500],
+    // Unix socket connected to service providing network access.
     unix: UnixStream,
+    // Buffer to send/receive data to/from vsock.
+    buf: [u8; 1500],
 }
 
 impl TryFrom<RawFd> for NetProxy {
@@ -35,9 +39,12 @@ impl TryFrom<RawFd> for NetProxy {
 }
 
 impl DeviceProxy for NetProxy {
+    /// Enclave argument of the proxy.
     fn arg(&self) -> Option<EnclaveArg<'_>> {
         Some(EnclaveArg::NetworkProxy)
     }
+
+    /// Clone a proxy's contents (notably, its connected unix socket).
     fn clone(&self) -> Result<Option<Box<dyn DeviceProxy>>> {
         let unix = self.unix.try_clone().map_err(Error::UnixClone)?;
 
@@ -46,6 +53,8 @@ impl DeviceProxy for NetProxy {
             unix,
         })))
     }
+
+    /// Receive data from the proxy's vsock. Forward the data to the connected unix socket.
     fn rcv(&mut self, vsock: &mut VsockStream) -> Result<usize> {
         let size = vsock.read(&mut self.buf).map_err(Error::VsockRead)?;
         if size > 0 {
@@ -56,6 +65,8 @@ impl DeviceProxy for NetProxy {
 
         Ok(size)
     }
+
+    /// Receive data from the connected unix socket. Forward the data to the proxy's vsock.
     fn send(&mut self, vsock: &mut VsockStream) -> Result<usize> {
         match self.unix.read(&mut self.buf) {
             Ok(size) => {
@@ -65,6 +76,7 @@ impl DeviceProxy for NetProxy {
 
                 Ok(size)
             }
+            // No data read from unix socket before timeout.
             Err(ref e) if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::WouldBlock => {
                 Ok(0)
             }
@@ -72,6 +84,7 @@ impl DeviceProxy for NetProxy {
         }
     }
 
+    /// Establish the proxy's vsock connection.
     fn vsock(&self, cid: u32) -> Result<VsockStream> {
         let port = cid + (VsockPortOffset::Net as u32);
 
