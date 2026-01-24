@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::enclave::{
-    device::{EnclaveArg, Error, Result},
+    proxy::{EnclaveArg, Error, Result},
     DeviceProxy, VsockPortOffset,
 };
 use signal_hook::consts::SIGTERM;

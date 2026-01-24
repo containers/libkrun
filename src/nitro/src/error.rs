@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::enclave::{args_writer, device};
+use super::enclave::{args_writer, proxy};
 use std::{fmt, io};
 
 #[derive(Debug)]
 pub enum Error {
     AppReturn(i32),
     ArgsWrite(args_writer::Error),
-    Device(device::Error),
+    DeviceProxy(proxy::Error),
     ReturnCodeListener(return_code::Error),
     RootFsArchive(io::Error),
     Start(start::Error),
@@ -18,7 +18,7 @@ impl fmt::Display for Error {
         let msg = match self {
             Self::AppReturn(ret) => format!("app returned non-zero return code: {ret}"),
             Self::ArgsWrite(e) => format!("enclave VM argument writer error: {e}"),
-            Self::Device(e) => format!("device proxy error: {e}"),
+            Self::DeviceProxy(e) => format!("device proxy error: {e}"),
             Self::ReturnCodeListener(e) => {
                 format!("error with enclave VM return code listener: {e}")
             }

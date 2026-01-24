@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-mod devices;
+mod proxies;
 
-pub use devices::*;
+pub use proxies::*;
 
 use crate::enclave::args_writer::EnclaveArg;
 use std::{
@@ -29,17 +29,17 @@ impl DeviceProxyList {
     pub fn run(self, cid: u32) -> Result<()> {
         let mut handles: Vec<JoinHandle<Result<()>>> = Vec::new();
 
-        for mut device in self.0 {
-            let mut vsock_rcv = device.vsock(cid)?;
+        for mut proxy in self.0 {
+            let mut vsock_rcv = proxy.vsock(cid)?;
 
             let handle: JoinHandle<Result<()>> = thread::spawn(move || {
-                let clone = device.clone()?;
+                let clone = proxy.clone()?;
                 let mut vsock_send = vsock_rcv.try_clone().map_err(Error::VsockClone)?;
 
                 let (tx, rx) = mpsc::channel::<()>();
 
                 let rcv: JoinHandle<Result<()>> = thread::spawn(move || loop {
-                    match device.rcv(&mut vsock_rcv) {
+                    match proxy.rcv(&mut vsock_rcv) {
                         Ok(0) => {
                             let _ = tx.send(());
                             return Ok(());

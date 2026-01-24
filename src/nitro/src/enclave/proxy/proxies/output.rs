@@ -2,7 +2,7 @@
 
 use crate::enclave::{
     args_writer::EnclaveArg,
-    device::{DeviceProxy, Error},
+    proxy::{DeviceProxy, Error},
     VsockPortOffset,
 };
 use std::{

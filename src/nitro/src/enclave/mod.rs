@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub(crate) mod args_writer;
-pub(crate) mod device;
+pub(crate) mod proxy;
 
 use super::error::{
     return_code::Error as ReturnCodeListenerError, start::Error as StartError, Error,
 };
 use args_writer::EnclaveArgsWriter;
-use device::{
-    net::NetProxy, output::OutputProxy, signal_handler::SignalHandler, DeviceProxy, DeviceProxyList,
-};
 use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
     Device,
+};
+use proxy::{
+    net::NetProxy, output::OutputProxy, signal_handler::SignalHandler, DeviceProxy, DeviceProxyList,
 };
 use std::{
     env,
@@ -61,14 +61,14 @@ impl NitroEnclave {
     pub fn run(mut self) -> Result<(), Error> {
         let rootfs_archive = self.rootfs_archive().map_err(Error::RootFsArchive)?;
 
-        let devices = self.devices().map_err(Error::Device)?;
+        let proxies = self.proxies().map_err(Error::DeviceProxy)?;
 
         let writer = EnclaveArgsWriter::new(
             &rootfs_archive,
             &self.exec_path,
             &self.exec_args,
             &self.exec_env,
-            &devices,
+            &proxies,
         );
 
         // Disable signals to launch enclave VM.
@@ -88,7 +88,7 @@ impl NitroEnclave {
         // Enable signals now that enclave VM is started.
         self.signals(true);
 
-        devices.run(cid).map_err(Error::Device)?;
+        proxies.run(cid).map_err(Error::DeviceProxy)?;
 
         /*
          * In debug mode, the console device doesn't shut down until the enclave
@@ -141,7 +141,7 @@ impl NitroEnclave {
         Ok((cid.try_into().unwrap(), timeout))
     }
 
-    fn devices(&self) -> Result<DeviceProxyList, device::Error> {
+    fn proxies(&self) -> Result<DeviceProxyList, proxy::Error> {
         let mut proxies: Vec<Box<dyn Send + DeviceProxy>> = vec![];
 
         let output = OutputProxy::new(&self.output_path, self.debug)?;
