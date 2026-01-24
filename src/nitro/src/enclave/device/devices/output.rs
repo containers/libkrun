@@ -36,14 +36,14 @@ impl OutputProxy {
 }
 
 impl DeviceProxy for OutputProxy {
-    fn clone(&self) -> Result<Option<Box<dyn DeviceProxy>>> {
-        Ok(None)
-    }
-    fn enclave_arg(&self) -> Option<EnclaveArg<'_>> {
+    fn arg(&self) -> Option<EnclaveArg<'_>> {
         match self.debug {
             true => Some(EnclaveArg::Debug),
             false => None,
         }
+    }
+    fn clone(&self) -> Result<Option<Box<dyn DeviceProxy>>> {
+        Ok(None)
     }
     fn rcv(&mut self, vsock: &mut VsockStream) -> Result<usize> {
         let size = vsock.read(&mut self.buf).map_err(Error::VsockRead)?;
