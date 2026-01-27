@@ -12,7 +12,7 @@ use std::mem::{self, MaybeUninit};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::ptr::null_mut;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -51,6 +51,12 @@ struct InodeData {
     ino: u64,
     dev: i32,
     refcount: AtomicU64,
+    unlinked_fd: AtomicI64,
+}
+
+enum InodeHandle {
+    Fd(RawFd),
+    VolPath(CString),
 }
 
 struct DirStream {
@@ -466,8 +472,8 @@ impl PassthroughFs {
         })
     }
 
-    fn inode_to_path(&self, inode: Inode) -> io::Result<CString> {
-        debug!("inode_to_path: inode={inode}");
+    fn inode_to_handle(&self, inode: Inode, supports_fd: bool) -> io::Result<InodeHandle> {
+        debug!("inode_to_handle: inode={inode}");
         let data = self
             .inodes
             .read()
@@ -478,8 +484,16 @@ impl PassthroughFs {
 
         let cstr =
             CString::new(format!("/.vol/{}/{}", data.dev, data.ino)).map_err(|_| einval())?;
-        debug!("inode_to_path: path={}", cstr.to_string_lossy());
-        Ok(cstr)
+        debug!("inode_to_handle: path={}", cstr.to_string_lossy());
+
+        if supports_fd {
+            let unlinked_fd = data.unlinked_fd.load(Ordering::Acquire);
+            if unlinked_fd >= 0 {
+                return Ok(InodeHandle::Fd(unlinked_fd as RawFd));
+            }
+        }
+
+        Ok(InodeHandle::VolPath(cstr))
     }
 
     fn name_to_path(&self, parent: Inode, name: &CStr) -> io::Result<CString> {
@@ -527,13 +541,16 @@ impl PassthroughFs {
             flags &= !libc::O_APPEND;
         }
 
-        let c_path = self.inode_to_path(inode)?;
-
-        let fd = unsafe {
-            libc::open(
-                c_path.as_ptr(),
-                (flags | libc::O_CLOEXEC) & (!libc::O_NOFOLLOW) & (!libc::O_EXLOCK),
-            )
+        let ihandle = self.inode_to_handle(inode, true)?;
+        let fd = match ihandle {
+            InodeHandle::VolPath(c_path) => unsafe {
+                libc::open(
+                    c_path.as_ptr(),
+                    (flags | libc::O_CLOEXEC) & (!libc::O_NOFOLLOW) & (!libc::O_EXLOCK),
+                )
+            },
+            // Check if we have recently unlinked the inode and kept open a file descriptor to it.
+            InodeHandle::Fd(fd) => unsafe { libc::dup(fd) },
         };
         if fd < 0 {
             return Err(linux_error(io::Error::last_os_error()));
@@ -596,6 +613,7 @@ impl PassthroughFs {
                     ino: st.st_ino,
                     dev: st.st_dev,
                     refcount: AtomicU64::new(1),
+                    unlinked_fd: AtomicI64::new(-1),
                 }),
             );
 
@@ -756,11 +774,30 @@ impl PassthroughFs {
     }
 
     fn do_getattr(&self, inode: Inode) -> io::Result<(bindings::stat64, Duration)> {
-        let c_path = self.inode_to_path(inode)?;
-
-        let st = lstat(&c_path, false)?;
+        let ihandle = self.inode_to_handle(inode, true)?;
+        let st = match ihandle {
+            InodeHandle::VolPath(c_path) => lstat(&c_path, false)?,
+            InodeHandle::Fd(fd) => fstat(fd, false)?,
+        };
 
         Ok((st, self.cfg.attr_timeout))
+    }
+
+    fn store_unlinked_fd(&self, parent_fd: RawFd, name: &CStr) -> io::Result<()> {
+        let fd =
+            unsafe { libc::openat(parent_fd, name.as_ptr(), libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let st = fstat(fd, true)?;
+        let altkey = InodeAltKey {
+            ino: st.st_ino,
+            dev: st.st_dev,
+        };
+        if let Some(data) = self.inodes.read().unwrap().get_alt(&altkey).cloned() {
+            data.unlinked_fd.store(fd as i64, Ordering::Release);
+        }
+        Ok(())
     }
 
     fn do_unlink(
@@ -770,21 +807,43 @@ impl PassthroughFs {
         name: &CStr,
         flags: libc::c_int,
     ) -> io::Result<()> {
-        let c_path = self.inode_to_path(parent)?;
+        let ihandle = self.inode_to_handle(parent, true)?;
 
-        let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+        let (fd, close_fd) = match ihandle {
+            InodeHandle::VolPath(c_path) => unsafe {
+                (
+                    libc::open(c_path.as_ptr(), libc::O_NOFOLLOW | libc::O_CLOEXEC),
+                    true,
+                )
+            },
+            InodeHandle::Fd(fd) => (fd, false),
+        };
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
 
+        // After unlinking this inode, we can't keep relying on getting a "/.vol/..." path
+        // to operate on it. Before unlinking the inode, grab a file descriptor so we can
+        // still operate on it. This one will be closed on "forget_one".
+        if let Err(err) = self.store_unlinked_fd(fd, name) {
+            warn!(
+                "Couldn't grab a file descriptor for file \"{}\": {err}",
+                name.to_string_lossy()
+            );
+        }
+
         // Safe because this doesn't modify any memory and we check the return value.
         let res = unsafe { libc::unlinkat(fd, name.as_ptr(), flags) };
-        unsafe { libc::close(fd) };
+        let err = io::Error::last_os_error();
+
+        if close_fd {
+            unsafe { libc::close(fd) };
+        }
 
         if res == 0 {
             Ok(())
         } else {
-            Err(linux_error(io::Error::last_os_error()))
+            Err(linux_error(err))
         }
     }
 
@@ -874,6 +933,12 @@ fn forget_one(
                 == refcount
             {
                 if new_count == 0 {
+                    // If we have unlinked this inode, we have opened a file descriptor to be
+                    // able to operate on it without a path. Close it now.
+                    let fd = data.unlinked_fd.load(Ordering::Acquire);
+                    if fd >= 0 {
+                        unsafe { libc::close(fd as RawFd) };
+                    }
                     // We just removed the last refcount for this inode. There's no need for an
                     // acquire fence here because we hold a write lock on the inode map and any
                     // thread that is waiting to do a forget on the same inode will have to wait
@@ -932,6 +997,7 @@ impl FileSystem for PassthroughFs {
                 ino: st.st_ino,
                 dev: st.st_dev,
                 refcount: AtomicU64::new(2),
+                unlinked_fd: AtomicI64::new(-1),
             }),
         );
 
@@ -957,10 +1023,12 @@ impl FileSystem for PassthroughFs {
     fn statfs(&self, _ctx: Context, inode: Inode) -> io::Result<bindings::statvfs64> {
         let mut out = MaybeUninit::<bindings::statvfs64>::zeroed();
 
-        let c_path = self.inode_to_path(inode)?;
-
-        // Safe because this will only modify `out` and we check the return value.
-        let res = unsafe { bindings::statvfs64(c_path.as_ptr(), out.as_mut_ptr()) };
+        let res = match self.inode_to_handle(inode, true)? {
+            InodeHandle::VolPath(c_path) => unsafe {
+                bindings::statvfs64(c_path.as_ptr(), out.as_mut_ptr())
+            },
+            InodeHandle::Fd(fd) => unsafe { bindings::fstatvfs64(fd, out.as_mut_ptr()) },
+        };
         if res == 0 {
             // Safe because the kernel guarantees that `out` has been initialized.
             Ok(unsafe { out.assume_init() })
@@ -1302,11 +1370,9 @@ impl FileSystem for PassthroughFs {
         handle: Option<Handle>,
         valid: SetattrValid,
     ) -> io::Result<(bindings::stat64, Duration)> {
-        let c_path = self.inode_to_path(inode)?;
-
         enum Data {
             Handle(RawFd),
-            FilePath,
+            FilePath(CString),
         }
 
         // If we have a handle then use it otherwise get a new fd from the inode.
@@ -1323,7 +1389,10 @@ impl FileSystem for PassthroughFs {
             let fd = hd.file.write().unwrap().as_raw_fd();
             Data::Handle(fd)
         } else {
-            Data::FilePath
+            match self.inode_to_handle(inode, true)? {
+                InodeHandle::VolPath(c_path) => Data::FilePath(c_path),
+                InodeHandle::Fd(fd) => Data::Handle(fd),
+            }
         };
 
         if valid.contains(SetattrValid::MODE) {
@@ -1331,8 +1400,8 @@ impl FileSystem for PassthroughFs {
                 Data::Handle(fd) => {
                     set_xattr_stat(StatFile::Fd(fd), None, Some(attr.st_mode as u32))?
                 }
-                Data::FilePath => {
-                    set_xattr_stat(StatFile::Path(&c_path), None, Some(attr.st_mode as u32))?
+                Data::FilePath(ref c_path) => {
+                    set_xattr_stat(StatFile::Path(c_path), None, Some(attr.st_mode as u32))?
                 }
             }
         }
@@ -1350,8 +1419,14 @@ impl FileSystem for PassthroughFs {
                 // Cannot use -1 here because these are unsigned values.
                 u32::MAX
             };
-
-            set_xattr_stat(StatFile::Path(&c_path), Some((uid, gid)), None)?;
+            match data {
+                Data::Handle(fd) => {
+                    set_xattr_stat(StatFile::Fd(fd), Some((uid, gid)), None)?;
+                }
+                Data::FilePath(ref c_path) => {
+                    set_xattr_stat(StatFile::Path(c_path), Some((uid, gid)), None)?;
+                }
+            }
         }
 
         if valid.contains(SetattrValid::SIZE) {
@@ -1398,7 +1473,7 @@ impl FileSystem for PassthroughFs {
             // Safe because this doesn't modify any memory and we check the return value.
             let res = match data {
                 Data::Handle(fd) => unsafe { libc::futimens(fd, tvs.as_ptr()) },
-                Data::FilePath => unsafe {
+                Data::FilePath(ref c_path) => unsafe {
                     let fd = libc::open(c_path.as_ptr(), libc::O_SYMLINK | libc::O_CLOEXEC);
                     let res = libc::futimens(fd, tvs.as_ptr());
                     libc::close(fd);
@@ -1517,7 +1592,10 @@ impl FileSystem for PassthroughFs {
         newparent: Inode,
         newname: &CStr,
     ) -> io::Result<Entry> {
-        let orig_c_path = self.inode_to_path(inode)?;
+        let orig_c_path = match self.inode_to_handle(inode, false)? {
+            InodeHandle::VolPath(c_path) => c_path,
+            InodeHandle::Fd(_) => return Err(ebadf()),
+        };
         let link_c_path = self.name_to_path(newparent, newname)?;
 
         // Safe because this doesn't modify any memory and we check the return value.
@@ -1564,15 +1642,19 @@ impl FileSystem for PassthroughFs {
     }
 
     fn readlink(&self, _ctx: Context, inode: Inode) -> io::Result<Vec<u8>> {
-        let c_path = self.inode_to_path(inode)?;
-
         let mut buf = vec![0; libc::PATH_MAX as usize];
-        let res = unsafe {
-            libc::readlink(
-                c_path.as_ptr(),
-                buf.as_mut_ptr() as *mut libc::c_char,
-                buf.len(),
-            )
+
+        let res = match self.inode_to_handle(inode, true)? {
+            InodeHandle::VolPath(c_path) => unsafe {
+                libc::readlink(
+                    c_path.as_ptr(),
+                    buf.as_mut_ptr() as *mut libc::c_char,
+                    buf.len(),
+                )
+            },
+            InodeHandle::Fd(fd) => unsafe {
+                libc::freadlink(fd, buf.as_mut_ptr() as *mut libc::c_char, buf.len()) as isize
+            },
         };
         if res < 0 {
             return Err(linux_error(io::Error::last_os_error()));
@@ -1654,9 +1736,10 @@ impl FileSystem for PassthroughFs {
     }
 
     fn access(&self, ctx: Context, inode: Inode, mask: u32) -> io::Result<()> {
-        let c_path = self.inode_to_path(inode)?;
-
-        let st = lstat(&c_path, false)?;
+        let st = match self.inode_to_handle(inode, true)? {
+            InodeHandle::VolPath(c_path) => lstat(&c_path, false)?,
+            InodeHandle::Fd(fd) => fstat(fd, false)?,
+        };
 
         let mode = mask as i32 & (libc::R_OK | libc::W_OK | libc::X_OK);
 
@@ -1730,19 +1813,30 @@ impl FileSystem for PassthroughFs {
             mflags |= libc::XATTR_REPLACE;
         }
 
-        let c_path = self.inode_to_path(inode)?;
-
         // Safe because this doesn't modify any memory and we check the return value.
-        let res = unsafe {
-            libc::setxattr(
-                c_path.as_ptr(),
-                name.as_ptr(),
-                value.as_ptr() as *const libc::c_void,
-                value.len(),
-                0,
-                mflags as libc::c_int,
-            )
+        let res = match self.inode_to_handle(inode, true)? {
+            InodeHandle::VolPath(c_path) => unsafe {
+                libc::setxattr(
+                    c_path.as_ptr(),
+                    name.as_ptr(),
+                    value.as_ptr() as *const libc::c_void,
+                    value.len(),
+                    0,
+                    mflags as libc::c_int,
+                )
+            },
+            InodeHandle::Fd(fd) => unsafe {
+                libc::fsetxattr(
+                    fd,
+                    name.as_ptr(),
+                    value.as_ptr() as *const libc::c_void,
+                    value.len(),
+                    0,
+                    mflags as libc::c_int,
+                )
+            },
         };
+
         if res == 0 {
             Ok(())
         } else {
@@ -1773,29 +1867,50 @@ impl FileSystem for PassthroughFs {
 
         let mut buf = vec![0; size as usize];
 
-        let c_path = self.inode_to_path(inode)?;
-
         // Safe because this will only modify the contents of `buf`
-        let res = unsafe {
-            if size == 0 {
-                libc::getxattr(
-                    c_path.as_ptr(),
-                    name.as_ptr(),
-                    std::ptr::null_mut(),
-                    size as libc::size_t,
-                    0,
-                    0,
-                )
-            } else {
-                libc::getxattr(
-                    c_path.as_ptr(),
-                    name.as_ptr(),
-                    buf.as_mut_ptr() as *mut libc::c_void,
-                    size as libc::size_t,
-                    0,
-                    0,
-                )
-            }
+        let res = match self.inode_to_handle(inode, true)? {
+            InodeHandle::VolPath(c_path) => unsafe {
+                if size == 0 {
+                    libc::getxattr(
+                        c_path.as_ptr(),
+                        name.as_ptr(),
+                        std::ptr::null_mut(),
+                        size as libc::size_t,
+                        0,
+                        0,
+                    )
+                } else {
+                    libc::getxattr(
+                        c_path.as_ptr(),
+                        name.as_ptr(),
+                        buf.as_mut_ptr() as *mut libc::c_void,
+                        size as libc::size_t,
+                        0,
+                        0,
+                    )
+                }
+            },
+            InodeHandle::Fd(fd) => unsafe {
+                if size == 0 {
+                    libc::fgetxattr(
+                        fd,
+                        name.as_ptr(),
+                        std::ptr::null_mut(),
+                        size as libc::size_t,
+                        0,
+                        0,
+                    )
+                } else {
+                    libc::fgetxattr(
+                        fd,
+                        name.as_ptr(),
+                        buf.as_mut_ptr() as *mut libc::c_void,
+                        size as libc::size_t,
+                        0,
+                        0,
+                    )
+                }
+            },
         };
         if res < 0 {
             return Err(linux_error(io::Error::last_os_error()));
@@ -1816,16 +1931,19 @@ impl FileSystem for PassthroughFs {
 
         let mut buf = vec![0; 512_usize];
 
-        let c_path = self.inode_to_path(inode)?;
-
         // Safe because this will only modify the contents of `buf`.
-        let res = unsafe {
-            libc::listxattr(
-                c_path.as_ptr(),
-                buf.as_mut_ptr() as *mut libc::c_char,
-                512,
-                0,
-            )
+        let res = match self.inode_to_handle(inode, true)? {
+            InodeHandle::VolPath(c_path) => unsafe {
+                libc::listxattr(
+                    c_path.as_ptr(),
+                    buf.as_mut_ptr() as *mut libc::c_char,
+                    512,
+                    0,
+                )
+            },
+            InodeHandle::Fd(fd) => unsafe {
+                libc::flistxattr(fd, buf.as_mut_ptr() as *mut libc::c_char, 512, 0)
+            },
         };
         if res < 0 {
             return Err(linux_error(io::Error::last_os_error()));
@@ -1876,11 +1994,13 @@ impl FileSystem for PassthroughFs {
             )));
         }
 
-        let c_path = self.inode_to_path(inode)?;
-
         // Safe because this doesn't modify any memory and we check the return value.
-        let res = unsafe { libc::removexattr(c_path.as_ptr(), name.as_ptr(), 0) };
-
+        let res = match self.inode_to_handle(inode, true)? {
+            InodeHandle::VolPath(c_path) => unsafe {
+                libc::removexattr(c_path.as_ptr(), name.as_ptr(), 0)
+            },
+            InodeHandle::Fd(fd) => unsafe { libc::fremovexattr(fd, name.as_ptr(), 0) },
+        };
         if res == 0 {
             Ok(())
         } else {
