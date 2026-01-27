@@ -340,6 +340,13 @@ static int app_ret_write(int code, unsigned int cid)
         return -errno;
     }
 
+    ret = read(sock_fd, (void *)&code, sizeof(int));
+    if (ret < sizeof(int)) {
+        perror("unable to read close signal from application return vsock");
+        close(sock_fd);
+        return -errno;
+    }
+
     close(sock_fd);
 
     return 0;
@@ -551,9 +558,6 @@ int main(int argc, char *argv[])
             goto out;
 
         ret = app_ret_write(ret_code, cid);
-
-        // Allow the host to read the return code before exiting the enclave.
-        sleep(1);
     }
 
 out:

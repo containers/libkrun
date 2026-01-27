@@ -18,7 +18,7 @@ use std::{
     env,
     ffi::OsStr,
     fs,
-    io::{self, Read},
+    io::{self, Read, Write},
     os::fd::RawFd,
     path::PathBuf,
 };
@@ -231,6 +231,11 @@ impl NitroEnclave {
         let _ = vsock_stream
             .read(&mut buf)
             .map_err(ReturnCodeListenerError::VsockRead)?;
+
+        let close_signal: u32 = 0;
+        vsock_stream
+            .write_all(&close_signal.to_ne_bytes())
+            .map_err(ReturnCodeListenerError::VsockWrite)?;
 
         Ok(i32::from_ne_bytes(buf))
     }

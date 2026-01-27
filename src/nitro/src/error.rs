@@ -96,6 +96,8 @@ pub mod return_code {
         VsockBind(io::Error),
         // Reading from the vsock.
         VsockRead(io::Error),
+        // Writing to the vsock.
+        VsockWrite(io::Error),
     }
 
     impl fmt::Display for Error {
@@ -104,6 +106,7 @@ pub mod return_code {
                 Self::VsockAccept(e) => format!("unable to accept vsock connection: {e}"),
                 Self::VsockBind(e) => format!("unable to bind to vsock: {e}"),
                 Self::VsockRead(e) => format!("unable to read from vsock: {e}"),
+                Self::VsockWrite(e) => format!("unable to write to vsock: {e}"),
             };
 
             write!(f, "{}", msg)
