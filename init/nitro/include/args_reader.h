@@ -6,14 +6,17 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/*
+ * Enclave configuration arguments written from the host.
+ */
 struct enclave_args {
-    void *rootfs_archive;
-    uint64_t rootfs_archive_size;
-    char *exec_path;
-    char **exec_argv;
-    char **exec_envp;
-    bool network_proxy;
-    bool debug;
+    void *rootfs_archive;         // rootfs tar archive.
+    uint64_t rootfs_archive_size; // Size of rootfs tar archive.
+    char *exec_path;              // Path of execution binary.
+    char **exec_argv;             // Execution argument vector.
+    char **exec_envp;             // Execution environment pointer.
+    bool network_proxy;           // Indicate if networking is configured.
+    bool debug;                   // Indicate if running in debug mode.
 };
 
 int args_reader_read(struct enclave_args *, unsigned int);

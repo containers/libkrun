@@ -15,6 +15,9 @@
 
 #include "include/device.h"
 
+/*
+ * Forward signals from the host to the parent process.
+ */
 static int sig_handler_start(int vsock_fd, int shutdown_fd)
 {
     struct pollfd pfds[2];
@@ -27,9 +30,11 @@ static int sig_handler_start(int vsock_fd, int shutdown_fd)
     pfds[1].fd = shutdown_fd;
     pfds[1].events = POLLIN;
 
+    // Signal to the parent process that initialization is complete.
     kill(getppid(), SIGUSR1);
 
     while (poll(pfds, 2, -1) > 0) {
+        // Event on vsock. Read the signal and forward it to the parent process.
         if (pfds[0].revents & POLLIN) {
             len = read(vsock_fd, (void *)&sig, sizeof(int));
             if (len != sizeof(int)) {
@@ -39,6 +44,7 @@ static int sig_handler_start(int vsock_fd, int shutdown_fd)
             kill(getppid(), sig);
         }
 
+        // Event on shutdown FD. Close the vsock and exit.
         if (pfds[1].revents & POLLIN)
             break;
     }
@@ -48,6 +54,10 @@ static int sig_handler_start(int vsock_fd, int shutdown_fd)
     exit(0);
 }
 
+/*
+ * Initialize a signal handling proxy to forward signals from the host to the
+ * parent process.
+ */
 int sig_handler_init(unsigned int vsock_port, int shutdown_fd)
 {
     struct sockaddr_vm saddr;
@@ -61,6 +71,7 @@ int sig_handler_init(unsigned int vsock_port, int shutdown_fd)
         perror("signal handler proxy process");
         return -errno;
     case 0:
+        // Initialize the vsock used for signal forwarding.
         vsock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
         if (vsock_fd < 0) {
             perror("signal handler vsock creation");
@@ -90,6 +101,7 @@ int sig_handler_init(unsigned int vsock_port, int shutdown_fd)
             return -errno;
         }
 
+        // Forward signals from the host to the parent process.
         ret = sig_handler_start(vsock_fd, shutdown_fd);
         if (ret < 0) {
             close(vsock_fd);

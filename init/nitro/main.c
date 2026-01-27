@@ -42,55 +42,14 @@ enum {
 };
 
 /*
- * Initialize /dev/console and redirect std{err, in, out} to it for early debug
- * output.
+ * Load the NSM kernel module.
  */
-int console_init()
-{
-    const char *path = "/dev/console";
-    FILE *file;
-    int ret;
-
-    ret = mount("dev", "/dev", "devtmpfs", MS_NOSUID | MS_NOEXEC, NULL);
-    if (ret < 0 && errno != EBUSY) {
-        perror("mount /dev");
-        return -errno;
-    }
-
-    // Redirect stdin, stdout, and stderr to /dev/console.
-    file = freopen(path, "r", stdin);
-    if (file == NULL) {
-        perror("freopen stdin");
-        return -errno;
-    }
-
-    file = freopen(path, "w", stdout);
-    if (file == NULL) {
-        perror("freopen stdout");
-        goto err;
-    }
-
-    file = freopen(path, "w", stderr);
-    if (file == NULL) {
-        perror("freopen stderr");
-        goto err;
-    }
-
-    return 0;
-
-err:
-    fclose(file);
-    return -errno;
-}
-
-/*
- * Initialize/load the NSM kernel module.
- */
-int nsm_init()
+static int nsm_load(void)
 {
     const char *file_name = "nsm.ko";
     int fd, ret;
 
+    // Open and load the kernel module.
     fd = open(file_name, O_RDONLY | O_CLOEXEC);
     if (fd < 0 && errno == ENOENT)
         return 0;
@@ -99,7 +58,6 @@ int nsm_init()
         return -errno;
     }
 
-    // Load the NSM module.
     ret = finit_module(fd, "", 0);
     if (ret < 0) {
         close(fd);
@@ -127,7 +85,7 @@ int nsm_init()
 /*
  * Mount the extracted rootfs and switch the root directory to it.
  */
-static int rootfs_mount()
+static int rootfs_mount(void)
 {
     int ret;
 
@@ -172,7 +130,7 @@ static int rootfs_mount()
 /*
  * Launch the application specified with argv and envp.
  */
-pid_t launch(char **argv, char **envp)
+static pid_t launch(char **argv, char **envp)
 {
     int ret;
 
@@ -200,11 +158,9 @@ pid_t launch(char **argv, char **envp)
 }
 
 /*
- * Measure the enclave rootfs and execution variables (path, argv, envp) with
- * the NSM PCRs.
+ * Measure the enclave execution environment (path, argv, envp) in NSM PCR 17.
  *
- * NSM PCR 16 contains the measurement of the root filesystem.
- * NSM PCR 17 contains the measurement of the execution variables (path, argv,
+ * NSM PCR 17 contains the measurement of the execution environment (path, argv,
  * envp).
  */
 static int nsm_pcrs_exec_path_extend(int nsm_fd, char *path, char **argv,
@@ -217,14 +173,14 @@ static int nsm_pcrs_exec_path_extend(int nsm_fd, char *path, char **argv,
 
     pcr_data_size = 256;
 
-    // Measure the execution path with NSM PCR 17.
+    // Measure the execution path.
     exec_ptr = path;
     ret = nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *)exec_ptr,
                          strlen(exec_ptr), (void *)pcr_data, &pcr_data_size);
     if (ret != ERROR_CODE_SUCCESS)
         goto out;
 
-    // Measure each execution argument with NSM PCR 17.
+    // Measure each execution argument.
     for (i = 0; (exec_ptr = argv[i]) != NULL; ++i) {
         ret =
             nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *)exec_ptr,
@@ -233,7 +189,7 @@ static int nsm_pcrs_exec_path_extend(int nsm_fd, char *path, char **argv,
             goto out;
     }
 
-    // Measure each environment variable with NSM PCR 17.
+    // Measure each environment variable.
     for (i = 0; (exec_ptr = envp[i]) != NULL; ++i) {
         ret =
             nsm_extend_pcr(nsm_fd, NSM_PCR_EXEC_DATA, (uint8_t *)exec_ptr,
@@ -249,7 +205,7 @@ out:
 }
 
 /*
- * Lock PCRs measured by initramfs and close the NSM handle.
+ * Lock PCRs measured by init process and close the NSM handle.
  */
 static int nsm_exit(int nsm_fd)
 {
@@ -258,7 +214,7 @@ static int nsm_exit(int nsm_fd)
     /*
      * Lock PCRs 16 and 17 so they cannot be extended further. This is to ensure
      * there can no further data measured other than the rootfs and execution
-     * variables.
+     * environment.
      */
     ret = nsm_lock_pcrs(nsm_fd, NSM_PCR_EXEC_DATA);
     if (ret != ERROR_CODE_SUCCESS)
@@ -268,12 +224,15 @@ static int nsm_exit(int nsm_fd)
     nsm_lib_exit(nsm_fd);
 
     ret = 0;
-
 out:
     return -ret;
 }
 
-unsigned int cid_fetch(void)
+/*
+ * Fetch the enclave VM's CID in order to calculate vsock port offsets for host
+ * communication.
+ */
+static unsigned int cid_fetch(void)
 {
     unsigned int cid;
     int ret, fd;
@@ -295,12 +254,15 @@ unsigned int cid_fetch(void)
     return cid;
 }
 
+/*
+ * Forward the application return code to the host.
+ */
 static int app_ret_write(int code, unsigned int cid)
 {
-    int ret, sock_fd;
     unsigned int vsock_port;
     struct sockaddr_vm addr;
     struct timeval timeval;
+    int ret, sock_fd;
 
     sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
     if (sock_fd < 0) {
@@ -318,6 +280,10 @@ static int app_ret_write(int code, unsigned int cid)
     memset(&timeval, 0, sizeof(struct timeval));
     timeval.tv_sec = 5;
 
+    /*
+     * The host needs to join all device proxy threads before reading the return
+     * code. Allow some time for the host to connect to the return code vsock.
+     */
     ret = setsockopt(sock_fd, AF_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
                      (void *)&timeval, sizeof(struct timeval));
     if (ret < 0) {
@@ -333,6 +299,7 @@ static int app_ret_write(int code, unsigned int cid)
         return -errno;
     }
 
+    // Write the return code.
     ret = write(sock_fd, (void *)&code, sizeof(int));
     if (ret < sizeof(int)) {
         perror("unable to write application return code");
@@ -340,6 +307,11 @@ static int app_ret_write(int code, unsigned int cid)
         return -errno;
     }
 
+    /*
+     * Read a return code (value is irrelevant) from the host. This is to ensure
+     * that the host was able to read the return code from the vsock before the
+     * enclave exits.
+     */
     ret = read(sock_fd, (void *)&code, sizeof(int));
     if (ret < sizeof(int)) {
         perror("unable to read close signal from application return vsock");
@@ -352,7 +324,10 @@ static int app_ret_write(int code, unsigned int cid)
     return 0;
 }
 
-static int devices_init(int cid, struct enclave_args *args, int shutdown_fd)
+/*
+ * Initialize each configured device proxy for the enclave.
+ */
+static int proxies_init(int cid, struct enclave_args *args, int shutdown_fd)
 {
     struct sigaction sa;
     int ret;
@@ -363,17 +338,28 @@ static int devices_init(int cid, struct enclave_args *args, int shutdown_fd)
     sigaddset(&sa.sa_mask, SIGUSR1);
     sigprocmask(SIG_UNBLOCK, &sa.sa_mask, NULL);
 
+    /*
+     * Each proxy will send a SIGUSR1 message to indicate when it has started.
+     * Enable this signal so the main process can wait and be notified when each
+     * proxy has initialized itself.
+     */
     ret = sigaction(SIGUSR1, &sa, NULL);
     if (ret < 0) {
         perror("sigaction enable SIGUSR1 for device proxies");
         return -errno;
     }
 
+    /*
+     * If not running in debug mode, initialize the application output proxy.
+     * In debug mode, the enclave uses the console (which is already connected)
+     * for output.
+     */
     if (!args->debug) {
         ret = device_init(KRUN_NE_DEV_APP_OUTPUT_STDIO,
                           cid + VSOCK_PORT_OFFSET_OUTPUT, shutdown_fd);
     }
 
+    // Initialize the network proxy if configured.
     if (args->network_proxy) {
         ret = device_init(KRUN_NE_DEV_NET_TAP_AF_VSOCK,
                           cid + VSOCK_PORT_OFFSET_NET, shutdown_fd);
@@ -381,19 +367,29 @@ static int devices_init(int cid, struct enclave_args *args, int shutdown_fd)
             return ret;
     }
 
+    /*
+     * The signal proxy is always initialized to allow the host to send signals
+     * to the enclave.
+     */
     ret = device_init(KRUN_NE_DEV_SIGNAL_HANDLER,
                       cid + VSOCK_PORT_OFFSET_SIGNAL_HANDLER, shutdown_fd);
-    if (ret < 0)
-        return ret;
 
     return ret;
 }
 
-static int devices_exit(struct enclave_args *args, int shutdown_fd)
+/*
+ * Close and exit each device proxy.
+ */
+static int proxies_exit(struct enclave_args *args, int shutdown_fd)
 {
     uint64_t sfd_val;
     int ret;
 
+    /*
+     * The shutdown value is irrelevant, it acts as a signal to all device proxy
+     * threads that the enclave is exiting. Upon receiving this signal, each
+     * device proxy will close their respective vsock and exit.
+     */
     sfd_val = 1;
     ret = write(shutdown_fd, &sfd_val, sizeof(uint64_t));
     if (ret < 0) {
@@ -401,19 +397,28 @@ static int devices_exit(struct enclave_args *args, int shutdown_fd)
         ret = -errno;
     }
 
+    // If not in debug mode, close the application output vsock.
     if (!args->debug)
         app_stdio_close();
 
     return ret;
 }
 
+// The PID of the application process.
 static pid_t KRUN_NITRO_APP_PID = -1;
+// Indicates if a SIGTERM signal was caught by the enclave signal handler.
 static bool KRUN_NITRO_SIGTERM_CAUGHT = false;
 
+/*
+ * Forward a signal from the signal handler to the application process.
+ * Currently, only SIGTERM is supported.
+ */
 void shutdown_sig_handler(int sig)
 {
     if ((sig == SIGTERM) && (KRUN_NITRO_APP_PID > 0)) {
+        // Send the signal to the application process.
         kill(KRUN_NITRO_APP_PID, sig);
+        // Indicate that the SIGTERM signal was caught.
         KRUN_NITRO_SIGTERM_CAUGHT = true;
     }
 }
@@ -453,10 +458,11 @@ int main(int argc, char *argv[])
         goto out;
 
     // Initialize the NSM kernel module.
-    ret = nsm_init();
+    ret = nsm_load();
     if (ret < 0)
         goto out;
 
+    // Read the enclave arguments from the host.
     ret = args_reader_read(&args, cid + VSOCK_PORT_OFFSET_ARGS_READER);
     if (ret < 0)
         goto out;
@@ -469,7 +475,7 @@ int main(int argc, char *argv[])
         goto out;
     }
 
-    // Measure the rootfs and execution variables in the NSM PCRs.
+    // Measure the rootfs and execution environment in the NSM PCRs.
     ret = nsm_pcrs_exec_path_extend(nsm_fd, args.exec_path, args.exec_argv,
                                     args.exec_envp);
     if (ret < 0)
@@ -508,6 +514,10 @@ int main(int argc, char *argv[])
     if (ret < 0)
         goto out;
 
+    /*
+     * Create a shutdown eventfd that can be written to in order to notify each
+     * device proxy to close and exit at some point.
+     */
     shutdown_fd = eventfd(0, 0);
     if (shutdown_fd < 0) {
         perror("creating shutdown FD");
@@ -515,7 +525,8 @@ int main(int argc, char *argv[])
         goto out;
     }
 
-    ret = devices_init(cid, &args, shutdown_fd);
+    // Initialize each configured device proxy.
+    ret = proxies_init(cid, &args, shutdown_fd);
     if (ret < 0)
         goto out;
 
@@ -537,8 +548,16 @@ int main(int argc, char *argv[])
         ret = launch(args.exec_argv, args.exec_envp);
         break;
     default:
+        /*
+         * Store the application process' PID in the event of a signal needing
+         * to be forwarded to it.
+         */
         KRUN_NITRO_APP_PID = pid;
 
+        /*
+         * Initialize the shutdown handler for signals to be forwarded to the
+         * application process.
+         */
         memset(&sa, 0, sizeof(struct sigaction));
         sa.sa_handler = shutdown_sig_handler;
 
@@ -548,15 +567,25 @@ int main(int argc, char *argv[])
             return -errno;
         }
 
+        // Wait for the application process to exit.
         waitpid(pid, &ret_code, 0);
 
+        /*
+         * If the process was ended by a signal, the return code may represent a
+         * value that under normal circumstances would indicate an error.
+         * Therefore, if the application ended from a signal, zero-out the
+         * return code (indicating that the application process exited
+         * gracefully).
+         */
         if (KRUN_NITRO_SIGTERM_CAUGHT)
             ret_code = 0;
 
-        ret = devices_exit(&args, shutdown_fd);
+        // Close and exit each device proxy.
+        ret = proxies_exit(&args, shutdown_fd);
         if (ret < 0)
             goto out;
 
+        // Write the return code to the host.
         ret = app_ret_write(ret_code, cid);
     }
 

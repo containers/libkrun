@@ -3,6 +3,7 @@
 #ifndef _FS_INIT_H
 #define _FS_INIT_H
 
+int console_init();
 int filesystem_init();
 int cgroups_init();
 

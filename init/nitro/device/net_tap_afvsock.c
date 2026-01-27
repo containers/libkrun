@@ -31,6 +31,10 @@
 #define TUN_DEV_MAJOR 10
 #define TUN_DEV_MINOR 200
 
+/*
+ * Forward ethernet packets to/from the host vsock providing network access and
+ * the guest TAP device routing application network traffic.
+ */
 static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
                              char *tap_name)
 {
@@ -38,9 +42,13 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
     unsigned char *buf;
     bool event_found;
     struct ifreq ifr;
-    ssize_t nread;
     int ret, sock_fd;
+    ssize_t nread;
 
+    /*
+     * Fetch the TAP device's Maximum Transfer Unit (MTU) and allocate a buffer
+     * in that size to transfer ethernet frames to/from the host.
+     */
     sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock_fd < 0) {
         perror("creating INET socket to get TAP MTU");
@@ -54,7 +62,7 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
     if (ret < 0) {
         close(sock_fd);
         perror("fetch MTU of TAP device");
-        exit(ret);
+        exit(-errno);
     }
 
     close(sock_fd);
@@ -74,10 +82,12 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
     pfds[2].fd = shutdown_fd;
     pfds[2].events = POLLIN;
 
+    // Signal to the parent process that initialization is complete.
     kill(getppid(), SIGUSR1);
 
     while (poll(pfds, 3, -1) > 0) {
         event_found = false;
+        // Event on vsock. Read the frame and write it to the TAP device.
         if (pfds[0].revents & POLLIN) {
             unsigned int sz;
             nread = read(vsock_fd, &sz, 4);
@@ -92,6 +102,7 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
             event_found = true;
         }
 
+        // Event on the TAP device. Read the frame and write it to the vsock.
         if (pfds[1].revents & POLLIN) {
             nread = read(tun_fd, buf, ifr.ifr_mtu);
             if (nread > 0) {
@@ -120,6 +131,9 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
     exit(0);
 }
 
+/*
+ * Initialize the enclave TAP device to route all network traffic to the host.
+ */
 static int tun_init(void)
 {
     struct stat statbuf;
@@ -165,6 +179,9 @@ static int tun_init(void)
     return 0;
 }
 
+/*
+ * Assign IP data to route enclave network traffic to the TAP device.
+ */
 static int tap_assign_ipaddr(char *name)
 {
     struct sockaddr_in *addr;
@@ -279,6 +296,9 @@ static int tap_assign_ipaddr(char *name)
     return 0;
 }
 
+/*
+ * Allocate a TAP device for enclave network traffic.
+ */
 static int tap_alloc(char *name)
 {
     struct ifreq ifr;
@@ -303,6 +323,7 @@ static int tap_alloc(char *name)
 
     strcpy(name, ifr.ifr_name);
 
+    // Assign the IP data to the TAP device.
     ret = tap_assign_ipaddr(name);
     if (ret < 0)
         return ret;
@@ -310,6 +331,9 @@ static int tap_alloc(char *name)
     return fd;
 }
 
+/*
+ * Initialize a TAP device to route network traffic to/from.
+ */
 int tap_afvsock_init(unsigned int vsock_port, int shutdown_fd)
 {
     int ret, tun_fd, vsock_fd;
@@ -335,6 +359,7 @@ int tap_afvsock_init(unsigned int vsock_port, int shutdown_fd)
         perror("network proxy process");
         exit(EXIT_FAILURE);
     case 0:
+        // Initialize the vsock used for network proxying.
         vsock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
         if (vsock_fd < 0) {
             perror("network vsock creation");
@@ -350,7 +375,6 @@ int tap_afvsock_init(unsigned int vsock_port, int shutdown_fd)
             return -errno;
         }
 
-        // Initialize the vsock used for network proxying.
         memset(&saddr, 0, sizeof(struct sockaddr_vm));
         saddr.svm_family = AF_VSOCK;
         saddr.svm_cid = VMADDR_CID_HOST;
@@ -363,6 +387,7 @@ int tap_afvsock_init(unsigned int vsock_port, int shutdown_fd)
             exit(EXIT_FAILURE);
         }
 
+        // Forward network traffic between the host and TAP device.
         ret = tap_vsock_forward(tun_fd, vsock_fd, shutdown_fd, tap_name);
         if (ret < 0)
             exit(EXIT_FAILURE);

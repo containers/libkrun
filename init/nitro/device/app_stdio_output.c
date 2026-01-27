@@ -11,6 +11,10 @@
 
 static int APP_STDIO_OUTPUT_VSOCK_FD = -1;
 
+/*
+ * Redirect std{err, out} output to a vsock connected to the host. Allows the
+ * host to read application output.
+ */
 int app_stdio_output(unsigned int vsock_port)
 {
     int streams[2] = {STDOUT_FILENO, STDERR_FILENO};
@@ -18,6 +22,7 @@ int app_stdio_output(unsigned int vsock_port)
     struct timeval timeval;
     int ret, sock_fd, i;
 
+    // Open a vsock and connect to the host.
     sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
     if (sock_fd < 0) {
         perror("unable to create guest socket");
@@ -47,6 +52,7 @@ int app_stdio_output(unsigned int vsock_port)
         return -errno;
     }
 
+    // Refer the std{err, out} file descriptors to the connected vsock.
     for (i = 0; i < 2; i++) {
         ret = dup2(sock_fd, streams[i]);
         if (ret < 0) {
@@ -57,11 +63,15 @@ int app_stdio_output(unsigned int vsock_port)
         }
     }
 
+    // Store the vsock's file descriptor for eventual closing.
     APP_STDIO_OUTPUT_VSOCK_FD = sock_fd;
 
     return 0;
 }
 
+/*
+ * Dereference and close the application output vsock.
+ */
 void app_stdio_close(void)
 {
     close(STDOUT_FILENO);

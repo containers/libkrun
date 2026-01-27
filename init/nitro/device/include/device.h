@@ -5,8 +5,16 @@
 
 #include <signal.h>
 
+/*
+ * Variable for device proxies to indicate to the main process that they have
+ * finished initialization.
+ */
 static volatile sig_atomic_t DEVICE_PROXY_READY = 0;
 
+/*
+ * Device proxy signal handler. Used by device proxy processes to notify the
+ * main process that they have finished initialization.
+ */
 void device_proxy_sig_handler(int);
 
 enum krun_nitro_device {

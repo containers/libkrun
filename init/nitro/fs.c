@@ -15,6 +15,48 @@
 #define CGROUP_SUB_PATH_SIZE (sizeof(SYS_FS_CGROUP_PATH) - 1 + 64)
 
 /*
+ * Initialize /dev/console and redirect std{err, in, out} to it for early debug
+ * output.
+ */
+int console_init()
+{
+    const char *path = "/dev/console";
+    FILE *file;
+    int ret;
+
+    ret = mount("dev", "/dev", "devtmpfs", MS_NOSUID | MS_NOEXEC, NULL);
+    if (ret < 0 && errno != EBUSY) {
+        perror("mount /dev");
+        return -errno;
+    }
+
+    // Redirect stdin, stdout, and stderr to /dev/console.
+    file = freopen(path, "r", stdin);
+    if (file == NULL) {
+        perror("freopen stdin");
+        return -errno;
+    }
+
+    file = freopen(path, "w", stdout);
+    if (file == NULL) {
+        perror("freopen stdout");
+        goto err;
+    }
+
+    file = freopen(path, "w", stderr);
+    if (file == NULL) {
+        perror("freopen stderr");
+        goto err;
+    }
+
+    return 0;
+
+err:
+    fclose(file);
+    return -errno;
+}
+
+/*
  * Initialize the cgroups.
  */
 int cgroups_init()
