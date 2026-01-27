@@ -16,6 +16,9 @@
 
 #define ENCLAVE_VSOCK_LAUNCH_ARGS_READY 0xb7
 
+/*
+ * Enclave argument IDs.
+ */
 enum {
     ENCLAVE_ARG_ID_ROOTFS,
     ENCLAVE_ARG_ID_EXEC_PATH,
@@ -162,9 +165,9 @@ static int args_reader_char_list_build(int sock_fd, char ***buf_ptr)
  */
 static int args_reader_signal(unsigned int vsock_port)
 {
-    uint8_t buf[1];
     struct sockaddr_vm saddr;
     int ret, sock_fd;
+    uint8_t buf[1];
 
     buf[0] = ENCLAVE_VSOCK_LAUNCH_ARGS_READY;
     errno = -EINVAL;
@@ -218,6 +221,9 @@ err:
     return -errno;
 }
 
+/*
+ * Read each enclave argument from the host.
+ */
 static int __args_reader_read(int sock_fd, struct enclave_args *args)
 {
     uint8_t id;
@@ -261,11 +267,16 @@ static int __args_reader_read(int sock_fd, struct enclave_args *args)
             return 0;
         }
 
+        // Error occurred. Return error code.
         if (ret < 0)
             return ret;
     }
 }
 
+/*
+ * Establish communication with the host's argument writer and read the enclave
+ * configuration (via the arguments) from it.
+ */
 int args_reader_read(struct enclave_args *args, unsigned int vsock_port)
 {
     int ret, sock_fd;
