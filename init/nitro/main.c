@@ -285,13 +285,12 @@ unsigned int cid_fetch(void)
     }
 
     ret = ioctl(fd, IOCTL_VM_SOCKETS_GET_LOCAL_CID, &cid);
+    close(fd);
+
     if (ret < 0) {
-        close(fd);
         perror("unable to fetch VM CID:");
         return 0;
     }
-
-    close(fd);
 
     return cid;
 }
