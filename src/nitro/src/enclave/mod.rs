@@ -3,9 +3,7 @@
 pub(crate) mod args_writer;
 pub(crate) mod proxy;
 
-use super::error::{
-    return_code::Error as ReturnCodeListenerError, start::Error as StartError, Error,
-};
+use super::error::{return_code, start, Error};
 use args_writer::EnclaveArgsWriter;
 use nitro_enclaves::{
     launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
@@ -90,7 +88,7 @@ impl NitroEnclave {
             VMADDR_CID_ANY,
             cid + (VsockPortOffset::ReturnCode as u32),
         ))
-        .map_err(ReturnCodeListenerError::VsockBind)
+        .map_err(return_code::Error::VsockBind)
         .map_err(Error::ReturnCodeListener)?;
 
         // Enable signals now that enclave VM is started.
@@ -118,30 +116,32 @@ impl NitroEnclave {
     }
 
     /// Start a nitro enclave.
-    fn start(&mut self) -> Result<(u32, PollTimeout), StartError> {
+    fn start(&mut self) -> Result<(u32, PollTimeout), start::Error> {
         // Read the cached EIF file required to run the enclave.
         let eif = {
             let path = env::var(KRUN_NITRO_EIF_PATH_ENV_VAR)
                 .unwrap_or(KRUN_NITRO_EIF_PATH_DEFAULT.to_string());
 
-            fs::read(path).map_err(StartError::EifRead)
+            fs::read(path).map_err(start::Error::EifRead)
         }?;
 
         // Calculate the poll timeout (based on the size of the EIF file and amount of RAM allocated
         // to the enclave) for the enclave to indicate that has successfully started.
         let timeout = PollTimeout::try_from((eif.as_slice(), self.mem_size_mib << 20))
-            .map_err(StartError::PollTimeoutCalculate)?;
+            .map_err(start::Error::PollTimeoutCalculate)?;
 
         // Launch an enclave VM with the configured number of vCPUs and amount of RAM.
-        let device = Device::open().map_err(StartError::DeviceOpen)?;
+        let device = Device::open().map_err(start::Error::DeviceOpen)?;
 
-        let mut launcher = Launcher::new(&device).map_err(StartError::VmCreate)?;
+        let mut launcher = Launcher::new(&device).map_err(start::Error::VmCreate)?;
 
         let mem = MemoryInfo::new(ImageType::Eif(&eif), self.mem_size_mib);
-        launcher.set_memory(mem).map_err(StartError::VmMemorySet)?;
+        launcher
+            .set_memory(mem)
+            .map_err(start::Error::VmMemorySet)?;
 
         for _ in 0..self.vcpus {
-            launcher.add_vcpu(None).map_err(StartError::VcpuAdd)?;
+            launcher.add_vcpu(None).map_err(start::Error::VcpuAdd)?;
         }
 
         // Indicate to the enclave to start in debug mode if configured.
@@ -154,7 +154,7 @@ impl NitroEnclave {
         // Start the enclave.
         let cid = launcher
             .start(start_flags, None)
-            .map_err(StartError::VmStart)?;
+            .map_err(start::Error::VmStart)?;
 
         // Safe to unwrap.
         Ok((cid.try_into().unwrap(), timeout))
@@ -225,20 +225,20 @@ impl NitroEnclave {
 
     // Receive a 4-byte (representing an i32) return code from the enclave via vsock. This
     // represents the return code of the application that ran within the enclave.
-    fn shutdown_ret(&self, vsock_listener: VsockListener) -> Result<i32, ReturnCodeListenerError> {
+    fn shutdown_ret(&self, vsock_listener: VsockListener) -> Result<i32, return_code::Error> {
         let (mut vsock_stream, _vsock_addr) = vsock_listener
             .accept()
-            .map_err(ReturnCodeListenerError::VsockAccept)?;
+            .map_err(return_code::Error::VsockAccept)?;
 
         let mut buf = [0u8; 4];
         let _ = vsock_stream
             .read(&mut buf)
-            .map_err(ReturnCodeListenerError::VsockRead)?;
+            .map_err(return_code::Error::VsockRead)?;
 
         let close_signal: u32 = 0;
         vsock_stream
             .write_all(&close_signal.to_ne_bytes())
-            .map_err(ReturnCodeListenerError::VsockWrite)?;
+            .map_err(return_code::Error::VsockWrite)?;
 
         Ok(i32::from_ne_bytes(buf))
     }
