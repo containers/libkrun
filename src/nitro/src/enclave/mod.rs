@@ -25,6 +25,9 @@ use std::{
 use tar::HeaderMode;
 use vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY};
 
+const KRUN_NITRO_EIF_PATH_ENV_VAR: &str = "KRUN_NITRO_EIF_PATH";
+const KRUN_NITRO_EIF_PATH_DEFAULT: &str = "/usr/share/krun-nitro/krun-nitro.eif";
+
 /// Directories within the configured rootfs that will be ignored when writing to the enclave. The
 /// enclave is responsible for initializing these directories within the guest operating system.
 const ROOTFS_DIR_DENYLIST: [&str; 6] = [
@@ -118,8 +121,8 @@ impl NitroEnclave {
     fn start(&mut self) -> Result<(u32, PollTimeout), StartError> {
         // Read the cached EIF file required to run the enclave.
         let eif = {
-            let path = env::var("KRUN_NITRO_EIF_PATH")
-                .unwrap_or("/usr/share/krun-nitro/krun-nitro.eif".to_string());
+            let path = env::var(KRUN_NITRO_EIF_PATH_ENV_VAR)
+                .unwrap_or(KRUN_NITRO_EIF_PATH_DEFAULT.to_string());
 
             fs::read(path).map_err(StartError::EifRead)
         }?;
