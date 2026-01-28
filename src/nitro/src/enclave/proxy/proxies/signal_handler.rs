@@ -6,7 +6,7 @@ use crate::enclave::{
 };
 use signal_hook::consts::SIGTERM;
 use std::{
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -61,9 +61,15 @@ impl DeviceProxy for SignalHandler {
         }
 
         let sig = libc::SIGTERM;
-        vsock.write(&sig.to_ne_bytes()).map_err(Error::VsockWrite)?;
-
-        Ok(0)
+        match vsock.write(&sig.to_ne_bytes()) {
+            Ok(size) => Ok(size),
+            /*
+             * If connection was already closed by enclave, return zero bytes written in order to
+             * listen for receiver shutdown signal.
+             */
+            Err(e) if e.kind() == ErrorKind::BrokenPipe => Ok(0),
+            Err(e) => Err(Error::VsockWrite(e)),
+        }
     }
 
     /// Establish the proxy's vsock connection.
