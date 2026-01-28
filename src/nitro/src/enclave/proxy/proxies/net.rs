@@ -7,6 +7,7 @@ use crate::enclave::{
 };
 use std::{
     io::{ErrorKind, Read, Write},
+    mem::size_of,
     os::{
         fd::{FromRawFd, OwnedFd, RawFd},
         unix::net::UnixStream,
@@ -21,14 +22,14 @@ pub struct NetProxy {
     // Unix socket connected to service providing network access.
     unix: UnixStream,
     // Buffer to send/receive data to/from vsock.
-    buf: [u8; 1500],
+    buf: Vec<u8>,
 }
 
 impl TryFrom<RawFd> for NetProxy {
     type Error = Error;
 
     fn try_from(fd: RawFd) -> Result<Self> {
-        let buf = [0u8; 1500];
+        let buf = Vec::new();
 
         let unix = unsafe { UnixStream::from(OwnedFd::from_raw_fd(fd)) };
         unix.set_read_timeout(Some(Duration::from_millis(250)))
@@ -49,7 +50,7 @@ impl DeviceProxy for NetProxy {
         let unix = self.unix.try_clone().map_err(Error::UnixClone)?;
 
         Ok(Some(Box::new(Self {
-            buf: self.buf,
+            buf: self.buf.clone(),
             unix,
         })))
     }
@@ -85,13 +86,27 @@ impl DeviceProxy for NetProxy {
     }
 
     /// Establish the proxy's vsock connection.
-    fn vsock(&self, cid: u32) -> Result<VsockStream> {
+    fn vsock(&mut self, cid: u32) -> Result<VsockStream> {
         let port = cid + (VsockPortOffset::Net as u32);
 
         let listener =
             VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, port)).map_err(Error::VsockBind)?;
 
-        let (vsock, _) = listener.accept().map_err(Error::VsockAccept)?;
+        let (mut vsock, _) = listener.accept().map_err(Error::VsockAccept)?;
+
+        /*
+         * Upon initial connection, read the MTU size from the enclave and allocate the buffer
+         * accordingly.
+         */
+        let size = {
+            let mut size_buf = [0u8; size_of::<u32>()];
+            let _ = vsock.read(&mut size_buf).map_err(Error::VsockRead)?;
+
+            u32::from_ne_bytes(size_buf)
+        };
+
+        self.buf
+            .resize(size.try_into().map_err(Error::VsockBufferLenConvert)?, 0);
 
         Ok(vsock)
     }

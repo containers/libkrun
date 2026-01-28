@@ -7,6 +7,7 @@ pub use proxies::*;
 use crate::enclave::args_writer::EnclaveArg;
 use std::{
     fmt, io,
+    num::TryFromIntError,
     sync::mpsc::{self, RecvTimeoutError},
     thread::{self, JoinHandle},
     time::Duration,
@@ -26,7 +27,7 @@ pub trait DeviceProxy: Send {
     /// Write data to the enclave's vsock. Perhaps perform some other functions.
     fn send(&mut self, vsock: &mut VsockStream) -> Result<usize>;
     /// Establish the proxy's respective vsock connection.
-    fn vsock(&self, cid: u32) -> Result<VsockStream>;
+    fn vsock(&mut self, cid: u32) -> Result<VsockStream>;
 }
 
 /// List of all configured device proxies.
@@ -164,6 +165,8 @@ pub enum Error {
     VsockAccept(io::Error),
     // Binding to the vsock.
     VsockBind(io::Error),
+    // Converting a byte buffer's length to a u64.
+    VsockBufferLenConvert(TryFromIntError),
     // Cloning the vsock.
     VsockClone(io::Error),
     // Connecting to the vsock.
@@ -193,6 +196,9 @@ impl fmt::Display for Error {
             Self::UnixWrite(e) => format!("unable to write to unix stream: {e}"),
             Self::VsockAccept(e) => format!("unable to accept connection from vsock: {e}"),
             Self::VsockBind(e) => format!("unable to bind to vsock: {e}"),
+            Self::VsockBufferLenConvert(e) => {
+                format!("unable to convert vsock buffer size to u32: {e}")
+            }
             Self::VsockConnect(e) => format!("unable to connect to vsock: {e}"),
             Self::VsockClone(e) => format!("unable to clone vsock: {e}"),
             Self::VsockRead(e) => format!("unable to read from vsock: {e}"),

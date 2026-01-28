@@ -73,6 +73,13 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
         exit(-1);
     }
 
+    // Forward the MTU to the host for it to allocate a corresponding buffer.
+    ret = write(vsock_fd, (void *)&ifr.ifr_mtu, sizeof(int));
+    if (ret < sizeof(int)) {
+        perror("write TAP device MTU to host");
+        exit(-errno);
+    }
+
     pfds[0].fd = vsock_fd;
     pfds[0].events = POLLIN;
 
