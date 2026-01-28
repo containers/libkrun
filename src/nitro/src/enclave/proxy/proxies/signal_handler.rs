@@ -67,7 +67,7 @@ impl DeviceProxy for SignalHandler {
     }
 
     /// Establish the proxy's vsock connection.
-    fn vsock(&self, cid: u32) -> Result<VsockStream> {
+    fn vsock(&mut self, cid: u32) -> Result<VsockStream> {
         let port = cid + (VsockPortOffset::SignalHandler as u32);
 
         let listener =

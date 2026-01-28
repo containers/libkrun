@@ -15,6 +15,8 @@ use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY, VMADDR_CID_HY
 
 type Result<T> = std::result::Result<T, Error>;
 
+const OUTPUT_BUFFER_SIZE: usize = 1500;
+
 /// Output proxy. May output application process logs or (in debug mode) kernel+initramfs logs as
 // well.
 pub struct OutputProxy {
@@ -23,7 +25,7 @@ pub struct OutputProxy {
     // Indicator of debug mode.
     debug: bool,
     // Buffer to receive data from the vsock.
-    buf: [u8; 1500],
+    buf: Vec<u8>,
 }
 
 impl OutputProxy {
@@ -35,9 +37,11 @@ impl OutputProxy {
             .open(path)
             .map_err(Error::FileOpen)?;
 
-        let buf = [0u8; 1500];
-
-        Ok(Self { file, debug, buf })
+        Ok(Self {
+            file,
+            debug,
+            buf: vec![0u8; OUTPUT_BUFFER_SIZE],
+        })
     }
 }
 
@@ -75,7 +79,7 @@ impl DeviceProxy for OutputProxy {
     }
 
     /// Establish the proxy's vsock connection.
-    fn vsock(&self, cid: u32) -> Result<VsockStream> {
+    fn vsock(&mut self, cid: u32) -> Result<VsockStream> {
         // If debug mode is enabled, connect to the enclave's console for kernel+initramfs logs.
         let port = {
             let offset = match self.debug {
