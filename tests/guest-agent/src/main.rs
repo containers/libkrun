@@ -8,7 +8,11 @@ fn run_guest_agent(test_name: &str) -> anyhow::Result<()> {
         .into_iter()
         .find(|t| t.name() == test_name)
         .context("No such test!")?;
-    let TestCase { test, name: _ } = test_case;
+    let TestCase {
+        test,
+        name: _,
+        requires_namespace: _,
+    } = test_case;
     test.in_guest();
     Ok(())
 }
