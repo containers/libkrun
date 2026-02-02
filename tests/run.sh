@@ -38,6 +38,20 @@ fi
 cargo build --target=$GUEST_TARGET -p guest-agent
 cargo build -p runner
 
+# On macOS, the runner needs entitlements to use Hypervisor.framework
+if [ "$OS" = "Darwin" ]; then
+	codesign --entitlements /dev/stdin --force -s - target/debug/runner <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.hypervisor</key>
+    <true/>
+</dict>
+</plist>
+EOF
+fi
+
 export KRUN_TEST_GUEST_AGENT_PATH="target/$GUEST_TARGET/debug/guest-agent"
 
 # Build runner args: pass through all arguments
