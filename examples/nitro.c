@@ -242,7 +242,7 @@ int main(int argc, char *const argv[])
     }
 
     /*
-     * Start and enter the microVM. In the libkrun-nitro flavor, a positive
+     * Start and enter the microVM. In the libkrun-awsnitro flavor, a positive
      * value returned by krun_start_enter() is the enclave's CID.
      */
     cid = krun_start_enter(ctx_id);

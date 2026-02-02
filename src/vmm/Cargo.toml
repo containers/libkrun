@@ -14,7 +14,7 @@ efi = [ "blk", "net" ]
 gpu = ["krun_display"]
 snd = []
 input = ["krun_input"]
-nitro = []
+aws-nitro = []
 
 [dependencies]
 crossbeam-channel = ">=0.5.15"

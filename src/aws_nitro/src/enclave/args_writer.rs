@@ -14,7 +14,7 @@ use std::{
 };
 use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
 
-// A known byte that libkrun-nitro and the enclave initramfs will exchange to confirm that startup
+// A known byte that libkrun-awsnitro and the enclave initramfs will exchange to confirm that startup
 // was successful and the initramfs is ready to begin reading enclave arguments.
 const ENCLAVE_VSOCK_LAUNCH_ARGS_READY: u8 = 0xb7;
 

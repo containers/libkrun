@@ -17,22 +17,22 @@ SNP_INIT_SRC =	init/tee/snp_attest.c		\
 		$(KBS_INIT_SRC)			\
 
 TDX_INIT_SRC = $(KBS_INIT_SRC)
-NITRO_INIT_SRC = \
-		init/nitro/include/*        	  	\
-        init/nitro/main.c				\
-        init/nitro/archive.c				\
-        init/nitro/args_reader.c			\
-        init/nitro/fs.c				\
-        init/nitro/device/include/*			\
-		init/nitro/device/app_stdio_output.c	\
-		init/nitro/device/device.c              \
-		init/nitro/device/net_tap_afvsock.c	\
-		init/nitro/device/signal.c		\
+AWS_NITRO_INIT_SRC = \
+		init/aws-nitro/include/*        	  	\
+        init/aws-nitro/main.c				\
+        init/aws-nitro/archive.c				\
+        init/aws-nitro/args_reader.c			\
+        init/aws-nitro/fs.c				\
+        init/aws-nitro/device/include/*			\
+		init/aws-nitro/device/app_stdio_output.c	\
+		init/aws-nitro/device/device.c              \
+		init/aws-nitro/device/net_tap_afvsock.c	\
+		init/aws-nitro/device/signal.c		\
 
 KBS_LD_FLAGS =	-lcurl -lidn2 -lssl -lcrypto -lzstd -lz -lbrotlidec-static \
 		-lbrotlicommon-static
 
-NITRO_INIT_LD_FLAGS = -larchive -lnsm
+AWS_NITRO_INIT_LD_FLAGS = -larchive -lnsm
 
 BUILD_INIT = 1
 INIT_DEFS =
@@ -75,9 +75,9 @@ endif
 ifeq ($(INPUT),1)
     FEATURE_FLAGS += --features input
 endif
-ifeq ($(NITRO),1)
-	VARIANT = -nitro
-	FEATURE_FLAGS := --features nitro,net
+ifeq ($(AWS_NITRO),1)
+	VARIANT = -awsnitro
+	FEATURE_FLAGS := --features aws-nitro,net
 	BUILD_INIT = 0
 endif
 
@@ -138,9 +138,9 @@ $(INIT_BINARY): $(INIT_SRC) $(SYSROOT_TARGET)
 	$(CC_LINUX) -O2 -static -Wall $(INIT_DEFS) -o $@ $(INIT_SRC) $(INIT_DEFS)
 endif
 
-NITRO_INIT_BINARY= init/nitro/init
-$(NITRO_INIT_BINARY): $(NITRO_INIT_SRC)
-	$(CC) -O2 -static -Wall $(NITRO_INIT_LD_FLAGS) -o $@ $(NITRO_INIT_SRC) $(NITRO_INIT_LD_FLAGS)
+AWS_NITRO_INIT_BINARY= init/aws-nitro/init
+$(AWS_NITRO_INIT_BINARY): $(AWS_NITRO_INIT_SRC)
+	$(CC) -O2 -static -Wall $(AWS_NITRO_INIT_LD_FLAGS) -o $@ $(AWS_NITRO_INIT_SRC) $(AWS_NITRO_INIT_LD_FLAGS)
 
 # Sysroot preparation rules for cross-compilation on macOS
 DEBIAN_PACKAGES = libc6 libc6-dev libgcc-12-dev linux-libc-dev
@@ -179,7 +179,7 @@ $(LIBRARY_RELEASE_$(OS)): $(INIT_BINARY)
 ifeq ($(SEV),1)
 	mv target/release/libkrun.so target/release/$(KRUN_BASE_$(OS))
 endif
-ifeq ($(NITRO),1)
+ifeq ($(AWS_NITRO),1)
 	mv target/release/libkrun.so target/release/$(KRUN_BASE_$(OS))
 endif
 ifeq ($(TDX),1)
