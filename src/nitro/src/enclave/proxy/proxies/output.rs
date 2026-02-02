@@ -18,7 +18,7 @@ type Result<T> = std::result::Result<T, Error>;
 const OUTPUT_BUFFER_SIZE: usize = 1500;
 
 /// Output proxy. May output application process logs or (in debug mode) kernel+initramfs logs as
-// well.
+/// well.
 pub struct OutputProxy {
     // The file to write enclave output to.
     file: File,

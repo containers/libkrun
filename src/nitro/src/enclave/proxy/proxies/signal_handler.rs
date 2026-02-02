@@ -25,7 +25,7 @@ pub struct SignalHandler {
 }
 
 impl SignalHandler {
-    // Create a new signal handler proxy with the SIGTERM hook set to false (not caught yet).
+    /// Create a new signal handler proxy with the SIGTERM hook set to false (not caught yet).
     pub fn new() -> Result<Self> {
         let sig = Arc::new(AtomicBool::new(false));
         signal_hook::flag::register(SIGTERM, Arc::clone(&sig)).map_err(Error::SignalRegister)?;
@@ -54,7 +54,7 @@ impl DeviceProxy for SignalHandler {
     }
 
     /// Check if a SIGTERM was caught. If so, write the signal to the enclave indicating it should
-    // gracefully shut down.
+    /// gracefully shut down.
     fn send(&mut self, vsock: &mut VsockStream) -> Result<usize> {
         if !self.sig.load(Ordering::Relaxed) {
             return Ok(0);
