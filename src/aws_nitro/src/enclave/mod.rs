@@ -18,7 +18,7 @@ use std::{
     fs,
     io::{self, Read, Write},
     os::fd::RawFd,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use tar::HeaderMode;
 use vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY};
@@ -29,11 +29,11 @@ const KRUN_NITRO_EIF_PATH_DEFAULT: &str = "/usr/share/krun-awsnitro/krun-awsnitr
 /// Directories within the configured rootfs that will be ignored when writing to the enclave. The
 /// enclave is responsible for initializing these directories within the guest operating system.
 const ROOTFS_DIR_DENYLIST: [&str; 6] = [
-    "proc",                 // /proc.
-    "run",                  // /run.
-    "tmp",                  // /tmp.
-    "dev",                  // /dev.
-    "sys",                  // /sys.
+    "proc",                     // /proc.
+    "run",                      // /run.
+    "tmp",                      // /tmp.
+    "dev",                      // /dev.
+    "sys",                      // /sys.
     "/usr/share/krun-awsnitro", // Cached EIF file (and possibly other metadata).
 ];
 
@@ -183,44 +183,36 @@ impl NitroEnclave {
     /// Produce a tarball of the enclave's rootfs (to be written to and extracted by the enclave
     /// initramfs).
     fn rootfs_archive(&self) -> Result<Vec<u8>, io::Error> {
-        let mut builder = tar::Builder::new(Vec::new());
+        let mut tar = tar::Builder::new(Vec::new());
 
-        builder.mode(HeaderMode::Deterministic);
-        builder.follow_symlinks(false);
+        tar.mode(HeaderMode::Deterministic);
+        tar.follow_symlinks(false);
 
-        let pathbuf = PathBuf::from(self.rootfs.clone());
-        let pathbuf_copy = pathbuf.clone();
-        let rootfs_dirname = pathbuf_copy
-            .file_name()
-            .unwrap_or(OsStr::new("/"))
-            .to_str()
-            .ok_or(io::Error::other(format!(
-                "unable to convert rootfs directory name (\"{:?}\") to str",
-                pathbuf_copy
-            )))?;
+        let rootfs = self.rootfs.clone();
+        let rootfs = Path::new(&rootfs);
 
-        // Traverse each directory and file within the root directory tree. If a directory is not
-        // found within the denylist, add it to the archive.
-        for entry in fs::read_dir(pathbuf)? {
+        for entry in fs::read_dir(self.rootfs.clone())? {
             let entry = entry?;
-            let filetype = entry.file_type()?;
-            let filename = entry.file_name().into_string().map_err(|e| {
-                io::Error::other(format!(
-                    "unable to convert file name {:?} to String object",
-                    e
-                ))
-            })?;
+            let r#type = entry.file_type()?;
+            let name = entry.file_name().into_string().unwrap();
+            let target = format!("rootfs/{}", name);
+            let rootfs_name = {
+                let name = rootfs.file_name().unwrap_or(OsStr::new("/"));
 
-            if !ROOTFS_DIR_DENYLIST.contains(&filename.as_str()) && filename != rootfs_dirname {
-                if filetype.is_dir() {
-                    builder.append_dir_all(format!("rootfs/{}", filename), entry.path())?
-                } else if filetype.is_file() {
-                    builder.append_path_with_name(entry.path(), format!("rootfs/{}", filename))?
+                name.to_str()
+                    .ok_or(io::Error::other("unable to convert rootfs dirname to str"))
+            }?;
+
+            if !ROOTFS_DIR_DENYLIST.contains(&name.as_str()) && name != rootfs_name {
+                if r#type.is_dir() {
+                    tar.append_dir_all(target, entry.path())?
+                } else {
+                    tar.append_path_with_name(entry.path(), target)?
                 }
             }
         }
 
-        builder.into_inner()
+        tar.into_inner()
     }
 
     /// Receive a 4-byte (representing an i32) return code from the enclave via vsock. This
