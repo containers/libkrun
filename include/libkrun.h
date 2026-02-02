@@ -718,6 +718,76 @@ int krun_add_input_device_fd(uint32_t ctx_id, int input_fd);
 int32_t krun_set_snd_device(uint32_t ctx_id, bool enable);
 
 /**
+ * Vhost-user device types.
+ * These correspond to virtio device type IDs for devices.
+ */
+#define KRUN_VIRTIO_DEVICE_RNG 4
+#define KRUN_VIRTIO_DEVICE_SND 25
+#define KRUN_VIRTIO_DEVICE_CAN 36
+
+/**
+ * Vhost-user RNG device default queue configuration.
+ * Use these when you want explicit defaults instead of auto-detection.
+ */
+#define KRUN_VHOST_USER_RNG_NUM_QUEUES 1
+#define KRUN_VHOST_USER_RNG_QUEUE_SIZES ((uint16_t[]){256})
+
+/**
+ * Add a vhost-user device to the VM.
+ *
+ * This function adds a vhost-user device by connecting to an external
+ * backend process (e.g., vhost-device-rng, vhost-device-snd). The backend
+ * must be running and listening on the specified socket before starting the VM.
+ *
+ * This API is designed for devices like RNG, sound, and CAN.
+ *
+ * Arguments:
+ *  "ctx_id"       - the configuration context ID.
+ *  "device_type"  - type of vhost-user device (e.g., KRUN_VHOST_USER_DEVICE_RNG).
+ *  "socket_path"  - path to the vhost-user Unix domain socket (e.g., "/tmp/vhost-rng.sock").
+ *  "name"         - device name for logging/debugging (e.g., "vhost-rng", "vhost-snd").
+ *                   NULL = auto-generate from device_type ("vhost-user-4", "vhost-user-25", etc.)
+ *  "num_queues"   - number of virtqueues.
+ *                   0 = auto-detect from backend (requires backend MQ support).
+ *                   >0 = explicit queue count.
+ *                   Or use device-specific constants like KRUN_VHOST_USER_RNG_NUM_QUEUES.
+ *  "queue_sizes"  - array of queue sizes for each queue.
+ *                   NULL = use default size (256) for all queues.
+ *                   When num_queues=0 (auto-detect): array must be 0-terminated (sentinel).
+ *                   When num_queues>0 (explicit): array must have exactly num_queues elements.
+ *                   Use device-specific constants like KRUN_VHOST_USER_RNG_QUEUE_SIZES for defaults.
+ *
+ * Examples:
+ *  // Auto-detect queue count, use default size (256)
+ *  krun_add_vhost_user_device(ctx, KRUN_VHOST_USER_DEVICE_RNG, "/tmp/rng.sock", NULL, 0, NULL);
+ *
+ *  // Auto-detect queue count, use custom size (512) for all queues
+ *  uint16_t custom_size[] = {512, 0};  // 0 = sentinel terminator
+ *  krun_add_vhost_user_device(ctx, KRUN_VHOST_USER_DEVICE_RNG, "/tmp/rng.sock", NULL, 0, custom_size);
+ *
+ *  // Explicit defaults using #define constants
+ *  krun_add_vhost_user_device(ctx, KRUN_VHOST_USER_DEVICE_RNG, "/tmp/rng.sock", "vhost-rng",
+ *                             KRUN_VHOST_USER_RNG_NUM_QUEUES,
+ *                             KRUN_VHOST_USER_RNG_QUEUE_SIZES);
+ *
+ *  // Explicit queue count with custom sizes
+ *  uint16_t sizes[] = {256, 512};
+ *  krun_add_vhost_user_device(ctx, KRUN_VHOST_USER_DEVICE_SND, "/tmp/snd.sock", "vhost-snd", 2, sizes);
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ *  -EINVAL  - Invalid parameters (device_type, socket_path, etc.)
+ *  -ENOENT  - Context doesn't exist
+ *  -ENOTSUP - vhost-user support not compiled in
+ */
+int32_t krun_add_vhost_user_device(uint32_t ctx_id,
+                                   uint32_t device_type,
+                                   const char *socket_path,
+                                   const char *name,
+                                   uint16_t num_queues,
+                                   const uint16_t *queue_sizes);
+
+/**
  * Configures a map of rlimits to be set in the guest before starting the isolated binary.
  *
  * Arguments:
