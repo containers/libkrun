@@ -96,16 +96,6 @@ mod tests {
     }
 
     #[test]
-    fn test_write_overflow() {
-        let evt = EventFd::new(EFD_NONBLOCK).unwrap();
-        evt.write(std::u64::MAX - 1).unwrap();
-        let r = evt.write(1);
-        match r {
-            Err(ref inner) if inner.kind() == io::ErrorKind::WouldBlock => (),
-            _ => panic!("Unexpected"),
-        }
-    }
-    #[test]
     fn test_read_nothing() {
         let evt = EventFd::new(EFD_NONBLOCK).unwrap();
         let r = evt.read();

@@ -322,8 +322,9 @@ mod tests {
 
     #[test]
     fn test_epoll() {
-        const DEFAULT__TIMEOUT: i32 = 250;
+        const DEFAULT_TIMEOUT: i32 = 250;
         const EVENT_BUFFER_SIZE: usize = 128;
+        const MAX_EVENTS: usize = 10;
 
         let epoll = Epoll::new().unwrap();
         assert_eq!(epoll.queue, epoll.as_raw_fd());
@@ -345,7 +346,7 @@ mod tests {
             .ctl(
                 ControlOperation::Add,
                 event_fd_1.as_raw_fd() as i32,
-                event_1
+                &event_1
             )
             .is_ok());
 
@@ -357,13 +358,15 @@ mod tests {
                 event_fd_2.as_raw_fd() as i32,
                 // For this fd, we want an Event instance that has `data` field set to other
                 // value than the value of the fd and `events` without EPOLLIN type set.
-                EpollEvent::new(EventSet::IN, 10)
+                &EpollEvent::new(EventSet::IN, 10)
             )
             .is_ok());
 
         // Let's check `epoll_wait()` behavior for our epoll instance.
         let mut ready_events = vec![EpollEvent::default(); EVENT_BUFFER_SIZE];
-        let mut ev_count = epoll.wait(DEFAULT__TIMEOUT, &mut ready_events[..]).unwrap();
+        let mut ev_count = epoll
+            .wait(MAX_EVENTS, DEFAULT_TIMEOUT, &mut ready_events[..])
+            .unwrap();
 
         // We expect to have 3 fds in the ready list of epoll instance.
         assert_eq!(ev_count, 2);
@@ -382,12 +385,14 @@ mod tests {
             .ctl(
                 ControlOperation::Delete,
                 event_fd_2.as_raw_fd() as i32,
-                EpollEvent::default()
+                &EpollEvent::default()
             )
             .is_ok());
 
         // We expect to have only one fd remained in the ready list (event_fd_3).
-        ev_count = epoll.wait(DEFAULT__TIMEOUT, &mut ready_events[..]).unwrap();
+        ev_count = epoll
+            .wait(MAX_EVENTS, DEFAULT_TIMEOUT, &mut ready_events[..])
+            .unwrap();
 
         assert_eq!(ev_count, 1);
         assert_eq!(ready_events[0].data(), event_fd_1.as_raw_fd() as u64);
