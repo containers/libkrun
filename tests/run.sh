@@ -7,13 +7,19 @@
 set -e
 
 OS=$(uname -s)
- # macOS uses the string "arm64" but Rust uses "aarch64"
-ARCH=$(uname -m | sed 's/^arm64$/aarch64/') 
-
-GUEST_TARGET="${ARCH}-unknown-linux-musl"
+ARCH=$(uname -m)
 
 # Run the unit tests first (this tests the testing framework itself not libkrun)
 cargo test -p test_cases --features guest
+
+# Determine guest target architecture
+# macOS uses arm64 but Rust uses aarch64
+if [ "$ARCH" = "arm64" ]; then
+	RUST_ARCH="aarch64"
+else
+	RUST_ARCH="$ARCH"
+fi
+GUEST_TARGET="${RUST_ARCH}-unknown-linux-musl"
 
 # On macOS, we need to cross-compile for Linux musl
 if [ "$OS" = "Darwin" ]; then
@@ -26,25 +32,11 @@ if [ "$OS" = "Darwin" ]; then
 
 	export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="clang"
 	export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C link-arg=-target -C link-arg=aarch64-linux-gnu -C link-arg=-fuse-ld=lld -C link-arg=--sysroot=$SYSROOT -C link-arg=-static"
-	echo "Cross-compiling guest-agent for $GUEST_TARGET"
+	echo "Cross-compiling guest-agent for $GUEST_TARGET..."
 fi
 
 cargo build --target=$GUEST_TARGET -p guest-agent
 cargo build -p runner
-
-# On macOS, the runner needs entitlements to use Hypervisor.framework
-if [ "$OS" = "Darwin" ]; then
-	codesign --entitlements /dev/stdin --force -s - target/debug/runner <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.hypervisor</key>
-    <true/>
-</dict>
-</plist>
-EOF
-fi
 
 export KRUN_TEST_GUEST_AGENT_PATH="target/$GUEST_TARGET/debug/guest-agent"
 
