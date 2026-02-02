@@ -29,10 +29,10 @@ unsafe impl ByteValued for VirtioConsoleControl {}
 #[derive(Copy, Clone, Debug, Default)]
 #[repr(C, packed)]
 pub struct VirtioConsoleResize {
-    // NOTE: the order of these fields in the actual kernel implementation and in the spec are swapped,
-    // we follow the order in the kernel to get it working correctly
-    pub rows: u16,
+    // NOTE: the order of these fields in older Linux kernels and in the spec were swapped.
+    // Linux changed it in commit 5326ab737a47 to match the specs.
     pub cols: u16,
+    pub rows: u16,
 }
 
 // Safe because it only has data and has no implicit padding.
