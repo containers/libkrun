@@ -13,6 +13,22 @@ use test_tsi_tcp_guest_listen::TestTsiTcpGuestListen;
 mod test_multiport_console;
 use test_multiport_console::TestMultiportConsole;
 
+pub enum ShouldRun {
+    Yes,
+    No(&'static str),
+}
+
+impl ShouldRun {
+    /// Returns Yes unless on macOS, in which case returns No with the given reason.
+    pub fn yes_unless_macos(reason: &'static str) -> Self {
+        if cfg!(target_os = "macos") {
+            ShouldRun::No(reason)
+        } else {
+            ShouldRun::Yes
+        }
+    }
+}
+
 pub fn test_cases() -> Vec<TestCase> {
     // Register your test here:
     vec![
@@ -80,6 +96,11 @@ pub trait Test {
         let output = child.wait_with_output().unwrap();
         assert_eq!(String::from_utf8(output.stdout).unwrap(), "OK\n");
     }
+
+    /// Check if this test should run on this platform.
+    fn should_run(&self) -> ShouldRun {
+        ShouldRun::Yes
+    }
 }
 
 #[guest]
@@ -98,6 +119,12 @@ impl TestCase {
     // different parameters with and specify a different name here.
     pub fn new(name: &'static str, test: Box<dyn Test>) -> Self {
         Self { name, test }
+    }
+
+    /// Check if this test should run on this platform.
+    #[host]
+    pub fn should_run(&self) -> ShouldRun {
+        self.test.should_run()
     }
 
     #[allow(dead_code)]
