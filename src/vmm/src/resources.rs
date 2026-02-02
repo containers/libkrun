@@ -40,6 +40,22 @@ type Result<E> = std::result::Result<(), E>;
 // Re-export TsiFlags from devices crate
 pub use devices::virtio::TsiFlags;
 
+#[cfg(feature = "vhost-user")]
+/// Configuration for a vhost-user device.
+#[derive(Debug, Clone)]
+pub struct VhostUserDeviceConfig {
+    /// Virtio device type ID (e.g., 4 for RNG, 25 for sound, 36 for CAN)
+    pub device_type: u32,
+    /// Path to the vhost-user Unix domain socket
+    pub socket_path: String,
+    /// Device name for logging/debugging (None = auto-generate from type)
+    pub name: Option<String>,
+    /// Number of virtqueues (0 = use device default)
+    pub num_queues: u16,
+    /// Size of each queue (empty = use device defaults)
+    pub queue_sizes: Vec<u16>,
+}
+
 /// Errors encountered when configuring microVM resources.
 #[derive(Debug)]
 pub enum Error {
@@ -173,6 +189,9 @@ pub struct VmResources {
     #[cfg(feature = "snd")]
     /// Enable the virtio-snd device.
     pub snd_device: bool,
+    #[cfg(feature = "vhost-user")]
+    /// Vhost-user device configurations
+    pub vhost_user_devices: Vec<VhostUserDeviceConfig>,
     /// File to send console output.
     pub console_output: Option<PathBuf>,
     /// SMBIOS OEM Strings
@@ -423,6 +442,8 @@ mod tests {
             input_backends: Vec::new(),
             #[cfg(feature = "snd")]
             snd_device: false,
+            #[cfg(feature = "vhost-user")]
+            vhost_user_devices: Vec::new(),
             console_output: None,
             smbios_oem_strings: None,
             nested_enabled: false,

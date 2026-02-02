@@ -17,6 +17,7 @@ snd = []
 input = ["krun_input", "vmm/input", "devices/input"]
 virgl_resource_map2 = []
 aws-nitro = [ "dep:aws-nitro", "dep:nitro-enclaves" ]
+vhost-user = ["vmm/vhost-user", "devices/vhost-user"]
 
 [dependencies]
 crossbeam-channel = ">=0.5.15"

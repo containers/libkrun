@@ -76,6 +76,9 @@ endif
 ifeq ($(INPUT),1)
     FEATURE_FLAGS += --features input
 endif
+ifeq ($(VHOST_USER),1)
+    FEATURE_FLAGS += --features vhost-user
+endif
 ifeq ($(AWS_NITRO),1)
 	VARIANT = -awsnitro
 	FEATURE_FLAGS := --features aws-nitro,net

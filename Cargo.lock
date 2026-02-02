@@ -468,6 +468,7 @@ dependencies = [
  "rutabaga_gfx",
  "thiserror 2.0.12",
  "utils",
+ "vhost",
  "virtio-bindings",
  "vm-fdt",
  "vm-memory",
@@ -1776,7 +1777,9 @@ version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3cf4199d1e5d15ddd86a694e4d0dffa9c323ce759fea589f00fef9d81cc1931d"
 dependencies = [
+ "getrandom",
  "js-sys",
+ "rand",
  "wasm-bindgen",
 ]
 
@@ -1791,6 +1794,19 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vhost"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a4dcad85a129d97d5d4b2f3c47a4affdeedd76bdcd02094bcb5d9b76cac2d05"
+dependencies = [
+ "bitflags 2.10.0",
+ "libc",
+ "uuid",
+ "vm-memory",
+ "vmm-sys-util 0.14.0",
+]
 
 [[package]]
 name = "virtio-bindings"

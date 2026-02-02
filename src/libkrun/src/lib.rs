@@ -1778,6 +1778,92 @@ pub unsafe extern "C" fn krun_set_snd_device(ctx_id: u32, enable: bool) -> i32 {
     KRUN_SUCCESS
 }
 
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(feature = "vhost-user")]
+pub unsafe extern "C" fn krun_add_vhost_user_device(
+    ctx_id: u32,
+    device_type: u32,
+    socket_path: *const c_char,
+    name: *const c_char,
+    num_queues: u16,
+    queue_sizes: *const u16,
+) -> i32 {
+    use vmm::resources::VhostUserDeviceConfig;
+
+    let socket_path_str = match CStr::from_ptr(socket_path).to_str() {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    if socket_path_str.is_empty() {
+        return -libc::EINVAL;
+    }
+
+    let name_opt = if name.is_null() {
+        None
+    } else {
+        match CStr::from_ptr(name).to_str() {
+            Ok(s) if !s.is_empty() => Some(s.to_string()),
+            _ => None,
+        }
+    };
+
+    let queue_sizes_vec = if queue_sizes.is_null() {
+        Vec::new()
+    } else if num_queues == 0 {
+        // Auto-detect mode: read queue_sizes until we hit 0 (sentinel)
+        let mut sizes = Vec::new();
+        let mut i = 0;
+        loop {
+            let size = *queue_sizes.add(i);
+            if size == 0 {
+                break;
+            }
+            sizes.push(size);
+            i += 1;
+
+            // Safety: prevent infinite loop if user forgets sentinel terminator
+            // Virtio spec allows up to 65536 queues (16-bit queue index: 0-65535)
+            if i >= 65536 {
+                return -libc::EINVAL;
+            }
+        }
+        sizes
+    } else {
+        std::slice::from_raw_parts(queue_sizes, num_queues as usize).to_vec()
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.vmr.vhost_user_devices.push(VhostUserDeviceConfig {
+                device_type,
+                socket_path: socket_path_str.to_string(),
+                name: name_opt,
+                num_queues,
+                queue_sizes: queue_sizes_vec,
+            });
+            KRUN_SUCCESS
+        }
+        Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(not(feature = "vhost-user"))]
+pub unsafe extern "C" fn krun_add_vhost_user_device(
+    _ctx_id: u32,
+    _device_type: u32,
+    _socket_path: *const c_char,
+    _name: *const c_char,
+    _num_queues: u16,
+    _queue_sizes: *const u16,
+) -> i32 {
+    -libc::ENOTSUP
+}
+
 #[allow(unused_assignments)]
 #[no_mangle]
 pub extern "C" fn krun_get_shutdown_eventfd(ctx_id: u32) -> i32 {
