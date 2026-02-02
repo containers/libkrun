@@ -58,8 +58,8 @@ use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::net::NetworkInterfaceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
 
-#[cfg(feature = "nitro")]
-use nitro::enclave::NitroEnclave;
+#[cfg(feature = "aws-nitro")]
+use aws_nitro::enclave::NitroEnclave;
 
 #[cfg(feature = "gpu")]
 use devices::virtio::display::{DisplayInfoEdid, PhysicalSize, MAX_DISPLAYS};
@@ -81,7 +81,7 @@ const KRUNFW_NAME: &str = "libkrunfw-tdx.so.5";
 #[cfg(target_os = "macos")]
 const KRUNFW_NAME: &str = "libkrunfw.5.dylib";
 
-#[cfg(feature = "nitro")]
+#[cfg(feature = "aws-nitro")]
 static KRUN_NITRO_DEBUG: Mutex<bool> = Mutex::new(false);
 
 // Path to the init binary to be executed inside the VM.
@@ -333,7 +333,7 @@ impl ContextConfig {
     }
 }
 
-#[cfg(feature = "nitro")]
+#[cfg(feature = "aws-nitro")]
 impl TryFrom<ContextConfig> for NitroEnclave {
     type Error = i32;
 
@@ -446,9 +446,9 @@ pub extern "C" fn krun_set_log_level(level: u32) -> i32 {
     let filter = log_level_to_filter_str(level);
     env_logger::Builder::from_env(Env::default().default_filter_or(filter)).init();
 
-    #[cfg(feature = "nitro")]
+    #[cfg(feature = "aws-nitro")]
     {
-        // Notify krun-nitro to enable debug for log level.
+        // Notify krun-awsnitro to enable debug for log level.
         if level == 4 {
             let mut debug = KRUN_NITRO_DEBUG.lock().unwrap();
 
@@ -1419,7 +1419,7 @@ pub unsafe extern "C" fn krun_add_vsock_port2(
     c_filepath: *const c_char,
     listen: bool,
 ) -> i32 {
-    #[cfg(feature = "nitro")]
+    #[cfg(feature = "aws-nitro")]
     if listen {
         return -libc::EINVAL;
     }
@@ -2492,7 +2492,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         unsafe { libc::prctl(libc::PR_SET_NAME, prname.as_ptr()) };
     }
 
-    #[cfg(feature = "nitro")]
+    #[cfg(feature = "aws-nitro")]
     return krun_start_enter_nitro(ctx_id);
 
     let mut event_manager = match EventManager::new() {
@@ -2690,7 +2690,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     }
 }
 
-#[cfg(feature = "nitro")]
+#[cfg(feature = "aws-nitro")]
 #[no_mangle]
 fn krun_start_enter_nitro(ctx_id: u32) -> i32 {
     let ctx_cfg = match CTX_MAP.lock().unwrap().remove(&ctx_id) {

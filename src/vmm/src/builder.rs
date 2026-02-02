@@ -58,7 +58,7 @@ use crate::signal_handler::register_sigwinch_handler;
 use crate::terminal::{term_restore_mode, term_set_raw_mode};
 #[cfg(feature = "blk")]
 use crate::vmm_config::block::BlockBuilder;
-#[cfg(not(any(feature = "tee", feature = "nitro")))]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 use crate::vmm_config::fs::FsDeviceConfig;
 use crate::vmm_config::kernel_cmdline::DEFAULT_KERNEL_CMDLINE;
 #[cfg(target_os = "linux")]
@@ -72,7 +72,7 @@ use device_manager::shm::ShmManager;
 use devices::virtio::display::DisplayInfo;
 #[cfg(feature = "gpu")]
 use devices::virtio::display::NoopDisplayBackend;
-#[cfg(not(any(feature = "tee", feature = "nitro")))]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 use devices::virtio::{fs::ExportTable, VirtioShmRegion};
 use flate2::read::GzDecoder;
 #[cfg(feature = "gpu")]
@@ -90,10 +90,10 @@ use utils::eventfd::EventFd;
 use utils::worker_message::WorkerMessage;
 #[cfg(all(target_arch = "x86_64", not(feature = "efi"), not(feature = "tee")))]
 use vm_memory::mmap::MmapRegion;
-#[cfg(not(any(feature = "tee", feature = "nitro")))]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 use vm_memory::Address;
 use vm_memory::Bytes;
-#[cfg(not(feature = "nitro"))]
+#[cfg(not(feature = "aws-nitro"))]
 use vm_memory::GuestMemory;
 #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
 use vm_memory::GuestRegionMmap;
@@ -998,7 +998,7 @@ pub fn build_microvm(
         console_id += 1;
     }
 
-    #[cfg(not(any(feature = "tee", feature = "nitro")))]
+    #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
     let export_table: Option<ExportTable> = if cfg!(feature = "gpu") {
         Some(Default::default())
     } else {
@@ -1031,7 +1031,7 @@ pub fn build_microvm(
         attach_input_devices(&mut vmm, &vm_resources.input_backends, intc.clone())?;
     }
 
-    #[cfg(not(any(feature = "tee", feature = "nitro")))]
+    #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
     attach_fs_devices(
         &mut vmm,
         &vm_resources.fs,
@@ -1873,7 +1873,7 @@ fn attach_mmio_device(
     Ok(())
 }
 
-#[cfg(not(any(feature = "tee", feature = "nitro")))]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 fn attach_fs_devices(
     vmm: &mut Vmm,
     fs_devs: &[FsDeviceConfig],

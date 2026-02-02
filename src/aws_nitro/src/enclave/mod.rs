@@ -24,7 +24,7 @@ use tar::HeaderMode;
 use vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY};
 
 const KRUN_NITRO_EIF_PATH_ENV_VAR: &str = "KRUN_NITRO_EIF_PATH";
-const KRUN_NITRO_EIF_PATH_DEFAULT: &str = "/usr/share/krun-nitro/krun-nitro.eif";
+const KRUN_NITRO_EIF_PATH_DEFAULT: &str = "/usr/share/krun-awsnitro/krun-awsnitro.eif";
 
 /// Directories within the configured rootfs that will be ignored when writing to the enclave. The
 /// enclave is responsible for initializing these directories within the guest operating system.
@@ -34,7 +34,7 @@ const ROOTFS_DIR_DENYLIST: [&str; 6] = [
     "tmp",                  // /tmp.
     "dev",                  // /dev.
     "sys",                  // /sys.
-    "usr/share/krun-nitro", // Cached EIF file (and possibly other metadata).
+    "/usr/share/krun-awsnitro", // Cached EIF file (and possibly other metadata).
 ];
 
 /// Nitro Enclave data.
@@ -271,6 +271,6 @@ pub enum VsockPortOffset {
     AppOutput = 3,
     ReturnCode = 4,
     SignalHandler = 5,
-    // Not set by krun-nitro.
+    // Not set by krun-awsnitro.
     Console = 10000,
 }
