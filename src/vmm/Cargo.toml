@@ -18,6 +18,7 @@ gpu = ["devices/gpu", "krun_display"]
 snd = ["devices/snd"]
 input = ["devices/input", "krun_input"]
 aws-nitro = []
+vhost-user = ["devices/vhost-user"]
 
 [dependencies]
 crossbeam-channel = ">=0.5.15"
