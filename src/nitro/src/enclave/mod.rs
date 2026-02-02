@@ -55,7 +55,7 @@ pub struct NitroEnclave {
     pub net_unixfd: Option<RawFd>,
     /// Path to redirect enclave output to.
     pub output_path: PathBuf,
-    // Output kernel and initramfs debug logs from enclave.
+    /// Output kernel and initramfs debug logs from enclave.
     pub debug: bool,
 }
 
@@ -181,7 +181,7 @@ impl NitroEnclave {
     }
 
     /// Produce a tarball of the enclave's rootfs (to be written to and extracted by the enclave
-    // initramfs).
+    /// initramfs).
     fn rootfs_archive(&self) -> Result<Vec<u8>, io::Error> {
         let mut builder = tar::Builder::new(Vec::new());
 
@@ -223,8 +223,8 @@ impl NitroEnclave {
         builder.into_inner()
     }
 
-    // Receive a 4-byte (representing an i32) return code from the enclave via vsock. This
-    // represents the return code of the application that ran within the enclave.
+    /// Receive a 4-byte (representing an i32) return code from the enclave via vsock. This
+    /// represents the return code of the application that ran within the enclave.
     fn shutdown_ret(&self, vsock_listener: VsockListener) -> Result<i32, return_code::Error> {
         let (mut vsock_stream, _vsock_addr) = vsock_listener
             .accept()
@@ -243,7 +243,7 @@ impl NitroEnclave {
         Ok(i32::from_ne_bytes(buf))
     }
 
-    // Enable or disable all signals.
+    /// Enable or disable all signals.
     fn signals(&self, enable: bool) {
         let sig = if enable {
             libc::SIG_UNBLOCK
