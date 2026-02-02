@@ -232,14 +232,20 @@ clean:
 
 clean-all: clean clean-sysroot
 
-test-prefix/lib64/libkrun.pc: $(LIBRARY_RELEASE_$(OS))
+test-prefix/$(LIBDIR_$(OS))/libkrun.pc: $(LIBRARY_RELEASE_$(OS))
 	mkdir -p test-prefix
 	PREFIX="$$(realpath test-prefix)" make install
 
-test-prefix: test-prefix/lib64/libkrun.pc
+test-prefix: test-prefix/$(LIBDIR_$(OS))/libkrun.pc
 
 TEST ?= all
 TEST_FLAGS ?=
 
+# Extra library paths needed for tests (libkrunfw, llvm)
+EXTRA_LIBPATH_Linux =
+EXTRA_LIBPATH_Darwin = /opt/homebrew/opt/libkrunfw/lib:/opt/homebrew/opt/llvm/lib
+
+# On macOS, SIP strips DYLD_LIBRARY_PATH when executing scripts via a shebang,
+# so we pass the path via LIBKRUN_LIB_PATH and let run.sh set the real variable.
 test: test-prefix
-	cd tests; RUST_LOG=trace LD_LIBRARY_PATH="$$(realpath ../test-prefix/lib64/)" PKG_CONFIG_PATH="$$(realpath ../test-prefix/lib64/pkgconfig/)" ./run.sh test --test-case "$(TEST)" $(TEST_FLAGS)
+	cd tests; RUST_LOG=trace LIBKRUN_LIB_PATH="$$(realpath ../test-prefix/$(LIBDIR_$(OS))/):$(EXTRA_LIBPATH_$(OS))" PKG_CONFIG_PATH="$$(realpath ../test-prefix/$(LIBDIR_$(OS))/pkgconfig/)" ./run.sh test --test-case "$(TEST)" $(TEST_FLAGS)
