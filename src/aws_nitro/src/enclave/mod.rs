@@ -61,7 +61,7 @@ pub struct NitroEnclave {
 
 impl NitroEnclave {
     /// Run an application within a nitro enclave.
-    pub fn run(mut self) -> Result<(), Error> {
+    pub fn run(mut self) -> Result<i32, Error> {
         // Collect all launch parameters (rootfs, execution arguments, device proxies) and establish
         // an enclave argument writer to write this data to the nitro enclave when started.
         let rootfs_archive = self.rootfs_archive().map_err(Error::RootFsArchive)?;
@@ -98,21 +98,11 @@ impl NitroEnclave {
         // terminated by the enclave (by closing the vsock connection).
         proxies.run(cid).map_err(Error::DeviceProxy)?;
 
-        // In debug mode, the console device doesn't shut down until the enclave itself exits. Thus,
-        // libkrun will be unable to retrieve the shutdown code from the enclave.
-        if !self.debug {
-            // Retrieve the application return code from the enclave.
-            let ret = self
-                .shutdown_ret(retcode_listener)
-                .map_err(Error::ReturnCodeListener)?;
+        let ret = self
+            .shutdown_ret(retcode_listener)
+            .map_err(Error::ReturnCodeListener)?;
 
-            // A non-zero return code indicates an error. Wrap this code within an Error object.
-            if ret != 0 {
-                return Err(Error::AppReturn(ret));
-            }
-        }
-
-        Ok(())
+        Ok(ret)
     }
 
     /// Start a nitro enclave.

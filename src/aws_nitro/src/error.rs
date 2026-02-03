@@ -6,8 +6,6 @@ use std::{fmt, io};
 /// Error in the running of a nitro enclave.
 #[derive(Debug)]
 pub enum Error {
-    // Application running within the enclave returned a non-zero return code.
-    AppReturn(i32),
     // Argument writing process.
     ArgsWrite(args_writer::Error),
     // Error in device proxy execution.
@@ -23,7 +21,6 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let msg = match self {
-            Self::AppReturn(ret) => format!("app returned non-zero return code: {ret}"),
             Self::ArgsWrite(e) => format!("enclave VM argument writer error: {e}"),
             Self::DeviceProxy(e) => format!("device proxy error: {e}"),
             Self::ReturnCodeListener(e) => {
