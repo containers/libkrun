@@ -17,12 +17,20 @@
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#if __FreeBSD__
+#include <kenv.h>
+#include <libutil.h>
+#include <sys/param.h>
+#else
 #include <sys/statfs.h>
+#endif
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#if __linux__
 #include <linux/vm_sockets.h>
+#endif
 
 #include "jsmn.h"
 
@@ -49,6 +57,104 @@ static char *snp_get_luks_passphrase(char *, char *, char *, int *);
 #endif
 
 char DEFAULT_KRUN_INIT[] = "/bin/sh";
+
+#if __FreeBSD__
+static char *get_kenv(const char *name)
+{
+    static char kenv_value[KENV_MVALLEN + 1];
+    if (kenv(KENV_GET, name, kenv_value, KENV_MVALLEN + 1) < 0) {
+        return NULL;
+    }
+    return kenv_value;
+}
+
+#define getenv get_kenv
+
+#define _PATH_CONSOLE "/dev/console"
+#define _PATH_DEVNULL "/dev/null"
+#define _PATH_INITLOG "/init.log"
+/*
+ * Start a session and allocate a controlling terminal.
+ * Only called by children of init after forking.
+ */
+static void open_console(void)
+{
+    int fd;
+
+    /*
+     * Try to open /dev/console.  Open the device with O_NONBLOCK to
+     * prevent potential blocking on a carrier.
+     */
+    revoke(_PATH_CONSOLE);
+    if ((fd = open(_PATH_CONSOLE, O_RDWR | O_NONBLOCK)) != -1) {
+        (void)fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK);
+        if (login_tty(fd) == 0)
+            return;
+        close(fd);
+    }
+
+    /* No luck.  Log output to file if possible. */
+    if ((fd = open(_PATH_DEVNULL, O_RDWR)) == -1) {
+        _exit(1);
+    }
+    if (fd != STDIN_FILENO) {
+        dup2(fd, STDIN_FILENO);
+        close(fd);
+    }
+    fd = open(_PATH_INITLOG, O_WRONLY | O_APPEND | O_CREAT, 0644);
+    if (fd == -1)
+        dup2(STDIN_FILENO, STDOUT_FILENO);
+    else if (fd != STDOUT_FILENO) {
+        dup2(fd, STDOUT_FILENO);
+        close(fd);
+    }
+    dup2(STDOUT_FILENO, STDERR_FILENO);
+}
+
+#define KRUN_CONFIG_ISO_DEV "/dev/iso9660/KRUN_CONFIG"
+#define ISO_CONFIG_FILE_PATH "/mnt/krun_config.json"
+
+bool config_file_from_iso(const char **path)
+{
+    const char *iov_args[] = {"fstype", "cd9660", "fspath",
+                              "/mnt",   "from",   KRUN_CONFIG_ISO_DEV};
+
+    const int iovlen = sizeof(iov_args) / sizeof(iov_args[0]);
+    struct iovec iov[iovlen];
+    int i;
+
+    struct stat st;
+    // mkdir can fail with read-only fs error,
+    // so we rather check if /mnt exists first
+    if (stat("/mnt", &st) != 0) {
+        if (errno != ENOENT) {
+            perror("stat(/mnt)");
+            exit(-1);
+        }
+        if (mkdir("/mnt", 0755) < 0) {
+            perror("mkdir(/mnt)");
+            exit(-1);
+        }
+    }
+
+    for (i = 0; i < iovlen; i++) {
+        iov[i].iov_base = (void *)iov_args[i];
+        iov[i].iov_len = strlen(iov_args[i]) + 1;
+    }
+
+    if (nmount(iov, iovlen, MNT_RDONLY) < 0) {
+        *path = NULL;
+        return false;
+    }
+    *path = ISO_CONFIG_FILE_PATH;
+    return true;
+}
+
+int unmount_config_iso()
+{
+    return unmount("/mnt", 0);
+}
+#endif
 
 static void set_rlimits(const char *rlimits)
 {
@@ -395,6 +501,7 @@ static int chroot_luks()
 
 static int mount_filesystems()
 {
+#if __linux__
     char *const DIRS_LEVEL1[] = {"/dev", "/proc", "/sys"};
     char *const DIRS_LEVEL2[] = {"/dev/pts", "/dev/shm"};
     int i;
@@ -451,7 +558,7 @@ static int mount_filesystems()
 
     /* May fail if already exists and that's fine. */
     symlink("/proc/self/fd", "/dev/fd");
-
+#endif
     return 0;
 }
 
@@ -708,13 +815,13 @@ char **concat_entrypoint_argv(char **entrypoint, char **config_argv)
     return argv;
 }
 
-static int config_parse_file(char ***argv, char **workdir)
+static int config_parse_file(char ***argv, char **workdir,
+                             const char *config_file)
 {
     jsmn_parser parser;
     jsmntok_t *tokens;
     struct stat stat;
     char *data;
-    char *config_file;
     char **config_argv;
     char **entrypoint;
     int parsed_env, parsed_workdir, parsed_args, parsed_entrypoint;
@@ -722,11 +829,6 @@ static int config_parse_file(char ***argv, char **workdir)
     int ret = -1;
     int fd;
     int i;
-
-    config_file = getenv("KRUN_CONFIG");
-    if (!config_file) {
-        config_file = CONFIG_FILE_PATH;
-    }
 
     fd = open(config_file, O_RDONLY);
     if (fd < 0) {
@@ -1003,6 +1105,7 @@ void set_exit_code(int code)
     close(fd);
 }
 
+#if __linux__
 int try_mount(const char *source, const char *target, const char *fstype,
               unsigned long mountflags, const void *data)
 {
@@ -1037,11 +1140,19 @@ int try_mount(const char *source, const char *target, const char *fstype,
 
     return mount_status;
 }
+#endif
+
+char *clone_str(const char *str)
+{
+    if (str == NULL) {
+        return NULL;
+    }
+    return strdup(str);
+}
 
 int main(int argc, char **argv)
 {
     struct ifreq ifr;
-    int fd;
     int sockfd;
     int status;
     int saved_errno;
@@ -1051,13 +1162,22 @@ int main(int argc, char **argv)
     char *krun_home;
     char *krun_term;
     char *krun_init;
+#if __linux__
+    int fd;
     char *krun_root;
     char *krun_root_fstype;
     char *krun_root_options;
+#endif
     char *env_init_pid1;
     char *config_workdir, *env_workdir;
     char *rlimits;
     char **config_argv, **exec_argv;
+    const char *config_file;
+#if __FreeBSD__
+    bool config_file_mounted = false;
+
+    open_console();
+#endif
 
 #ifdef TDX
     if (mkdir("/tmp", 0755) < 0 && errno != EEXIST) {
@@ -1092,21 +1212,25 @@ int main(int argc, char **argv)
         exit(-2);
     }
 
-    krun_root = getenv("KRUN_BLOCK_ROOT_DEVICE");
+#if __linux__
+    krun_root = clone_str(getenv("KRUN_BLOCK_ROOT_DEVICE"));
     if (krun_root) {
         if (mkdir("/newroot", 0755) < 0 && errno != EEXIST) {
             perror("mkdir(/newroot)");
             exit(-1);
         }
 
-        krun_root_fstype = getenv("KRUN_BLOCK_ROOT_FSTYPE");
-        krun_root_options = getenv("KRUN_BLOCK_ROOT_OPTIONS");
+        krun_root_fstype = clone_str(getenv("KRUN_BLOCK_ROOT_FSTYPE"));
+        krun_root_options = clone_str(getenv("KRUN_BLOCK_ROOT_OPTIONS"));
 
         if (try_mount(krun_root, "/newroot", krun_root_fstype, 0,
                       krun_root_options) < 0) {
             perror("mount KRUN_BLOCK_ROOT_DEVICE");
             exit(-1);
         }
+        free(krun_root);
+        free(krun_root_fstype);
+        free(krun_root_options);
 
         chdir("/newroot");
 
@@ -1137,9 +1261,14 @@ int main(int argc, char **argv)
         perror("Couldn't set shared propagation on the root mount");
         exit(-1);
     }
+#endif
 
     setsid();
     ioctl(0, TIOCSCTTY, 1);
+
+#if __FreeBSD__
+    setlogin("root");
+#endif
 
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd >= 0) {
@@ -1153,7 +1282,25 @@ int main(int argc, char **argv)
     config_argv = NULL;
     config_workdir = NULL;
 
-    config_parse_file(&config_argv, &config_workdir);
+    config_file = getenv("KRUN_CONFIG");
+
+#if __FreeBSD__
+    if (!config_file) {
+        config_file_mounted = config_file_from_iso(&config_file);
+    }
+#endif
+
+    if (!config_file) {
+        config_file = CONFIG_FILE_PATH;
+    }
+
+    config_parse_file(&config_argv, &config_workdir, config_file);
+
+#if __FreeBSD__
+    if (config_file_mounted) {
+        unmount_config_iso();
+    }
+#endif
 
     krun_home = getenv("KRUN_HOME");
     if (krun_home) {
@@ -1187,7 +1334,7 @@ int main(int argc, char **argv)
     exec_argv = argv;
     krun_init = getenv("KRUN_INIT");
     if (krun_init) {
-        exec_argv[0] = krun_init;
+        exec_argv[0] = clone_str(krun_init);
     } else if (config_argv) {
         exec_argv = config_argv;
     } else {
@@ -1219,9 +1366,13 @@ int main(int argc, char **argv)
     }
     if (child == 0) { // child
     exec_init:
+#if __FreeBSD__
+        open_console();
+#else
         if (setup_redirects() < 0) {
             exit(125);
         }
+#endif
         if (execvp(exec_argv[0], exec_argv) < 0) {
             saved_errno = errno;
             printf("Couldn't execute '%s' inside the vm: %s\n", exec_argv[0],

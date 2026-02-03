@@ -18,3 +18,4 @@ examples/consoles
 examples/rootfs_fedora
 test-prefix
 /linux-sysroot
+/freebsd-sysroot
