@@ -43,6 +43,7 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
     bool event_found;
     struct ifreq ifr;
     int ret, sock_fd;
+    unsigned int sz;
     ssize_t nread;
 
     /*
@@ -96,7 +97,6 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
         event_found = false;
         // Event on vsock. Read the frame and write it to the TAP device.
         if (pfds[0].revents & POLLIN) {
-            unsigned int sz;
             nread = read(vsock_fd, &sz, 4);
             if (nread != 4)
                 exit(0);
@@ -113,7 +113,7 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
         if (pfds[1].revents & POLLIN) {
             nread = read(tun_fd, buf, ifr.ifr_mtu);
             if (nread > 0) {
-                unsigned int sz = htonl(nread);
+                sz = htonl(nread);
                 write(vsock_fd, (void *)&sz, 4);
                 write(vsock_fd, buf, nread);
             }

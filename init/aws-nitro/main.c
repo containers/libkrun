@@ -497,13 +497,6 @@ int main(int argc, char *argv[])
     if (ret < 0)
         goto out;
 
-    // Ensure the container /dev is initialized as well.
-    ret = mount("dev", "/dev", "devtmpfs", MS_NOSUID | MS_NOEXEC, NULL);
-    if (ret < 0 && errno != EBUSY) {
-        perror("mount");
-        return ret;
-    }
-
     // Initialize the rest of the filesystem.
     ret = filesystem_init();
     if (ret < 0)
