@@ -2703,7 +2703,7 @@ fn krun_start_enter_nitro(ctx_id: u32) -> i32 {
     };
 
     match enclave.run() {
-        Ok(()) => KRUN_SUCCESS,
+        Ok(ret) => ret,
         Err(e) => {
             error!("Error running nitro enclave: {e}");
 
