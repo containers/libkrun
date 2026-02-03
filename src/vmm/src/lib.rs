@@ -30,7 +30,7 @@ mod linux;
 use crate::linux::vstate;
 #[cfg(target_os = "macos")]
 mod macos;
-mod terminal;
+pub mod terminal;
 pub mod worker;
 
 #[cfg(target_os = "macos")]
@@ -38,6 +38,7 @@ use macos::vstate;
 
 use std::fmt::{Display, Formatter};
 use std::io;
+use std::os::fd::BorrowedFd;
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -57,7 +58,7 @@ use crossbeam_channel::Sender;
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 use devices::fdt;
 use devices::legacy::IrqChip;
-use devices::virtio::VmmExitObserver;
+use devices::virtio::{ConsoleController, VmmExitObserver};
 use devices::{BusDevice, DeviceType};
 use kernel::cmdline::Cmdline as KernelCmdline;
 use polly::event_manager::{self, EventManager, Subscriber};
@@ -207,6 +208,7 @@ pub struct Vmm {
     mmio_device_manager: MMIODeviceManager,
     #[cfg(target_arch = "x86_64")]
     pio_device_manager: PortIODeviceManager,
+    console_controllers: Vec<ConsoleController>,
 }
 
 impl Vmm {
@@ -391,6 +393,34 @@ impl Vmm {
     #[cfg(target_os = "macos")]
     pub fn remove_mapping(&self, reply_sender: Sender<bool>, guest_addr: u64, len: u64) {
         self.vm.remove_mapping(reply_sender, guest_addr, len);
+    }
+
+    pub fn console_controller(&self, console_id: u32) -> Option<&ConsoleController> {
+        self.console_controllers.get(console_id as usize)
+    }
+
+    /// Set up raw mode for a terminal fd and register cleanup on exit.
+    pub fn setup_terminal_raw_mode(
+        &mut self,
+        term_fd: BorrowedFd<'_>,
+        handle_signals_by_terminal: bool,
+    ) {
+        match terminal::term_set_raw_mode(term_fd, handle_signals_by_terminal) {
+            Ok(old_mode) => {
+                let raw_fd = term_fd.as_raw_fd();
+                self.exit_observers.push(Arc::new(Mutex::new(move || {
+                    if let Err(e) = terminal::term_restore_mode(
+                        unsafe { BorrowedFd::borrow_raw(raw_fd) },
+                        &old_mode,
+                    ) {
+                        log::error!("Failed to restore terminal mode: {e}")
+                    }
+                })));
+            }
+            Err(e) => {
+                log::error!("Failed to set terminal to raw mode: {e}")
+            }
+        }
     }
 }
 

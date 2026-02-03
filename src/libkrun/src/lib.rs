@@ -28,18 +28,17 @@ use std::ffi::CString;
 use std::ffi::{c_void, CStr};
 use std::fs::File;
 use std::io::IsTerminal;
-#[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::os::fd::{BorrowedFd, FromRawFd, RawFd};
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::LazyLock;
 use std::sync::Mutex;
+use std::sync::{Arc, LazyLock};
 use utils::eventfd::EventFd;
 use vmm::resources::{
-    DefaultVirtioConsoleConfig, PortConfig, SerialConsoleConfig, TsiFlags, VirtioConsoleConfigMode,
-    VmResources, VsockConfig,
+    DefaultVirtioConsoleConfig, PortConfig, SerialConsoleConfig, TsiFlags, VirtioConsoleConfig,
+    VirtioConsoleConfigMode, VmResources, VsockConfig,
 };
 #[cfg(feature = "blk")]
 use vmm::vmm_config::block::{BlockDeviceConfig, BlockRootConfig};
@@ -57,12 +56,14 @@ use vmm::vmm_config::machine_config::VmConfig;
 #[cfg(feature = "net")]
 use vmm::vmm_config::net::NetworkInterfaceConfig;
 use vmm::vmm_config::vsock::VsockDeviceConfig;
+use vmm::Vmm;
 
 #[cfg(feature = "nitro")]
 use nitro::enclave::NitroEnclave;
 
 #[cfg(feature = "gpu")]
 use devices::virtio::display::{DisplayInfoEdid, PhysicalSize, MAX_DISPLAYS};
+use devices::virtio::{port_io, ConsoleControllerError, PortDescription};
 #[cfg(feature = "input")]
 use krun_input::{InputConfigBackend, InputEventProviderBackend};
 
@@ -427,7 +428,13 @@ fn with_cfg(ctx_id: u32, f: impl FnOnce(&mut ContextConfig) -> i32) -> i32 {
     }
 }
 
+// Vmm configuration(s) to be started
 static CTX_MAP: Lazy<Mutex<HashMap<u32, ContextConfig>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+// Running vmm instances
+static RUNNING_CTX_MAP: Lazy<Mutex<HashMap<u32, Arc<Mutex<Vmm>>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
 static CTX_IDS: AtomicI32 = AtomicI32::new(0);
 
 fn log_level_to_filter_str(level: u32) -> &'static str {
@@ -2325,15 +2332,18 @@ pub unsafe extern "C" fn krun_add_virtio_console_default(
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
 
-            cfg.vmr
-                .virtio_consoles
-                .push(VirtioConsoleConfigMode::Autoconfigure(
-                    DefaultVirtioConsoleConfig {
-                        input_fd,
-                        output_fd,
-                        err_fd,
-                    },
-                ));
+            let console_ready_evt = Arc::new(
+                EventFd::new(utils::eventfd::EFD_NONBLOCK)
+                    .expect("Failed to create console_ready_evt"),
+            );
+            cfg.vmr.virtio_consoles.push(VirtioConsoleConfig {
+                mode: VirtioConsoleConfigMode::Autoconfigure(DefaultVirtioConsoleConfig {
+                    input_fd,
+                    output_fd,
+                    err_fd,
+                }),
+                console_ready_evt,
+            });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -2349,13 +2359,76 @@ pub unsafe extern "C" fn krun_add_virtio_console_multiport(ctx_id: u32) -> i32 {
             let cfg = ctx_cfg.get_mut();
             let console_id = cfg.vmr.virtio_consoles.len() as i32;
 
-            cfg.vmr
-                .virtio_consoles
-                .push(VirtioConsoleConfigMode::Explicit(Vec::new()));
+            let console_ready_evt = Arc::new(
+                EventFd::new(utils::eventfd::EFD_NONBLOCK)
+                    .expect("Failed to create console_ready_evt"),
+            );
+            cfg.vmr.virtio_consoles.push(VirtioConsoleConfig {
+                mode: VirtioConsoleConfigMode::Explicit {
+                    ports: Vec::new(),
+                    reserved_count: 0,
+                },
+                console_ready_evt,
+            });
 
             console_id
         }
         Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_console_reserve_ports(
+    ctx_id: u32,
+    console_id: u32,
+    num_ports: u32,
+) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            match ctx_cfg
+                .get_mut()
+                .vmr
+                .virtio_consoles
+                .get_mut(console_id as usize)
+            {
+                Some(VirtioConsoleConfig {
+                    mode: VirtioConsoleConfigMode::Explicit { reserved_count, .. },
+                    ..
+                }) => {
+                    *reserved_count += num_ports;
+                    KRUN_SUCCESS
+                }
+                _ => -libc::EINVAL,
+            }
+        }
+        Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+pub unsafe extern "C" fn krun_get_console_ready_fd(ctx_id: u32, console_id: u32) -> i32 {
+    // Check if VM is running
+    if let Some(vmm) = RUNNING_CTX_MAP.lock().unwrap().get(&ctx_id).cloned() {
+        let vmm = vmm.lock().unwrap();
+        let Some(console) = vmm.console_controller(console_id) else {
+            error!("krun_get_console_ready_fd: Invalid console id={console_id}");
+            return -libc::ENOENT;
+        };
+        return console.console_ready_fd().as_raw_fd();
+    }
+
+    // VM not running yet, get the pre-created eventfd from CTX_MAP
+    match CTX_MAP.lock().unwrap().get(&ctx_id) {
+        Some(ctx_cfg) => match ctx_cfg.vmr.virtio_consoles.get(console_id as usize) {
+            Some(console_cfg) => console_cfg.console_ready_evt.as_raw_fd(),
+            None => {
+                error!("krun_get_console_ready_fd: Invalid console id={console_id}");
+                -libc::ENOENT
+            }
+        },
+        None => -libc::ENOENT,
     }
 }
 
@@ -2384,12 +2457,36 @@ pub unsafe extern "C" fn krun_add_console_port_tty(
         return -libc::ENOTTY;
     }
 
+    if let Some(vmm) = RUNNING_CTX_MAP.lock().unwrap().get(&ctx_id) {
+        let mut vmm = vmm.lock().unwrap();
+        vmm.setup_terminal_raw_mode(unsafe { BorrowedFd::borrow_raw(tty_fd) }, false);
+
+        let Some(console) = vmm.console_controller(console_id) else {
+            error!("krun_add_console_port_tty: Invalid console id={console_id}");
+            return -libc::ENOENT;
+        };
+
+        return match console.add_port(PortDescription {
+            name: name_str.into(),
+            input: Some(port_io::input_to_raw_fd_dup(tty_fd).unwrap()),
+            output: Some(port_io::output_to_raw_fd_dup(tty_fd).unwrap()),
+            terminal: Some(port_io::term_fd(tty_fd).unwrap()),
+        }) {
+            Ok(()) => KRUN_SUCCESS,
+            Err(ConsoleControllerError::NotReady) => -libc::EAGAIN,
+            Err(ConsoleControllerError::OutOfPorts) => -libc::ENOMEM,
+        };
+    }
+
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
 
             match cfg.vmr.virtio_consoles.get_mut(console_id as usize) {
-                Some(VirtioConsoleConfigMode::Explicit(ports)) => {
+                Some(VirtioConsoleConfig {
+                    mode: VirtioConsoleConfigMode::Explicit { ports, .. },
+                    ..
+                }) => {
                     ports.push(PortConfig::Tty {
                         name: name_str,
                         tty_fd,
@@ -2421,12 +2518,34 @@ pub unsafe extern "C" fn krun_add_console_port_inout(
         }
     };
 
+    if let Some(vmm) = RUNNING_CTX_MAP.lock().unwrap().get(&ctx_id) {
+        let vmm = vmm.lock().unwrap();
+        let Some(console) = vmm.console_controller(console_id) else {
+            error!("krun_add_console_port_tty: Invalid console id={console_id}");
+            return -libc::ENOENT;
+        };
+
+        return match console.add_port(PortDescription {
+            name: name_str.into(),
+            input: Some(port_io::input_to_raw_fd_dup(input_fd).unwrap()),
+            output: Some(port_io::output_to_raw_fd_dup(output_fd).unwrap()),
+            terminal: None,
+        }) {
+            Ok(()) => KRUN_SUCCESS,
+            Err(ConsoleControllerError::NotReady) => -libc::EAGAIN,
+            Err(ConsoleControllerError::OutOfPorts) => -libc::ENOMEM,
+        };
+    }
+
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
 
             match cfg.vmr.virtio_consoles.get_mut(console_id as usize) {
-                Some(VirtioConsoleConfigMode::Explicit(ports)) => {
+                Some(VirtioConsoleConfig {
+                    mode: VirtioConsoleConfigMode::Explicit { ports, .. },
+                    ..
+                }) => {
                     ports.push(PortConfig::InOut {
                         name: name_str,
                         input_fd,
@@ -2653,7 +2772,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     let (sender, _receiver) = unbounded();
 
-    let _vmm = match vmm::builder::build_microvm(
+    let vmm = match vmm::builder::build_microvm(
         &ctx_cfg.vmr,
         &mut event_manager,
         ctx_cfg.shutdown_efd,
@@ -2666,18 +2785,20 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         }
     };
 
+    RUNNING_CTX_MAP.lock().unwrap().insert(ctx_id, vmm.clone());
+
     #[cfg(target_os = "macos")]
     if ctx_cfg.gpu_virgl_flags.is_some() {
-        vmm::worker::start_worker_thread(_vmm.clone(), _receiver).unwrap();
+        vmm::worker::start_worker_thread(vmm.clone(), _receiver).unwrap();
     }
 
     #[cfg(target_arch = "x86_64")]
     if ctx_cfg.vmr.split_irqchip {
-        vmm::worker::start_worker_thread(_vmm.clone(), _receiver.clone()).unwrap();
+        vmm::worker::start_worker_thread(vmm.clone(), _receiver.clone()).unwrap();
     }
 
     #[cfg(any(feature = "amd-sev", feature = "tdx"))]
-    vmm::worker::start_worker_thread(_vmm.clone(), _receiver.clone()).unwrap();
+    vmm::worker::start_worker_thread(vmm.clone(), _receiver.clone()).unwrap();
 
     loop {
         match event_manager.run() {

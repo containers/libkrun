@@ -1110,6 +1110,42 @@ int32_t krun_add_serial_console_default(uint32_t ctx_id,
 int32_t krun_add_virtio_console_multiport(uint32_t ctx_id);
 
 /*
+ * Reserves additional port slots on a multi-port virtio-console device for dynamic addition
+ * after the VM has started.
+ *
+ * This function must be called before krun_start_enter(). The reserved ports can be populated
+ * later by calling krun_add_console_port_tty() or krun_add_console_port_inout() on a running VM.
+ *
+ * Arguments:
+ *  "ctx_id"     - the configuration context ID.
+ *  "console_id" - the console ID returned by krun_add_virtio_console_multiport().
+ *  "num_ports"  - the number of additional port slots to reserve.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_console_reserve_ports(uint32_t ctx_id, uint32_t console_id, uint32_t num_ports);
+
+/*
+ * Returns an eventfd that becomes readable when the virtio-console device is ready
+ * to accept dynamically added ports.
+ *
+ * This function must be called after krun_start_enter() has been invoked (typically from
+ * another thread). The returned fd can be polled; when readable, read an 8-byte value
+ * from it to consume the event, then call krun_add_console_port_tty() or
+ * krun_add_console_port_inout() to add ports dynamically.
+ *
+ * Arguments:
+ *  "ctx_id"     - the configuration context ID.
+ *  "console_id" - the console ID returned by krun_add_virtio_console_multiport().
+ *
+ * Returns:
+ *  The eventfd file descriptor (>= 0) on success, or a negative error number on failure.
+ *  Returns -EAGAIN if the VM has not been started yet.
+ */
+int32_t krun_get_console_ready_fd(uint32_t ctx_id, uint32_t console_id);
+
+/*
  * Adds a TTY port to a multi-port virtio-console device.
  *
  * The TTY file descriptor is used for both input and output. This port will be marked with the

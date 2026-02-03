@@ -24,7 +24,8 @@ use super::{Error, Vmm};
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
 use crate::resources::{
-    DefaultVirtioConsoleConfig, PortConfig, TsiFlags, VirtioConsoleConfigMode, VmResources,
+    DefaultVirtioConsoleConfig, PortConfig, TsiFlags, VirtioConsoleConfig, VirtioConsoleConfigMode,
+    VmResources,
 };
 use crate::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(feature = "net")]
@@ -45,7 +46,9 @@ use devices::legacy::{IoApic, IrqChipT};
 use devices::legacy::{IrqChip, IrqChipDevice};
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 use devices::legacy::{KvmGicV2, KvmGicV3};
-use devices::virtio::{port_io, MmioTransport, PortDescription, VirtioDevice, Vsock};
+use devices::virtio::{
+    port_io, Console, ConsoleController, MmioTransport, PortDescription, VirtioDevice, Vsock,
+};
 
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
@@ -55,7 +58,6 @@ use crate::device_manager;
 use crate::signal_handler::register_sigint_handler;
 #[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigwinch_handler;
-use crate::terminal::{term_restore_mode, term_set_raw_mode};
 #[cfg(feature = "blk")]
 use crate::vmm_config::block::BlockBuilder;
 #[cfg(not(any(feature = "tee", feature = "nitro")))]
@@ -196,6 +198,8 @@ pub enum StartMicrovmError {
     RegisterFsDevice(device_manager::mmio::Error),
     // Cannot initialize a MMIO Fs Device or add ad device to the MMIO Bus.
     RegisterConsoleDevice(device_manager::mmio::Error),
+    /// Cannot create console channel for dynamic port addition.
+    CreateConsoleChannel(io::Error),
     /// Cannot register SIGWINCH event file descriptor.
     #[cfg(target_os = "linux")]
     RegisterFsSigwinch(kvm_ioctls::Error),
@@ -408,6 +412,12 @@ impl Display for StartMicrovmError {
                 write!(
                     f,
                     "Cannot initialize a MMIO Console Device or add a device to the MMIO Bus. {err_msg}"
+                )
+            }
+            CreateConsoleChannel(ref err) => {
+                write!(
+                    f,
+                    "Cannot create console channel for dynamic port addition. {err}"
                 )
             }
             #[cfg(target_os = "linux")]
@@ -962,20 +972,26 @@ pub fn build_microvm(
         mmio_device_manager,
         #[cfg(target_arch = "x86_64")]
         pio_device_manager,
+        console_controllers: Vec::new(),
     };
 
     // Set raw mode for FDs that are connected to legacy serial devices.
     for serial_tty in serial_ttys {
-        setup_terminal_raw_mode(&mut vmm, Some(serial_tty), false);
+        vmm.setup_terminal_raw_mode(serial_tty, false);
     }
 
     #[cfg(not(feature = "tee"))]
     attach_balloon_device(&mut vmm, event_manager, intc.clone())?;
     #[cfg(not(feature = "tee"))]
     attach_rng_device(&mut vmm, event_manager, intc.clone())?;
+
+    let mut console_controllers = Vec::with_capacity(
+        vm_resources.virtio_consoles.len() + !vm_resources.disable_implicit_console as usize,
+    );
+
     let mut console_id = 0;
     if !vm_resources.disable_implicit_console {
-        attach_console_devices(
+        let controller = attach_console_devices(
             &mut vmm,
             event_manager,
             intc.clone(),
@@ -983,11 +999,12 @@ pub fn build_microvm(
             None,
             console_id,
         )?;
+        console_controllers.push(controller);
         console_id += 1;
     }
 
     for console_cfg in vm_resources.virtio_consoles.iter() {
-        attach_console_devices(
+        let controller = attach_console_devices(
             &mut vmm,
             event_manager,
             intc.clone(),
@@ -995,8 +1012,11 @@ pub fn build_microvm(
             Some(console_cfg),
             console_id,
         )?;
+        console_controllers.push(controller);
         console_id += 1;
     }
+
+    vmm.console_controllers = console_controllers;
 
     #[cfg(not(any(feature = "tee", feature = "nitro")))]
     let export_table: Option<ExportTable> = if cfg!(feature = "gpu") {
@@ -2005,7 +2025,9 @@ fn autoconfigure_console_ports(
             .map(|fd| port_io::term_fd(fd.as_raw_fd()).unwrap())
             .unwrap_or_else(|| port_io::term_fixed_size(0, 0));
 
-        setup_terminal_raw_mode(vmm, term_fd, forwarding_sigint);
+        if let Some(fd) = term_fd {
+            vmm.setup_terminal_raw_mode(fd, forwarding_sigint);
+        }
 
         let mut ports = vec![PortDescription::console(
             console_input,
@@ -2038,30 +2060,6 @@ fn autoconfigure_console_ports(
     }
 }
 
-fn setup_terminal_raw_mode(
-    vmm: &mut Vmm,
-    term_fd: Option<BorrowedFd<'_>>,
-    handle_signals_by_terminal: bool,
-) {
-    if let Some(term_fd) = term_fd {
-        match term_set_raw_mode(term_fd, handle_signals_by_terminal) {
-            Ok(old_mode) => {
-                let raw_fd = term_fd.as_raw_fd();
-                vmm.exit_observers.push(Arc::new(Mutex::new(move || {
-                    if let Err(e) =
-                        term_restore_mode(unsafe { BorrowedFd::borrow_raw(raw_fd) }, &old_mode)
-                    {
-                        log::error!("Failed to restore terminal mode: {e}")
-                    }
-                })));
-            }
-            Err(e) => {
-                log::error!("Failed to set terminal to raw mode: {e}")
-            }
-        };
-    }
-}
-
 fn create_explicit_ports(
     vmm: &mut Vmm,
     port_configs: &[PortConfig],
@@ -2073,7 +2071,7 @@ fn create_explicit_ports(
             PortConfig::Tty { name, tty_fd } => {
                 assert!(*tty_fd > 0, "PortConfig::Tty must have a valid tty_fd");
                 let term_fd = unsafe { BorrowedFd::borrow_raw(*tty_fd) };
-                setup_terminal_raw_mode(vmm, Some(term_fd), false);
+                vmm.setup_terminal_raw_mode(term_fd, false);
 
                 PortDescription {
                     name: name.clone().into(),
@@ -2113,25 +2111,46 @@ fn attach_console_devices(
     event_manager: &mut EventManager,
     intc: IrqChip,
     vm_resources: &VmResources,
-    cfg: Option<&VirtioConsoleConfigMode>,
+    cfg: Option<&VirtioConsoleConfig>,
     id_number: u32,
-) -> std::result::Result<(), StartMicrovmError> {
+) -> std::result::Result<ConsoleController, StartMicrovmError> {
     use self::StartMicrovmError::*;
 
     let creating_implicit_console = cfg.is_none();
 
+    let (reserved_count, console_ready_evt) = match cfg {
+        Some(VirtioConsoleConfig {
+            mode: VirtioConsoleConfigMode::Explicit { reserved_count, .. },
+            console_ready_evt,
+        }) => (*reserved_count, console_ready_evt.clone()),
+        Some(VirtioConsoleConfig {
+            console_ready_evt, ..
+        }) => (0, console_ready_evt.clone()),
+        None => (
+            0,
+            Arc::new(EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap()),
+        ),
+    };
+
     let ports = match cfg {
         None => autoconfigure_console_ports(vmm, vm_resources, None, creating_implicit_console)?,
-        Some(VirtioConsoleConfigMode::Autoconfigure(autocfg)) => autoconfigure_console_ports(
+        Some(VirtioConsoleConfig {
+            mode: VirtioConsoleConfigMode::Autoconfigure(autocfg),
+            ..
+        }) => autoconfigure_console_ports(
             vmm,
             vm_resources,
             Some(autocfg),
             creating_implicit_console,
         )?,
-        Some(VirtioConsoleConfigMode::Explicit(ports)) => create_explicit_ports(vmm, ports)?,
+        Some(VirtioConsoleConfig {
+            mode: VirtioConsoleConfigMode::Explicit { ports, .. },
+            ..
+        }) => create_explicit_ports(vmm, ports)?,
     };
 
-    let console = Arc::new(Mutex::new(devices::virtio::Console::new(ports).unwrap()));
+    let (console, console_controller) =
+        Console::with_controller(ports, reserved_count, console_ready_evt).unwrap();
 
     vmm.exit_observers.push(console.clone());
 
@@ -2147,7 +2166,7 @@ fn attach_console_devices(
     attach_mmio_device(vmm, format!("hvc{id_number}"), intc, console)
         .map_err(RegisterConsoleDevice)?;
 
-    Ok(())
+    Ok(console_controller)
 }
 
 #[cfg(feature = "net")]
