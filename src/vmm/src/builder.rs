@@ -93,6 +93,8 @@ use vm_memory::mmap::MmapRegion;
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 use vm_memory::Address;
 use vm_memory::Bytes;
+#[cfg(all(feature = "vhost-user", target_os = "linux"))]
+use vm_memory::FileOffset;
 #[cfg(not(feature = "aws-nitro"))]
 use vm_memory::GuestMemory;
 #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
@@ -1330,9 +1332,76 @@ fn load_payload(
                     return Err(StartMicrovmError::MissingKernelConfig);
                 };
 
-            let kernel_region = unsafe {
-                MmapRegion::build_raw(kernel_host_addr as *mut u8, kernel_size, 0, 0)
-                    .map_err(StartMicrovmError::InvalidKernelBundle)?
+            #[cfg(all(feature = "vhost-user", target_os = "linux"))]
+            let use_vhost_user = !_vm_resources.vhost_user_devices.is_empty();
+            #[cfg(not(all(feature = "vhost-user", target_os = "linux")))]
+            let use_vhost_user = false;
+
+            let kernel_region = if use_vhost_user {
+                #[cfg(all(feature = "vhost-user", target_os = "linux"))]
+                {
+                    debug!(
+                        "Creating file-backed kernel region for vhost-user (size=0x{:x})",
+                        kernel_size
+                    );
+                    // SAFETY: memfd_create is called with a valid null-terminated C string and valid flags.
+                    // File descriptor ownership is transferred to File::from_raw_fd below.
+                    let memfd = unsafe {
+                        let fd = libc::memfd_create(c"kernel".as_ptr(), libc::MFD_CLOEXEC);
+                        if fd < 0 {
+                            error!(
+                                "Failed to create memfd for kernel: {:?}",
+                                io::Error::last_os_error()
+                            );
+                            return Err(StartMicrovmError::GuestMemoryMmap(format!(
+                                "memfd_create failed: {:?}",
+                                io::Error::last_os_error()
+                            )));
+                        }
+                        if libc::ftruncate(fd, kernel_size as i64) < 0 {
+                            error!(
+                                "Failed to ftruncate kernel memfd: {:?}",
+                                io::Error::last_os_error()
+                            );
+                            libc::close(fd);
+                            return Err(StartMicrovmError::GuestMemoryMmap(format!(
+                                "ftruncate failed: {:?}",
+                                io::Error::last_os_error()
+                            )));
+                        }
+                        debug!("Created kernel memfd with fd={}", fd);
+                        File::from_raw_fd(fd)
+                    };
+
+                    let file_offset = FileOffset::new(memfd, 0);
+                    let region = MmapRegion::from_file(file_offset, kernel_size)
+                        .map_err(StartMicrovmError::InvalidKernelBundle)?;
+
+                    // SAFETY: kernel_host_addr points to valid kernel data of size kernel_size,
+                    // provided by the kernel bundle loader.
+                    let kernel_data = unsafe {
+                        std::slice::from_raw_parts(kernel_host_addr as *const u8, kernel_size)
+                    };
+                    // SAFETY: Both source (kernel_data) and destination (region) are valid for
+                    // kernel_size bytes. Regions don't overlap as dest is newly allocated memfd-backed
+                    // memory and source is from kernel bundle.
+                    unsafe {
+                        let dest = region.as_ptr() as *mut u8;
+                        std::ptr::copy_nonoverlapping(kernel_data.as_ptr(), dest, kernel_size);
+                    }
+                    debug!("Copied kernel data to file-backed region");
+
+                    region
+                }
+                #[cfg(not(all(feature = "vhost-user", target_os = "linux")))]
+                unreachable!()
+            } else {
+                // SAFETY: kernel_host_addr points to valid kernel data of size kernel_size.
+                // The memory region is managed by the kernel bundle and remains valid.
+                unsafe {
+                    MmapRegion::build_raw(kernel_host_addr as *mut u8, kernel_size, 0, 0)
+                        .map_err(StartMicrovmError::InvalidKernelBundle)?
+                }
             };
 
             Ok((
@@ -1498,10 +1567,71 @@ pub fn create_guest_memory(
             .map_err(StartMicrovmError::ShmCreate)?;
     }
 
+    // For vhost-user devices, we need file-backed memory so the backend can mmap it
+    #[cfg(all(feature = "vhost-user", target_os = "linux"))]
+    let use_vhost_user = !vm_resources.vhost_user_devices.is_empty();
+    #[cfg(not(all(feature = "vhost-user", target_os = "linux")))]
+    let use_vhost_user = false;
+
+    // Add SHM regions before creating guest memory
     arch_mem_regions.extend(shm_manager.regions());
 
-    let guest_mem = GuestMemoryMmap::from_ranges(&arch_mem_regions)
-        .map_err(|e| StartMicrovmError::GuestMemoryMmap(format!("{e:?}")))?;
+    let guest_mem = if use_vhost_user {
+        #[cfg(all(feature = "vhost-user", target_os = "linux"))]
+        {
+            debug!(
+                "Creating file-backed memory for vhost-user (regions: {})",
+                arch_mem_regions.len()
+            );
+            // Create file-backed memory regions using memfd
+            let regions_with_files: Vec<_> = arch_mem_regions
+                .iter()
+                .map(|(addr, size)| {
+                    debug!(
+                        "Creating memfd for region: addr=0x{:x}, size=0x{:x}",
+                        addr.0, size
+                    );
+                    // SAFETY: memfd_create is called with a valid null-terminated C string and valid flags.
+                    // File descriptor ownership is transferred to File::from_raw_fd below.
+                    let memfd = unsafe {
+                        let fd = libc::memfd_create(c"guest_mem".as_ptr(), libc::MFD_CLOEXEC);
+                        if fd < 0 {
+                            error!("Failed to create memfd: {:?}", io::Error::last_os_error());
+                            return Err(io::Error::last_os_error());
+                        }
+                        if libc::ftruncate(fd, *size as i64) < 0 {
+                            error!(
+                                "Failed to ftruncate memfd: {:?}",
+                                io::Error::last_os_error()
+                            );
+                            libc::close(fd);
+                            return Err(io::Error::last_os_error());
+                        }
+                        debug!("Created memfd with fd={}", fd);
+                        File::from_raw_fd(fd)
+                    };
+
+                    let file_offset = FileOffset::new(memfd, 0);
+                    Ok((*addr, *size, Some(file_offset)))
+                })
+                .collect::<Result<Vec<_>, io::Error>>()
+                .map_err(|e| {
+                    StartMicrovmError::GuestMemoryMmap(format!("memfd creation failed: {e:?}"))
+                })?;
+
+            debug!(
+                "Created {} file-backed memory regions",
+                regions_with_files.len()
+            );
+            GuestMemoryMmap::from_ranges_with_files(&regions_with_files)
+                .map_err(|e| StartMicrovmError::GuestMemoryMmap(format!("{e:?}")))?
+        }
+        #[cfg(not(all(feature = "vhost-user", target_os = "linux")))]
+        unreachable!()
+    } else {
+        GuestMemoryMmap::from_ranges(&arch_mem_regions)
+            .map_err(|e| StartMicrovmError::GuestMemoryMmap(format!("{e:?}")))?
+    };
 
     let (guest_mem, entry_addr, initrd_config, cmdline) =
         load_payload(vm_resources, guest_mem, &arch_mem_info, payload)?;
