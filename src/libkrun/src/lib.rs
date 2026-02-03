@@ -1844,6 +1844,38 @@ pub unsafe extern "C" fn krun_check_nested_virt() -> i32 {
     -libc::EOPNOTSUPP
 }
 
+const KRUN_FEATURE_NET: u64 = 0;
+const KRUN_FEATURE_BLK: u64 = 1;
+const KRUN_FEATURE_GPU: u64 = 2;
+const KRUN_FEATURE_SND: u64 = 3;
+const KRUN_FEATURE_INPUT: u64 = 4;
+const KRUN_FEATURE_EFI: u64 = 5;
+const KRUN_FEATURE_TEE: u64 = 6;
+const KRUN_FEATURE_AMD_SEV: u64 = 7;
+const KRUN_FEATURE_INTEL_TDX: u64 = 8;
+const KRUN_FEATURE_AWS_NITRO: u64 = 9;
+const KRUN_FEATURE_VIRGL_RESOURCE_MAP2: u64 = 10;
+
+#[no_mangle]
+pub extern "C" fn krun_has_feature(feature: u64) -> c_int {
+    let supported = match feature {
+        KRUN_FEATURE_NET => cfg!(feature = "net"),
+        KRUN_FEATURE_BLK => cfg!(feature = "blk"),
+        KRUN_FEATURE_GPU => cfg!(feature = "gpu"),
+        KRUN_FEATURE_SND => cfg!(feature = "snd"),
+        KRUN_FEATURE_INPUT => cfg!(feature = "input"),
+        KRUN_FEATURE_EFI => cfg!(feature = "efi"),
+        KRUN_FEATURE_TEE => cfg!(feature = "tee"),
+        KRUN_FEATURE_AMD_SEV => cfg!(feature = "amd-sev"),
+        KRUN_FEATURE_INTEL_TDX => cfg!(feature = "tdx"),
+        KRUN_FEATURE_AWS_NITRO => cfg!(feature = "aws-nitro"),
+        KRUN_FEATURE_VIRGL_RESOURCE_MAP2 => cfg!(feature = "virgl_resource_map2"),
+        _ => return -libc::EINVAL,
+    };
+
+    supported as c_int
+}
+
 /// Gets the maximum number of vCPUs supported by the hypervisor.
 ///
 /// Returns the maximum number of vCPUs that can be created by this hypervisor,

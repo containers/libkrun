@@ -977,6 +977,35 @@ int32_t krun_set_nested_virt(uint32_t ctx_id, bool enabled);
  */
 int32_t krun_check_nested_virt(void);
 
+/* Feature constants for krun_has_feature() */
+#define KRUN_FEATURE_NET 0
+#define KRUN_FEATURE_BLK 1
+#define KRUN_FEATURE_GPU 2
+#define KRUN_FEATURE_SND 3
+#define KRUN_FEATURE_INPUT 4
+#define KRUN_FEATURE_EFI 5
+#define KRUN_FEATURE_TEE 6
+#define KRUN_FEATURE_AMD_SEV 7
+#define KRUN_FEATURE_INTEL_TDX 8
+#define KRUN_FEATURE_AWS_NITRO 9
+#define KRUN_FEATURE_VIRGL_RESOURCE_MAP2 10
+
+/**
+ * Checks if a specific feature was enabled at build time.
+ *
+ * Arguments:
+ *  "feature" - one of the KRUN_FEATURE_* constants.
+ *
+ * Returns:
+ *  1 if the feature is supported, 0 if not supported, or a negative error
+ *  number on failure (e.g., -EINVAL for invalid/unknown feature constant).
+ *
+ * Notes:
+ *  When linking against an older version of libkrun, this function may
+ *  return -EINVAL for feature constants that were added in newer versions.
+ */
+int32_t krun_has_feature(uint64_t feature);
+
 /**
  * Get the maximum number of vCPUs supported by the hypervisor.
  *
