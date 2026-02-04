@@ -22,23 +22,17 @@ use std::os::fd::RawFd;
 use std::path::PathBuf;
 use virtio_bindings::virtio_net::VIRTIO_NET_F_MAC;
 use virtio_bindings::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
-use vm_memory::{ByteValued, GuestMemoryError, GuestMemoryMmap};
+use vm_memory::{ByteValued, GuestMemoryMmap};
 
 const VIRTIO_F_VERSION_1: u32 = 32;
 
-#[derive(Debug)]
-pub enum FrontendError {
-    DescriptorChainTooSmall,
-    EmptyQueue,
-    GuestMemory(GuestMemoryError),
-    QueueError(QueueError),
-    ReadOnlyDescriptor,
-}
+// FrontendError removed - no longer used with vectored I/O
 
 #[derive(Debug)]
 pub enum RxError {
     Backend(ReadError),
     DeviceError(DeviceError),
+    QueueError(QueueError),
 }
 
 #[derive(Debug)]
@@ -93,7 +87,7 @@ impl Net {
     ) -> Result<Self> {
         let avail_features = features as u64
             | (1 << VIRTIO_NET_F_MAC)
-            | (1 << VIRTIO_RING_F_EVENT_IDX)
+            // | (1 << VIRTIO_RING_F_EVENT_IDX)  // TODO: re-enable after debugging
             | (1 << VIRTIO_F_VERSION_1);
 
         let config = VirtioNetConfig {
