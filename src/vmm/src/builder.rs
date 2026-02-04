@@ -51,6 +51,8 @@ use devices::virtio::{port_io, MmioTransport, PortDescription, VirtioDevice, Vso
 use kbs_types::Tee;
 
 use crate::device_manager;
+#[cfg(all(feature = "vhost-user", target_os = "linux"))]
+use crate::resources::VhostUserDeviceConfig;
 #[cfg(target_os = "linux")]
 use crate::signal_handler::register_sigint_handler;
 #[cfg(target_os = "linux")]
@@ -207,6 +209,8 @@ pub enum StartMicrovmError {
     RegisterRngDevice(device_manager::mmio::Error),
     /// Cannot initialize a MMIO Snd device or add a device to the MMIO Bus.
     RegisterSndDevice(device_manager::mmio::Error),
+    /// Cannot initialize a vhost-user device or add a device to the MMIO Bus.
+    RegisterVhostUserDevice(device_manager::mmio::Error),
     /// Cannot initialize a MMIO Vsock Device or add a device to the MMIO Bus.
     RegisterVsockDevice(device_manager::mmio::Error),
     /// Cannot attest the VM in the Secure Virtualization context.
@@ -457,6 +461,14 @@ impl Display for StartMicrovmError {
                 write!(
                     f,
                     "Cannot initialize a MMIO Snd Device or add a device to the MMIO Bus. {err_msg}"
+                )
+            }
+            RegisterVhostUserDevice(ref err) => {
+                let mut err_msg = err.to_string();
+                err_msg = err_msg.replace('\"', "");
+                write!(
+                    f,
+                    "Cannot initialize a vhost-user device or add a device to the MMIO Bus. {err_msg}"
                 )
             }
             RegisterVsockDevice(ref err) => {
@@ -969,7 +981,29 @@ pub fn build_microvm(
     #[cfg(not(feature = "tee"))]
     attach_balloon_device(&mut vmm, event_manager, intc.clone())?;
     #[cfg(not(feature = "tee"))]
-    attach_rng_device(&mut vmm, event_manager, intc.clone())?;
+    {
+        #[cfg(all(feature = "vhost-user", target_os = "linux"))]
+        {
+            const VIRTIO_ID_RNG: u32 = 4;
+            for device_config in &vm_resources.vhost_user_devices {
+                attach_vhost_user_device(&mut vmm, event_manager, intc.clone(), device_config)?;
+            }
+
+            let has_vhost_user_rng = vm_resources
+                .vhost_user_devices
+                .iter()
+                .any(|dev| dev.device_type == VIRTIO_ID_RNG);
+
+            if !has_vhost_user_rng {
+                attach_rng_device(&mut vmm, event_manager, intc.clone())?;
+            }
+        }
+
+        #[cfg(not(all(feature = "vhost-user", target_os = "linux")))]
+        {
+            attach_rng_device(&mut vmm, event_manager, intc.clone())?;
+        }
+    }
     let mut console_id = 0;
     if !vm_resources.disable_implicit_console {
         attach_console_devices(
@@ -2375,6 +2409,41 @@ fn attach_rng_device(
 
     // The device mutex mustn't be locked here otherwise it will deadlock.
     attach_mmio_device(vmm, id, intc.clone(), rng).map_err(RegisterRngDevice)?;
+
+    Ok(())
+}
+
+#[cfg(not(feature = "tee"))]
+#[cfg(all(feature = "vhost-user", target_os = "linux"))]
+fn attach_vhost_user_device(
+    vmm: &mut Vmm,
+    event_manager: &mut EventManager,
+    intc: IrqChip,
+    device_config: &VhostUserDeviceConfig,
+) -> std::result::Result<(), StartMicrovmError> {
+    use self::StartMicrovmError::*;
+
+    let device_name = device_config
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("vhost-user-{}", device_config.device_type));
+
+    let device = Arc::new(Mutex::new(
+        devices::virtio::VhostUserDevice::new(
+            &device_config.socket_path,
+            device_config.device_type,
+            device_name.clone(),
+            device_config.num_queues,
+            &device_config.queue_sizes,
+        )
+        .map_err(|e| RegisterVhostUserDevice(device_manager::mmio::Error::VhostUserDevice(e)))?,
+    ));
+
+    event_manager
+        .add_subscriber(device.clone())
+        .map_err(RegisterEvent)?;
+
+    attach_mmio_device(vmm, device_name, intc.clone(), device).map_err(RegisterVhostUserDevice)?;
 
     Ok(())
 }
