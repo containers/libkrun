@@ -3,7 +3,7 @@ LIBRARY_HEADER_DISPLAY = include/libkrun_display.h
 LIBRARY_HEADER_INPUT = include/libkrun_input.h
 
 ABI_VERSION=1
-FULL_VERSION=1.17.0
+FULL_VERSION=1.17.2
 
 INIT_SRC = init/init.c
 KBS_INIT_SRC =	init/tee/kbs/kbs.h		\
