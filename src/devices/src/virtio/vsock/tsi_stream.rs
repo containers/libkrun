@@ -877,7 +877,7 @@ impl Proxy for TsiStreamProxy {
                 // OP_REQUEST and the vsock transport is fully established.
                 update.polling = Some((self.id(), self.fd.as_raw_fd(), EventSet::empty()));
             } else {
-                error!("EventSet::OUT while not connecting");
+                debug!("EventSet::OUT while not connecting");
             }
         }
 
