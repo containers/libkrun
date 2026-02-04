@@ -21,6 +21,8 @@ pub mod console;
 pub mod descriptor_utils;
 pub mod device;
 pub mod file_traits;
+#[cfg(feature = "net")]
+pub mod iovec_utils;
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 pub mod fs;
 #[cfg(feature = "gpu")]
@@ -32,6 +34,12 @@ mod mmio;
 #[cfg(feature = "net")]
 pub mod net;
 mod queue;
+#[cfg(feature = "net")]
+pub mod rx_queue_producer;
+#[cfg(feature = "net")]
+pub mod tx_queue_consumer;
+#[cfg(all(feature = "net", test))]
+mod queue_tests;
 #[cfg(not(feature = "tee"))]
 pub mod rng;
 #[cfg(feature = "snd")]
