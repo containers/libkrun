@@ -27,6 +27,7 @@
 enum net_mode {
     NET_MODE_PASST = 0,
     NET_MODE_TSI,
+    NET_MODE_TAP,
 };
 
 static void print_help(char *const name)
@@ -38,8 +39,9 @@ static void print_help(char *const name)
         "              --log=PATH            Write libkrun log to file or named pipe at PATH\n"
         "              --color-log=PATH      Write libkrun log to file or named pipe at PATH, use color\n"
         "              --net=NET_MODE        Set network mode\n"
-        "              --passt-socket=PATH   Instead of starting passt, connect to passt socket at PATH"
-        "NET_MODE can be either TSI (default) or PASST\n"
+        "              --passt-socket=PATH   Instead of starting passt, connect to passt socket at PATH\n"
+        "              --tap=NAME            Use TAP device NAME for networking\n"
+        "NET_MODE can be TSI (default), PASST, or TAP\n"
         "\n"
         "NEWROOT:      the root directory of the vm\n"
         "COMMAND:      the command you want to execute in the vm\n"
@@ -54,6 +56,7 @@ static const struct option long_options[] = {
     { "color-log", required_argument, NULL, 'C' },
     { "net_mode", required_argument, NULL, 'N' },
     { "passt-socket", required_argument, NULL, 'P' },
+    { "tap", required_argument, NULL, 'T' },
     { NULL, 0, NULL, 0 }
 };
 
@@ -63,6 +66,7 @@ struct cmdline {
     uint32_t log_style;
     enum net_mode net_mode;
     char const *passt_socket_path;
+    char const *tap_name;
     char const *new_root;
     char *const *guest_argv;
 };
@@ -89,6 +93,7 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         .show_help = false,
         .net_mode = NET_MODE_TSI,
         .passt_socket_path = NULL,
+        .tap_name = NULL,
         .new_root = NULL,
         .guest_argv = NULL,
         .log_target = KRUN_LOG_TARGET_DEFAULT,
@@ -116,6 +121,8 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
                 cmdline->net_mode = NET_MODE_TSI;
             } else if(strcasecmp("PASST", optarg) == 0) {
                 cmdline->net_mode = NET_MODE_PASST;
+            } else if(strcasecmp("TAP", optarg) == 0) {
+                cmdline->net_mode = NET_MODE_TAP;
             } else {
                 fprintf(stderr, "Unknown mode %s\n", optarg);
                 return false;
@@ -123,6 +130,10 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
             break;
         case 'P':
             cmdline->passt_socket_path = optarg;
+            break;
+        case 'T':
+            cmdline->tap_name = optarg;
+            cmdline->net_mode = NET_MODE_TAP;
             break;
         case '?':
             return false;
@@ -268,15 +279,18 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    // Map port 18000 in the host to 8000 in the guest (if networking uses TSI)
-    if (cmdline.net_mode == NET_MODE_TSI) {
+    // Configure networking based on mode
+    uint8_t mac[] = {0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee};
+    switch (cmdline.net_mode) {
+    case NET_MODE_TSI:
+        // Map port 18000 in the host to 8000 in the guest
         if (err = krun_set_port_map(ctx_id, &port_map[0])) {
             errno = -err;
             perror("Error configuring port map");
             return -1;
         }
-    } else {
-        uint8_t mac[] = {0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee};
+        break;
+    case NET_MODE_PASST:
         if (cmdline.passt_socket_path != NULL) {
             if (err = krun_add_net_unixstream(ctx_id, cmdline.passt_socket_path, -1, &mac[0], COMPAT_NET_FEATURES, 0)) {
                 errno = -err;
@@ -285,17 +299,26 @@ int main(int argc, char *const argv[])
             }
         } else {
             int passt_fd = start_passt();
-
             if (passt_fd < 0) {
                 return -1;
             }
-
             if (err = krun_add_net_unixstream(ctx_id, NULL, passt_fd, &mac[0], COMPAT_NET_FEATURES, 0)) {
                 errno = -err;
                 perror("Error configuring net mode");
                 return -1;
             }
         }
+        break;
+    case NET_MODE_TAP:
+        if (cmdline.tap_name == NULL) {
+            return -1;
+        }
+        if (err = krun_add_net_tap(ctx_id, (char *)cmdline.tap_name, &mac[0], COMPAT_NET_FEATURES, 0)) {
+            errno = -err;
+            perror("Error configuring TAP network");
+            return -1;
+        }
+        break;
     }
 
     // Configure the rlimits that will be set in the guest
