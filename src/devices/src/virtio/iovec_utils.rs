@@ -27,7 +27,29 @@ pub fn write_to_iovecs(slices: &mut [IoSliceMut], data: &[u8]) -> usize {
     written
 }
 
-/// Advance iovecs in place by `bytes`, removing fully consumed buffers.
+/// Advance iovecs in place by `bytes`, removing fully consumed buffers (Vec version).
+///
+/// Works with Vec, removing consumed iovecs from the front and
+/// adjusting the first remaining iovec's pointer/length as needed.
+pub fn advance_iovecs_vec(iovecs: &mut Vec<IoSliceMut<'_>>, bytes: usize) {
+    let mut remaining = bytes;
+    while remaining > 0 && !iovecs.is_empty() {
+        let first_len = iovecs[0].len();
+        if first_len <= remaining {
+            iovecs.remove(0);
+            remaining -= first_len;
+        } else {
+            let ptr = iovecs[0].as_mut_ptr();
+            let new_len = first_len - remaining;
+            // Safety: advancing pointer within same allocation
+            let new_slice = unsafe { std::slice::from_raw_parts_mut(ptr.add(remaining), new_len) };
+            iovecs[0] = IoSliceMut::new(new_slice);
+            remaining = 0;
+        }
+    }
+}
+
+/// Advance iovecs in place by `bytes`, removing fully consumed buffers (SmallVec version).
 ///
 /// Works with SmallVec, removing consumed iovecs from the front and
 /// adjusting the first remaining iovec's pointer/length as needed.
@@ -49,6 +71,28 @@ pub fn advance_iovecs(iovecs: &mut SmallVec<[IoSliceMut<'_>; 4]>, bytes: usize) 
     }
 }
 
+/// Advance IoSlice Vec in place by `bytes`, removing fully consumed buffers.
+///
+/// Works with Vec<IoSlice>, removing consumed iovecs from the front and
+/// adjusting the first remaining iovec's pointer/length as needed.
+pub fn advance_tx_iovecs_vec(iovecs: &mut Vec<std::io::IoSlice<'_>>, bytes: usize) {
+    let mut remaining = bytes;
+    while remaining > 0 && !iovecs.is_empty() {
+        let first_len = iovecs[0].len();
+        if first_len <= remaining {
+            iovecs.remove(0);
+            remaining -= first_len;
+        } else {
+            let ptr = iovecs[0].as_ptr();
+            let new_len = first_len - remaining;
+            // Safety: advancing pointer within same allocation
+            let new_slice = unsafe { std::slice::from_raw_parts(ptr.add(remaining), new_len) };
+            iovecs[0] = std::io::IoSlice::new(new_slice);
+            remaining = 0;
+        }
+    }
+}
+
 /// Truncate iovecs in place to max_bytes total, returning the usable slice.
 pub fn truncate_iovecs<'a, 'b>(
     slices: &'a mut [IoSliceMut<'b>],
@@ -64,9 +108,9 @@ pub fn truncate_iovecs<'a, 'b>(
             let take = max_bytes - total;
             // Last iovec is empty so we don't include it in the and
             if take == 0 {
-                 return &mut slices[..i];
+                return &mut slices[..i];
             }
-            
+
             let ptr = slice.as_mut_ptr();
             // SAFETY: `take <= len` because we only enter this branch when
             // `total + len >= max_bytes`, which means `max_bytes - total <= len`.
