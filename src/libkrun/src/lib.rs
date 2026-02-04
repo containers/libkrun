@@ -2299,6 +2299,11 @@ pub extern "C" fn krun_add_vsock(ctx_id: u32, tsi_features: u32) -> i32 {
         None => return -libc::EINVAL,
     };
 
+    if cfg!(target_os = "macos") && tsi_flags.contains(TsiFlags::HIJACK_UNIX) {
+        error!("TSI hijacking of UNIX sockets is not yet supported on macOS");
+        return -libc::EINVAL;
+    }
+
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
