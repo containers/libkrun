@@ -976,7 +976,28 @@ pub fn build_microvm(
     #[cfg(not(feature = "tee"))]
     attach_balloon_device(&mut vmm, event_manager, intc.clone())?;
     #[cfg(not(feature = "tee"))]
-    attach_rng_device(&mut vmm, event_manager, intc.clone())?;
+    {
+        #[cfg(feature = "vhost-user")]
+        {
+            const VIRTIO_ID_RNG: u32 = 4;
+
+            let has_vhost_user_rng = vm_resources
+                .vhost_user_devices
+                .iter()
+                .any(|dev| dev.device_type == VIRTIO_ID_RNG);
+
+            if has_vhost_user_rng {
+                for device_config in &vm_resources.vhost_user_devices {
+                    attach_vhost_user_device(&mut vmm, intc.clone(), device_config)?;
+                }
+            } else {
+                attach_rng_device(&mut vmm, event_manager, intc.clone())?;
+            }
+        }
+
+        #[cfg(not(feature = "vhost-user"))]
+        attach_rng_device(&mut vmm, event_manager, intc.clone())?;
+    }
     let mut console_id = 0;
     if !vm_resources.disable_implicit_console {
         attach_console_devices(
@@ -2384,6 +2405,36 @@ fn attach_rng_device(
 
     // The device mutex mustn't be locked here otherwise it will deadlock.
     attach_mmio_device(vmm, id, intc.clone(), rng).map_err(RegisterRngDevice)?;
+
+    Ok(())
+}
+
+#[cfg(not(feature = "tee"))]
+#[cfg(feature = "vhost-user")]
+fn attach_vhost_user_device(
+    vmm: &mut Vmm,
+    intc: IrqChip,
+    device_config: &VhostUserDeviceConfig,
+) -> std::result::Result<(), StartMicrovmError> {
+    use self::StartMicrovmError::*;
+
+    let device_name = device_config
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("vhost-user-{}", device_config.device_type));
+
+    let device = Arc::new(Mutex::new(
+        devices::virtio::VhostUserDevice::new(
+            &device_config.socket_path,
+            device_config.device_type,
+            device_name.clone(),
+            device_config.num_queues,
+            &device_config.queue_sizes,
+        )
+        .map_err(|e| RegisterRngDevice(device_manager::mmio::Error::VhostUserDevice(e)))?,
+    ));
+
+    attach_mmio_device(vmm, device_name, intc.clone(), device).map_err(RegisterRngDevice)?;
 
     Ok(())
 }
