@@ -488,7 +488,11 @@ impl Proxy for TsiStreamProxy {
         };
 
         if self.status == ProxyStatus::Connecting {
-            update.polling = Some((self.id, self.fd.as_raw_fd(), EventSet::OUT));
+            update.polling = Some((
+                self.id,
+                self.fd.as_raw_fd(),
+                EventSet::OUT | EventSet::EDGE_TRIGGERED,
+            ));
         } else {
             if self.status == ProxyStatus::Connected {
                 update.polling = Some((self.id, self.fd.as_raw_fd(), EventSet::IN));
