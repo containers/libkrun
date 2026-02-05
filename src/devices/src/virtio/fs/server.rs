@@ -883,7 +883,6 @@ impl<F: FileSystem + Sync> Server<F> {
             | FsOptions::PARALLEL_DIROPS
             | FsOptions::BIG_WRITES
             | FsOptions::AUTO_INVAL_DATA
-            | FsOptions::HANDLE_KILLPRIV
             | FsOptions::ASYNC_DIO
             | FsOptions::HAS_IOCTL_DIR
             | FsOptions::ATOMIC_O_TRUNC
