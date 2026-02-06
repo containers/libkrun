@@ -92,7 +92,7 @@ fn item_to_value(item: &[u8], radix: u32) -> Option<u32> {
     }
 }
 
-fn get_xattr_common(buf: &Vec<u8>) -> io::Result<Option<(u32, u32, u32)>> {
+fn get_xattr_common(buf: &[u8]) -> io::Result<Option<(u32, u32, u32)>> {
     let mut items = buf.split(|c| *c == b':');
 
     let uid = match items.next() {
@@ -120,9 +120,8 @@ fn get_xattr_common(buf: &Vec<u8>) -> io::Result<Option<(u32, u32, u32)>> {
     Ok(Some((uid, gid, mode)))
 }
 
-fn get_xattr_fstat(fd: RawFd) -> io::Result<Option<(u32, u32, u32)>> {
+fn get_xattr_fstat(fd: RawFd, st: bindings::stat64) -> io::Result<Option<(u32, u32, u32)>> {
     let mut buf: Vec<u8> = vec![0; 32];
-    let st = fstat(fd, true)?;
     let options = if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
         libc::XATTR_NOFOLLOW
     } else {
@@ -148,9 +147,8 @@ fn get_xattr_fstat(fd: RawFd) -> io::Result<Option<(u32, u32, u32)>> {
     get_xattr_common(&buf)
 }
 
-fn get_xattr_lstat(path: &CString) -> io::Result<Option<(u32, u32, u32)>> {
+fn get_xattr_lstat(path: &CString, st: bindings::stat64) -> io::Result<Option<(u32, u32, u32)>> {
     let mut buf: Vec<u8> = vec![0; 32];
-    let st = lstat(path, true)?;
     let options = if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
         libc::XATTR_NOFOLLOW
     } else {
@@ -192,12 +190,19 @@ fn set_xattr_stat(
     owner: Option<(u32, u32)>,
     mode: Option<u32>,
 ) -> io::Result<()> {
+    let st = istat(file, true)?;
+    let options = if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
+        libc::XATTR_NOFOLLOW
+    } else {
+        0
+    };
+
     let (new_owner, new_mode) = if is_valid_owner(owner) && mode.is_some() {
         (owner.unwrap(), mode.unwrap())
     } else {
         let (orig_owner, orig_mode) = if let Some((xuid, xgid, xmode)) = match file {
-            InodeHandle::Fd(fd) => get_xattr_fstat(*fd)?,
-            InodeHandle::Path(ref c_path) => get_xattr_lstat(c_path)?,
+            InodeHandle::Fd(fd) => get_xattr_fstat(*fd, st)?,
+            InodeHandle::Path(ref c_path) => get_xattr_lstat(c_path, st)?,
         } {
             ((xuid, xgid), xmode)
         } else {
@@ -220,12 +225,6 @@ fn set_xattr_stat(
 
     let res = match file {
         InodeHandle::Path(path) => unsafe {
-            let st = lstat(path, true)?;
-            let options = if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
-                libc::XATTR_NOFOLLOW
-            } else {
-                0
-            };
             libc::setxattr(
                 path.as_ptr(),
                 XATTR_KEY.as_ptr() as *const i8,
@@ -236,12 +235,6 @@ fn set_xattr_stat(
             )
         },
         InodeHandle::Fd(fd) => unsafe {
-            let st = fstat(*fd, true)?;
-            let options = if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
-                libc::XATTR_NOFOLLOW
-            } else {
-                0
-            };
             libc::fsetxattr(
                 *fd,
                 XATTR_KEY.as_ptr() as *const i8,
@@ -271,7 +264,7 @@ fn fstat(fd: RawFd, host: bool) -> io::Result<bindings::stat64> {
         let mut st = unsafe { st.assume_init() };
 
         if !host {
-            if let Some((uid, gid, mode)) = get_xattr_fstat(fd)? {
+            if let Some((uid, gid, mode)) = get_xattr_fstat(fd, st)? {
                 st.st_uid = uid;
                 st.st_gid = gid;
                 if mode as u16 & libc::S_IFMT == 0 {
@@ -299,7 +292,7 @@ fn lstat(c_path: &CString, host: bool) -> io::Result<bindings::stat64> {
         let mut st = unsafe { st.assume_init() };
 
         if !host {
-            if let Some((uid, gid, mode)) = get_xattr_lstat(&c_path)? {
+            if let Some((uid, gid, mode)) = get_xattr_lstat(c_path, st)? {
                 st.st_uid = uid;
                 st.st_gid = gid;
                 if mode as u16 & libc::S_IFMT == 0 {
@@ -319,7 +312,7 @@ fn lstat(c_path: &CString, host: bool) -> io::Result<bindings::stat64> {
 fn istat(ihandle: &InodeHandle, host: bool) -> io::Result<bindings::stat64> {
     match ihandle {
         InodeHandle::Fd(fd) => fstat(*fd, host),
-        InodeHandle::Path(ref c_path) => lstat(&c_path, host),
+        InodeHandle::Path(ref c_path) => lstat(c_path, host),
     }
 }
 
