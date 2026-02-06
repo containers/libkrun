@@ -118,8 +118,74 @@ macro_rules! scoped_cred {
 scoped_cred!(ScopedUid, libc::uid_t, libc::SYS_setresuid);
 scoped_cred!(ScopedGid, libc::gid_t, libc::SYS_setresgid);
 
+#[must_use]
+pub struct ScopedCaps {
+    cap: capng::Capability,
+}
+
+impl ScopedCaps {
+    fn new(cap_name: &str) -> io::Result<Option<Self>> {
+        use capng::{Action, CUpdate, Set, Type};
+
+        let cap = capng::name_to_capability(cap_name).map_err(|_| {
+            let err = io::Error::last_os_error();
+            error!("couldn't get the capability id for name {cap_name}: {err:?}");
+            err
+        })?;
+
+        if capng::have_capability(Type::EFFECTIVE, cap) {
+            let req = vec![CUpdate {
+                action: Action::DROP,
+                cap_type: Type::EFFECTIVE,
+                capability: cap,
+            }];
+            capng::update(req).map_err(|e| {
+                error!("couldn't drop {cap} capability: {e:?}");
+                einval()
+            })?;
+            capng::apply(Set::CAPS).map_err(|e| {
+                error!("couldn't apply capabilities after dropping {cap}: {e:?}");
+                einval()
+            })?;
+            Ok(Some(Self { cap }))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+impl Drop for ScopedCaps {
+    fn drop(&mut self) {
+        use capng::{Action, CUpdate, Set, Type};
+
+        let req = vec![CUpdate {
+            action: Action::ADD,
+            cap_type: Type::EFFECTIVE,
+            capability: self.cap,
+        }];
+
+        if let Err(e) = capng::update(req) {
+            panic!("couldn't restore {} capability: {:?}", self.cap, e);
+        }
+        if let Err(e) = capng::apply(Set::CAPS) {
+            panic!(
+                "couldn't apply capabilities after restoring {}: {:?}",
+                self.cap, e
+            );
+        }
+    }
+}
+
+pub fn drop_effective_cap(cap_name: &str) -> io::Result<Option<ScopedCaps>> {
+    ScopedCaps::new(cap_name)
+}
+
 fn ebadf() -> io::Error {
     io::Error::from_raw_os_error(libc::EBADF)
+}
+
+fn einval() -> io::Error {
+    io::Error::from_raw_os_error(libc::EINVAL)
 }
 
 fn stat(f: &File) -> io::Result<libc::stat64> {
@@ -681,7 +747,12 @@ impl PassthroughFs {
         Ok(())
     }
 
-    fn do_open(&self, inode: Inode, mut flags: u32) -> io::Result<(Option<Handle>, OpenOptions)> {
+    fn do_open(
+        &self,
+        inode: Inode,
+        kill_priv: bool,
+        mut flags: u32,
+    ) -> io::Result<(Option<Handle>, OpenOptions)> {
         debug!("do_open: {inode:?}");
         if !self.cap_fowner {
             // O_NOATIME can only be used with CAP_FOWNER or if we are the file
@@ -690,7 +761,15 @@ impl PassthroughFs {
             // work.
             flags &= !(libc::O_NOATIME as u32);
         }
-        let file = RwLock::new(self.open_inode(inode, flags as i32)?);
+
+        let file = {
+            let _killpriv_guard = if kill_priv {
+                drop_effective_cap("FSETID")?
+            } else {
+                None
+            };
+            RwLock::new(self.open_inode(inode, flags as i32)?)
+        };
 
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
         let data = HandleData {
@@ -981,7 +1060,7 @@ impl FileSystem for PassthroughFs {
         inode: Inode,
         flags: u32,
     ) -> io::Result<(Option<Handle>, OpenOptions)> {
-        self.do_open(inode, flags | (libc::O_DIRECTORY as u32))
+        self.do_open(inode, false, flags | (libc::O_DIRECTORY as u32))
     }
 
     fn releasedir(
@@ -1074,12 +1153,13 @@ impl FileSystem for PassthroughFs {
         &self,
         _ctx: Context,
         inode: Inode,
+        kill_priv: bool,
         flags: u32,
     ) -> io::Result<(Option<Handle>, OpenOptions)> {
         if inode == self.init_inode {
             Ok((Some(self.init_handle), OpenOptions::empty()))
         } else {
-            self.do_open(inode, flags)
+            self.do_open(inode, kill_priv, flags)
         }
     }
 
@@ -1102,6 +1182,7 @@ impl FileSystem for PassthroughFs {
         parent: Inode,
         name: &CStr,
         mode: u32,
+        kill_priv: bool,
         flags: u32,
         umask: u32,
         extensions: Extensions,
@@ -1111,6 +1192,12 @@ impl FileSystem for PassthroughFs {
         }
 
         let (_uid, _gid) = self.set_creds(ctx.uid, ctx.gid)?;
+        let _killpriv_guard = if kill_priv {
+            drop_effective_cap("FSETID")?
+        } else {
+            None
+        };
+
         let data = self
             .inodes
             .read()
@@ -1175,9 +1262,7 @@ impl FileSystem for PassthroughFs {
     ) -> io::Result<usize> {
         debug!("read: {inode:?}");
         if inode == self.init_inode {
-            let off: usize = offset
-                .try_into()
-                .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+            let off: usize = offset.try_into().map_err(|_| einval())?;
             let len = if off + (size as usize) < INIT_BINARY.len() {
                 size as usize
             } else {
@@ -1203,7 +1288,7 @@ impl FileSystem for PassthroughFs {
 
     fn write<R: io::Read + ZeroCopyReader>(
         &self,
-        ctx: Context,
+        _ctx: Context,
         inode: Inode,
         handle: Handle,
         mut r: R,
@@ -1214,11 +1299,14 @@ impl FileSystem for PassthroughFs {
         kill_priv: bool,
         _flags: u32,
     ) -> io::Result<usize> {
-        if kill_priv {
-            // We need to change credentials during a write so that the kernel will remove setuid
-            // or setgid bits from the file if it was written to by someone other than the owner.
-            let (_uid, _gid) = self.set_creds(ctx.uid, ctx.gid)?;
-        }
+        let _killpriv_guard = if kill_priv {
+            // We need to drop FSETID during a write so that the kernel will remove setuid
+            // or setgid bits from the file if it was written to by someone other than the
+            // owner.
+            drop_effective_cap("FSETID")?
+        } else {
+            None
+        };
 
         let data = self
             .handles
@@ -2019,7 +2107,7 @@ impl FileSystem for PassthroughFs {
         };
 
         if (moffset + len) > shm_size {
-            return Err(io::Error::from_raw_os_error(libc::EINVAL));
+            return Err(einval());
         }
 
         let addr = host_shm_base + moffset;
@@ -2086,7 +2174,7 @@ impl FileSystem for PassthroughFs {
         for req in requests {
             let addr = host_shm_base + req.moffset;
             if (req.moffset + req.len) > shm_size {
-                return Err(io::Error::from_raw_os_error(libc::EINVAL));
+                return Err(einval());
             }
             debug!("removemapping: addr={:x} len={:?}", addr, req.len);
             let ret = unsafe {
@@ -2140,7 +2228,7 @@ impl FileSystem for PassthroughFs {
         match cmd {
             VIRTIO_IOC_EXPORT_FD_REQ => {
                 if out_size as usize != VIRTIO_IOC_EXPORT_FD_SIZE {
-                    return Err(io::Error::from_raw_os_error(libc::EINVAL));
+                    return Err(einval());
                 }
 
                 let mut exports = self

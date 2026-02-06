@@ -29,6 +29,7 @@ const FATTR_ATIME_NOW: u32 = 128;
 const FATTR_MTIME_NOW: u32 = 256;
 pub const FATTR_LOCKOWNER: u32 = 512;
 const FATTR_CTIME: u32 = 1024;
+const FATTR_KILL_SUIDGID: u32 = 2048;
 
 bitflags! {
     pub struct SetattrValid: u32 {
@@ -41,6 +42,7 @@ bitflags! {
         const ATIME_NOW = FATTR_ATIME_NOW;
         const MTIME_NOW = FATTR_MTIME_NOW;
         const CTIME = FATTR_CTIME;
+        const KILL_SUIDGID = FATTR_KILL_SUIDGID;
     }
 }
 
@@ -529,6 +531,9 @@ pub const FUSE_COMPAT_22_INIT_OUT_SIZE: u32 = 24;
 /// Object is a submount root
 pub const ATTR_SUBMOUNT: u32 = 1;
 
+/// Kill suid and sgid if executable
+pub const OPEN_KILL_SUIDGID: u32 = 1;
+
 // Message definitions follow.  It is safe to implement ByteValued for all of these
 // because they are POD types.
 
@@ -859,7 +864,7 @@ impl From<SetattrIn> for bindings::stat64 {
 #[derive(Debug, Default, Copy, Clone)]
 pub struct OpenIn {
     pub flags: u32,
-    pub unused: u32,
+    pub open_flags: u32,
 }
 unsafe impl ByteValued for OpenIn {}
 
@@ -869,7 +874,7 @@ pub struct CreateIn {
     pub flags: u32,
     pub mode: u32,
     pub umask: u32,
-    pub padding: u32,
+    pub open_flags: u32,
 }
 unsafe impl ByteValued for CreateIn {}
 
