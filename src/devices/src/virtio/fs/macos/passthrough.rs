@@ -32,6 +32,7 @@ use super::super::multikey::MultikeyBTreeMap;
 
 const INIT_CSTR: &[u8] = b"init.krun\0";
 const XATTR_KEY: &[u8] = b"user.containers.override_stat\0";
+const SECURITY_CAPABILITY: &[u8] = b"security.capability\0";
 
 const UID_MAX: u32 = u32::MAX - 1;
 
@@ -176,7 +177,6 @@ fn is_valid_owner(owner: Option<(u32, u32)>) -> bool {
 
     false
 }
-
 // We won't need this once expressions like "if let ... &&" are allowed.
 #[allow(clippy::unnecessary_unwrap)]
 fn set_xattr_stat(file: StatFile, owner: Option<(u32, u32)>, mode: Option<u32>) -> io::Result<()> {
@@ -732,10 +732,31 @@ impl PassthroughFs {
         Ok(())
     }
 
-    fn do_open(&self, inode: Inode, flags: u32) -> io::Result<(Option<Handle>, OpenOptions)> {
+    fn do_open(
+        &self,
+        inode: Inode,
+        kill_priv: bool,
+        flags: u32,
+    ) -> io::Result<(Option<Handle>, OpenOptions)> {
         let flags = self.parse_open_flags(flags as i32);
 
         let file = RwLock::new(self.open_inode(inode, flags)?);
+
+        // If O_TRUNC and kill_priv (OPEN_KILL_SUIDGID), clear security.capability and suid/sgid
+        if (flags & libc::O_TRUNC) != 0 && kill_priv {
+            let fd = file.read().unwrap().as_raw_fd();
+
+            remove_security_capability(StatFile::Fd(fd));
+
+            if let Ok(st) = fstat(fd, false) {
+                let new_mode = clear_suid_sgid(st.st_mode as u32);
+                if new_mode != st.st_mode as u32 {
+                    if let Err(err) = set_xattr_stat(StatFile::Fd(fd), None, Some(new_mode)) {
+                        error!("Couldn't clear suid/sgid for inode {inode}: {err}");
+                    }
+                }
+            }
+        }
 
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
         let data = HandleData {
@@ -934,6 +955,39 @@ fn set_secctx(file: StatFile, secctx: SecContext, symlink: bool) -> io::Result<(
     }
 }
 
+/// Remove the security.capability extended attribute
+fn remove_security_capability(file: StatFile) {
+    let ret = match file {
+        StatFile::Path(path) => unsafe {
+            libc::removexattr(path.as_ptr(), SECURITY_CAPABILITY.as_ptr() as *const i8, 0)
+        },
+        StatFile::Fd(fd) => unsafe {
+            libc::fremovexattr(fd, SECURITY_CAPABILITY.as_ptr() as *const i8, 0)
+        },
+    };
+
+    // ENODATA means the attribute didn't exist, which is fine
+    if ret != 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ENODATA) {
+        warn!("Error removing security.capability from file");
+    }
+}
+
+/// Clear suid/sgid bits from mode.
+/// sgid is cleared only if group executable bit is set.
+fn clear_suid_sgid(mode: u32) -> u32 {
+    let mut new_mode = mode;
+
+    // Clear suid bit
+    new_mode &= !libc::S_ISUID as u32;
+
+    // Clear sgid bit only if group executable bit is set
+    if (mode & libc::S_IXGRP as u32) != 0 {
+        new_mode &= !libc::S_ISGID as u32;
+    }
+
+    new_mode
+}
+
 fn forget_one(
     inodes: &mut MultikeyBTreeMap<Inode, InodeAltKey, Arc<InodeData>>,
     inode: Inode,
@@ -1106,7 +1160,7 @@ impl FileSystem for PassthroughFs {
         inode: Inode,
         flags: u32,
     ) -> io::Result<(Option<Handle>, OpenOptions)> {
-        self.do_open(inode, flags | libc::O_DIRECTORY as u32)
+        self.do_open(inode, false, flags | libc::O_DIRECTORY as u32)
     }
 
     fn releasedir(
@@ -1213,12 +1267,13 @@ impl FileSystem for PassthroughFs {
         &self,
         _ctx: Context,
         inode: Inode,
+        kill_priv: bool,
         flags: u32,
     ) -> io::Result<(Option<Handle>, OpenOptions)> {
         if inode == self.init_inode {
             Ok((Some(self.init_handle), OpenOptions::empty()))
         } else {
-            self.do_open(inode, flags)
+            self.do_open(inode, kill_priv, flags)
         }
     }
 
@@ -1241,6 +1296,7 @@ impl FileSystem for PassthroughFs {
         parent: Inode,
         name: &CStr,
         mode: u32,
+        kill_priv: bool,
         flags: u32,
         umask: u32,
         extensions: Extensions,
@@ -1281,6 +1337,13 @@ impl FileSystem for PassthroughFs {
         if let Some(secctx) = extensions.secctx {
             set_secctx(StatFile::Fd(fd), secctx, false)?
         };
+
+        // If O_TRUNC and kill_priv (OPEN_KILL_SUIDGID), clear security.capability.
+        // We don't need to clear suid/sgid here because we've just updated them
+        // unconditionally above.
+        if (flags & libc::O_TRUNC) != 0 && kill_priv {
+            remove_security_capability(StatFile::Fd(fd));
+        }
 
         // Safe because we just opened this fd.
         let file = RwLock::new(unsafe { File::from_raw_fd(fd) });
@@ -1362,7 +1425,7 @@ impl FileSystem for PassthroughFs {
         offset: u64,
         _lock_owner: Option<u64>,
         _delayed_write: bool,
-        _kill_priv: bool,
+        kill_priv: bool,
         _flags: u32,
     ) -> io::Result<usize> {
         let data = self
@@ -1377,7 +1440,26 @@ impl FileSystem for PassthroughFs {
         // This is safe because read_to uses pwritev64, so the underlying file descriptor
         // offset is not affected by this operation.
         let f = data.file.read().unwrap();
-        r.read_to(&f, size as usize, offset)
+        let result = r.read_to(&f, size as usize, offset);
+
+        // If write succeeded and kill_priv is set, clear security.capability and suid/sgid
+        if result.is_ok() && kill_priv {
+            let fd = f.as_raw_fd();
+
+            remove_security_capability(StatFile::Fd(fd));
+
+            if let Ok(st) = fstat(fd, false) {
+                let new_mode = clear_suid_sgid(st.st_mode as u32);
+                if new_mode != st.st_mode as u32 {
+                    // Update mode in xattr
+                    if let Err(err) = set_xattr_stat(StatFile::Fd(fd), None, Some(new_mode)) {
+                        error!("Couldn't clear suid/sgid for inode {inode}: {err}");
+                    }
+                }
+            }
+        }
+
+        result
     }
 
     fn getattr(
@@ -1446,12 +1528,33 @@ impl FileSystem for PassthroughFs {
                 // Cannot use -1 here because these are unsigned values.
                 u32::MAX
             };
-            match data {
+
+            let st = match data {
                 Data::Handle(fd) => {
-                    set_xattr_stat(StatFile::Fd(fd), Some((uid, gid)), None)?;
+                    // Clear security.capability on chown unconditionally
+                    remove_security_capability(StatFile::Fd(fd));
+                    fstat(fd, false)?
                 }
                 Data::FilePath(ref c_path) => {
-                    set_xattr_stat(StatFile::Path(c_path), Some((uid, gid)), None)?;
+                    // Clear security.capability on chown unconditionally
+                    remove_security_capability(StatFile::Path(c_path));
+                    lstat(c_path, false)?
+                }
+            };
+
+            // Clear suid/sgid if UID or GID is being changed
+            let new_mode = clear_suid_sgid(st.st_mode as u32);
+            let new_mode = if new_mode != st.st_mode as u32 {
+                Some(new_mode)
+            } else {
+                None
+            };
+            match data {
+                Data::Handle(fd) => {
+                    set_xattr_stat(StatFile::Fd(fd), Some((uid, gid)), new_mode)?;
+                }
+                Data::FilePath(ref c_path) => {
+                    set_xattr_stat(StatFile::Path(c_path), Some((uid, gid)), new_mode)?;
                 }
             }
         }
@@ -1468,6 +1571,26 @@ impl FileSystem for PassthroughFs {
             };
             if res < 0 {
                 return Err(linux_error(io::Error::last_os_error()));
+            }
+
+            // Clear security.capability on truncate unconditionally
+            match data {
+                Data::Handle(fd) => {
+                    remove_security_capability(StatFile::Fd(fd));
+                    let st = fstat(fd, false)?;
+                    let new_mode = clear_suid_sgid(st.st_mode as u32);
+                    if new_mode != st.st_mode as u32 {
+                        set_xattr_stat(StatFile::Fd(fd), None, Some(new_mode))?;
+                    }
+                }
+                Data::FilePath(ref c_path) => {
+                    remove_security_capability(StatFile::Path(c_path));
+                    let st = lstat(c_path, false)?;
+                    let new_mode = clear_suid_sgid(st.st_mode as u32);
+                    if new_mode != st.st_mode as u32 {
+                        set_xattr_stat(StatFile::Path(c_path), None, Some(new_mode))?;
+                    }
+                }
             }
         }
 
