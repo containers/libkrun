@@ -39,4 +39,5 @@ runs:
           libdrm-dev \
           libpipewire-0.3-dev \
           clang-format \
-          libclang-dev
+          libclang-dev \
+          libcap-ng-dev
