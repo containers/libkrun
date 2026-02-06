@@ -633,6 +633,9 @@ pub trait FileSystem {
     /// The returned `OpenOptions` allow the file system to change the way the opened file is
     /// handled by the kernel. See the documentation of `OpenOptions` for more information.
     ///
+    /// If `kill_priv` is true then it indicates that the file system is expected to clear the
+    /// setuid and setgid bits.
+    ///
     /// If the `FsOptions::ZERO_MESSAGE_OPEN` feature is enabled by both the file system
     /// implementation and the kernel, then the file system may return an error of `ENOSYS`. This
     /// will be interpreted by the kernel as success and future calls to `open` and `release` will
@@ -641,6 +644,7 @@ pub trait FileSystem {
         &self,
         ctx: Context,
         inode: Self::Inode,
+        kill_priv: bool,
         flags: u32,
     ) -> io::Result<(Option<Self::Handle>, OpenOptions)> {
         // Matches the behavior of libfuse.
@@ -657,6 +661,9 @@ pub trait FileSystem {
     /// unimplemented and all future calls to `create` will be handled by calling the `mknod` and
     /// `open` methods instead.
     ///
+    /// If `kill_priv` is true then it indicates that the file system is expected to clear the
+    /// setuid and setgid bits.
+    ///
     /// See the documentation for the `open` method for more information about opening the file. In
     /// addition to the optional `Handle` and the `OpenOptions`, the file system must also return an
     /// `Entry` for the file. This increases the lookup count for the `Inode` associated with the
@@ -668,6 +675,7 @@ pub trait FileSystem {
         parent: Self::Inode,
         name: &CStr,
         mode: u32,
+        kill_priv: bool,
         flags: u32,
         umask: u32,
         extensions: Extensions,

@@ -20,6 +20,7 @@ test_utils = []
 
 [dependencies]
 bitflags = "1.2.0"
+capng = "0.2.3"
 crossbeam-channel = ">=0.5.15"
 libc = ">=0.2.39"
 libloading = "0.8"
