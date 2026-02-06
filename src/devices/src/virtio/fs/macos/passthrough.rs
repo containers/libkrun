@@ -187,10 +187,11 @@ fn is_valid_owner(owner: Option<(u32, u32)>) -> bool {
 #[allow(clippy::unnecessary_unwrap)]
 fn set_xattr_stat(
     file: &InodeHandle,
+    st: Option<bindings::stat64>,
     owner: Option<(u32, u32)>,
     mode: Option<u32>,
 ) -> io::Result<()> {
-    let st = istat(file, true)?;
+    let st = st.unwrap_or(istat(file, true)?);
     let options = if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
         libc::XATTR_NOFOLLOW
     } else {
@@ -766,7 +767,7 @@ impl PassthroughFs {
             if let Ok(st) = fstat(fd, false) {
                 let new_mode = clear_suid_sgid(st.st_mode as u32);
                 if new_mode != st.st_mode as u32 {
-                    if let Err(err) = set_xattr_stat(&ihandle, None, Some(new_mode)) {
+                    if let Err(err) = set_xattr_stat(&ihandle, Some(st), None, Some(new_mode)) {
                         error!("Couldn't clear suid/sgid for inode {inode}: {err}");
                     }
                 }
@@ -1223,7 +1224,12 @@ impl FileSystem for PassthroughFs {
                 set_secctx(&ihandle, secctx, false)?
             };
 
-            set_xattr_stat(&ihandle, Some((ctx.uid, ctx.gid)), Some(mode & !umask))?;
+            set_xattr_stat(
+                &ihandle,
+                None,
+                Some((ctx.uid, ctx.gid)),
+                Some(mode & !umask),
+            )?;
             self.do_lookup(parent, name)
         } else {
             Err(linux_error(io::Error::last_os_error()))
@@ -1339,6 +1345,7 @@ impl FileSystem for PassthroughFs {
 
         if let Err(e) = set_xattr_stat(
             &ihandle,
+            None,
             Some((ctx.uid, ctx.gid)),
             Some(libc::S_IFREG as u32 | (mode & !(umask & 0o777))),
         ) {
@@ -1466,7 +1473,7 @@ impl FileSystem for PassthroughFs {
                 let new_mode = clear_suid_sgid(st.st_mode as u32);
                 if new_mode != st.st_mode as u32 {
                     // Update mode in xattr
-                    if let Err(err) = set_xattr_stat(&ihandle, None, Some(new_mode)) {
+                    if let Err(err) = set_xattr_stat(&ihandle, Some(st), None, Some(new_mode)) {
                         error!("Couldn't clear suid/sgid for inode {inode}: {err}");
                     }
                 }
@@ -1511,7 +1518,7 @@ impl FileSystem for PassthroughFs {
         };
 
         if valid.contains(SetattrValid::MODE) {
-            set_xattr_stat(&ihandle, None, Some(attr.st_mode as u32))?
+            set_xattr_stat(&ihandle, None, None, Some(attr.st_mode as u32))?
         }
 
         if valid.intersects(SetattrValid::UID | SetattrValid::GID) {
@@ -1538,7 +1545,7 @@ impl FileSystem for PassthroughFs {
             } else {
                 None
             };
-            set_xattr_stat(&ihandle, Some((uid, gid)), new_mode)?;
+            set_xattr_stat(&ihandle, Some(st), Some((uid, gid)), new_mode)?;
         }
 
         if valid.contains(SetattrValid::SIZE) {
@@ -1555,7 +1562,7 @@ impl FileSystem for PassthroughFs {
                     let st = fstat(fd, false)?;
                     let new_mode = clear_suid_sgid(st.st_mode as u32);
                     if new_mode != st.st_mode as u32 {
-                        set_xattr_stat(&ihandle, None, Some(new_mode))?;
+                        set_xattr_stat(&ihandle, Some(st), None, Some(new_mode))?;
                     }
                 }
                 InodeHandle::Path(_) => {
@@ -1575,7 +1582,7 @@ impl FileSystem for PassthroughFs {
                     let st = istat(&ihandle, false)?;
                     let new_mode = clear_suid_sgid(st.st_mode as u32);
                     if new_mode != st.st_mode as u32 {
-                        set_xattr_stat(&ihandle, None, Some(new_mode))?;
+                        set_xattr_stat(&ihandle, Some(st), None, Some(new_mode))?;
                     }
                 }
             };
@@ -1665,6 +1672,7 @@ impl FileSystem for PassthroughFs {
                     if let Err(e) = set_xattr_stat(
                         &InodeHandle::Fd(fd),
                         None,
+                        None,
                         Some((libc::S_IFCHR | 0o600) as u32),
                     ) {
                         unsafe { libc::close(fd) };
@@ -1712,8 +1720,12 @@ impl FileSystem for PassthroughFs {
                 set_secctx(&ihandle, secctx, false)?
             };
 
-            if let Err(e) = set_xattr_stat(&ihandle, Some((ctx.uid, ctx.gid)), Some(mode & !umask))
-            {
+            if let Err(e) = set_xattr_stat(
+                &ihandle,
+                None,
+                Some((ctx.uid, ctx.gid)),
+                Some(mode & !umask),
+            ) {
                 unsafe { libc::close(fd) };
                 return Err(e);
             }
@@ -1767,7 +1779,7 @@ impl FileSystem for PassthroughFs {
 
             let mut entry = self.do_lookup(parent, name)?;
             let mode = libc::S_IFLNK | 0o777;
-            set_xattr_stat(&ihandle, Some((ctx.uid, ctx.gid)), Some(mode as u32))?;
+            set_xattr_stat(&ihandle, None, Some((ctx.uid, ctx.gid)), Some(mode as u32))?;
             entry.attr.st_uid = ctx.uid;
             entry.attr.st_gid = ctx.gid;
             entry.attr.st_mode = mode;
