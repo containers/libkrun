@@ -57,7 +57,7 @@ struct InodeData {
 
 enum InodeHandle {
     Fd(RawFd),
-    VolPath(CString),
+    Path(CString),
 }
 
 struct DirStream {
@@ -79,12 +79,6 @@ fn einval() -> io::Error {
     linux_error(io::Error::from_raw_os_error(libc::EINVAL))
 }
 
-#[derive(Clone)]
-enum StatFile<'a> {
-    Path(&'a CString),
-    Fd(RawFd),
-}
-
 fn item_to_value(item: &[u8], radix: u32) -> Option<u32> {
     match std::str::from_utf8(item) {
         Ok(val) => match u32::from_str_radix(val, radix) {
@@ -98,49 +92,7 @@ fn item_to_value(item: &[u8], radix: u32) -> Option<u32> {
     }
 }
 
-fn get_xattr_stat(file: StatFile) -> io::Result<Option<(u32, u32, u32)>> {
-    let mut buf: Vec<u8> = vec![0; 32];
-    let res = match file {
-        StatFile::Path(path) => unsafe {
-            let st = lstat(path, true)?;
-            let options = if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
-                libc::XATTR_NOFOLLOW
-            } else {
-                0
-            };
-            libc::getxattr(
-                path.as_ptr(),
-                XATTR_KEY.as_ptr() as *const i8,
-                buf.as_mut_ptr() as *mut libc::c_void,
-                32,
-                0,
-                options,
-            )
-        },
-        StatFile::Fd(fd) => unsafe {
-            let st = fstat(fd, true)?;
-            let options = if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
-                libc::XATTR_NOFOLLOW
-            } else {
-                0
-            };
-            libc::fgetxattr(
-                fd,
-                XATTR_KEY.as_ptr() as *const i8,
-                buf.as_mut_ptr() as *mut libc::c_void,
-                64,
-                0,
-                options,
-            )
-        },
-    };
-    if res < 0 {
-        debug!("fget_xattr error: {res}");
-        return Ok(None);
-    }
-
-    buf.resize(res as usize, 0);
-
+fn get_xattr_common(buf: &Vec<u8>) -> io::Result<Option<(u32, u32, u32)>> {
     let mut items = buf.split(|c| *c == b':');
 
     let uid = match items.next() {
@@ -168,6 +120,62 @@ fn get_xattr_stat(file: StatFile) -> io::Result<Option<(u32, u32, u32)>> {
     Ok(Some((uid, gid, mode)))
 }
 
+fn get_xattr_fstat(fd: RawFd) -> io::Result<Option<(u32, u32, u32)>> {
+    let mut buf: Vec<u8> = vec![0; 32];
+    let st = fstat(fd, true)?;
+    let options = if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
+        libc::XATTR_NOFOLLOW
+    } else {
+        0
+    };
+    let res = unsafe {
+        libc::fgetxattr(
+            fd,
+            XATTR_KEY.as_ptr() as *const i8,
+            buf.as_mut_ptr() as *mut libc::c_void,
+            64,
+            0,
+            options,
+        )
+    };
+    if res < 0 {
+        debug!("fget_xattr error: {res}");
+        return Ok(None);
+    }
+
+    buf.resize(res as usize, 0);
+
+    get_xattr_common(&buf)
+}
+
+fn get_xattr_lstat(path: &CString) -> io::Result<Option<(u32, u32, u32)>> {
+    let mut buf: Vec<u8> = vec![0; 32];
+    let st = lstat(path, true)?;
+    let options = if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
+        libc::XATTR_NOFOLLOW
+    } else {
+        0
+    };
+    let res = unsafe {
+        libc::getxattr(
+            path.as_ptr(),
+            XATTR_KEY.as_ptr() as *const i8,
+            buf.as_mut_ptr() as *mut libc::c_void,
+            32,
+            0,
+            options,
+        )
+    };
+    if res < 0 {
+        debug!("fget_xattr error: {res}");
+        return Ok(None);
+    }
+
+    buf.resize(res as usize, 0);
+
+    get_xattr_common(&buf)
+}
+
 fn is_valid_owner(owner: Option<(u32, u32)>) -> bool {
     if let Some(owner) = owner {
         if owner.0 < UID_MAX && owner.1 < UID_MAX {
@@ -179,16 +187,22 @@ fn is_valid_owner(owner: Option<(u32, u32)>) -> bool {
 }
 // We won't need this once expressions like "if let ... &&" are allowed.
 #[allow(clippy::unnecessary_unwrap)]
-fn set_xattr_stat(file: StatFile, owner: Option<(u32, u32)>, mode: Option<u32>) -> io::Result<()> {
+fn set_xattr_stat(
+    file: &InodeHandle,
+    owner: Option<(u32, u32)>,
+    mode: Option<u32>,
+) -> io::Result<()> {
     let (new_owner, new_mode) = if is_valid_owner(owner) && mode.is_some() {
         (owner.unwrap(), mode.unwrap())
     } else {
-        let (orig_owner, orig_mode) =
-            if let Some((xuid, xgid, xmode)) = get_xattr_stat(file.clone())? {
-                ((xuid, xgid), xmode)
-            } else {
-                ((0, 0), 0o0777)
-            };
+        let (orig_owner, orig_mode) = if let Some((xuid, xgid, xmode)) = match file {
+            InodeHandle::Fd(fd) => get_xattr_fstat(*fd)?,
+            InodeHandle::Path(ref c_path) => get_xattr_lstat(c_path)?,
+        } {
+            ((xuid, xgid), xmode)
+        } else {
+            ((0, 0), 0o0777)
+        };
 
         let new_owner = match owner {
             Some(o) => {
@@ -205,7 +219,7 @@ fn set_xattr_stat(file: StatFile, owner: Option<(u32, u32)>, mode: Option<u32>) 
     let buf = format!("{}:{}:0{:o}", new_owner.0, new_owner.1, new_mode);
 
     let res = match file {
-        StatFile::Path(path) => unsafe {
+        InodeHandle::Path(path) => unsafe {
             let st = lstat(path, true)?;
             let options = if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
                 libc::XATTR_NOFOLLOW
@@ -221,15 +235,15 @@ fn set_xattr_stat(file: StatFile, owner: Option<(u32, u32)>, mode: Option<u32>) 
                 options,
             )
         },
-        StatFile::Fd(fd) => unsafe {
-            let st = fstat(fd, true)?;
+        InodeHandle::Fd(fd) => unsafe {
+            let st = fstat(*fd, true)?;
             let options = if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
                 libc::XATTR_NOFOLLOW
             } else {
                 0
             };
             libc::fsetxattr(
-                fd,
+                *fd,
                 XATTR_KEY.as_ptr() as *const i8,
                 buf.as_ptr() as *mut libc::c_void,
                 buf.len() as libc::size_t,
@@ -257,7 +271,7 @@ fn fstat(fd: RawFd, host: bool) -> io::Result<bindings::stat64> {
         let mut st = unsafe { st.assume_init() };
 
         if !host {
-            if let Some((uid, gid, mode)) = get_xattr_stat(StatFile::Fd(fd))? {
+            if let Some((uid, gid, mode)) = get_xattr_fstat(fd)? {
                 st.st_uid = uid;
                 st.st_gid = gid;
                 if mode as u16 & libc::S_IFMT == 0 {
@@ -285,7 +299,7 @@ fn lstat(c_path: &CString, host: bool) -> io::Result<bindings::stat64> {
         let mut st = unsafe { st.assume_init() };
 
         if !host {
-            if let Some((uid, gid, mode)) = get_xattr_stat(StatFile::Path(c_path))? {
+            if let Some((uid, gid, mode)) = get_xattr_lstat(&c_path)? {
                 st.st_uid = uid;
                 st.st_gid = gid;
                 if mode as u16 & libc::S_IFMT == 0 {
@@ -299,6 +313,13 @@ fn lstat(c_path: &CString, host: bool) -> io::Result<bindings::stat64> {
         Ok(st)
     } else {
         Err(linux_error(io::Error::last_os_error()))
+    }
+}
+
+fn istat(ihandle: &InodeHandle, host: bool) -> io::Result<bindings::stat64> {
+    match ihandle {
+        InodeHandle::Fd(fd) => fstat(*fd, host),
+        InodeHandle::Path(ref c_path) => lstat(&c_path, host),
     }
 }
 
@@ -493,7 +514,7 @@ impl PassthroughFs {
             }
         }
 
-        Ok(InodeHandle::VolPath(cstr))
+        Ok(InodeHandle::Path(cstr))
     }
 
     fn name_to_path(&self, parent: Inode, name: &CStr) -> io::Result<CString> {
@@ -543,7 +564,7 @@ impl PassthroughFs {
 
         let ihandle = self.inode_to_handle(inode, true)?;
         let fd = match ihandle {
-            InodeHandle::VolPath(c_path) => unsafe {
+            InodeHandle::Path(c_path) => unsafe {
                 libc::open(
                     c_path.as_ptr(),
                     (flags | libc::O_CLOEXEC) & (!libc::O_NOFOLLOW) & (!libc::O_EXLOCK),
@@ -745,13 +766,14 @@ impl PassthroughFs {
         // If O_TRUNC and kill_priv (OPEN_KILL_SUIDGID), clear security.capability and suid/sgid
         if (flags & libc::O_TRUNC) != 0 && kill_priv {
             let fd = file.read().unwrap().as_raw_fd();
+            let ihandle = InodeHandle::Fd(fd);
 
-            remove_security_capability(StatFile::Fd(fd));
+            remove_security_capability(&ihandle);
 
             if let Ok(st) = fstat(fd, false) {
                 let new_mode = clear_suid_sgid(st.st_mode as u32);
                 if new_mode != st.st_mode as u32 {
-                    if let Err(err) = set_xattr_stat(StatFile::Fd(fd), None, Some(new_mode)) {
+                    if let Err(err) = set_xattr_stat(&ihandle, None, Some(new_mode)) {
                         error!("Couldn't clear suid/sgid for inode {inode}: {err}");
                     }
                 }
@@ -805,7 +827,7 @@ impl PassthroughFs {
     fn do_getattr(&self, inode: Inode) -> io::Result<(bindings::stat64, Duration)> {
         let ihandle = self.inode_to_handle(inode, true)?;
         let st = match ihandle {
-            InodeHandle::VolPath(c_path) => lstat(&c_path, false)?,
+            InodeHandle::Path(c_path) => lstat(&c_path, false)?,
             InodeHandle::Fd(fd) => fstat(fd, false)?,
         };
 
@@ -844,7 +866,7 @@ impl PassthroughFs {
         let ihandle = self.inode_to_handle(parent, true)?;
 
         let (fd, close_fd) = match ihandle {
-            InodeHandle::VolPath(c_path) => unsafe {
+            InodeHandle::Path(c_path) => unsafe {
                 (
                     libc::open(c_path.as_ptr(), libc::O_NOFOLLOW | libc::O_CLOEXEC),
                     true,
@@ -923,10 +945,10 @@ impl PassthroughFs {
     }
 }
 
-fn set_secctx(file: StatFile, secctx: SecContext, symlink: bool) -> io::Result<()> {
+fn set_secctx(file: &InodeHandle, secctx: SecContext, symlink: bool) -> io::Result<()> {
     let options = if symlink { libc::XATTR_NOFOLLOW } else { 0 };
     let ret = match file {
-        StatFile::Path(path) => unsafe {
+        InodeHandle::Path(path) => unsafe {
             libc::setxattr(
                 path.as_ptr(),
                 secctx.name.as_ptr(),
@@ -936,9 +958,9 @@ fn set_secctx(file: StatFile, secctx: SecContext, symlink: bool) -> io::Result<(
                 options,
             )
         },
-        StatFile::Fd(fd) => unsafe {
+        InodeHandle::Fd(fd) => unsafe {
             libc::fsetxattr(
-                fd,
+                *fd,
                 secctx.name.as_ptr(),
                 secctx.secctx.as_ptr() as *const libc::c_void,
                 secctx.secctx.len(),
@@ -956,13 +978,13 @@ fn set_secctx(file: StatFile, secctx: SecContext, symlink: bool) -> io::Result<(
 }
 
 /// Remove the security.capability extended attribute
-fn remove_security_capability(file: StatFile) {
+fn remove_security_capability(file: &InodeHandle) {
     let ret = match file {
-        StatFile::Path(path) => unsafe {
+        InodeHandle::Path(path) => unsafe {
             libc::removexattr(path.as_ptr(), SECURITY_CAPABILITY.as_ptr() as *const i8, 0)
         },
-        StatFile::Fd(fd) => unsafe {
-            libc::fremovexattr(fd, SECURITY_CAPABILITY.as_ptr() as *const i8, 0)
+        InodeHandle::Fd(fd) => unsafe {
+            libc::fremovexattr(*fd, SECURITY_CAPABILITY.as_ptr() as *const i8, 0)
         },
     };
 
@@ -1104,7 +1126,7 @@ impl FileSystem for PassthroughFs {
         let mut out = MaybeUninit::<bindings::statvfs64>::zeroed();
 
         let res = match self.inode_to_handle(inode, true)? {
-            InodeHandle::VolPath(c_path) => unsafe {
+            InodeHandle::Path(c_path) => unsafe {
                 bindings::statvfs64(c_path.as_ptr(), out.as_mut_ptr())
             },
             InodeHandle::Fd(fd) => unsafe { bindings::fstatvfs64(fd, out.as_mut_ptr()) },
@@ -1202,16 +1224,13 @@ impl FileSystem for PassthroughFs {
         // Safe because this doesn't modify any memory and we check the return value.
         let res = unsafe { libc::mkdir(c_path.as_ptr(), 0o700) };
         if res == 0 {
+            let ihandle = InodeHandle::Path(c_path);
             // Set security context
             if let Some(secctx) = extensions.secctx {
-                set_secctx(StatFile::Path(&c_path), secctx, false)?
+                set_secctx(&ihandle, secctx, false)?
             };
 
-            set_xattr_stat(
-                StatFile::Path(&c_path),
-                Some((ctx.uid, ctx.gid)),
-                Some(mode & !umask),
-            )?;
+            set_xattr_stat(&ihandle, Some((ctx.uid, ctx.gid)), Some(mode & !umask))?;
             self.do_lookup(parent, name)
         } else {
             Err(linux_error(io::Error::last_os_error()))
@@ -1323,9 +1342,10 @@ impl FileSystem for PassthroughFs {
         if fd < 0 {
             return Err(linux_error(io::Error::last_os_error()));
         }
+        let ihandle = InodeHandle::Fd(fd);
 
         if let Err(e) = set_xattr_stat(
-            StatFile::Fd(fd),
+            &ihandle,
             Some((ctx.uid, ctx.gid)),
             Some(libc::S_IFREG as u32 | (mode & !(umask & 0o777))),
         ) {
@@ -1335,14 +1355,14 @@ impl FileSystem for PassthroughFs {
 
         // Set security context
         if let Some(secctx) = extensions.secctx {
-            set_secctx(StatFile::Fd(fd), secctx, false)?
+            set_secctx(&ihandle, secctx, false)?
         };
 
         // If O_TRUNC and kill_priv (OPEN_KILL_SUIDGID), clear security.capability.
         // We don't need to clear suid/sgid here because we've just updated them
         // unconditionally above.
         if (flags & libc::O_TRUNC) != 0 && kill_priv {
-            remove_security_capability(StatFile::Fd(fd));
+            remove_security_capability(&ihandle);
         }
 
         // Safe because we just opened this fd.
@@ -1445,14 +1465,15 @@ impl FileSystem for PassthroughFs {
         // If write succeeded and kill_priv is set, clear security.capability and suid/sgid
         if result.is_ok() && kill_priv {
             let fd = f.as_raw_fd();
+            let ihandle = InodeHandle::Fd(fd);
 
-            remove_security_capability(StatFile::Fd(fd));
+            remove_security_capability(&ihandle);
 
             if let Ok(st) = fstat(fd, false) {
                 let new_mode = clear_suid_sgid(st.st_mode as u32);
                 if new_mode != st.st_mode as u32 {
                     // Update mode in xattr
-                    if let Err(err) = set_xattr_stat(StatFile::Fd(fd), None, Some(new_mode)) {
+                    if let Err(err) = set_xattr_stat(&ihandle, None, Some(new_mode)) {
                         error!("Couldn't clear suid/sgid for inode {inode}: {err}");
                     }
                 }
@@ -1479,13 +1500,8 @@ impl FileSystem for PassthroughFs {
         handle: Option<Handle>,
         valid: SetattrValid,
     ) -> io::Result<(bindings::stat64, Duration)> {
-        enum Data {
-            Handle(RawFd),
-            FilePath(CString),
-        }
-
         // If we have a handle then use it otherwise get a new fd from the inode.
-        let data = if let Some(handle) = handle {
+        let ihandle = if let Some(handle) = handle {
             let hd = self
                 .handles
                 .read()
@@ -1496,23 +1512,13 @@ impl FileSystem for PassthroughFs {
                 .ok_or_else(ebadf)?;
 
             let fd = hd.file.write().unwrap().as_raw_fd();
-            Data::Handle(fd)
+            InodeHandle::Fd(fd)
         } else {
-            match self.inode_to_handle(inode, true)? {
-                InodeHandle::VolPath(c_path) => Data::FilePath(c_path),
-                InodeHandle::Fd(fd) => Data::Handle(fd),
-            }
+            self.inode_to_handle(inode, true)?
         };
 
         if valid.contains(SetattrValid::MODE) {
-            match data {
-                Data::Handle(fd) => {
-                    set_xattr_stat(StatFile::Fd(fd), None, Some(attr.st_mode as u32))?
-                }
-                Data::FilePath(ref c_path) => {
-                    set_xattr_stat(StatFile::Path(c_path), None, Some(attr.st_mode as u32))?
-                }
-            }
+            set_xattr_stat(&ihandle, None, Some(attr.st_mode as u32))?
         }
 
         if valid.intersects(SetattrValid::UID | SetattrValid::GID) {
@@ -1529,18 +1535,8 @@ impl FileSystem for PassthroughFs {
                 u32::MAX
             };
 
-            let st = match data {
-                Data::Handle(fd) => {
-                    // Clear security.capability on chown unconditionally
-                    remove_security_capability(StatFile::Fd(fd));
-                    fstat(fd, false)?
-                }
-                Data::FilePath(ref c_path) => {
-                    // Clear security.capability on chown unconditionally
-                    remove_security_capability(StatFile::Path(c_path));
-                    lstat(c_path, false)?
-                }
-            };
+            remove_security_capability(&ihandle);
+            let st = istat(&ihandle, false)?;
 
             // Clear suid/sgid if UID or GID is being changed
             let new_mode = clear_suid_sgid(st.st_mode as u32);
@@ -1549,49 +1545,47 @@ impl FileSystem for PassthroughFs {
             } else {
                 None
             };
-            match data {
-                Data::Handle(fd) => {
-                    set_xattr_stat(StatFile::Fd(fd), Some((uid, gid)), new_mode)?;
-                }
-                Data::FilePath(ref c_path) => {
-                    set_xattr_stat(StatFile::Path(c_path), Some((uid, gid)), new_mode)?;
-                }
-            }
+            set_xattr_stat(&ihandle, Some((uid, gid)), new_mode)?;
         }
 
         if valid.contains(SetattrValid::SIZE) {
             // Safe because this doesn't modify any memory and we check the return value.
-            let res = match data {
-                Data::Handle(fd) => unsafe { libc::ftruncate(fd, attr.st_size) },
-                _ => {
-                    // There is no `ftruncateat` so we need to get a new fd and truncate it.
-                    let f = self.open_inode(inode, libc::O_NONBLOCK | libc::O_RDWR)?;
-                    unsafe { libc::ftruncate(f.as_raw_fd(), attr.st_size) }
-                }
-            };
-            if res < 0 {
-                return Err(linux_error(io::Error::last_os_error()));
-            }
+            match ihandle {
+                InodeHandle::Fd(fd) => {
+                    let res = unsafe { libc::ftruncate(fd, attr.st_size) };
+                    if res < 0 {
+                        return Err(linux_error(io::Error::last_os_error()));
+                    }
 
-            // Clear security.capability on truncate unconditionally
-            match data {
-                Data::Handle(fd) => {
-                    remove_security_capability(StatFile::Fd(fd));
+                    // Clear security.capability on truncate unconditionally
+                    remove_security_capability(&ihandle);
                     let st = fstat(fd, false)?;
                     let new_mode = clear_suid_sgid(st.st_mode as u32);
                     if new_mode != st.st_mode as u32 {
-                        set_xattr_stat(StatFile::Fd(fd), None, Some(new_mode))?;
+                        set_xattr_stat(&ihandle, None, Some(new_mode))?;
                     }
                 }
-                Data::FilePath(ref c_path) => {
-                    remove_security_capability(StatFile::Path(c_path));
-                    let st = lstat(c_path, false)?;
+                InodeHandle::Path(_) => {
+                    // There is no `ftruncateat` so we need to get a new fd and truncate it.
+                    let f = self.open_inode(inode, libc::O_NONBLOCK | libc::O_RDWR)?;
+                    let res = unsafe { libc::ftruncate(f.as_raw_fd(), attr.st_size) };
+                    if res < 0 {
+                        return Err(linux_error(io::Error::last_os_error()));
+                    }
+
+                    // Clear security.capability on truncate unconditionally
+                    //
+                    // Do this here even if it means duplicating the code above to be able to
+                    // reuse the FD we just opened, thus reducing the number of syscalls.
+                    let ihandle = InodeHandle::Fd(f.as_raw_fd());
+                    remove_security_capability(&ihandle);
+                    let st = istat(&ihandle, false)?;
                     let new_mode = clear_suid_sgid(st.st_mode as u32);
                     if new_mode != st.st_mode as u32 {
-                        set_xattr_stat(StatFile::Path(c_path), None, Some(new_mode))?;
+                        set_xattr_stat(&ihandle, None, Some(new_mode))?;
                     }
                 }
-            }
+            };
         }
 
         if valid.intersects(SetattrValid::ATIME | SetattrValid::MTIME) {
@@ -1621,9 +1615,9 @@ impl FileSystem for PassthroughFs {
             }
 
             // Safe because this doesn't modify any memory and we check the return value.
-            let res = match data {
-                Data::Handle(fd) => unsafe { libc::futimens(fd, tvs.as_ptr()) },
-                Data::FilePath(ref c_path) => unsafe {
+            let res = match ihandle {
+                InodeHandle::Fd(fd) => unsafe { libc::futimens(fd, tvs.as_ptr()) },
+                InodeHandle::Path(ref c_path) => unsafe {
                     let fd = libc::open(c_path.as_ptr(), libc::O_SYMLINK | libc::O_CLOEXEC);
                     let res = libc::futimens(fd, tvs.as_ptr());
                     libc::close(fd);
@@ -1675,9 +1669,11 @@ impl FileSystem for PassthroughFs {
                     )
                 };
                 if fd > 0 {
-                    if let Err(e) =
-                        set_xattr_stat(StatFile::Fd(fd), None, Some((libc::S_IFCHR | 0o600) as u32))
-                    {
+                    if let Err(e) = set_xattr_stat(
+                        &InodeHandle::Fd(fd),
+                        None,
+                        Some((libc::S_IFCHR | 0o600) as u32),
+                    ) {
                         unsafe { libc::close(fd) };
                         return Err(e);
                     }
@@ -1716,16 +1712,15 @@ impl FileSystem for PassthroughFs {
         if fd < 0 {
             Err(linux_error(io::Error::last_os_error()))
         } else {
+            let ihandle = InodeHandle::Fd(fd);
+
             // Set security context
             if let Some(secctx) = extensions.secctx {
-                set_secctx(StatFile::Fd(fd), secctx, false)?
+                set_secctx(&ihandle, secctx, false)?
             };
 
-            if let Err(e) = set_xattr_stat(
-                StatFile::Fd(fd),
-                Some((ctx.uid, ctx.gid)),
-                Some(mode & !umask),
-            ) {
+            if let Err(e) = set_xattr_stat(&ihandle, Some((ctx.uid, ctx.gid)), Some(mode & !umask))
+            {
                 unsafe { libc::close(fd) };
                 return Err(e);
             }
@@ -1743,7 +1738,7 @@ impl FileSystem for PassthroughFs {
         newname: &CStr,
     ) -> io::Result<Entry> {
         let orig_c_path = match self.inode_to_handle(inode, false)? {
-            InodeHandle::VolPath(c_path) => c_path,
+            InodeHandle::Path(c_path) => c_path,
             InodeHandle::Fd(_) => return Err(ebadf()),
         };
         let link_c_path = self.name_to_path(newparent, newname)?;
@@ -1770,18 +1765,16 @@ impl FileSystem for PassthroughFs {
         // Safe because this doesn't modify any memory and we check the return value.
         let res = unsafe { libc::symlink(linkname.as_ptr(), c_path.as_ptr()) };
         if res == 0 {
+            let ihandle = InodeHandle::Path(c_path);
+
             // Set security context
             if let Some(secctx) = extensions.secctx {
-                set_secctx(StatFile::Path(&c_path), secctx, true)?
+                set_secctx(&ihandle, secctx, true)?
             };
 
             let mut entry = self.do_lookup(parent, name)?;
             let mode = libc::S_IFLNK | 0o777;
-            set_xattr_stat(
-                StatFile::Path(&c_path),
-                Some((ctx.uid, ctx.gid)),
-                Some(mode as u32),
-            )?;
+            set_xattr_stat(&ihandle, Some((ctx.uid, ctx.gid)), Some(mode as u32))?;
             entry.attr.st_uid = ctx.uid;
             entry.attr.st_gid = ctx.gid;
             entry.attr.st_mode = mode;
@@ -1795,7 +1788,7 @@ impl FileSystem for PassthroughFs {
         let mut buf = vec![0; libc::PATH_MAX as usize];
 
         let res = match self.inode_to_handle(inode, true)? {
-            InodeHandle::VolPath(c_path) => unsafe {
+            InodeHandle::Path(c_path) => unsafe {
                 libc::readlink(
                     c_path.as_ptr(),
                     buf.as_mut_ptr() as *mut libc::c_char,
@@ -1887,7 +1880,7 @@ impl FileSystem for PassthroughFs {
 
     fn access(&self, ctx: Context, inode: Inode, mask: u32) -> io::Result<()> {
         let st = match self.inode_to_handle(inode, true)? {
-            InodeHandle::VolPath(c_path) => lstat(&c_path, false)?,
+            InodeHandle::Path(c_path) => lstat(&c_path, false)?,
             InodeHandle::Fd(fd) => fstat(fd, false)?,
         };
 
@@ -1965,7 +1958,7 @@ impl FileSystem for PassthroughFs {
 
         // Safe because this doesn't modify any memory and we check the return value.
         let res = match self.inode_to_handle(inode, true)? {
-            InodeHandle::VolPath(c_path) => unsafe {
+            InodeHandle::Path(c_path) => unsafe {
                 libc::setxattr(
                     c_path.as_ptr(),
                     name.as_ptr(),
@@ -2019,7 +2012,7 @@ impl FileSystem for PassthroughFs {
 
         // Safe because this will only modify the contents of `buf`
         let res = match self.inode_to_handle(inode, true)? {
-            InodeHandle::VolPath(c_path) => unsafe {
+            InodeHandle::Path(c_path) => unsafe {
                 if size == 0 {
                     libc::getxattr(
                         c_path.as_ptr(),
@@ -2083,7 +2076,7 @@ impl FileSystem for PassthroughFs {
 
         // Safe because this will only modify the contents of `buf`.
         let res = match self.inode_to_handle(inode, true)? {
-            InodeHandle::VolPath(c_path) => unsafe {
+            InodeHandle::Path(c_path) => unsafe {
                 libc::listxattr(
                     c_path.as_ptr(),
                     buf.as_mut_ptr() as *mut libc::c_char,
@@ -2146,7 +2139,7 @@ impl FileSystem for PassthroughFs {
 
         // Safe because this doesn't modify any memory and we check the return value.
         let res = match self.inode_to_handle(inode, true)? {
-            InodeHandle::VolPath(c_path) => unsafe {
+            InodeHandle::Path(c_path) => unsafe {
                 libc::removexattr(c_path.as_ptr(), name.as_ptr(), 0)
             },
             InodeHandle::Fd(fd) => unsafe { libc::fremovexattr(fd, name.as_ptr(), 0) },
