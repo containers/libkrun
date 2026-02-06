@@ -294,6 +294,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "capng"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a26766f93f07f7e8b8309ed2824fa2a68f5d12d219de855e24688e9fbe89e85"
+dependencies = [
+ "bitflags 1.3.2",
+ "libc",
+]
+
+[[package]]
 name = "caps"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -438,6 +448,7 @@ version = "0.1.0"
 dependencies = [
  "arch",
  "bitflags 1.3.2",
+ "capng",
  "caps",
  "crossbeam-channel",
  "hvf",

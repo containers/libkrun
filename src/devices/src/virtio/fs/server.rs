@@ -512,12 +512,18 @@ impl<F: FileSystem + Sync> Server<F> {
     }
 
     fn open(&self, in_header: InHeader, mut r: Reader, w: Writer) -> Result<usize> {
-        let OpenIn { flags, .. } = r.read_obj().map_err(Error::DecodeMessage)?;
+        let OpenIn {
+            flags, open_flags, ..
+        } = r.read_obj().map_err(Error::DecodeMessage)?;
 
-        match self
-            .fs
-            .open(Context::from(in_header), in_header.nodeid.into(), flags)
-        {
+        let kill_priv = open_flags & OPEN_KILL_SUIDGID != 0;
+
+        match self.fs.open(
+            Context::from(in_header),
+            in_header.nodeid.into(),
+            kill_priv,
+            flags,
+        ) {
             Ok((handle, opts)) => {
                 let out = OpenOut {
                     fh: handle.map(Into::into).unwrap_or(0),
@@ -888,6 +894,7 @@ impl<F: FileSystem + Sync> Server<F> {
             | FsOptions::ATOMIC_O_TRUNC
             | FsOptions::MAX_PAGES
             | FsOptions::SUBMOUNTS
+            | FsOptions::HANDLE_KILLPRIV_V2
             | FsOptions::INIT_EXT
             | FsOptions::ALLOW_IDMAP;
 
@@ -1091,7 +1098,11 @@ impl<F: FileSystem + Sync> Server<F> {
 
     fn create(&self, in_header: InHeader, mut r: Reader, w: Writer) -> Result<usize> {
         let CreateIn {
-            flags, mode, umask, ..
+            flags,
+            mode,
+            umask,
+            open_flags,
+            ..
         } = r.read_obj().map_err(Error::DecodeMessage)?;
 
         let namelen = (in_header.len as usize)
@@ -1109,11 +1120,14 @@ impl<F: FileSystem + Sync> Server<F> {
 
         let extensions = get_extensions(options, name.len(), buf.as_slice())?;
 
+        let kill_priv = open_flags & OPEN_KILL_SUIDGID != 0;
+
         match self.fs.create(
             Context::from(in_header),
             in_header.nodeid.into(),
             bytes_to_cstr(name)?,
             mode,
+            kill_priv,
             flags,
             umask,
             extensions,
