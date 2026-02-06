@@ -7,14 +7,14 @@ edition = "2021"
 aws-nitro = []
 
 [dependencies]
-libc = "0.2.171"
-nix = { version = "0.30.1", features = ["poll"] }
-tar = "0.4.44"
-vsock = "0.5.1"
+libc = "0.2"
+nix = { version = "0.30", features = ["poll"] }
+tar = "0.4"
+vsock = "0.5"
 
 devices = { path = "../devices" }
 log = "0.4"
-signal-hook = "0.4.1"
+signal-hook = "0.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nitro-enclaves = "0.6.0"
