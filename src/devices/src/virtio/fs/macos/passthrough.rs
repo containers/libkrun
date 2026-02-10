@@ -61,13 +61,46 @@ enum InodeHandle {
 
 struct DirStream {
     stream: u64,
-    offset: i64,
+}
+
+impl DirStream {
+    pub fn new(ihandle: &InodeHandle) -> Result<Self, io::Error> {
+        let c_path = match ihandle {
+            InodeHandle::Fd(_) => return Err(einval()),
+            InodeHandle::VolPath(c_path) => c_path,
+        };
+
+        let dir = unsafe { libc::opendir(c_path.as_ptr()) };
+        if dir.is_null() {
+            return Err(linux_error(io::Error::last_os_error()));
+        }
+
+        Ok(Self { stream: dir as u64 })
+    }
+
+    pub fn telldir(&mut self) -> i64 {
+        unsafe { libc::telldir(self.stream as *mut libc::DIR) }
+    }
+
+    pub fn seekdir(&mut self, new_offset: i64) {
+        unsafe { libc::seekdir(self.stream as *mut libc::DIR, new_offset) };
+    }
+
+    pub fn readdir(&mut self) -> *mut libc::dirent {
+        unsafe { libc::readdir(self.stream as *mut libc::DIR) }
+    }
+}
+
+impl Drop for DirStream {
+    fn drop(&mut self) {
+        unsafe { libc::closedir(self.stream as *mut libc::DIR) };
+    }
 }
 
 struct HandleData {
     inode: Inode,
     file: RwLock<File>,
-    dirstream: Mutex<DirStream>,
+    dirstream: Mutex<Option<DirStream>>,
 }
 
 fn ebadf() -> io::Error {
@@ -654,33 +687,23 @@ impl PassthroughFs {
             .cloned()
             .ok_or_else(ebadf)?;
 
-        let mut ds = data.dirstream.lock().unwrap();
-
-        let dir_stream = if ds.stream == 0 {
-            // fdopendir() seems to be bogus on macOS, so we need to obtain a path to
-            // the inode to be able to use opendir() instead.
-            let c_path = match self.inode_to_handle(inode, false)? {
-                InodeHandle::Fd(_) => return Err(ebadf()),
-                InodeHandle::VolPath(c_path) => c_path,
-            };
-            let dir = unsafe { libc::opendir(c_path.as_ptr()) };
-            if dir.is_null() {
-                return Err(linux_error(io::Error::last_os_error()));
-            }
-            ds.stream = dir as u64;
-            dir
-        } else {
-            ds.stream as *mut libc::DIR
-        };
-
-        if (offset as i64) != ds.offset {
-            unsafe { libc::seekdir(dir_stream, offset as i64) };
+        let mut dslock = data.dirstream.lock().unwrap();
+        if dslock.is_none() {
+            // fdopendir() seems to be bogus on macOS, so we need a path to be able
+            // to use opendir().
+            let ihandle = self.inode_to_handle(inode, false)?;
+            let ds = DirStream::new(&ihandle)?;
+            dslock.replace(ds);
         }
 
-        loop {
-            ds.offset = unsafe { libc::telldir(dir_stream) };
+        let ds = dslock.as_mut().unwrap();
+        ds.seekdir(offset.try_into().map_err(|_| einval())?);
 
-            let dentry = unsafe { libc::readdir(dir_stream) };
+        loop {
+            // telldir() may return a different value than what we set with seekdir().
+            let offset = ds.telldir();
+
+            let dentry = ds.readdir();
             if dentry.is_null() {
                 break;
             }
@@ -703,7 +726,7 @@ impl PassthroughFs {
             let res = unsafe {
                 add_entry(DirEntry {
                     ino: (*dentry).d_ino,
-                    offset: (ds.offset + 1) as u64,
+                    offset: (offset + 1) as u64,
                     type_: u32::from((*dentry).d_type),
                     name: &name,
                 })
@@ -712,7 +735,7 @@ impl PassthroughFs {
             match res {
                 Ok(size) => {
                     if size == 0 {
-                        unsafe { libc::seekdir(dir_stream, ds.offset) };
+                        ds.seekdir(offset);
                         break;
                     }
                 }
@@ -739,10 +762,7 @@ impl PassthroughFs {
         let data = HandleData {
             inode,
             file,
-            dirstream: Mutex::new(DirStream {
-                stream: 0,
-                offset: 0,
-            }),
+            dirstream: Mutex::new(None),
         };
 
         self.handles.write().unwrap().insert(handle, Arc::new(data));
@@ -1105,10 +1125,8 @@ impl FileSystem for PassthroughFs {
             .cloned()
             .ok_or_else(ebadf)?;
 
-        let ds = data.dirstream.lock().unwrap();
-        if ds.stream != 0 {
-            unsafe { libc::closedir(ds.stream as *mut libc::DIR) };
-        }
+        // Take DirStream out of the Option so it gets dropped.
+        let _ = data.dirstream.lock().unwrap().take();
 
         self.do_release(inode, handle)
     }
@@ -1270,10 +1288,7 @@ impl FileSystem for PassthroughFs {
         let data = HandleData {
             inode: entry.inode,
             file,
-            dirstream: Mutex::new(DirStream {
-                stream: 0,
-                offset: 0,
-            }),
+            dirstream: Mutex::new(None),
         };
 
         self.handles.write().unwrap().insert(handle, Arc::new(data));
