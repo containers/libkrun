@@ -657,9 +657,17 @@ impl PassthroughFs {
         let mut ds = data.dirstream.lock().unwrap();
 
         let dir_stream = if ds.stream == 0 {
-            let dir = unsafe { libc::fdopendir(data.file.write().unwrap().as_raw_fd()) };
-            if dir.is_null() {
+            // fdopendir() takes ownership of the fd, so we need to obtain a new one
+            // to be donated.
+            let newfd = unsafe { libc::dup(data.file.write().unwrap().as_raw_fd()) };
+            if newfd < 0 {
                 return Err(linux_error(io::Error::last_os_error()));
+            }
+            let dir = unsafe { libc::fdopendir(newfd) };
+            if dir.is_null() {
+                let err = io::Error::last_os_error();
+                let _ = unsafe { libc::close(newfd) };
+                return Err(linux_error(err));
             }
             ds.stream = dir as u64;
             dir
