@@ -657,7 +657,13 @@ impl PassthroughFs {
         let mut ds = data.dirstream.lock().unwrap();
 
         let dir_stream = if ds.stream == 0 {
-            let dir = unsafe { libc::fdopendir(data.file.write().unwrap().as_raw_fd()) };
+            // fdopendir() seems to be bogus on macOS, so we need to obtain a path to
+            // the inode to be able to use opendir() instead.
+            let c_path = match self.inode_to_handle(inode, false)? {
+                InodeHandle::Fd(_) => return Err(ebadf()),
+                InodeHandle::VolPath(c_path) => c_path,
+            };
+            let dir = unsafe { libc::opendir(c_path.as_ptr()) };
             if dir.is_null() {
                 return Err(linux_error(io::Error::last_os_error()));
             }
