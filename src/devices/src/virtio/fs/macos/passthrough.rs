@@ -783,19 +783,24 @@ impl PassthroughFs {
         Ok((st, self.cfg.attr_timeout))
     }
 
-    fn store_unlinked_fd(&self, parent_fd: RawFd, name: &CStr) -> io::Result<()> {
+    fn grab_unlinked_fd(&self, parent_fd: RawFd, name: &CStr) -> io::Result<RawFd> {
         let fd =
             unsafe { libc::openat(parent_fd, name.as_ptr(), libc::O_NOFOLLOW | libc::O_CLOEXEC) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
-        let st = fstat(fd, true)?;
+        Ok(fd)
+    }
+
+    fn store_unlinked_fd(&self, unlinked_fd: RawFd) -> io::Result<()> {
+        let st = fstat(unlinked_fd, true)?;
         let altkey = InodeAltKey {
             ino: st.st_ino,
             dev: st.st_dev,
         };
         if let Some(data) = self.inodes.read().unwrap().get_alt(&altkey).cloned() {
-            data.unlinked_fd.store(fd as i64, Ordering::Release);
+            data.unlinked_fd
+                .store(unlinked_fd as i64, Ordering::Release);
         }
         Ok(())
     }
@@ -825,12 +830,16 @@ impl PassthroughFs {
         // After unlinking this inode, we can't keep relying on getting a "/.vol/..." path
         // to operate on it. Before unlinking the inode, grab a file descriptor so we can
         // still operate on it. This one will be closed on "forget_one".
-        if let Err(err) = self.store_unlinked_fd(fd, name) {
-            warn!(
-                "Couldn't grab a file descriptor for file \"{}\": {err}",
-                name.to_string_lossy()
-            );
-        }
+        let unlinked_fd = match self.grab_unlinked_fd(fd, name) {
+            Ok(fd) => Some(fd),
+            Err(err) => {
+                warn!(
+                    "Couldn't grab a file descriptor for file \"{}\": {err}",
+                    name.to_string_lossy()
+                );
+                None
+            }
+        };
 
         // Safe because this doesn't modify any memory and we check the return value.
         let res = unsafe { libc::unlinkat(fd, name.as_ptr(), flags) };
@@ -841,6 +850,12 @@ impl PassthroughFs {
         }
 
         if res == 0 {
+            if let Some(unlinked_fd) = unlinked_fd {
+                if let Err(err) = self.store_unlinked_fd(unlinked_fd) {
+                    unsafe { libc::close(unlinked_fd) };
+                    warn!("Couldn't store unlinked fd \"{}\": {err}", unlinked_fd);
+                }
+            }
             Ok(())
         } else {
             Err(linux_error(err))
