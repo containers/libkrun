@@ -607,6 +607,20 @@ impl VsockPacket {
                     std::slice::from_raw_parts(addr_ptr as *const u8, rsp.addr.len() as usize)
                 };
                 buf[8..(rsp.addr.len() + 8) as usize].copy_from_slice(slice);
+
+                // On macOS, convert BSD sockaddr (u8 sa_len + u8 sa_family) to
+                // Linux wire format (u16 sa_family). Also translate macOS AF_*
+                // values to their Linux equivalents (e.g. AF_INET6: 30 → 10).
+                #[cfg(target_os = "macos")]
+                {
+                    let bsd_family = buf[9];
+                    let linux_family: u16 = match bsd_family as i32 {
+                        libc::AF_INET => defs::LINUX_AF_INET,
+                        libc::AF_INET6 => defs::LINUX_AF_INET6,
+                        _ => 0, // AF_UNSPEC
+                    };
+                    byte_order::write_le_u16(&mut buf[8..], linux_family);
+                }
             }
         }
     }
