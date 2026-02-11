@@ -10,7 +10,10 @@ OS=$(uname -s)
 ARCH=$(uname -m)
 
 # Run the unit tests first (this tests the testing framework itself not libkrun)
-cargo test -p test_cases --features guest
+# Only run on Linux - guest code uses Linux-specific ioctls
+if [ "$OS" = "Linux" ]; then
+	cargo test -p test_cases --features guest
+fi
 
 # Determine guest target architecture
 # macOS uses arm64 but Rust uses aarch64
