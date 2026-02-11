@@ -13,7 +13,10 @@ ARCH=$(uname -m | sed 's/^arm64$/aarch64/')
 GUEST_TARGET="${ARCH}-unknown-linux-musl"
 
 # Run the unit tests first (this tests the testing framework itself not libkrun)
-cargo test -p test_cases --features guest
+# Only run on Linux - guest code uses Linux-specific ioctls
+if [ "$OS" = "Linux" ]; then
+	cargo test -p test_cases --features guest
+fi
 
 # On macOS, we need to cross-compile for Linux musl
 if [ "$OS" = "Darwin" ]; then
