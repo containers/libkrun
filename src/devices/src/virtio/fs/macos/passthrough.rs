@@ -59,9 +59,76 @@ enum InodeHandle {
     VolPath(CString),
 }
 
+struct CachedDirEntry {
+    ino: bindings::ino64_t,
+    name: Box<[u8]>,
+    type_: u8,
+}
+
 struct DirStream {
-    stream: u64,
-    offset: i64,
+    entries: Vec<CachedDirEntry>,
+    ready: bool,
+}
+
+impl DirStream {
+    fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            ready: false,
+        }
+    }
+
+    fn get_entry<'a>(&'a self, offset: u64) -> Option<DirEntry<'a>> {
+        self.entries.get(offset as usize).map(|e| DirEntry {
+            ino: e.ino,
+            offset: offset + 1,
+            type_: u32::from(e.type_),
+            name: &e.name,
+        })
+    }
+
+    fn fill_from_fd(&mut self, fd: RawFd) -> io::Result<()> {
+        // fdopendir() takes ownership of the fd, so we need to obtain a new one
+        // to be donated.
+        let newfd = unsafe { libc::dup(fd) };
+        if newfd < 0 {
+            return Err(linux_error(io::Error::last_os_error()));
+        }
+        let dir = unsafe { libc::fdopendir(newfd) };
+        if dir.is_null() {
+            let err = io::Error::last_os_error();
+            let _ = unsafe { libc::close(newfd) };
+            return Err(linux_error(err));
+        }
+
+        loop {
+            let dentry = unsafe { libc::readdir(dir) };
+            if dentry.is_null() {
+                break;
+            }
+            let name = unsafe {
+                let name_len = (*dentry).d_namlen as usize;
+                let name_ptr = (*dentry).d_name.as_ptr() as *const u8;
+                std::slice::from_raw_parts(name_ptr, name_len)
+            };
+
+            if name == b"." || name == b".." {
+                continue;
+            }
+
+            let ino = unsafe { (*dentry).d_ino };
+            let type_ = unsafe { (*dentry).d_type };
+
+            self.entries.push(CachedDirEntry {
+                ino,
+                name: name.into(),
+                type_,
+            });
+        }
+
+        unsafe { libc::closedir(dir) };
+        Ok(())
+    }
 }
 
 struct HandleData {
@@ -635,7 +702,7 @@ impl PassthroughFs {
         inode: Inode,
         handle: Handle,
         size: u32,
-        offset: u64,
+        mut offset: u64,
         mut add_entry: F,
     ) -> io::Result<()>
     where
@@ -656,72 +723,26 @@ impl PassthroughFs {
 
         let mut ds = data.dirstream.lock().unwrap();
 
-        let dir_stream = if ds.stream == 0 {
-            // fdopendir() takes ownership of the fd, so we need to obtain a new one
-            // to be donated.
-            let newfd = unsafe { libc::dup(data.file.write().unwrap().as_raw_fd()) };
-            if newfd < 0 {
-                return Err(linux_error(io::Error::last_os_error()));
-            }
-            let dir = unsafe { libc::fdopendir(newfd) };
-            if dir.is_null() {
-                let err = io::Error::last_os_error();
-                let _ = unsafe { libc::close(newfd) };
-                return Err(linux_error(err));
-            }
-            ds.stream = dir as u64;
-            dir
-        } else {
-            ds.stream as *mut libc::DIR
-        };
-
-        if (offset as i64) != ds.offset {
-            unsafe { libc::seekdir(dir_stream, offset as i64) };
+        if !ds.ready {
+            // Fill the cache on first call
+            ds.fill_from_fd(data.file.write().unwrap().as_raw_fd())?;
+            ds.ready = true;
         }
 
-        loop {
-            ds.offset = unsafe { libc::telldir(dir_stream) };
+        while let Some(entry) = ds.get_entry(offset) {
+            offset += 1;
 
-            let dentry = unsafe { libc::readdir(dir_stream) };
-            if dentry.is_null() {
-                break;
-            }
-
-            let mut name: Vec<u8> = Vec::new();
-
-            unsafe {
-                for c in &(*dentry).d_name {
-                    if *c == 0 {
-                        break;
-                    }
-                    name.push(*c as u8);
-                }
-            }
-
-            if name == b"." || name == b".." {
-                continue;
-            }
-
-            let res = unsafe {
-                add_entry(DirEntry {
-                    ino: (*dentry).d_ino,
-                    offset: (ds.offset + 1) as u64,
-                    type_: u32::from((*dentry).d_type),
-                    name: &name,
-                })
-            };
-
-            match res {
+            let name = entry.name;
+            match add_entry(entry) {
                 Ok(size) => {
                     if size == 0 {
-                        unsafe { libc::seekdir(dir_stream, ds.offset) };
                         break;
                     }
                 }
                 Err(e) => {
                     warn!(
                         "virtio-fs: error adding entry {}: {:?}",
-                        std::str::from_utf8(&name).unwrap(),
+                        String::from_utf8_lossy(name),
                         e
                     );
                     break;
@@ -741,10 +762,7 @@ impl PassthroughFs {
         let data = HandleData {
             inode,
             file,
-            dirstream: Mutex::new(DirStream {
-                stream: 0,
-                offset: 0,
-            }),
+            dirstream: Mutex::new(DirStream::new()),
         };
 
         self.handles.write().unwrap().insert(handle, Arc::new(data));
@@ -1113,21 +1131,6 @@ impl FileSystem for PassthroughFs {
         _flags: u32,
         handle: Handle,
     ) -> io::Result<()> {
-        let data = self
-            .handles
-            .read()
-            .unwrap()
-            .get(&handle)
-            .filter(|hd| hd.inode == inode)
-            .cloned()
-            .ok_or_else(ebadf)?;
-
-        let mut ds = data.dirstream.lock().unwrap();
-        if ds.stream != 0 {
-            unsafe { libc::closedir(ds.stream as *mut libc::DIR) };
-            ds.stream = 0;
-        }
-
         self.do_release(inode, handle)
     }
 
@@ -1288,10 +1291,7 @@ impl FileSystem for PassthroughFs {
         let data = HandleData {
             inode: entry.inode,
             file,
-            dirstream: Mutex::new(DirStream {
-                stream: 0,
-                offset: 0,
-            }),
+            dirstream: Mutex::new(DirStream::new()),
         };
 
         self.handles.write().unwrap().insert(handle, Arc::new(data));
