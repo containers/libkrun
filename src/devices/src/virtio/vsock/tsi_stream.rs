@@ -241,7 +241,10 @@ impl TsiStreamProxy {
                 // it's possible the userspace application can't do it itself.
                 self.unixsock_path = unixsock_path;
 
-                match Backlog::new(req.backlog) {
+                // Clamp backlog to SOMAXCONN, mirroring Linux kernel's __sys_listen behavior.
+                // The nix crate's Backlog::new() rejects values above SOMAXCONN with EINVAL.
+                let clamped_backlog = req.backlog.clamp(0, libc::SOMAXCONN);
+                match Backlog::new(clamped_backlog) {
                     Ok(backlog) => match listen(&self.fd, backlog) {
                         Ok(_) => {
                             debug!("proxy: id={}", self.id);
