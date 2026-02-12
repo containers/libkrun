@@ -66,6 +66,7 @@ impl TcpTester {
         stream.write_all(b"bye!").unwrap();
         // We leak the file descriptor for now, since there is no easy way to close it on libkrun exit
         mem::forget(listener);
+        mem::forget(stream);
     }
 
     pub fn run_client(&self) {
