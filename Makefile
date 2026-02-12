@@ -140,7 +140,7 @@ endif
 
 AWS_NITRO_INIT_BINARY= init/aws-nitro/init
 $(AWS_NITRO_INIT_BINARY): $(AWS_NITRO_INIT_SRC)
-	$(CC) -O2 -static -Wall $(AWS_NITRO_INIT_LD_FLAGS) -o $@ $(AWS_NITRO_INIT_SRC) $(AWS_NITRO_INIT_LD_FLAGS)
+	$(CC) -O2 -static -s -Wall $(AWS_NITRO_INIT_LD_FLAGS) -o $@ $(AWS_NITRO_INIT_SRC) $(AWS_NITRO_INIT_LD_FLAGS)
 
 # Sysroot preparation rules for cross-compilation on macOS
 DEBIAN_PACKAGES = libc6 libc6-dev libgcc-12-dev linux-libc-dev
