@@ -188,7 +188,7 @@ fn run_tests(
             fs::create_dir_all(&path).context("Failed to create base directory")?;
             path
         }
-        None => TempDir::new("libkrun-tests")
+        None => TempDir::new_in("/tmp", "libkrun-tests")
             .context("Failed to create temp base directory")?
             .into_path(),
     };
