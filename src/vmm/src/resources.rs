@@ -412,7 +412,7 @@ mod tests {
             fs: Default::default(),
             vsock: Default::default(),
             #[cfg(feature = "net")]
-            net_builder: Default::default(),
+            net: Default::default(),
             gpu_virgl_flags: None,
             gpu_shm_size: None,
             #[cfg(feature = "gpu")]

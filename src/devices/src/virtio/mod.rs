@@ -17,6 +17,8 @@ pub mod balloon;
 pub mod bindings;
 #[cfg(feature = "blk")]
 pub mod block;
+#[cfg(feature = "net")]
+pub mod chain_storage;
 pub mod console;
 pub mod descriptor_utils;
 pub mod device;
@@ -27,6 +29,8 @@ pub mod fs;
 pub mod gpu;
 #[cfg(feature = "input")]
 pub mod input;
+#[cfg(feature = "net")]
+pub mod iovec_utils;
 pub mod linux_errno;
 mod mmio;
 #[cfg(feature = "net")]
@@ -34,8 +38,14 @@ pub mod net;
 mod queue;
 #[cfg(not(feature = "tee"))]
 pub mod rng;
+#[cfg(feature = "net")]
+pub mod rx_queue_producer;
 #[cfg(feature = "snd")]
 pub mod snd;
+#[cfg(all(feature = "net", test))]
+pub(crate) mod test_utils;
+#[cfg(feature = "net")]
+pub mod tx_queue_consumer;
 pub mod vsock;
 
 #[cfg(not(feature = "tee"))]

@@ -19,7 +19,7 @@ impl TestTsiTcpGuestListen {
 mod host {
     use super::*;
     use crate::common::setup_fs_and_enter;
-    use crate::{krun_call, krun_call_u32, Test, TestSetup};
+    use crate::{krun_call, krun_call_u32, ShouldRun, Test, TestSetup};
     use krun_sys::*;
     use std::ffi::CString;
     use std::ptr::null;
@@ -27,6 +27,10 @@ mod host {
     use std::time::Duration;
 
     impl Test for TestTsiTcpGuestListen {
+        fn should_run(&self) -> ShouldRun {
+            ShouldRun::yes_unless_macos("broken on macOS")
+        }
+
         fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()> {
             unsafe {
                 thread::spawn(move || {
