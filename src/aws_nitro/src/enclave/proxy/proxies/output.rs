@@ -48,10 +48,9 @@ impl OutputProxy {
 impl DeviceProxy for OutputProxy {
     /// Enclave argument of the proxy.
     fn arg(&self) -> Option<EnclaveArg<'_>> {
-        // The enclave only needs to be made aware that it is to be run in debug mode.
         match self.debug {
-            true => Some(EnclaveArg::Debug),
-            false => None,
+            true => None,
+            false => Some(EnclaveArg::AppOutput),
         }
     }
 

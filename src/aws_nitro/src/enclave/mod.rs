@@ -19,6 +19,7 @@ use std::{
     io::{self, Read, Write},
     os::fd::RawFd,
     path::{Path, PathBuf},
+    thread::{self, JoinHandle},
 };
 use tar::HeaderMode;
 use vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY};
@@ -80,6 +81,12 @@ impl NitroEnclave {
 
         // Launch the enclave and write the configured launch parameters to the initramfs.
         let (cid, timeout) = self.start().map_err(Error::Start)?;
+
+        // If debug mode is enabled, attach to the serial console immediately after the enclave VM
+        // is started to get logs.
+        if self.debug {
+            self.start_console_debug(cid).map_err(Error::DeviceProxy)?;
+        }
 
         writer.write_args(cid, timeout).map_err(Error::ArgsWrite)?;
 
@@ -154,9 +161,11 @@ impl NitroEnclave {
     fn proxies(&self) -> Result<DeviceProxyList, proxy::Error> {
         let mut proxies: Vec<Box<dyn Send + DeviceProxy>> = vec![];
 
-        // All enclaves will include a proxy for debug/application output.
-        let output = OutputProxy::new(&self.output_path, self.debug)?;
-        proxies.push(Box::new(output));
+        // Only specify application output proxy if not running in debug mode.
+        if !self.debug {
+            let output = OutputProxy::new(&self.output_path, false)?;
+            proxies.push(Box::new(output));
+        }
 
         if let Some(fd) = self.net_unixfd {
             let net = NetProxy::try_from(fd)?;
@@ -238,6 +247,19 @@ impl NitroEnclave {
             libc::sigfillset(&mut set);
             libc::pthread_sigmask(sig, &set, std::ptr::null_mut());
         }
+    }
+
+    /// Start the debug output thread, read from the serial console. Run this proxy separate
+    /// from the others, as it is not easily controlled by the user due to the connection to
+    /// the enclave VM's serial console.
+    fn start_console_debug(&self, cid: u32) -> Result<(), proxy::Error> {
+        let mut output = OutputProxy::new(&self.output_path, true)?;
+        let mut vsock_rcv = output.vsock(cid)?;
+        let _: JoinHandle<Result<(), proxy::Error>> = thread::spawn(move || loop {
+            output.rcv(&mut vsock_rcv)?;
+        });
+
+        Ok(())
     }
 }
 

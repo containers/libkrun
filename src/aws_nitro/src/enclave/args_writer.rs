@@ -139,8 +139,8 @@ pub enum EnclaveArg<'a> {
     ExecEnvp(Vec<String>),
     // Network proxy.
     NetworkProxy,
-    // Debug logs.
-    Debug,
+    // Application output.
+    AppOutput,
 
     // Placeholder argument where libkrun notifies the initramfs that all arguments have been
     // written and it can now close the vsock connection.
@@ -157,7 +157,7 @@ impl From<&EnclaveArg<'_>> for u8 {
             EnclaveArg::ExecArgv(_) => 2,
             EnclaveArg::ExecEnvp(_) => 3,
             EnclaveArg::NetworkProxy => 4,
-            EnclaveArg::Debug => 5,
+            EnclaveArg::AppOutput => 5,
 
             EnclaveArg::Finished => 255,
         }

@@ -16,7 +16,7 @@ struct enclave_args {
     char **exec_argv;             // Execution argument vector.
     char **exec_envp;             // Execution environment pointer.
     bool network_proxy;           // Indicate if networking is configured.
-    bool debug;                   // Indicate if running in debug mode.
+    bool app_output;              // Indicate if running in non-debug mode.
 };
 
 int args_reader_read(struct enclave_args *, unsigned int);
