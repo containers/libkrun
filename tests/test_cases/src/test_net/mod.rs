@@ -12,11 +12,11 @@ use macros::{guest, host};
 use crate::{ShouldRun, TestSetup};
 
 #[cfg(feature = "host")]
-mod passt;
+pub(crate) mod passt;
 #[cfg(feature = "host")]
-mod tap;
+pub(crate) mod tap;
 #[cfg(feature = "host")]
-mod gvproxy;
+pub(crate) mod gvproxy;
 
 /// Virtio-net test with configurable backend
 pub struct TestNet {
@@ -29,6 +29,8 @@ pub struct TestNet {
     should_run: fn() -> ShouldRun,
     #[cfg(feature = "host")]
     setup_backend: fn(u32, &TestSetup) -> anyhow::Result<()>,
+    #[cfg(feature = "host")]
+    cleanup: Option<fn()>,
 }
 
 impl TestNet {
@@ -43,6 +45,8 @@ impl TestNet {
             should_run: passt::should_run,
             #[cfg(feature = "host")]
             setup_backend: passt::setup_backend,
+            #[cfg(feature = "host")]
+            cleanup: None,
         }
     }
 
@@ -57,6 +61,8 @@ impl TestNet {
             should_run: tap::should_run,
             #[cfg(feature = "host")]
             setup_backend: tap::setup_backend,
+            #[cfg(feature = "host")]
+            cleanup: Some(tap::cleanup),
         }
     }
 
@@ -71,6 +77,8 @@ impl TestNet {
             should_run: gvproxy::should_run,
             #[cfg(feature = "host")]
             setup_backend: gvproxy::setup_backend,
+            #[cfg(feature = "host")]
+            cleanup: None,
         }
     }
 }
@@ -85,7 +93,22 @@ mod host {
 
     impl Test for TestNet {
         fn should_run(&self) -> ShouldRun {
+            if unsafe { krun_call_u32!(krun_has_feature(KRUN_FEATURE_NET.into())) }.ok() != Some(1) {
+                return ShouldRun::No("libkrun compiled without NET");
+            }
             (self.should_run)()
+        }
+
+        fn check(self: Box<Self>, child: std::process::Child) -> crate::TestOutcome {
+            let output = child.wait_with_output().unwrap();
+            if let Some(cleanup) = self.cleanup {
+                cleanup();
+            }
+            if String::from_utf8(output.stdout).unwrap() == "OK\n" {
+                crate::TestOutcome::Pass
+            } else {
+                crate::TestOutcome::Fail
+            }
         }
 
         fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()> {

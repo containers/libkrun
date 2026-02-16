@@ -50,3 +50,30 @@ pub fn setup_fs_and_enter(ctx: u32, test_setup: TestSetup) -> anyhow::Result<()>
     }
     unreachable!()
 }
+
+/// Like setup_fs_and_enter, but uses an existing rootfs directory (e.g. a Fedora rootfs with
+/// extra packages installed). Copies the guest-agent into it and enters the VM.
+pub fn setup_existing_rootfs_and_enter(
+    ctx: u32,
+    test_setup: TestSetup,
+    rootfs_dir: &Path,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(rootfs_dir.is_dir(), "rootfs directory not found: {}", rootfs_dir.display());
+    let path_str = CString::new(rootfs_dir.as_os_str().as_bytes()).context("CString::new")?;
+    copy_guest_agent(rootfs_dir)?;
+    unsafe {
+        krun_call!(krun_set_root(ctx, path_str.as_ptr()))?;
+        krun_call!(krun_set_workdir(ctx, c"/".as_ptr()))?;
+        let test_case_cstr = CString::new(test_setup.test_case).context("CString::new")?;
+        let argv = [test_case_cstr.as_ptr(), null()];
+        let envp = [null()];
+        krun_call!(krun_set_exec(
+            ctx,
+            c"/guest-agent".as_ptr(),
+            argv.as_ptr(),
+            envp.as_ptr(),
+        ))?;
+        krun_call!(krun_start_enter(ctx))?;
+    }
+    unreachable!()
+}

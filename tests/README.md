@@ -44,3 +44,11 @@ make test
 
 ## Adding tests
 To add a test you need to add a new rust module in the `test_cases` directory, implement the  required host and guest side methods (see existing tests) and register the test in the `test_cases/src/lib.rs` to be ran.
+
+## Rootfs images
+
+Some tests (e.g. the iperf3 performance tests) need a full Linux rootfs with extra packages installed. These are built automatically via podman and stored in podman's local image store (tagged as `libkrun-test-<name>`). Podman's layer cache handles rebuild efficiency.
+
+Container image definitions are registered in the `rootfs_image()` function in `test_cases/src/lib.rs`. Tests refer to images by name only. Tests that need a rootfs will be skipped if podman is not installed.
+
+To clean up images: `podman rmi $(podman images --filter reference='libkrun-test-*' -q)`
