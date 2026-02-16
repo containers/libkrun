@@ -351,10 +351,10 @@ static int proxies_init(int cid, struct enclave_args *args, int shutdown_fd)
 
     /*
      * If not running in debug mode, initialize the application output proxy.
-     * In debug mode, the enclave uses the console (which is already connected)
-     * for output.
+     * Otherwise, the enclave uses the console (which is already connected) for
+     * output.
      */
-    if (!args->debug) {
+    if (args->app_output) {
         ret = device_init(KRUN_NE_DEV_APP_OUTPUT_STDIO,
                           cid + VSOCK_PORT_OFFSET_OUTPUT, shutdown_fd);
     }
@@ -398,7 +398,7 @@ static int proxies_exit(struct enclave_args *args, int shutdown_fd)
     }
 
     // If not in debug mode, close the application output vsock.
-    if (!args->debug)
+    if (args->app_output)
         app_stdio_close();
 
     return ret;
