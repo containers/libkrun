@@ -104,7 +104,7 @@ pub fn add_default_route(gateway: [u8; 4]) -> nix::Result<()> {
     rt.rt_dst = make_sockaddr_in([0, 0, 0, 0]);
     rt.rt_gateway = make_sockaddr_in(gateway);
     rt.rt_genmask = make_sockaddr_in([0, 0, 0, 0]);
-    rt.rt_flags = (libc::RTF_UP | libc::RTF_GATEWAY) as u16;
+    rt.rt_flags = libc::RTF_UP | libc::RTF_GATEWAY;
 
     let ret = unsafe { libc::ioctl(sock.as_raw_fd(), libc::SIOCADDRT as _, &rt) };
     if ret < 0 {

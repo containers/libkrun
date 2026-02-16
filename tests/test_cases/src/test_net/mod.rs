@@ -99,10 +99,8 @@ impl TestNet {
             #[cfg(feature = "guest")]
             netmask: [255, 255, 255, 0],
             #[cfg(feature = "guest")]
-            gateway: Some([192, 168, 105, 1]),
-            // HACK: hardcoded host LAN IP for testing; guest needs a default
-            // route via the vmnet gateway (192.168.105.1) to reach it.
-            tcp_tester: TcpTester::new(9003, [10, 42, 0, 115].into()),
+            gateway: None,
+            tcp_tester: TcpTester::new(9003, [192, 168, 105, 1].into()),
             #[cfg(feature = "host")]
             should_run: vmnet_helper::should_run,
             #[cfg(feature = "host")]
@@ -175,8 +173,7 @@ mod guest {
                 .expect("Failed to configure eth0");
 
             if let Some(gw) = self.gateway {
-                crate::net_config::add_default_route(gw)
-                    .expect("Failed to add default route");
+                crate::net_config::add_default_route(gw).expect("Failed to add default route");
             }
 
             self.tcp_tester.run_client();

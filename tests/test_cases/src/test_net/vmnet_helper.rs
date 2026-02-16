@@ -1,7 +1,6 @@
 //! vmnet-helper backend for virtio-net test (macOS only)
 
 use crate::{krun_call, ShouldRun, TestSetup};
-use krun_sys::COMPAT_NET_FEATURES;
 use nix::libc;
 use std::ffi::CString;
 use std::io::{BufRead, BufReader, Read};
@@ -187,6 +186,26 @@ fn start_vmnet_helper(log_path: &std::path::Path) -> std::io::Result<VmnetConfig
     let mac = parse_mac(mac_str)
         .ok_or_else(|| std::io::Error::other(format!("invalid MAC address: {mac_str}")))?;
 
+    // Increase socket buffer sizes so libkrun's Unixgram backend (which uses
+    // the fd path and does NOT set these) can batch frames without drops.
+    let buf_size: libc::c_int = 7 * 1024 * 1024;
+    unsafe {
+        libc::setsockopt(
+            our_fd,
+            libc::SOL_SOCKET,
+            libc::SO_SNDBUF,
+            &buf_size as *const _ as *const libc::c_void,
+            std::mem::size_of_val(&buf_size) as libc::socklen_t,
+        );
+        libc::setsockopt(
+            our_fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVBUF,
+            &buf_size as *const _ as *const libc::c_void,
+            std::mem::size_of_val(&buf_size) as libc::socklen_t,
+        );
+    }
+
     Ok(VmnetConfig { fd: our_fd, mac })
 }
 
@@ -218,8 +237,8 @@ pub(crate) fn setup_backend(ctx: u32, test_setup: &TestSetup) -> anyhow::Result<
             std::ptr::null(),
             config.fd,
             config.mac.as_mut_ptr(),
-            COMPAT_NET_FEATURES,
-            0, // no VFKIT flag - vmnet-helper uses raw datagrams
+            0, // no offloading - vmnet-helper uses raw ethernet frames
+            0, // no VFKIT flag
         ))?;
     }
     Ok(())
