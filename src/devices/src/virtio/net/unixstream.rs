@@ -22,7 +22,7 @@ use super::FRAME_HEADER_LEN;
 
 /// Helper to convert IoSlice to IovecVec
 fn to_iovec(iovecs: Vec<IoSlice<'_>>) -> IovecVec {
-    IovecVec(unsafe { std::mem::transmute(iovecs) })
+    IovecVec(unsafe { std::mem::transmute::<Vec<IoSlice<'_>>, Vec<libc::iovec>>(iovecs) })
 }
 
 /// Try to read/complete the frame length header.

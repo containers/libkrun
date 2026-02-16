@@ -273,6 +273,7 @@ impl RxProducerBatch<'_, IovecVec> {
     /// # Panics
     ///
     /// Panics if the chain at `index` has already been finished.
+    #[allow(clippy::result_unit_err)]
     pub fn write_advance(&mut self, index: usize, data: &[u8]) -> Result<(), ()> {
         let written = write_to_iovecs(self.io_slices_mut(index), data);
         if written != data.len() {
@@ -293,6 +294,7 @@ impl RxProducerBatch<'_, IovecVec> {
     /// # Panics
     ///
     /// Panics if the chain at `index` has already been finished.
+    #[allow(clippy::result_unit_err)]
     pub fn write_complete(&mut self, index: usize, data: &[u8]) -> Result<(), ()> {
         let written = write_to_iovecs(self.io_slices_mut(index), data);
         if written != data.len() {

@@ -20,23 +20,23 @@ jobs:
       - name: Clippy (test_cases guest)
         run: |
           cd tests
-          cargo clippy --locked -p test_cases --features guest -- -D warnings
-      
+          IPERF_DURATION=15 cargo clippy --locked -p test_cases --features guest -- -D warnings
+
       - name: Clippy (test_cases host)
         run: |
           cd tests
-          PKG_CONFIG_PATH="$(realpath ../test-prefix/lib64/pkgconfig/)" LD_LIBRARY_PATH="$(realpath ../test-prefix/lib64/)" cargo clippy --locked -p test_cases --features host -- -D warnings
-      
+          IPERF_DURATION=15 PKG_CONFIG_PATH="$(realpath ../test-prefix/lib64/pkgconfig/)" LD_LIBRARY_PATH="$(realpath ../test-prefix/lib64/)" cargo clippy --locked -p test_cases --features host -- -D warnings
+
       - name: Clippy (runner)
         run: |
           cd tests
           PKG_CONFIG_PATH="$(realpath ../test-prefix/lib64/pkgconfig/)" LD_LIBRARY_PATH="$(realpath ../test-prefix/lib64/)" cargo clippy --locked -p runner -- -D warnings
-      
+
       - name: Clippy (guest-agent)
         run: |
           cd tests
           cargo clippy --locked --target x86_64-unknown-linux-musl -p guest-agent -- -D warnings
-      
+
       - name: Enable KVM group perms
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -45,13 +45,13 @@ jobs:
           sudo usermod -a -G kvm $USER
       
       - name: Install additional packages
-        run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools
-      
+        run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools iperf3
+
       - name: Install libkrunfw
         run: TAG=`curl -sL https://api.github.com/repos/containers/libkrunfw/releases/latest |jq -r .tag_name` && curl -L -o /tmp/libkrunfw-x86_64.tgz https://github.com/containers/libkrunfw/releases/download/$TAG/libkrunfw-x86_64.tgz && mkdir tmp && tar xf /tmp/libkrunfw-x86_64.tgz -C tmp && sudo mv tmp/lib64/* /lib/x86_64-linux-gnu
-      
+
       - name: Integration tests
-        run: KRUN_ENOMEM_WORKAROUND=1 KRUN_NO_UNSHARE=1 KRUN_TEST_BASE_DIR=/tmp/libkrun-tests make test TEST_FLAGS="--keep-all --github-summary"
+        run: IPERF_DURATION=15 KRUN_ENOMEM_WORKAROUND=1 KRUN_NO_UNSHARE=1 KRUN_TEST_BASE_DIR=/tmp/libkrun-tests make test TEST_FLAGS="--keep-all --github-summary"
 
       - name: Upload test logs
         if: always()
@@ -81,34 +81,34 @@ jobs:
       - name: Clippy (test_cases guest)
         run: |
           cd tests
-          cargo clippy --locked -p test_cases --features guest -- -D warnings
-      
+          IPERF_DURATION=15 cargo clippy --locked -p test_cases --features guest -- -D warnings
+
       - name: Clippy (test_cases host)
         run: |
           cd tests
-          PKG_CONFIG_PATH="$(realpath ../test-prefix/lib64/pkgconfig/)" LD_LIBRARY_PATH="$(realpath ../test-prefix/lib64/)" cargo clippy --locked -p test_cases --features host -- -D warnings
-      
+          IPERF_DURATION=15 PKG_CONFIG_PATH="$(realpath ../test-prefix/lib64/pkgconfig/)" LD_LIBRARY_PATH="$(realpath ../test-prefix/lib64/)" cargo clippy --locked -p test_cases --features host -- -D warnings
+
       - name: Clippy (runner)
         run: |
           cd tests
           PKG_CONFIG_PATH="$(realpath ../test-prefix/lib64/pkgconfig/)" LD_LIBRARY_PATH="$(realpath ../test-prefix/lib64/)" cargo clippy --locked -p runner -- -D warnings
-      
+
       - name: Clippy (guest-agent)
         run: |
           cd tests
           cargo clippy --locked --target aarch64-unknown-linux-musl -p guest-agent -- -D warnings
-      
+
       - name: Install additional packages
-        run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools
-      
+        run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools iperf3
+
       - name: Install libkrunfw
         run: TAG=`curl -sL https://api.github.com/repos/containers/libkrunfw/releases/latest |jq -r .tag_name` && curl -L -o /tmp/libkrunfw-aarch64.tgz https://github.com/containers/libkrunfw/releases/download/$TAG/libkrunfw-aarch64.tgz && mkdir tmp && tar xf /tmp/libkrunfw-aarch64.tgz -C tmp && sudo mv tmp/lib64/* /lib/aarch64-linux-gnu
 
       - name: Clean up tests directory
         run: rm -fr /tmp/libkrun-tests
-      
+
       - name: Integration tests
-        run: KRUN_ENOMEM_WORKAROUND=1 KRUN_NO_UNSHARE=1 KRUN_TEST_BASE_DIR=/tmp/libkrun-tests make test TEST_FLAGS="--keep-all --github-summary"
+        run: IPERF_DURATION=15 KRUN_ENOMEM_WORKAROUND=1 KRUN_NO_UNSHARE=1 KRUN_TEST_BASE_DIR=/tmp/libkrun-tests make test TEST_FLAGS="--keep-all --github-summary"
 
       - name: Upload test logs
         if: always()

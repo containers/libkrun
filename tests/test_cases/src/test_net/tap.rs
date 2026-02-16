@@ -84,10 +84,8 @@ fn create_tap(name: &str) -> std::io::Result<()> {
     let mut ifr: Ifreq = unsafe { std::mem::zeroed() };
     set_interface_name(&mut ifr, name);
     ifr.ifr_ifru.ifru_flags = IFF_TAP | IFF_NO_PI | IFF_VNET_HDR;
-    unsafe { ioctl_tunsetiff(tun.as_raw_fd(), &ifr) }
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    unsafe { ioctl_tunsetpersist(tun.as_raw_fd(), 1) }
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    unsafe { ioctl_tunsetiff(tun.as_raw_fd(), &ifr) }.map_err(std::io::Error::other)?;
+    unsafe { ioctl_tunsetpersist(tun.as_raw_fd(), 1) }.map_err(std::io::Error::other)?;
     Ok(())
 }
 

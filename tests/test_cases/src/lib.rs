@@ -71,6 +71,7 @@ pub fn test_cases() -> Vec<TestCase> {
         TestCase::new("net-passt", Box::new(TestNet::new_passt())),
         TestCase::new("net-tap", Box::new(TestNet::new_tap())),
         TestCase::new("net-gvproxy", Box::new(TestNet::new_gvproxy())),
+        TestCase::new("net-vmnet-helper", Box::new(TestNet::new_vmnet_helper())),
         TestCase::new("multiport-console", Box::new(TestMultiportConsole)),
         TestCase::new(
             "perf-net-passt-upload",
@@ -95,6 +96,14 @@ pub fn test_cases() -> Vec<TestCase> {
         TestCase::new(
             "perf-net-gvproxy-download",
             Box::new(TestNetPerf::new_gvproxy_download()),
+        ),
+        TestCase::new(
+            "perf-net-vmnet-helper-upload",
+            Box::new(TestNetPerf::new_vmnet_helper_upload()),
+        ),
+        TestCase::new(
+            "perf-net-vmnet-helper-download",
+            Box::new(TestNetPerf::new_vmnet_helper_download()),
         ),
     ]
 }
