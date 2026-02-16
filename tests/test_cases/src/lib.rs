@@ -10,8 +10,11 @@ use test_tsi_tcp_guest_connect::TestTsiTcpGuestConnect;
 mod test_tsi_tcp_guest_listen;
 use test_tsi_tcp_guest_listen::TestTsiTcpGuestListen;
 
-mod test_net;
+pub(crate) mod test_net;
 use test_net::TestNet;
+
+mod test_net_perf;
+use test_net_perf::TestNetPerf;
 
 mod test_multiport_console;
 use test_multiport_console::TestMultiportConsole;
@@ -30,6 +33,13 @@ impl ShouldRun {
             ShouldRun::Yes
         }
     }
+}
+
+pub enum TestOutcome {
+    Pass,
+    Fail,
+    Skip(&'static str),
+    Report(Box<dyn ReportImpl>),
 }
 
 pub fn test_cases() -> Vec<TestCase> {
@@ -62,12 +72,64 @@ pub fn test_cases() -> Vec<TestCase> {
         TestCase::new("net-tap", Box::new(TestNet::new_tap())),
         TestCase::new("net-gvproxy", Box::new(TestNet::new_gvproxy())),
         TestCase::new("multiport-console", Box::new(TestMultiportConsole)),
+        TestCase::new("perf-net-passt-upload", Box::new(TestNetPerf::new_passt_upload())),
+        TestCase::new("perf-net-passt-download", Box::new(TestNetPerf::new_passt_download())),
+        TestCase::new("perf-net-tap-upload", Box::new(TestNetPerf::new_tap_upload())),
+        TestCase::new("perf-net-tap-download", Box::new(TestNetPerf::new_tap_download())),
+        TestCase::new("perf-net-gvproxy-upload", Box::new(TestNetPerf::new_gvproxy_upload())),
+        TestCase::new("perf-net-gvproxy-download", Box::new(TestNetPerf::new_gvproxy_download())),
+    ]
+}
+
+/// Registry of container images used by tests.
+/// Each entry maps a name to a Containerfile that will be built and cached via podman.
+#[host]
+pub fn rootfs_images() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("fedora-iperf3", "\
+FROM fedora:43
+RUN dnf install -y iperf3 && dnf clean all
+"),
     ]
 }
 
 ////////////////////
 // Implementation details:
 //////////////////
+
+pub trait ReportImpl {
+    fn fmt_text(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+    fn fmt_gh_markdown(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+}
+
+pub trait Report: ReportImpl {
+    fn text(&self) -> ReportText<'_, Self> {
+        ReportText(self)
+    }
+
+    fn gh_markdown(&self) -> ReportGhMarkdown<'_, Self> {
+        ReportGhMarkdown(self)
+    }
+}
+
+impl<T: ReportImpl + ?Sized> Report for T {}
+
+pub struct ReportText<'a, T: ReportImpl + ?Sized>(pub &'a T);
+
+impl<T: ReportImpl + ?Sized> std::fmt::Display for ReportText<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt_text(f)
+    }
+}
+
+pub struct ReportGhMarkdown<'a, T: ReportImpl + ?Sized>(pub &'a T);
+
+impl<T: ReportImpl + ?Sized> std::fmt::Display for ReportGhMarkdown<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt_gh_markdown(f)
+    }
+}
+
 use macros::{guest, host};
 #[host]
 use std::path::PathBuf;
@@ -82,6 +144,9 @@ mod common;
 
 #[cfg(feature = "host")]
 mod krun;
+
+#[cfg(feature = "host")]
+pub mod rootfs;
 
 #[cfg(feature = "guest")]
 mod net_config;
@@ -102,9 +167,13 @@ pub trait Test {
     fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()>;
 
     /// Checks the output of the (host) process which started the VM
-    fn check(self: Box<Self>, child: Child) {
+    fn check(self: Box<Self>, child: Child) -> TestOutcome {
         let output = child.wait_with_output().unwrap();
-        assert_eq!(String::from_utf8(output.stdout).unwrap(), "OK\n");
+        if String::from_utf8(output.stdout).unwrap() == "OK\n" {
+            TestOutcome::Pass
+        } else {
+            TestOutcome::Fail
+        }
     }
 
     /// Check if this test should run on this platform.

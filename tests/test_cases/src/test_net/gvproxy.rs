@@ -1,6 +1,6 @@
 //! Gvproxy backend for virtio-net test (macOS only)
 
-use crate::{ShouldRun, TestSetup};
+use crate::{krun_call, ShouldRun, TestSetup};
 use krun_sys::{COMPAT_NET_FEATURES, NET_FLAG_VFKIT};
 use nix::libc;
 use std::ffi::CString;
@@ -14,14 +14,11 @@ type KrunAddNetUnixgramFn = unsafe extern "C" fn(
     flags: u32,
 ) -> i32;
 
-fn get_krun_add_net_unixgram() -> Option<KrunAddNetUnixgramFn> {
+fn get_krun_add_net_unixgram() -> KrunAddNetUnixgramFn {
     let symbol = CString::new("krun_add_net_unixgram").unwrap();
     let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, symbol.as_ptr()) };
-    if ptr.is_null() {
-        None
-    } else {
-        Some(unsafe { std::mem::transmute(ptr) })
-    }
+    assert!(!ptr.is_null(), "krun_add_net_unixgram not found");
+    unsafe { std::mem::transmute(ptr) }
 }
 
 fn gvproxy_path() -> Option<String> {
@@ -83,15 +80,12 @@ fn wait_for_socket(path: &std::path::Path, timeout_ms: u64) -> bool {
     false
 }
 
-pub fn should_run() -> ShouldRun {
+pub(crate) fn should_run() -> ShouldRun {
     #[cfg(not(target_os = "macos"))]
     return ShouldRun::No("gvproxy unixgram only supported on macOS");
 
     #[cfg(target_os = "macos")]
     {
-        if get_krun_add_net_unixgram().is_none() {
-            return ShouldRun::No("libkrun compiled without NET");
-        }
         if gvproxy_path().is_none() {
             return ShouldRun::No("gvproxy not installed");
         }
@@ -99,7 +93,7 @@ pub fn should_run() -> ShouldRun {
     }
 }
 
-pub fn setup_backend(ctx: u32, test_setup: &TestSetup) -> anyhow::Result<()> {
+pub(crate) fn setup_backend(ctx: u32, test_setup: &TestSetup) -> anyhow::Result<()> {
     let tmp_dir = test_setup
         .tmp_dir
         .canonicalize()
@@ -120,16 +114,15 @@ pub fn setup_backend(ctx: u32, test_setup: &TestSetup) -> anyhow::Result<()> {
     let mut mac: [u8; 6] = [0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee];
     let c_socket_path = CString::new(socket_path.to_str().unwrap()).unwrap();
 
-    let net_result = unsafe {
-        get_krun_add_net_unixgram().unwrap()(
+    unsafe {
+        krun_call!(get_krun_add_net_unixgram()(
             ctx,
             c_socket_path.as_ptr(),
             -1,
             mac.as_mut_ptr(),
             COMPAT_NET_FEATURES,
             NET_FLAG_VFKIT,
-        )
-    };
-    anyhow::ensure!(net_result >= 0, "krun_add_net_unixgram failed: {}", net_result);
+        ))?;
+    }
     Ok(())
 }

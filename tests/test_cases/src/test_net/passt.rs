@@ -1,6 +1,6 @@
 //! Passt backend for virtio-net test
 
-use crate::{ShouldRun, TestSetup};
+use crate::{krun_call, ShouldRun, TestSetup};
 use krun_sys::COMPAT_NET_FEATURES;
 use nix::libc;
 use std::ffi::CString;
@@ -15,14 +15,11 @@ type KrunAddNetUnixstreamFn = unsafe extern "C" fn(
     flags: u32,
 ) -> i32;
 
-fn get_krun_add_net_unixstream() -> Option<KrunAddNetUnixstreamFn> {
+fn get_krun_add_net_unixstream() -> KrunAddNetUnixstreamFn {
     let symbol = CString::new("krun_add_net_unixstream").unwrap();
     let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, symbol.as_ptr()) };
-    if ptr.is_null() {
-        None
-    } else {
-        Some(unsafe { std::mem::transmute(ptr) })
-    }
+    assert!(!ptr.is_null(), "krun_add_net_unixstream not found");
+    unsafe { std::mem::transmute(ptr) }
 }
 
 fn passt_available() -> bool {
@@ -69,12 +66,9 @@ fn start_passt() -> std::io::Result<RawFd> {
     Ok(parent_fd)
 }
 
-pub fn should_run() -> ShouldRun {
+pub(crate) fn should_run() -> ShouldRun {
     if cfg!(target_os = "macos") {
         return ShouldRun::No("passt not supported on macOS");
-    }
-    if get_krun_add_net_unixstream().is_none() {
-        return ShouldRun::No("libkrun compiled without NET");
     }
     if !passt_available() {
         return ShouldRun::No("passt not installed");
@@ -82,20 +76,19 @@ pub fn should_run() -> ShouldRun {
     ShouldRun::Yes
 }
 
-pub fn setup_backend(ctx: u32, _test_setup: &TestSetup) -> anyhow::Result<()> {
+pub(crate) fn setup_backend(ctx: u32, _test_setup: &TestSetup) -> anyhow::Result<()> {
     let passt_fd = start_passt()?;
     let mut mac: [u8; 6] = [0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee];
 
-    let net_result = unsafe {
-        get_krun_add_net_unixstream().unwrap()(
+    unsafe {
+        krun_call!(get_krun_add_net_unixstream()(
             ctx,
             std::ptr::null(),
             passt_fd,
             mac.as_mut_ptr(),
             COMPAT_NET_FEATURES,
             0,
-        )
-    };
-    anyhow::ensure!(net_result >= 0, "krun_add_net_unixstream failed: {}", net_result);
+        ))?;
+    }
     Ok(())
 }
