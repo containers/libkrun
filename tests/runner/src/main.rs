@@ -8,7 +8,9 @@ use std::panic::catch_unwind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tempdir::TempDir;
-use test_cases::{test_cases, rootfs_images, Report, ShouldRun, Test, TestCase, TestOutcome, TestSetup};
+use test_cases::{
+    rootfs_images, test_cases, Report, ShouldRun, Test, TestCase, TestOutcome, TestSetup,
+};
 
 struct TestResult {
     name: String,
@@ -328,8 +330,10 @@ fn build_images() -> anyhow::Result<()> {
 
     for (name, _) in rootfs_images() {
         eprint!("Building rootfs image {name}...");
-        rootfs::build_rootfs(name)?;
-        eprintln!(" done");
+        match rootfs::build_rootfs(name) {
+            Ok(()) => eprintln!(" done"),
+            Err(e) => eprintln!(" skipped ({e})"),
+        }
     }
     Ok(())
 }

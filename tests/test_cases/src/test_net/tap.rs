@@ -77,7 +77,10 @@ fn make_sockaddr_in(ip: [u8; 4]) -> libc::sockaddr {
 }
 
 fn create_tap(name: &str) -> std::io::Result<()> {
-    let tun = OpenOptions::new().read(true).write(true).open("/dev/net/tun")?;
+    let tun = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/net/tun")?;
     let mut ifr: Ifreq = unsafe { std::mem::zeroed() };
     set_interface_name(&mut ifr, name);
     ifr.ifr_ifru.ifru_flags = IFF_TAP | IFF_NO_PI | IFF_VNET_HDR;
@@ -89,7 +92,12 @@ fn create_tap(name: &str) -> std::io::Result<()> {
 }
 
 fn configure_host_interface(name: &str, ip: [u8; 4], netmask: [u8; 4]) -> nix::Result<()> {
-    let sock = socket(AddressFamily::Inet, SockType::Datagram, SockFlag::empty(), None)?;
+    let sock = socket(
+        AddressFamily::Inet,
+        SockType::Datagram,
+        SockFlag::empty(),
+        None,
+    )?;
     let fd = sock.as_raw_fd();
 
     let mut ifr: Ifreq = unsafe { std::mem::zeroed() };
@@ -126,7 +134,11 @@ pub(crate) fn should_run() -> ShouldRun {
 }
 
 pub(crate) fn cleanup() {
-    if let Ok(tun) = OpenOptions::new().read(true).write(true).open("/dev/net/tun") {
+    if let Ok(tun) = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/net/tun")
+    {
         let mut ifr: Ifreq = unsafe { std::mem::zeroed() };
         set_interface_name(&mut ifr, DEFAULT_TAP_NAME);
         ifr.ifr_ifru.ifru_flags = IFF_TAP | IFF_NO_PI;

@@ -39,7 +39,9 @@ fn gvproxy_path() -> Option<String> {
         .ok()
         .and_then(|o| {
             if o.status.success() {
-                String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
             } else {
                 None
             }
@@ -101,10 +103,7 @@ pub(crate) fn setup_backend(ctx: u32, test_setup: &TestSetup) -> anyhow::Result<
     let socket_path = tmp_dir.join("gvproxy.sock");
     let gvproxy_log = tmp_dir.join("gvproxy.log");
 
-    let _gvproxy_child = start_gvproxy(
-        socket_path.to_str().unwrap(),
-        &gvproxy_log,
-    )?;
+    let _gvproxy_child = start_gvproxy(socket_path.to_str().unwrap(), &gvproxy_log)?;
 
     anyhow::ensure!(
         wait_for_socket(&socket_path, 5000),

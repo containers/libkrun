@@ -59,7 +59,12 @@ pub fn make_sockaddr_in(ip: [u8; 4]) -> nix::libc::sockaddr {
 
 /// Configure a network interface with IP address and netmask, and bring it UP
 pub fn configure_interface(name: &str, ip: [u8; 4], netmask: [u8; 4]) -> nix::Result<()> {
-    let sock = socket(AddressFamily::Inet, SockType::Datagram, SockFlag::empty(), None)?;
+    let sock = socket(
+        AddressFamily::Inet,
+        SockType::Datagram,
+        SockFlag::empty(),
+        None,
+    )?;
     let fd = sock.as_raw_fd();
 
     // Set IP address

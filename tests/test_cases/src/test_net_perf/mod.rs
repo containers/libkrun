@@ -212,7 +212,11 @@ mod host {
         fn fmt_text(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             let i = f.width().unwrap_or(0);
             writeln!(f, "{:i$}iperf3 — {}\n", "", self.label())?;
-            writeln!(f, "{:i$}{:<9}  {:>18}  {:>14}", "", "Interval", "Throughput", "Transferred")?;
+            writeln!(
+                f,
+                "{:i$}{:<9}  {:>18}  {:>14}",
+                "", "Interval", "Throughput", "Transferred"
+            )?;
             writeln!(f, "{:i$}{:-<9}  {:-<18}  {:-<14}", "", "", "", "")?;
             for interval in &self.output.intervals {
                 let s = &interval.sum;
@@ -268,7 +272,8 @@ mod host {
             if option_env!("IPERF_DURATION").is_none() {
                 return ShouldRun::No("IPERF_DURATION not set");
             }
-            if unsafe { krun_call_u32!(krun_has_feature(KRUN_FEATURE_NET.into())) }.ok() != Some(1) {
+            if unsafe { krun_call_u32!(krun_has_feature(KRUN_FEATURE_NET.into())) }.ok() != Some(1)
+            {
                 return ShouldRun::No("libkrun compiled without NET");
             }
             let backend_result = (self.should_run)();
@@ -376,8 +381,7 @@ mod guest {
 
                 if output.status.success() {
                     // Print JSON output to stdout (host will read it)
-                    let stdout =
-                        String::from_utf8(output.stdout).expect("iperf3 output not UTF-8");
+                    let stdout = String::from_utf8(output.stdout).expect("iperf3 output not UTF-8");
                     print!("{}", stdout);
                     return;
                 }

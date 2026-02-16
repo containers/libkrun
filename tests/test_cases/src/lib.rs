@@ -72,12 +72,30 @@ pub fn test_cases() -> Vec<TestCase> {
         TestCase::new("net-tap", Box::new(TestNet::new_tap())),
         TestCase::new("net-gvproxy", Box::new(TestNet::new_gvproxy())),
         TestCase::new("multiport-console", Box::new(TestMultiportConsole)),
-        TestCase::new("perf-net-passt-upload", Box::new(TestNetPerf::new_passt_upload())),
-        TestCase::new("perf-net-passt-download", Box::new(TestNetPerf::new_passt_download())),
-        TestCase::new("perf-net-tap-upload", Box::new(TestNetPerf::new_tap_upload())),
-        TestCase::new("perf-net-tap-download", Box::new(TestNetPerf::new_tap_download())),
-        TestCase::new("perf-net-gvproxy-upload", Box::new(TestNetPerf::new_gvproxy_upload())),
-        TestCase::new("perf-net-gvproxy-download", Box::new(TestNetPerf::new_gvproxy_download())),
+        TestCase::new(
+            "perf-net-passt-upload",
+            Box::new(TestNetPerf::new_passt_upload()),
+        ),
+        TestCase::new(
+            "perf-net-passt-download",
+            Box::new(TestNetPerf::new_passt_download()),
+        ),
+        TestCase::new(
+            "perf-net-tap-upload",
+            Box::new(TestNetPerf::new_tap_upload()),
+        ),
+        TestCase::new(
+            "perf-net-tap-download",
+            Box::new(TestNetPerf::new_tap_download()),
+        ),
+        TestCase::new(
+            "perf-net-gvproxy-upload",
+            Box::new(TestNetPerf::new_gvproxy_upload()),
+        ),
+        TestCase::new(
+            "perf-net-gvproxy-download",
+            Box::new(TestNetPerf::new_gvproxy_download()),
+        ),
     ]
 }
 
@@ -85,12 +103,13 @@ pub fn test_cases() -> Vec<TestCase> {
 /// Each entry maps a name to a Containerfile that will be built and cached via podman.
 #[host]
 pub fn rootfs_images() -> &'static [(&'static str, &'static str)] {
-    &[
-        ("fedora-iperf3", "\
+    &[(
+        "fedora-iperf3",
+        "\
 FROM fedora:43
 RUN dnf install -y iperf3 && dnf clean all
-"),
-    ]
+",
+    )]
 }
 
 ////////////////////

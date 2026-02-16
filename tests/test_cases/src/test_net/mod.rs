@@ -12,11 +12,11 @@ use macros::{guest, host};
 use crate::{ShouldRun, TestSetup};
 
 #[cfg(feature = "host")]
+pub(crate) mod gvproxy;
+#[cfg(feature = "host")]
 pub(crate) mod passt;
 #[cfg(feature = "host")]
 pub(crate) mod tap;
-#[cfg(feature = "host")]
-pub(crate) mod gvproxy;
 
 /// Virtio-net test with configurable backend
 pub struct TestNet {
@@ -93,7 +93,8 @@ mod host {
 
     impl Test for TestNet {
         fn should_run(&self) -> ShouldRun {
-            if unsafe { krun_call_u32!(krun_has_feature(KRUN_FEATURE_NET.into())) }.ok() != Some(1) {
+            if unsafe { krun_call_u32!(krun_has_feature(KRUN_FEATURE_NET.into())) }.ok() != Some(1)
+            {
                 return ShouldRun::No("libkrun compiled without NET");
             }
             (self.should_run)()
@@ -148,8 +149,12 @@ mod guest {
     }
 
     fn set_timeouts(stream: &mut TcpStream) {
-        stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
-        stream.set_write_timeout(Some(Duration::from_secs(10))).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
     }
 
     impl Test for TestNet {
@@ -161,7 +166,9 @@ mod guest {
             // Connect to host TCP server
             let host_ip = self.host_ip;
             let addr = SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::new(host_ip[0], host_ip[1], host_ip[2], host_ip[3])),
+                IpAddr::V4(Ipv4Addr::new(
+                    host_ip[0], host_ip[1], host_ip[2], host_ip[3],
+                )),
                 self.port,
             );
 
