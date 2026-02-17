@@ -592,6 +592,7 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
                 shared_dir,
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
+                allow_root_dir_delete: false,
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -624,6 +625,7 @@ pub unsafe extern "C" fn krun_add_virtiofs(
                 fs_id: tag.to_string(),
                 shared_dir: path.to_string(),
                 shm_size: None,
+                allow_root_dir_delete: false,
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -657,6 +659,7 @@ pub unsafe extern "C" fn krun_add_virtiofs2(
                 fs_id: tag.to_string(),
                 shared_dir: path.to_string(),
                 shm_size: Some(shm_size.try_into().unwrap()),
+                allow_root_dir_delete: false,
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -2288,6 +2291,7 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 shared_dir: empty_root.to_string_lossy().into(),
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
+                allow_root_dir_delete: true,
             });
 
             ctx_cfg.set_block_root(device, fstype, options);

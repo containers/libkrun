@@ -54,7 +54,12 @@ pub struct Fs {
 }
 
 impl Fs {
-    pub fn new(fs_id: String, shared_dir: String, exit_code: Arc<AtomicI32>) -> super::Result<Fs> {
+    pub fn new(
+        fs_id: String,
+        shared_dir: String,
+        exit_code: Arc<AtomicI32>,
+        allow_root_dir_delete: bool,
+    ) -> super::Result<Fs> {
         let avail_features = (1u64 << VIRTIO_F_VERSION_1) | (1u64 << VIRTIO_RING_F_EVENT_IDX);
 
         let tag = fs_id.into_bytes();
@@ -64,6 +69,7 @@ impl Fs {
 
         let fs_cfg = passthrough::Config {
             root_dir: shared_dir,
+            allow_root_dir_delete,
             ..Default::default()
         };
 
