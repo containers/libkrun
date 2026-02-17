@@ -92,35 +92,29 @@ fn item_to_value(item: &[u8], radix: u32) -> Option<u32> {
     }
 }
 
-fn get_xattr_common(buf: &[u8]) -> io::Result<Option<(u32, u32, u32)>> {
+fn get_xattr_common(buf: &[u8]) -> io::Result<(Option<u32>, Option<u32>, Option<u32>)> {
     let mut items = buf.split(|c| *c == b':');
 
     let uid = match items.next() {
-        Some(item) => match item_to_value(item, 10) {
-            Some(item) => item,
-            None => return Ok(None),
-        },
-        None => return Ok(None),
+        Some(item) => item_to_value(item, 10),
+        None => None,
     };
     let gid = match items.next() {
-        Some(item) => match item_to_value(item, 10) {
-            Some(item) => item,
-            None => return Ok(None),
-        },
-        None => return Ok(None),
+        Some(item) => item_to_value(item, 10),
+        None => None,
     };
     let mode = match items.next() {
-        Some(item) => match item_to_value(item, 8) {
-            Some(item) => item,
-            None => return Ok(None),
-        },
-        None => return Ok(None),
+        Some(item) => item_to_value(item, 8),
+        None => None,
     };
 
-    Ok(Some((uid, gid, mode)))
+    Ok((uid, gid, mode))
 }
 
-fn get_xattr_fstat(fd: RawFd, st: bindings::stat64) -> io::Result<Option<(u32, u32, u32)>> {
+fn get_xattr_fstat(
+    fd: RawFd,
+    st: bindings::stat64,
+) -> io::Result<(Option<u32>, Option<u32>, Option<u32>)> {
     let mut buf: Vec<u8> = vec![0; 32];
     let options = if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
         libc::XATTR_NOFOLLOW
@@ -139,7 +133,7 @@ fn get_xattr_fstat(fd: RawFd, st: bindings::stat64) -> io::Result<Option<(u32, u
     };
     if res < 0 {
         debug!("fget_xattr error: {res}");
-        return Ok(None);
+        return Ok((None, None, None));
     }
 
     buf.resize(res as usize, 0);
@@ -147,7 +141,10 @@ fn get_xattr_fstat(fd: RawFd, st: bindings::stat64) -> io::Result<Option<(u32, u
     get_xattr_common(&buf)
 }
 
-fn get_xattr_lstat(path: &CString, st: bindings::stat64) -> io::Result<Option<(u32, u32, u32)>> {
+fn get_xattr_lstat(
+    path: &CString,
+    st: bindings::stat64,
+) -> io::Result<(Option<u32>, Option<u32>, Option<u32>)> {
     let mut buf: Vec<u8> = vec![0; 32];
     let options = if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
         libc::XATTR_NOFOLLOW
@@ -166,7 +163,7 @@ fn get_xattr_lstat(path: &CString, st: bindings::stat64) -> io::Result<Option<(u
     };
     if res < 0 {
         debug!("fget_xattr error: {res}");
-        return Ok(None);
+        return Ok((None, None, None));
     }
 
     buf.resize(res as usize, 0);
@@ -198,31 +195,45 @@ fn set_xattr_stat(
         0
     };
 
-    let (new_owner, new_mode) = if is_valid_owner(owner) && mode.is_some() {
-        (owner.unwrap(), mode.unwrap())
+    let buf = if is_valid_owner(owner) && mode.is_some() {
+        let owner = owner.unwrap();
+        let mode = mode.unwrap();
+        format!("{}:{}:0{:o}", owner.0, owner.1, mode)
     } else {
-        let (orig_owner, orig_mode) = if let Some((xuid, xgid, xmode)) = match file {
+        let (orig_uid, orig_gid, orig_mode) = match file {
             InodeHandle::Fd(fd) => get_xattr_fstat(*fd, st)?,
             InodeHandle::Path(ref c_path) => get_xattr_lstat(c_path, st)?,
-        } {
-            ((xuid, xgid), xmode)
-        } else {
-            ((0, 0), 0o0777)
         };
 
-        let new_owner = match owner {
+        let (uid, gid) = match owner {
             Some(o) => {
-                let uid = if o.0 < UID_MAX { o.0 } else { orig_owner.0 };
-                let gid = if o.1 < UID_MAX { o.1 } else { orig_owner.1 };
+                let uid = if o.0 < UID_MAX { Some(o.0) } else { orig_uid };
+                let gid = if o.1 < UID_MAX { Some(o.1) } else { orig_gid };
                 (uid, gid)
             }
-            None => orig_owner,
+            None => (orig_uid, orig_gid),
         };
 
-        (new_owner, mode.unwrap_or(orig_mode))
+        let mut buf = String::new();
+        if let Some(uid) = uid {
+            buf.push_str(&format!("{uid}"));
+        } else {
+            buf.push('x');
+        }
+        if let Some(gid) = gid {
+            buf.push_str(&format!(":{gid}:"));
+        } else {
+            buf.push_str(":x:");
+        }
+        if let Some(mode) = mode {
+            buf.push_str(&format!("0{:o}", mode));
+        } else if let Some(orig_mode) = orig_mode {
+            buf.push_str(&format!("0{:o}", orig_mode));
+        } else {
+            buf.push('x');
+        }
+        buf
     };
-
-    let buf = format!("{}:{}:0{:o}", new_owner.0, new_owner.1, new_mode);
 
     let res = match file {
         InodeHandle::Path(path) => unsafe {
@@ -254,6 +265,32 @@ fn set_xattr_stat(
     }
 }
 
+fn stat_common(
+    mut st: bindings::stat64,
+    uid: Option<u32>,
+    gid: Option<u32>,
+    mode: Option<u32>,
+    host: bool,
+) -> io::Result<bindings::stat64> {
+    if !host {
+        if let Some(uid) = uid {
+            st.st_uid = uid;
+        }
+        if let Some(gid) = gid {
+            st.st_gid = gid;
+        }
+        if let Some(mode) = mode {
+            if mode as u16 & libc::S_IFMT == 0 {
+                st.st_mode = (st.st_mode & libc::S_IFMT) | mode as u16;
+            } else {
+                st.st_mode = mode as u16;
+            }
+        }
+    }
+
+    Ok(st)
+}
+
 fn fstat(fd: RawFd, host: bool) -> io::Result<bindings::stat64> {
     let mut st = MaybeUninit::<bindings::stat64>::zeroed();
 
@@ -262,21 +299,13 @@ fn fstat(fd: RawFd, host: bool) -> io::Result<bindings::stat64> {
     let res = unsafe { libc::fstat(fd, st.as_mut_ptr()) };
     if res >= 0 {
         // Safe because the kernel guarantees that the struct is now fully initialized.
-        let mut st = unsafe { st.assume_init() };
-
+        let st = unsafe { st.assume_init() };
         if !host {
-            if let Some((uid, gid, mode)) = get_xattr_fstat(fd, st)? {
-                st.st_uid = uid;
-                st.st_gid = gid;
-                if mode as u16 & libc::S_IFMT == 0 {
-                    st.st_mode = (st.st_mode & libc::S_IFMT) | mode as u16;
-                } else {
-                    st.st_mode = mode as u16;
-                }
-            }
+            let (uid, gid, mode) = get_xattr_fstat(fd, st)?;
+            stat_common(st, uid, gid, mode, host)
+        } else {
+            Ok(st)
         }
-
-        Ok(st)
     } else {
         Err(linux_error(io::Error::last_os_error()))
     }
@@ -290,21 +319,13 @@ fn lstat(c_path: &CString, host: bool) -> io::Result<bindings::stat64> {
     let res = unsafe { libc::lstat(c_path.as_ptr(), st.as_mut_ptr()) };
     if res >= 0 {
         // Safe because the kernel guarantees that the struct is now fully initialized.
-        let mut st = unsafe { st.assume_init() };
-
+        let st = unsafe { st.assume_init() };
         if !host {
-            if let Some((uid, gid, mode)) = get_xattr_lstat(c_path, st)? {
-                st.st_uid = uid;
-                st.st_gid = gid;
-                if mode as u16 & libc::S_IFMT == 0 {
-                    st.st_mode = (st.st_mode & libc::S_IFMT) | mode as u16;
-                } else {
-                    st.st_mode = mode as u16;
-                }
-            }
+            let (uid, gid, mode) = get_xattr_lstat(c_path, st)?;
+            stat_common(st, uid, gid, mode, host)
+        } else {
+            Ok(st)
         }
-
-        Ok(st)
     } else {
         Err(linux_error(io::Error::last_os_error()))
     }
