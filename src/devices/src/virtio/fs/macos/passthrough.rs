@@ -126,7 +126,7 @@ fn get_xattr_fstat(
             fd,
             XATTR_KEY.as_ptr() as *const i8,
             buf.as_mut_ptr() as *mut libc::c_void,
-            64,
+            buf.len(),
             0,
             options,
         )
@@ -156,7 +156,7 @@ fn get_xattr_lstat(
             path.as_ptr(),
             XATTR_KEY.as_ptr() as *const i8,
             buf.as_mut_ptr() as *mut libc::c_void,
-            32,
+            buf.len(),
             0,
             options,
         )
