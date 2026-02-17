@@ -60,6 +60,7 @@ impl Fs {
         fs_id: String,
         shared_dir: String,
         exit_code: Arc<AtomicI32>,
+        allow_root_dir_delete: bool,
         queues: Vec<VirtQueue>,
     ) -> super::Result<Fs> {
         let mut queue_events = Vec::new();
@@ -77,6 +78,7 @@ impl Fs {
 
         let fs_cfg = passthrough::Config {
             root_dir: shared_dir,
+            allow_root_dir_delete,
             ..Default::default()
         };
 
@@ -97,12 +99,17 @@ impl Fs {
         })
     }
 
-    pub fn new(fs_id: String, shared_dir: String, exit_code: Arc<AtomicI32>) -> super::Result<Fs> {
+    pub fn new(
+        fs_id: String,
+        shared_dir: String,
+        exit_code: Arc<AtomicI32>,
+        allow_root_dir_delete: bool,
+    ) -> super::Result<Fs> {
         let queues: Vec<VirtQueue> = defs::QUEUE_SIZES
             .iter()
             .map(|&max_size| VirtQueue::new(max_size))
             .collect();
-        Self::with_queues(fs_id, shared_dir, exit_code, queues)
+        Self::with_queues(fs_id, shared_dir, exit_code, allow_root_dir_delete, queues)
     }
 
     pub fn id(&self) -> &str {
