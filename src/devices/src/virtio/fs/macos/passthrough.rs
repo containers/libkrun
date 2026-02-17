@@ -432,6 +432,7 @@ pub struct Config {
     pub export_fsid: u64,
     /// Table of exported FDs to share with other subsystems. Not supported for macos.
     pub export_table: Option<ExportTable>,
+    pub allow_root_dir_delete: bool,
 }
 
 impl Default for Config {
@@ -446,6 +447,7 @@ impl Default for Config {
             proc_sfd_rawfd: None,
             export_fsid: 0,
             export_table: None,
+            allow_root_dir_delete: false,
         }
     }
 }
@@ -2419,7 +2421,7 @@ impl FileSystem for PassthroughFs {
                 exit_code.store(arg as i32, Ordering::SeqCst);
                 Ok(Vec::new())
             }
-            VIRTIO_IOC_REMOVE_ROOT_DIR_REQ => {
+            VIRTIO_IOC_REMOVE_ROOT_DIR_REQ if self.cfg.allow_root_dir_delete => {
                 std::fs::remove_dir_all(&self.cfg.root_dir)?;
                 Ok(Vec::new())
             }
