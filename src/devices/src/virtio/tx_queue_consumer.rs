@@ -323,7 +323,13 @@ impl<R: ChainsMemoryRepr> TxQueueConsumer<R> {
 
         while self.pending_count() < max_chains {
             let Some(head) = self.queue.pop(&self.mem) else {
-                break;
+                // Queue exhausted: re-enable driver kicks (sets avail_event for
+                // EVENT_IDX). If more descriptors arrived in the meantime, loop
+                // back to pop them; otherwise break and wait for the next kick.
+                match self.queue.enable_notification(&self.mem) {
+                    Ok(true) => continue,
+                    _ => break,
+                }
             };
             let head_index = head.index;
 
