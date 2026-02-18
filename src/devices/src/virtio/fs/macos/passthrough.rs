@@ -36,7 +36,7 @@ const SECURITY_CAPABILITY: &[u8] = b"security.capability\0";
 
 const UID_MAX: u32 = u32::MAX - 1;
 
-static INIT_BINARY: &[u8] = include_bytes!("../../../../../../init/init");
+static INIT_BINARY: &[u8] = include_bytes!(env!("INIT_BINARY_PATH"));
 
 type Inode = u64;
 type Handle = u64;
