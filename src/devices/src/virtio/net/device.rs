@@ -20,7 +20,7 @@ use std::cmp;
 use std::io::Write;
 use std::os::fd::RawFd;
 use std::path::PathBuf;
-use virtio_bindings::virtio_net::VIRTIO_NET_F_MAC;
+use virtio_bindings::{virtio_net::VIRTIO_NET_F_MAC, virtio_ring::VIRTIO_RING_F_EVENT_IDX};
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 const VIRTIO_F_VERSION_1: u32 = 32;
@@ -86,7 +86,7 @@ impl Net {
     ) -> Result<Self> {
         let avail_features = features as u64
             | (1 << VIRTIO_NET_F_MAC)
-            // | (1 << VIRTIO_RING_F_EVENT_IDX)  // TODO: re-enable after debugging
+            | (1 << VIRTIO_RING_F_EVENT_IDX)
             | (1 << VIRTIO_F_VERSION_1);
 
         let config = VirtioNetConfig {
