@@ -21,33 +21,8 @@ struct ChainMeta<M: Default> {
     max_bytes: usize,
     bytes_used: usize,
     finished: bool,
-    /// User-defined metadata from representation (e.g., Vec capacity for mmsghdr)
+    /// User-defined metadata
     user_meta: M,
-}
-
-/// RxQueueProducer - owns the RX queue and provides buffers for receiving.
-///
-/// Generic over representation type R, allowing different backends to use optimized
-/// representations (e.g., mmsghdr for recvmmsg). Default is IovecVec.
-///
-/// Pops descriptor chains from the virtio RX queue and provides writable
-/// iovecs for receiving data. Unfinished chains are kept pending for the next
-/// produce() call; finished chains get add_used() with their byte counts.
-///
-/// The iovecs point into guest memory owned by `mem`. This is safe because
-/// the struct owns the memory reference and outlives any use of the iovecs.
-pub struct RxQueueProducer<R: ChainsMemoryRepr = IovecVec> {
-    /// The virtio RX queue
-    queue: Queue,
-    /// Guest memory reference
-    mem: GuestMemoryMmap,
-    /// Interrupt for signaling guest
-    interrupt: InterruptTransport,
-
-    /// Per-chain representation (type depends on R)
-    chain_repr: Vec<R>,
-    /// Metadata for each chain (parallel to chain_repr)
-    chain_meta: Vec<ChainMeta<R::Meta>>,
 }
 
 /// Batch for producing RX chains.
@@ -65,71 +40,19 @@ pub struct RxProducerBatch<'a, R: ChainsMemoryRepr> {
 }
 
 impl<R: ChainsMemoryRepr> RxProducerBatch<'_, R> {
-    /// Number of pending chains.
+    /// Number of chains in the batch.
     #[inline]
     pub fn len(&self) -> usize {
         self.chain_repr.len()
     }
 
-    /// Returns true if there are no pending chains.
+    /// Check if chain is already finished.
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.chain_repr.is_empty()
+    pub fn is_finished(&self, index: usize) -> bool {
+        self.chain_meta[index].finished
     }
 
-    /// Get mutable access to a chain's representation by index.
-    ///
-    /// This is useful for backends that need to access representation-specific features
-    /// (e.g., getting mmsghdr from MsgHdrRx representation).
-    ///
-    /// # Panics
-    ///
-    /// Panics if index is out of bounds or if the chain has already been finished.
-    pub fn chain_mut(&mut self, index: usize) -> &mut R {
-        assert!(
-            !self.chain_meta[index].finished,
-            "chain_mut: chain at index {} already finished",
-            index
-        );
-        &mut self.chain_repr[index]
-    }
-
-    /// Get mutable access to chains in a range (checked).
-    ///
-    /// Returns a mutable slice of chain representation for the given range.
-    /// Optimized for sequential finishing: if `range.start >= first_unfinished`,
-    /// all chains in range are guaranteed unfinished (O(1) check).
-    ///
-    /// # Panics
-    ///
-    /// Panics if any chain in the range has already been finished.
-    pub fn chains_mut(&mut self, range: Range<usize>) -> &mut [R] {
-        // Fast path: if range starts at or after first_unfinished, all are unfinished
-        if range.start < self.first_unfinished {
-            // Slow path: range may include finished chains, check each
-            for i in range.clone() {
-                assert!(
-                    !self.chain_meta[i].finished,
-                    "all_chains_mut: chain at index {} already finished",
-                    i
-                );
-            }
-        }
-        &mut self.chain_repr[range]
-    }
-
-    /// Get mutable access to chains in a range (unchecked).
-    ///
-    /// # Safety
-    ///
-    /// This provides unchecked access to representations including already-finished
-    /// chains. The caller must ensure they only access valid (non-finished) chains.
-    #[inline]
-    pub unsafe fn chains_mut_unchecked(&mut self, range: Range<usize>) -> &mut [R] {
-        self.chain_repr.get_unchecked_mut(range)
-    }
-
-    /// Get bytes already received for chain at index.
+    /// Get bytes already produced for chain at index.
     #[inline]
     pub fn bytes_used(&self, index: usize) -> usize {
         self.chain_meta[index].bytes_used
@@ -141,39 +64,72 @@ impl<R: ChainsMemoryRepr> RxProducerBatch<'_, R> {
         self.chain_meta[index].max_bytes
     }
 
-    /// Mark chain at index as finished.
-    ///
-    /// Calls add_used immediately. Chain will be removed after callback returns.
-    /// Can be called out-of-order, but sequential finishing (0, 1, 2...) is
-    /// optimized via `first_unfinished` tracking.
+    // Get mutable access to the chain at index.
     ///
     /// # Panics
     ///
-    /// Panics if the chain at `index` has already been finished.
-    pub fn finish(&mut self, index: usize) {
-        let meta = &mut self.chain_meta[index];
-        assert!(
-            !meta.finished,
-            "finish: chain at index {} already finished",
-            index
-        );
-        meta.finished = true;
-        log::info!(
-            "RxProducerBatch::finish: index={} head_index={} bytes_used={}",
-            index,
-            meta.head_index,
-            meta.bytes_used
-        );
-        if let Err(e) = self
-            .queue
-            .add_used(self.mem, meta.head_index, meta.bytes_used as u32)
-        {
-            log::error!("RxProducerBatch: failed to add_used: {e}");
+    /// Panics if index is out of bounds or if the chain has already been finished.
+    pub fn chain_mut(&mut self, index: usize) -> &mut R {
+        self.assert_not_finished(index);
+        &mut self.chain_repr[index]
+    }
+
+    /// Get mutable access to chains in a range (checked).
+    ///
+    /// O(1) if chains are being finished sequentially, O(n) otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any chain in the range has already been finished.
+    pub fn chains_mut(&mut self, range: Range<usize>) -> &mut [R] {
+        self.assert_range_not_finished(range.clone());
+        &mut self.chain_repr[range]
+    }
+
+    /// Mark range of chains as finished.
+    ///
+    /// Calls add_used immediately. Chains can be finsihed out-of-order,
+    /// but sequential finishing (0, 1, 2...) is preferable, as it simplifies tracking of completed ranges.
+    ///
+    /// O(1) if chains are being finished sequentially, O(n) otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any chain in the range has already been finished.
+    pub fn finish_many(&mut self, range: Range<usize>) {
+        if range.is_empty() {
+            return;
         }
 
-        // Update first_unfinished for sequential finishing optimization
-        if index == self.first_unfinished {
-            // Scan forward to find next unfinished chain
+        let range_start = range.start;
+        let range_end = range.end;
+
+        for i in range {
+            self.assert_not_finished(i);
+            let meta = &mut self.chain_meta[i];
+            meta.finished = true;
+
+            log::trace!(
+                "finishing chain index={} head_index={} bytes_used={}",
+                i,
+                meta.head_index,
+                meta.bytes_used
+            );
+
+            if let Err(e) = self
+                .queue
+                .add_used(self.mem, meta.head_index, meta.bytes_used as u32)
+            {
+                log::error!("failed to add_used: {e}");
+            }
+        }
+
+        debug_assert!(range_start >= self.first_unfinished);
+        if range_start == self.first_unfinished {
+            // Jump to the end of the range we just verified and finished
+            self.first_unfinished = range_end;
+
+            // Scan forward in case there were out-of-order finishes sitting ahead of us
             while self.first_unfinished < self.chain_meta.len()
                 && self.chain_meta[self.first_unfinished].finished
             {
@@ -182,7 +138,44 @@ impl<R: ChainsMemoryRepr> RxProducerBatch<'_, R> {
         }
     }
 
+    /// Mark chain at index as finished.
+    ///
+    /// Calls add_used immediately. Chains can be finished out-of-order,
+    /// but sequential finishing (0, 1, 2...) is preferable.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the chain at `index` has already been finished.
+    pub fn finish(&mut self, index: usize) {
+        self.finish_many(index..index + 1);
+    }
+
+    #[track_caller]
+    #[inline]
+    fn assert_range_not_finished(&self, range: Range<usize>) {
+        // Fast path: if range starts at or after first_unfinished, all are unfinished
+        if range.start < self.first_unfinished {
+            // Slow path: range may include finished chains, check each
+            for i in range {
+                self.assert_not_finished(i);
+            }
+        }
+    }
+
+    #[track_caller]
+    #[inline]
+    fn assert_not_finished(&self, index: usize) {
+        assert!(
+            !self.is_finished(index),
+            "chain at index {index} already finished",
+        );
+    }
+}
+
+/// Methods for representation types that support advancing (for partial receives).
+impl<R: ChainsMemoryRepr + AdvanceBytes> RxProducerBatch<'_, R> {
     /// Complete a chain with the given byte count.
+    ///
     ///
     /// Updates bytes_used and marks the chain as finished.
     ///
@@ -190,13 +183,11 @@ impl<R: ChainsMemoryRepr> RxProducerBatch<'_, R> {
     ///
     /// Panics if the chain at `index` has already been finished.
     pub fn complete(&mut self, index: usize, bytes: usize) {
+        // self.chain_repr[index].advance(bytes);
         self.chain_meta[index].bytes_used += bytes;
         self.finish(index);
     }
-}
 
-/// Methods for representation types that support advancing (for partial receives).
-impl<R: ChainsMemoryRepr + AdvanceBytes> RxProducerBatch<'_, R> {
     /// Advance bytes used for chain at index (partial receive).
     ///
     /// Updates bytes_used and advances the iovecs in place.
@@ -305,6 +296,31 @@ impl RxProducerBatch<'_, IovecVec> {
     }
 }
 
+/// RxQueueProducer - owns the RX queue and provides buffers for receiving.
+///
+/// Generic over representation type R, allowing different backends to use optimized
+/// representations (e.g., mmsghdr for recvmmsg). Default is IovecVec.
+///
+/// Pops descriptor chains from the virtio RX queue and provides writable
+/// iovecs for receiving data. Unfinished chains are kept pending for the next
+/// produce() call; finished chains get add_used() with their byte counts.
+///
+/// The iovecs point into guest memory owned by `mem`. This is safe because
+/// the struct owns the memory reference and outlives any use of the iovecs.
+pub struct RxQueueProducer<R: ChainsMemoryRepr = IovecVec> {
+    /// The virtio RX queue
+    queue: Queue,
+    /// Guest memory reference
+    mem: GuestMemoryMmap,
+    /// Interrupt for signaling guest
+    interrupt: InterruptTransport,
+
+    /// Per-chain representation (type depends on R)
+    chain_repr: Vec<R>,
+    /// Metadata for each chain (parallel to chain_repr)
+    chain_meta: Vec<ChainMeta<R::Meta>>,
+}
+
 impl<R: ChainsMemoryRepr> RxQueueProducer<R> {
     /// Create a new RxQueueProducer with the given queue, memory, and interrupt.
     pub fn new(queue: Queue, mem: GuestMemoryMmap, interrupt: InterruptTransport) -> Self {
@@ -334,78 +350,65 @@ impl<R: ChainsMemoryRepr> RxQueueProducer<R> {
     /// Returns the number of frames added.
     ///
     /// # Arguments
-    /// * `max_frames` - Maximum frames to feed (including already pending)
+    /// * `max_chains` - Maximum frames to feed (including already pending)
     /// * `transform` - Callback to transform each descriptor chain's iovecs
     ///
     /// # Lifetime Note
     /// The callback uses HRTB to hide the internal 'static lifetime. The iovecs
     /// point into guest memory owned by this struct - do not store references.
-    pub fn feed_with_transform<F>(&mut self, max_frames: usize, mut transform: F) -> usize
+    pub fn feed_with_transform<F>(&mut self, max_chains: usize, mut transform: F) -> usize
     where
         F: for<'a> FnMut(Vec<IoSliceMut<'a>>) -> (R, R::Meta),
     {
         let mut added = 0;
 
-        while self.pending_count() < max_frames {
+        'next_chain: while self.pending_count() < max_chains {
             let Some(head) = self.queue.pop(&self.mem) else {
-                // Queue exhausted: re-enable driver kicks (sets avail_event for
-                // EVENT_IDX). If more descriptors arrived in the meantime, loop
-                // back to pop them; otherwise break and wait for the next kick.
+                // Queue exhausted: re-enable driver kicks. If more descriptors arrived in the
+                // meantime, loops back to pop them; otherwise break and wait for the next kick.
                 match self.queue.enable_notification(&self.mem) {
-                    Ok(true) => continue,
-                    _ => break,
+                    Ok(true) => continue 'next_chain,
+                    _ => break 'next_chain,
                 }
             };
 
             let head_index = head.index;
-            // Safety: The 'static lifetime here is a lie - the slices actually point into
-            // `self.mem`. This is safe because:
-            // 1. `self` owns `mem`, so the memory outlives these iovecs
-            // 2. The iovecs are stored in chain_repr (requires 'static for representation)
-            // 3. All access goes through `produce()` which borrows `&mut self`, preventing
-            //    use-after-free (can't drop self while iovecs are in use)
-            let mut iovecs: Vec<IoSliceMut<'static>> = Vec::new();
+            let mut iovecs: Vec<IoSliceMut<'_>> = Vec::new();
             let mut valid = true;
 
-            for desc in head.into_iter() {
-                // Only process writable descriptors (guest-writable = receive buffer)
-                if desc.is_write_only() {
-                    if let Some(iov) = self.desc_to_ioslice_mut(&desc) {
-                        iovecs.push(iov);
-                    } else {
-                        log::error!(
-                            "RxQueueProducer: failed to map descriptor addr={:x} len={}",
-                            desc.addr.raw_value(),
-                            desc.len
-                        );
-                        valid = false;
-                        break;
-                    }
+            for desc in head.into_iter().filter(DescriptorChain::is_write_only) {
+                if let Some(iov) = self.desc_to_ioslice_mut(&desc) {
+                    iovecs.push(iov);
+                } else {
+                    log::warn!(
+                        "Invalid descriptor: head_index={} addr={:x} len={}, skipping the chain",
+                        head_index,
+                        desc.addr.raw_value(),
+                        desc.len
+                    );
+                    continue 'next_chain;
                 }
             }
 
-            if !valid || iovecs.is_empty() {
-                // Invalid or empty - mark as used with 0 bytes
-                if let Err(e) = self.queue.add_used(&self.mem, head_index, 0) {
-                    log::error!("RxQueueProducer: failed to add_used: {e}");
-                }
-                continue;
+            if iovecs.is_empty() {
+                log::warn!("Found empty chain, ignoring it");
+                continue 'next_chain;
             }
 
             // Compute original chain length before transformation
             let max_bytes: usize = iovecs.iter().map(|iov| iov.len()).sum();
 
             // Apply transformation (callback takes ownership, returns representation)
-            let (storage, user_meta) = transform(iovecs);
+            let (repr, user_meta) = transform(iovecs);
 
             // Track bytes consumed by transform (header written + advanced)
-            let transform_bytes = max_bytes - storage.total_bytes();
+            let bytes_used = max_bytes - repr.total_bytes();
 
-            self.chain_repr.push(storage);
+            self.chain_repr.push(repr);
             self.chain_meta.push(ChainMeta {
                 head_index,
                 max_bytes,
-                bytes_used: transform_bytes,
+                bytes_used,
                 finished: false,
                 user_meta,
             });
@@ -446,29 +449,39 @@ impl<R: ChainsMemoryRepr> RxQueueProducer<R> {
         F: for<'a> FnOnce(&mut RxProducerBatch<'a, R>),
     {
         if self.chain_meta.is_empty() {
-            log::info!("RxQueueProducer::produce: no chains pending, returning 0");
+            log::info!("produce: no chains pending, returning 0");
             return 0;
         }
 
         log::info!(
-            "RxQueueProducer::produce: {} chains pending, calling callback",
+            "produce: {} chains pending, calling callback",
             self.chain_meta.len()
         );
 
-        {
-            let mut batch = RxProducerBatch {
-                chain_repr: &mut self.chain_repr,
-                chain_meta: &mut self.chain_meta,
-                queue: &mut self.queue,
-                mem: &self.mem,
-                first_unfinished: 0,
-            };
-            f(&mut batch);
+        f(&mut RxProducerBatch {
+            chain_repr: &mut self.chain_repr,
+            chain_meta: &mut self.chain_meta,
+            queue: &mut self.queue,
+            mem: &self.mem,
+            first_unfinished: 0,
+        });
+        let finished_count = self.compact();
+
+        if finished_count > 0 {
+            self.signal_used_if_needed();
         }
 
-        // Remove finished chains in O(n) by swapping unfinished to front, then truncating
+        log::info!("produce: finished_count={} remaining={}", finished_count, self.chain_meta.len());
+
+        finished_count
+    }
+
+    // Remove finished chains in O(n) by swapping unfinished to front, then truncating
+    // (for producer we don't care about the order of the descriptor chains)
+    fn compact(&mut self) -> usize {
         let mut finished_count = 0;
         let mut write = 0;
+
         for read in 0..self.chain_meta.len() {
             if self.chain_meta[read].finished {
                 self.chain_repr[read].clear(&mut self.chain_meta[read].user_meta);
@@ -481,18 +494,9 @@ impl<R: ChainsMemoryRepr> RxQueueProducer<R> {
                 write += 1;
             }
         }
+
         self.chain_repr.truncate(write);
         self.chain_meta.truncate(write);
-
-        log::info!(
-            "RxQueueProducer::produce: finished_count={} remaining={}",
-            finished_count,
-            write
-        );
-
-        if finished_count > 0 {
-            self.signal_used_if_needed();
-        }
 
         finished_count
     }

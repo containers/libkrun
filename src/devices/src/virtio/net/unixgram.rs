@@ -385,10 +385,6 @@ impl Unixgram {
         let fd = self.fd.as_raw_fd();
 
         self.tx_consumer.consume(|batch| {
-            if batch.is_empty() {
-                return;
-            }
-
             let len = batch.len();
             // Safety: No chains have been completed yet, so 0..len is valid.
             let storage = batch.chains(0..len);
@@ -417,10 +413,6 @@ impl Unixgram {
         let fd = self.fd.as_raw_fd();
 
         self.rx_producer.produce(|batch| {
-            if batch.is_empty() {
-                return;
-            }
-
             let len = batch.len();
             let ret = {
                 let storage = batch.chains_mut(0..len);
@@ -438,10 +430,7 @@ impl Unixgram {
 
             match ret {
                 n if n > 0 => {
-                    for i in 0..n as usize {
-                        let bytes = batch.chain_mut(i).received_len();
-                        batch.complete(i, bytes);
-                    }
+                    batch.finish_many(0..n as usize);
                 }
                 0 => log::warn!("recvmmsg returned 0 (unexpected)"),
                 _ => {
@@ -461,10 +450,6 @@ impl Unixgram {
         let fd = self.fd.as_raw_fd();
 
         self.tx_consumer.consume(|batch| {
-            if batch.is_empty() {
-                return;
-            }
-
             let len = batch.len();
             // Safety: No chains have been completed yet, so 0..len is valid.
             let storage = batch.chains(0..len);
@@ -522,10 +507,6 @@ impl Unixgram {
         let fd = self.fd.as_raw_fd();
 
         self.rx_producer.produce(|batch| {
-            if batch.is_empty() {
-                log::trace!("recv_macos: no chains available");
-                return;
-            }
             log::info!("recv_macos: {} chains available", batch.len());
 
             let len = batch.len();
@@ -541,11 +522,7 @@ impl Unixgram {
 
             match ret {
                 n if n > 0 => {
-                    for i in 0..n as usize {
-                        let bytes = batch.chain_mut(i).received_len();
-                        log::info!("recvmsg_x[{}]: received {} bytes", i, bytes);
-                        batch.complete(i, bytes);
-                    }
+                    batch.finish_many(0..n as usize);
                 }
                 0 => log::warn!("recvmsg_x returned 0 (unexpected)"),
                 _ => {

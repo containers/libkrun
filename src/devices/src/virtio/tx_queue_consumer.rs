@@ -24,7 +24,7 @@ struct ChainMeta<M: Default> {
     /// Bytes sent so far (for partial send tracking)
     bytes_used: usize,
     finished: bool,
-    /// User-defined metadata from representation (e.g., Vec capacity for mmsghdr)
+    /// User-defined metadata
     user_meta: M,
 }
 
@@ -51,122 +51,14 @@ impl<R: ChainsMemoryRepr> TxConsumerBatch<'_, R> {
     pub fn len(&self) -> usize {
         self.chain_repr.len()
     }
-
-    /// Returns true if there are no pending chains.
+    
+    /// Check if chain is already finished.
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.chain_repr.is_empty()
+    pub fn is_finished(&self, index: usize) -> bool {
+        self.chain_meta[index].finished
     }
 
-    /// Get access to a chain's representation by index.
-    ///
-    /// This is useful for backends that need to access representation-specific features
-    /// (e.g., getting mmsghdr from MsgHdrTx representation).
-    ///
-    /// # Panics
-    ///
-    /// Panics if index is out of bounds or if the chain has already been completed.
-    pub fn chain(&self, index: usize) -> &R {
-        assert!(
-            !self.chain_meta[index].finished,
-            "chain: chain at index {} already completed",
-            index
-        );
-        &self.chain_repr[index]
-    }
-
-    /// Get access to chains in a range (checked).
-    ///
-    /// Returns a slice of chain representations for the given range.
-    /// Optimized for sequential completion: if `range.start >= first_finished`,
-    /// all chains in range are guaranteed uncompleted (O(1) check).
-    ///
-    /// # Panics
-    ///
-    /// Panics if any chain in the range has already been completed.
-    pub fn chains(&self, range: Range<usize>) -> &[R] {
-        // Fast path: if range starts at or after first_finished, all are uncompleted
-        if range.start < self.first_finished {
-            // Slow path: range may include completed chains, check each
-            for i in range.clone() {
-                assert!(
-                    !self.chain_meta[i].finished,
-                    "chains: chain at index {} already completed",
-                    i
-                );
-            }
-        }
-        &self.chain_repr[range]
-    }
-
-    /// Get access to chains in a range (unchecked).
-    ///
-    /// # Safety
-    ///
-    /// This provides unchecked access to representations including already-completed
-    /// chains. The caller must ensure they only access valid (non-completed) chains.
-    #[inline]
-    pub unsafe fn chains_unchecked(&self, range: Range<usize>) -> &[R] {
-        self.chain_repr.get_unchecked(range)
-    }
-
-    /// Mark chains in a range as complete.
-    ///
-    /// # Panics
-    ///
-    /// Panics if any chain in the range has already been completed.
-    pub fn complete_many(&mut self, range: Range<usize>) {
-        for i in range {
-            self.complete(i);
-        }
-    }
-
-    /// Complete a chain.
-    ///
-    /// Marks the chain as completed and calls add_used with guest_len.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the chain at `index` has already been completed.
-    pub fn complete(&mut self, index: usize) {
-        let meta = &mut self.chain_meta[index];
-        assert!(
-            !meta.finished,
-            "complete: chain at index {} already completed",
-            index
-        );
-        meta.finished = true;
-        log::trace!(
-            "TxConsumerBatch::complete: index={} head_index={} guest_len={}",
-            index,
-            meta.head_index,
-            meta.guest_len
-        );
-        if let Err(e) = self
-            .queue
-            .add_used(self.mem, meta.head_index, meta.guest_len as u32)
-        {
-            log::error!("TxConsumerBatch: failed to add_used: {e}");
-        }
-
-        // Update first_finished for sequential completion optimization
-        if index == self.first_finished {
-            // Scan forward to find next uncompleted chain
-            while self.first_finished < self.chain_meta.len()
-                && self.chain_meta[self.first_finished].finished
-            {
-                self.first_finished += 1;
-            }
-        }
-    }
-
-    /// Get the number of chains completed so far in this batch.
-    #[inline]
-    pub fn completed_count(&self) -> usize {
-        self.first_finished
-    }
-
-    /// Get bytes already sent for chain at index.
+    /// Get bytes already consumed for chain at index.
     #[inline]
     pub fn bytes_used(&self, index: usize) -> usize {
         self.chain_meta[index].bytes_used
@@ -176,6 +68,58 @@ impl<R: ChainsMemoryRepr> TxConsumerBatch<'_, R> {
     #[inline]
     pub fn max_bytes(&self, index: usize) -> usize {
         self.chain_meta[index].max_bytes
+    }
+
+    /// Get access to a chain at index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if index is out of bounds or if the chain has already been completed.
+    pub fn chain(&self, index: usize) -> &R {
+        self.assert_not_finished(index);
+        &self.chain_repr[index]
+    }
+
+    /// Get access to chains in a range (checked).
+    ///
+    /// Returns a slice of chain representations for the given range.
+    ///
+    /// O(1) if chains are being finished sequentially, O(n) otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any chain in the range has already been completed.
+    pub fn chains(&self, range: Range<usize>) -> &[R] {
+        // Fast path: if range starts at or after first_finished, all are uncompleted
+        if range.start < self.first_finished {
+            // Slow path: range may include completed chains, check each
+            for i in range.clone() {
+                self.assert_not_finished(i);
+            }
+        }
+        &self.chain_repr[range]
+    }
+
+    /// Mark chain at index as complete.
+    ///
+    /// Calls add_used immediately. Chain will be removed after consume() returns.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the chain at `index` has already been completed.
+    pub fn complete(&mut self, index: usize) {
+        self.finish(index);
+    }
+
+    /// Mark range of chains as complete.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any chain in the range has already been completed.
+    pub fn complete_many(&mut self, range: Range<usize>) {
+        for i in range {
+            self.complete(i);
+        }
     }
 
     /// Get total bytes across all pending (non-completed) chains.
@@ -203,7 +147,7 @@ impl<R: ChainsMemoryRepr> TxConsumerBatch<'_, R> {
         );
         meta.finished = true;
         log::trace!(
-            "TxConsumerBatch::finish: index={} head_index={} guest_len={}",
+            "finish: index={} head_index={} guest_len={}",
             index,
             meta.head_index,
             meta.guest_len
@@ -223,6 +167,14 @@ impl<R: ChainsMemoryRepr> TxConsumerBatch<'_, R> {
                 self.first_finished += 1;
             }
         }
+    }
+    
+    #[track_caller]
+    fn assert_not_finished(&self, index: usize) {
+        assert!(
+            !self.is_finished(index),
+            "chain at index {index} already finished",
+        );
     }
 }
 
@@ -314,21 +266,20 @@ impl<R: ChainsMemoryRepr> TxQueueConsumer<R> {
     ///
     /// # Arguments
     /// * `max_chains` - Maximum chains to feed (including already pending)
-    /// * `transform_chain` - Callback that takes iovecs and returns (representation, meta)
-    pub fn feed_with_transform<F>(&mut self, max_chains: usize, mut transform_chain: F) -> usize
+    /// * `transform` - Callback that takes iovecs and returns (representation, meta)
+    pub fn feed_with_transform<F>(&mut self, max_chains: usize, mut transform: F) -> usize
     where
         F: for<'a> FnMut(Vec<IoSlice<'a>>) -> (R, R::Meta),
     {
         let mut added = 0;
 
-        while self.pending_count() < max_chains {
+        'next_chain: while self.pending_count() < max_chains {
             let Some(head) = self.queue.pop(&self.mem) else {
-                // Queue exhausted: re-enable driver kicks (sets avail_event for
-                // EVENT_IDX). If more descriptors arrived in the meantime, loop
-                // back to pop them; otherwise break and wait for the next kick.
+                // Queue exhausted: re-enable driver kicks. If more descriptors arrived in the
+                // meantime, loops back to pop them; otherwise break and wait for the next kick.
                 match self.queue.enable_notification(&self.mem) {
-                    Ok(true) => continue,
-                    _ => break,
+                    Ok(true) => continue 'next_chain,
+                    _ => break 'next_chain,
                 }
             };
             let head_index = head.index;
@@ -336,46 +287,43 @@ impl<R: ChainsMemoryRepr> TxQueueConsumer<R> {
             let mut iovecs: Vec<IoSlice<'_>> = Vec::new();
             let mut valid = true;
 
-            for desc in head.into_iter() {
-                // Only process readable descriptors (guest-readable = data to send)
-                if desc.is_read_only() {
-                    if let Some(iov) = self.desc_to_ioslice(&desc) {
-                        iovecs.push(iov);
-                    } else {
-                        log::error!(
-                            "TxQueueConsumer: failed to map descriptor addr={:x} len={}",
-                            desc.addr.raw_value(),
-                            desc.len
-                        );
-                        valid = false;
-                        break;
-                    }
+            for desc in head.into_iter().filter(DescriptorChain::is_read_only) {
+                if let Some(iov) = self.desc_to_ioslice(&desc) {
+                    iovecs.push(iov);
+                } else {
+                    log::warn!(
+                        "Invalid descriptor head_index={} addr={:x} len={}, skipping the chain",
+                        head_index,
+                        desc.addr.raw_value(),
+                        desc.len
+                    );
+                    continue 'next_chain;
                 }
             }
 
-            if !valid || iovecs.is_empty() {
-                // Invalid or empty descriptor chain - mark as used with 0 bytes
-                if let Err(e) = self.queue.add_used(&self.mem, head_index, 0) {
-                    log::error!("TxQueueConsumer: failed to add_used: {e}");
-                }
-                continue;
+            if iovecs.is_empty() {
+                warn!("Found empty chain, ignoring it");
+                continue 'next_chain;
             }
 
             // Compute original chain length before transformation
             let guest_len: usize = iovecs.iter().map(|s| s.len()).sum();
 
-            // Let callback construct representation (and transform iovecs as needed)
-            let (storage, user_meta) = transform_chain(iovecs);
+            // Apply transformation (callback takes ownership, returns representation)
+            let (repr, user_meta) = transform(iovecs);
 
             // Compute final length from storage
-            let max_bytes = storage.total_bytes();
+            let max_bytes = repr.total_bytes();
+            
+            // Track bytes consumed by transform (header written + advanced)
+            let bytes_used = max_bytes - repr.total_bytes();
 
-            self.chain_repr.push(storage);
+            self.chain_repr.push(repr);
             self.chain_meta.push(ChainMeta {
                 head_index,
                 max_bytes,
                 guest_len,
-                bytes_used: 0,
+                bytes_used,
                 finished: false,
                 user_meta,
             });
