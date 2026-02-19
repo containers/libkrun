@@ -114,8 +114,20 @@ impl NetBackend for Unixgram {
 
     /// Try to write a frame to the proxy.
     fn write_frame(&mut self, hdr_len: usize, buf: &mut [u8]) -> Result<(), WriteError> {
-        let ret = send(self.fd.as_raw_fd(), &buf[hdr_len..], MsgFlags::empty())
-            .map_err(WriteError::Internal)?;
+        let ret = match send(self.fd.as_raw_fd(), &buf[hdr_len..], MsgFlags::empty()) {
+            Ok(ret) => ret,
+            // macOS returns ENOBUFS when the kernel socket buffer is full,
+            // rather than blocking or returning EAGAIN on non-blocking sockets.
+            // The only way to recover is to retry the send; the kernel does not
+            // provide any readiness notification for this condition.
+            // vmnet-helper handles this with a 50us sleep between retries,
+            // and typically one retry is enough:
+            // https://github.com/nirs/vmnet-helper/blob/455d172/helper.c#L42
+            Err(nix::Error::ENOBUFS) => {
+                return Err(WriteError::NothingWritten);
+            }
+            Err(e) => return Err(WriteError::Internal(e)),
+        };
         debug!(
             "Written frame size={}, written={}",
             buf.len() - hdr_len,
