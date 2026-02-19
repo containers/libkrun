@@ -23,7 +23,8 @@ AWS_NITRO_INIT_SRC = \
         init/aws-nitro/archive.c				\
         init/aws-nitro/args_reader.c			\
         init/aws-nitro/fs.c				\
-        init/aws-nitro/device/include/*			\
+        init/aws-nitro/mod.c					\
+		init/aws-nitro/device/include/*			\
 		init/aws-nitro/device/app_stdio_output.c	\
 		init/aws-nitro/device/device.c              \
 		init/aws-nitro/device/net_tap_afvsock.c	\
@@ -140,7 +141,7 @@ endif
 
 AWS_NITRO_INIT_BINARY= init/aws-nitro/init
 $(AWS_NITRO_INIT_BINARY): $(AWS_NITRO_INIT_SRC)
-	$(CC) -O2 -static -Wall $(AWS_NITRO_INIT_LD_FLAGS) -o $@ $(AWS_NITRO_INIT_SRC) $(AWS_NITRO_INIT_LD_FLAGS)
+	$(CC) -O2 -static -s -Wall $(AWS_NITRO_INIT_LD_FLAGS) -o $@ $(AWS_NITRO_INIT_SRC) $(AWS_NITRO_INIT_LD_FLAGS)
 
 # Sysroot preparation rules for cross-compilation on macOS
 DEBIAN_PACKAGES = libc6 libc6-dev libgcc-12-dev linux-libc-dev

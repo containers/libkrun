@@ -40,7 +40,7 @@ int app_stdio_output(unsigned int vsock_port)
     ret = setsockopt(sock_fd, AF_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
                      (void *)&timeval, sizeof(struct timeval));
     if (ret < 0) {
-        perror("unable to connect to host socket");
+        perror("unable to set application output vsock timeout");
         close(sock_fd);
         return -errno;
     }

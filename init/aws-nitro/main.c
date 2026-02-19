@@ -16,7 +16,6 @@
 #include <sys/reboot.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -25,6 +24,7 @@
 #include "include/archive.h"
 #include "include/args_reader.h"
 #include "include/fs.h"
+#include "include/mod.h"
 
 #define finit_module(fd, param_values, flags)                                  \
     (int)syscall(__NR_finit_module, fd, param_values, flags)
@@ -40,47 +40,6 @@ enum {
     VSOCK_PORT_OFFSET_APP_RET_CODE = 4,
     VSOCK_PORT_OFFSET_SIGNAL_HANDLER = 5,
 };
-
-/*
- * Load the NSM kernel module.
- */
-static int nsm_load(void)
-{
-    const char *file_name = "nsm.ko";
-    int fd, ret;
-
-    // Open and load the kernel module.
-    fd = open(file_name, O_RDONLY | O_CLOEXEC);
-    if (fd < 0 && errno == ENOENT)
-        return 0;
-    else if (fd < 0) {
-        perror("nsm.ko open");
-        return -errno;
-    }
-
-    ret = finit_module(fd, "", 0);
-    if (ret < 0) {
-        close(fd);
-        perror("nsm.ko finit_module");
-        return -errno;
-    }
-
-    // Close the file descriptor.
-    ret = close(fd);
-    if (ret < 0) {
-        perror("nsm.ko close");
-        return -errno;
-    }
-
-    // The NSM module file is no longer needed, remove it.
-    ret = unlink(file_name);
-    if (ret < 0) {
-        perror("nsm.ko unlink");
-        return -errno;
-    }
-
-    return 0;
-}
 
 /*
  * Mount the extracted rootfs and switch the root directory to it.
@@ -350,11 +309,11 @@ static int proxies_init(int cid, struct enclave_args *args, int shutdown_fd)
     }
 
     /*
-     * If not running in debug mode, initialize the application output proxy.
-     * In debug mode, the enclave uses the console (which is already connected)
-     * for output.
+     * If not running in debug mode, initialize the application output proxy. In
+     * debug mode, the enclave uses the console (which is already connected) for
+     * output.
      */
-    if (!args->debug) {
+    if (args->app_output) {
         ret = device_init(KRUN_NE_DEV_APP_OUTPUT_STDIO,
                           cid + VSOCK_PORT_OFFSET_OUTPUT, shutdown_fd);
     }
@@ -398,7 +357,7 @@ static int proxies_exit(struct enclave_args *args, int shutdown_fd)
     }
 
     // If not in debug mode, close the application output vsock.
-    if (!args->debug)
+    if (args->app_output)
         app_stdio_close();
 
     return ret;
@@ -447,6 +406,11 @@ int main(int argc, char *argv[])
         return -errno;
     }
 
+    // Initialize the configured kernel modules.
+    ret = mods_load();
+    if (ret < 0)
+        goto out;
+
     // Initialize early debug output with /dev/console.
     ret = console_init();
     if (ret < 0)
@@ -455,11 +419,6 @@ int main(int argc, char *argv[])
     // Get the enclave's context ID.
     cid = cid_fetch();
     if (cid == 0)
-        goto out;
-
-    // Initialize the NSM kernel module.
-    ret = nsm_load();
-    if (ret < 0)
         goto out;
 
     // Read the enclave arguments from the host.
