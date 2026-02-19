@@ -33,7 +33,7 @@ const EMPTY_CSTR: &[u8] = b"\0";
 const PROC_CSTR: &[u8] = b"/proc/self/fd\0";
 const INIT_CSTR: &[u8] = b"init.krun\0";
 
-static INIT_BINARY: &[u8] = include_bytes!(env!("INIT_BINARY_PATH"));
+static INIT_BINARY: &[u8] = include_bytes!(env!("KRUN_INIT_BINARY_PATH"));
 
 type Inode = u64;
 type Handle = u64;

@@ -101,7 +101,7 @@ use vm_memory::{GuestAddress, GuestMemoryMmap};
 
 #[cfg(target_arch = "aarch64")]
 #[allow(dead_code)]
-static EDK2_BINARY: &[u8] = include_bytes!(env!("EDK2_BINARY_PATH"));
+static EDK2_BINARY: &[u8] = include_bytes!(env!("KRUN_EDK2_BINARY_PATH"));
 
 /// Errors associated with starting the instance.
 #[derive(Debug)]
