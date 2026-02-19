@@ -18,6 +18,8 @@ pub struct NetworkInterfaceConfig {
     pub mac: [u8; 6],
     /// virtio-net features for the network interface.
     pub features: u32,
+    /// Whether vnet headers should be sent to and received from the network backend.
+    pub include_vnet_header: bool,
 }
 
 /// Errors associated with `NetworkInterfaceConfig`.
@@ -65,7 +67,13 @@ impl NetBuilder {
     /// Creates a Net device from a NetworkInterfaceConfig.
     pub fn create_net(cfg: NetworkInterfaceConfig) -> Result<Net> {
         // Create and return the Net device
-        Net::new(cfg.iface_id, cfg.backend, cfg.mac, cfg.features)
-            .map_err(NetworkInterfaceError::CreateNetworkDevice)
+        Net::new(
+            cfg.iface_id,
+            cfg.backend,
+            cfg.mac,
+            cfg.features,
+            cfg.include_vnet_header,
+        )
+        .map_err(NetworkInterfaceError::CreateNetworkDevice)
     }
 }

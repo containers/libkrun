@@ -3,7 +3,7 @@ use crate::virtio::net::backend::ConnectError;
 use crate::virtio::net::tap::Tap;
 use crate::virtio::net::unixgram::Unixgram;
 use crate::virtio::net::unixstream::Unixstream;
-use crate::virtio::net::{MAX_BUFFER_SIZE, QUEUE_SIZE};
+use crate::virtio::net::{FRAME_HEADER_LEN, MAX_BUFFER_SIZE, QUEUE_SIZE};
 use crate::virtio::{DeviceQueue, InterruptTransport};
 
 use super::backend::{NetBackend, ReadError, WriteError};
@@ -29,7 +29,7 @@ pub struct NetWorker {
     rx_has_deferred_frame: bool,
 
     tx_iovec: Vec<(GuestAddress, usize)>,
-    tx_frame_buf: [u8; MAX_BUFFER_SIZE],
+    tx_frame_buf: [u8; MAX_BUFFER_SIZE + FRAME_HEADER_LEN],
     tx_frame_len: usize,
 }
 
@@ -40,6 +40,7 @@ impl NetWorker {
         interrupt: InterruptTransport,
         mem: GuestMemoryMmap,
         _vnet_features: u64,
+        include_vnet_header: bool,
         cfg_backend: VirtioNetBackend,
     ) -> Result<Self, ConnectError> {
         let backend = match cfg_backend {
@@ -47,23 +48,26 @@ impl NetWorker {
                 // SAFETY: we need to trust that the library user has configured
                 // the backend with a healthy file descriptor.
                 let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
-                Box::new(Unixstream::new(owned_fd)) as Box<dyn NetBackend + Send>
+                Box::new(Unixstream::new(owned_fd, include_vnet_header))
+                    as Box<dyn NetBackend + Send>
             }
             VirtioNetBackend::UnixstreamPath(path) => {
-                Box::new(Unixstream::open(path)?) as Box<dyn NetBackend + Send>
+                Box::new(Unixstream::open(path, include_vnet_header)?) as Box<dyn NetBackend + Send>
             }
             VirtioNetBackend::UnixgramFd(fd) => {
                 // SAFETY: we need to trust that the library user has configured
                 // the backend with a healthy file descriptor.
                 let owned_fd = unsafe { OwnedFd::from_raw_fd(fd) };
-                Box::new(Unixgram::new(owned_fd)) as Box<dyn NetBackend + Send>
+                Box::new(Unixgram::new(owned_fd, include_vnet_header)) as Box<dyn NetBackend + Send>
             }
             VirtioNetBackend::UnixgramPath(path, vfkit_magic) => {
-                Box::new(Unixgram::open(path, vfkit_magic)?) as Box<dyn NetBackend + Send>
+                Box::new(Unixgram::open(path, vfkit_magic, include_vnet_header)?)
+                    as Box<dyn NetBackend + Send>
             }
             #[cfg(target_os = "linux")]
             VirtioNetBackend::Tap(tap_name) => {
-                Box::new(Tap::new(tap_name, _vnet_features)?) as Box<dyn NetBackend + Send>
+                Box::new(Tap::new(tap_name, _vnet_features, include_vnet_header)?)
+                    as Box<dyn NetBackend + Send>
             }
         };
 
@@ -79,7 +83,7 @@ impl NetWorker {
             rx_frame_buf_len: 0,
             rx_has_deferred_frame: false,
 
-            tx_frame_buf: [0u8; MAX_BUFFER_SIZE],
+            tx_frame_buf: [0u8; MAX_BUFFER_SIZE + FRAME_HEADER_LEN],
             tx_frame_len: 0,
             tx_iovec: Vec::with_capacity(QUEUE_SIZE as usize),
         })
@@ -299,7 +303,7 @@ impl NetWorker {
             }
 
             // Copy buffer from across multiple descriptors.
-            let mut read_count = 0;
+            let mut read_count = FRAME_HEADER_LEN;
             for (desc_addr, desc_len) in self.tx_iovec.drain(..) {
                 let limit = cmp::min(read_count + desc_len, self.tx_frame_buf.len());
 
@@ -319,10 +323,10 @@ impl NetWorker {
             }
 
             self.tx_frame_len = read_count;
-            match self
-                .backend
-                .write_frame(vnet_hdr_len(), &mut self.tx_frame_buf[..read_count])
-            {
+            match self.backend.write_frame(
+                vnet_hdr_len() + FRAME_HEADER_LEN,
+                &mut self.tx_frame_buf[..read_count],
+            ) {
                 Ok(()) => {
                     self.tx_frame_len = 0;
                     tx_queue
