@@ -1122,15 +1122,27 @@ impl RutabagaContext for CrossDomainContext {
             .remove(&item_id)
             .ok_or(RutabagaError::InvalidCrossDomainItemId)?;
 
+        fn access_mode(descriptor: &SafeDescriptor) -> RutabagaResult<u32> {
+            Ok(
+                match fcntl(descriptor.as_fd(), FcntlArg::F_GETFL)? & libc::O_ACCMODE {
+                    libc::O_RDWR => RUTABAGA_MAP_ACCESS_RW,
+                    libc::O_WRONLY => RUTABAGA_MAP_ACCESS_WRITE,
+                    _ => RUTABAGA_MAP_ACCESS_READ,
+                    // (there is a "secret fourth option" O_WRONLY|O_RDWR meaning "no access", very unlikely we'd see it)
+                },
+            )
+        }
+
         // Items that are removed from the table after one usage.
         match item {
             CrossDomainItem::ShmBlob(descriptor) => {
                 #[allow(unused_mut)]
-                let mut access = RUTABAGA_MAP_ACCESS_RW;
+                let mut access = access_mode(&descriptor)?;
+                // Some compositors actually do send descriptors that are O_RDWR but write-sealed (!)
                 #[cfg(target_os = "linux")]
                 if fcntl(&descriptor, FcntlArg::F_GET_SEALS)? & libc::F_SEAL_WRITE != 0 {
                     access &= !RUTABAGA_MAP_ACCESS_WRITE;
-                };
+                }
 
                 let hnd = RutabagaHandle {
                     os_handle: descriptor,
@@ -1156,10 +1168,7 @@ impl RutabagaContext for CrossDomainContext {
                 })
             }
             CrossDomainItem::DmaBuf(descriptor) => {
-                let mut access = RUTABAGA_MAP_ACCESS_READ;
-                if fcntl(descriptor.as_fd(), FcntlArg::F_GETFL)? & libc::O_WRONLY != 0 {
-                    access |= RUTABAGA_MAP_ACCESS_WRITE;
-                }
+                let access = access_mode(&descriptor)?;
 
                 let hnd = RutabagaHandle {
                     os_handle: descriptor,
