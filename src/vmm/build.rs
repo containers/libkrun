@@ -8,6 +8,6 @@ fn main() {
             )
         });
         println!("cargo:rustc-env=KRUN_EDK2_BINARY_PATH={edk2_binary_path}");
-        println!("cargo:rerun-if-changed={edk2_binary_path}");
+        println!("cargo:rerun-if-env-changed=KRUN_EDK2_BINARY_PATH");
     }
 }

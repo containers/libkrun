@@ -6,5 +6,5 @@ fn main() {
         )
     });
     println!("cargo:rustc-env=KRUN_INIT_BINARY_PATH={init_binary_path}");
-    println!("cargo:rerun-if-changed={init_binary_path}");
+    println!("cargo:rerun-if-env-changed=KRUN_INIT_BINARY_PATH");
 }
