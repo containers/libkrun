@@ -48,7 +48,7 @@ impl MemoryMapping {
         let non_zero_opt = NonZeroUsize::new(size);
         let prot = match map_info & RUTABAGA_MAP_ACCESS_MASK {
             RUTABAGA_MAP_ACCESS_READ => ProtFlags::PROT_READ,
-            RUTABAGA_MAP_ACCESS_WRITE => ProtFlags::PROT_READ,
+            RUTABAGA_MAP_ACCESS_WRITE => ProtFlags::PROT_WRITE,
             RUTABAGA_MAP_ACCESS_RW => ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
             _ => return Err(RutabagaError::SpecViolation("incorrect access flags")),
         };
