@@ -835,23 +835,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "krun-rutabaga-gfx"
-version = "0.1.0-1.18.0"
-dependencies = [
- "anyhow",
- "cfg-if",
- "libc",
- "log",
- "nix 0.30.1",
- "pkg-config",
- "remain",
- "thiserror 1.0.69",
- "vmm-sys-util 0.14.0",
- "winapi",
- "zerocopy",
-]
-
-[[package]]
 name = "krun-smbios"
 version = "0.1.0-1.18.0"
 dependencies = [
