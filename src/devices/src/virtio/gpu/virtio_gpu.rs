@@ -25,14 +25,14 @@ use rutabaga_gfx::RUTABAGA_HANDLE_TYPE_MEM_OPAQUE_FD;
 #[cfg(all(feature = "virgl_resource_map2", target_os = "linux"))]
 use rutabaga_gfx::RUTABAGA_HANDLE_TYPE_MEM_SHM;
 use rutabaga_gfx::{
-    ResourceCreate3D, ResourceCreateBlob, Rutabaga, RutabagaBuilder, RutabagaFence,
-    RutabagaFenceHandler, RutabagaIovec, RutabagaPath, Transfer3D, RUTABAGA_MAP_CACHE_MASK,
-    RUTABAGA_PATH_TYPE_WAYLAND,
+    ResourceCreate3D, ResourceCreateBlob, Rutabaga, RutabagaBuilder, RutabagaDescriptor,
+    RutabagaFence, RutabagaFenceHandler, RutabagaIovec, RutabagaPath, RutabagaResult, Transfer3D,
+    VirtioFsLookup, RUTABAGA_MAP_CACHE_MASK, RUTABAGA_PATH_TYPE_WAYLAND,
 };
 #[cfg(target_os = "linux")]
 use rutabaga_gfx::{
     RUTABAGA_MAP_ACCESS_MASK, RUTABAGA_MAP_ACCESS_READ, RUTABAGA_MAP_ACCESS_RW,
-    RUTABAGA_MAP_ACCESS_WRITE, RUTABAGA_PATH_TYPE_PW, RUTABAGA_PATH_TYPE_X11,
+    RUTABAGA_MAP_ACCESS_WRITE, RUTABAGA_PATH_TYPE_PIPEWIRE, RUTABAGA_PATH_TYPE_X11,
 };
 #[cfg(target_os = "macos")]
 use utils::worker_message::WorkerMessage;
@@ -43,6 +43,33 @@ use crate::virtio::display::DisplayInfo;
 use crate::virtio::fs::ExportTable;
 use crate::virtio::gpu::protocol::VIRTIO_GPU_FLAG_INFO_RING_IDX;
 use crate::virtio::{InterruptTransport, VirtioShmRegion};
+
+struct ExportTableLookup {
+    table: ExportTable,
+}
+
+impl ExportTableLookup {
+    fn new(table: ExportTable) -> Self {
+        Self { table }
+    }
+}
+
+impl VirtioFsLookup for ExportTableLookup {
+    fn get_exported_descriptor(
+        &self,
+        fs_id: u64,
+        handle: u64,
+    ) -> RutabagaResult<RutabagaDescriptor> {
+        let table = self.table.lock().unwrap();
+        let file = table
+            .get(&(fs_id, handle))
+            .ok_or(rutabaga_gfx::RutabagaError::InvalidResourceId)?
+            .try_clone()
+            .map_err(|_| rutabaga_gfx::RutabagaError::InvalidResourceId)?;
+
+        Ok(file.into())
+    }
+}
 
 fn sglist_to_rutabaga_iovecs(
     vecs: &[(GuestAddress, usize)],
@@ -254,7 +281,7 @@ impl VirtioGpu {
             pw_path.push(name);
             rutabaga_paths.push(RutabagaPath {
                 path: pw_path,
-                path_type: RUTABAGA_PATH_TYPE_PW,
+                path_type: RUTABAGA_PATH_TYPE_PIPEWIRE,
             });
         }
         let rutabaga_paths_opt = Some(rutabaga_paths);
@@ -302,7 +329,8 @@ impl VirtioGpu {
             .set_use_render_server(use_render_server);
 
         if let Some(export_table) = export_table {
-            builder = builder.set_export_table(export_table);
+            let lookup: Arc<dyn VirtioFsLookup> = Arc::new(ExportTableLookup::new(export_table));
+            builder = builder.set_virtiofs_lookup(lookup);
         }
 
         builder.build().ok()
