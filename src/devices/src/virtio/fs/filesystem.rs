@@ -344,6 +344,22 @@ pub struct SecContext {
     pub secctx: Vec<u8>,
 }
 
+/// Key type for export table compatibility with rutabaga_gfx.
+/// This struct matches the layout of rutabaga_gfx::rutabaga_core::VirtioFsKey
+/// which is not publicly exported in rutabaga_gfx v0.1.76-libkrun.0.
+/// TODO: Remove this local definition once VirtioFsKey is exported from rutabaga_gfx.
+#[cfg(feature = "gpu")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct VirtioFsKey {
+    /// VirtioFS filesystem ID (identifies which virtio-fs instance)
+    pub fs_id: u64,
+    /// File handle within the filesystem (identifies a specific file)
+    pub handle: u64,
+}
+
+#[cfg(feature = "gpu")]
+pub type ExportTable = Arc<Mutex<BTreeMap<VirtioFsKey, File>>>;
+#[cfg(not(feature = "gpu"))]
 pub type ExportTable = Arc<Mutex<BTreeMap<(u64, u64), File>>>;
 
 /// The main trait that connects a file system with a transport.

@@ -1023,8 +1023,9 @@ dependencies = [
 
 [[package]]
 name = "mesa3d_util"
-version = "0.1.75"
-source = "git+https://github.com/dorindabassey/rutabaga_gfx?branch=x11-pipewire-support#3c37c12170f3e730294f2870abebc93418a36c93"
+version = "0.1.76-libkrun.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a95e11093683dd73b2e70dbd3f848cddd54f05a971fdcb5e3dc655773062fd79"
 dependencies = [
  "cfg-if",
  "libc",
@@ -1395,8 +1396,9 @@ checksum = "8a0d197bd2c9dc6e53b84da9556a69ba4cdfab8619eb41a8bd1cc2027a0f6b1d"
 
 [[package]]
 name = "rutabaga_gfx"
-version = "0.1.75"
-source = "git+https://github.com/dorindabassey/rutabaga_gfx?branch=x11-pipewire-support#3c37c12170f3e730294f2870abebc93418a36c93"
+version = "0.1.76-libkrun.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fdc1abc0bccf93a5c59147192b24963d449e14fdcd0dfe02f61c457c069ea4c"
 dependencies = [
  "cfg-if",
  "libc",
@@ -1404,7 +1406,6 @@ dependencies = [
  "mesa3d_util",
  "pkg-config",
  "remain",
- "rustix",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

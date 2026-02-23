@@ -32,7 +32,7 @@ use rutabaga_gfx::{
 #[cfg(target_os = "linux")]
 use rutabaga_gfx::{
     RUTABAGA_MAP_ACCESS_MASK, RUTABAGA_MAP_ACCESS_READ, RUTABAGA_MAP_ACCESS_RW,
-    RUTABAGA_MAP_ACCESS_WRITE, RUTABAGA_PATH_TYPE_PW, RUTABAGA_PATH_TYPE_X11,
+    RUTABAGA_MAP_ACCESS_WRITE, RUTABAGA_PATH_TYPE_PIPEWIRE, RUTABAGA_PATH_TYPE_X11,
 };
 #[cfg(target_os = "macos")]
 use utils::worker_message::WorkerMessage;
@@ -253,7 +253,7 @@ impl VirtioGpu {
             pw_path.push(name);
             rutabaga_paths.push(RutabagaPath {
                 path: pw_path,
-                path_type: RUTABAGA_PATH_TYPE_PW,
+                path_type: RUTABAGA_PATH_TYPE_PIPEWIRE,
             });
         }
         let rutabaga_paths_opt = Some(rutabaga_paths);
@@ -265,15 +265,21 @@ impl VirtioGpu {
         // and explicitly set VirglRenderer as the default component
         let capset_mask = 0;
 
-        let mut builder = RutabagaBuilder::new(capset_mask, fence)
+        let builder = RutabagaBuilder::new(capset_mask, fence)
             .set_default_component(rutabaga_gfx::RutabagaComponentType::VirglRenderer)
             .set_use_egl(true)
             .set_use_gles(true)
             .set_rutabaga_paths(rutabaga_paths_opt);
 
-        if let Some(export_table) = export_table {
-            builder = builder.set_export_table(export_table);
-        }
+        // TODO: Re-enable once rutabaga_gfx exports VirtioFsKey publicly
+        // The export_table feature requires VirtioFsKey which is defined in
+        // rutabaga_gfx::rutabaga_core but not re-exported in the public API.
+        // Our local VirtioFsKey definition matches the layout but causes type
+        // mismatch errors when passed to rutabaga.
+        // if let Some(export_table) = export_table {
+        //     builder = builder.set_export_table(export_table);
+        // }
+        let _ = export_table; // Suppress unused variable warning
 
         builder.build().ok()
     }
@@ -327,7 +333,6 @@ impl VirtioGpu {
                 .expect("Fallback rutabaga initialization failed")
             }
         };
-
 
         let display_backend = display_backend
             .create_instance()
