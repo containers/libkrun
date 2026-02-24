@@ -259,11 +259,19 @@ impl NetWorker {
         loop {
             self.tx_q.queue.disable_notification(&self.mem).unwrap();
 
-            if let Err(e) = self.process_tx() {
-                log::error!("Failed to process rx: {e:?} (triggered by backend socket readable)");
+            let retry_later = match self.process_tx() {
+                Err(TxError::Backend(WriteError::NothingWritten)) => true,
+                Err(e) => {
+                    log::error!(
+                        "Failed to process tx: {e:?} (triggered by backend socket readable)"
+                    );
+                    false
+                }
+                _ => false,
             };
 
-            if !self.tx_q.queue.enable_notification(&self.mem).unwrap() {
+            let has_new_entries = self.tx_q.queue.enable_notification(&self.mem).unwrap();
+            if retry_later || !has_new_entries {
                 break;
             }
         }
@@ -283,6 +291,7 @@ impl NetWorker {
         }
 
         let mut raise_irq = false;
+        let mut result = Ok(());
 
         while let Some(head) = tx_queue.pop(&self.mem) {
             let head_index = head.index;
@@ -332,6 +341,7 @@ impl NetWorker {
                 }
                 Err(WriteError::NothingWritten) => {
                     tx_queue.undo_pop();
+                    result = Err(TxError::Backend(WriteError::NothingWritten));
                     break;
                 }
                 Err(WriteError::PartialWrite) => {
@@ -365,7 +375,7 @@ impl NetWorker {
                 .map_err(TxError::DeviceError)?;
         }
 
-        Ok(())
+        result
     }
 
     // Copies a single frame from `self.rx_frame_buf` into the guest.
