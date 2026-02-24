@@ -66,7 +66,9 @@ pub fn build_rootfs(name: &str) -> anyhow::Result<()> {
         .write_all(containerfile.as_bytes())
         .context("writing containerfile to podman stdin")?;
 
-    let output = build.wait_with_output().context("waiting for podman build")?;
+    let output = build
+        .wait_with_output()
+        .context("waiting for podman build")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("podman build failed: {stderr}");

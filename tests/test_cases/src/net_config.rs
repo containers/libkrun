@@ -59,7 +59,12 @@ pub fn make_sockaddr_in(ip: [u8; 4]) -> nix::libc::sockaddr {
 
 /// Configure a network interface with IP address and netmask, and bring it UP
 pub fn configure_interface(name: &str, ip: [u8; 4], netmask: [u8; 4]) -> nix::Result<()> {
-    let sock = socket(AddressFamily::Inet, SockType::Datagram, SockFlag::empty(), None)?;
+    let sock = socket(
+        AddressFamily::Inet,
+        SockType::Datagram,
+        SockFlag::empty(),
+        None,
+    )?;
     let fd = sock.as_raw_fd();
 
     // Set IP address
@@ -81,5 +86,29 @@ pub fn configure_interface(name: &str, ip: [u8; 4], netmask: [u8; 4]) -> nix::Re
     unsafe { ifr.ifr_ifru.ifru_flags |= IFF_UP | IFF_RUNNING };
     unsafe { ioctl_siocsifflags(fd, &mut ifr)? };
 
+    Ok(())
+}
+
+/// Add a default route via the given gateway
+pub fn add_default_route(gateway: [u8; 4]) -> nix::Result<()> {
+    use nix::libc;
+
+    let sock = socket(
+        AddressFamily::Inet,
+        SockType::Datagram,
+        SockFlag::empty(),
+        None,
+    )?;
+
+    let mut rt: libc::rtentry = unsafe { std::mem::zeroed() };
+    rt.rt_dst = make_sockaddr_in([0, 0, 0, 0]);
+    rt.rt_gateway = make_sockaddr_in(gateway);
+    rt.rt_genmask = make_sockaddr_in([0, 0, 0, 0]);
+    rt.rt_flags = (libc::RTF_UP | libc::RTF_GATEWAY) as u16;
+
+    let ret = unsafe { libc::ioctl(sock.as_raw_fd(), libc::SIOCADDRT as _, &rt) };
+    if ret < 0 {
+        return Err(nix::errno::Errno::last());
+    }
     Ok(())
 }

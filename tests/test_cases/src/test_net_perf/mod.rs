@@ -14,8 +14,11 @@ use crate::{ShouldRun, TestSetup};
 
 /// Virtio-net performance test with configurable backend and direction
 pub struct TestNetPerf {
+    #[cfg(feature = "guest")]
     guest_ip: [u8; 4],
+    #[cfg(feature = "guest")]
     host_ip: [u8; 4],
+    #[cfg(feature = "guest")]
     netmask: [u8; 4],
     port: u16,
     /// If true, run iperf3 with -R (reverse: server sends, client receives = download)
@@ -31,8 +34,11 @@ pub struct TestNetPerf {
 impl TestNetPerf {
     pub fn new_passt_upload() -> Self {
         Self {
+            #[cfg(feature = "guest")]
             guest_ip: [169, 254, 2, 1],
+            #[cfg(feature = "guest")]
             host_ip: [169, 254, 2, 2],
+            #[cfg(feature = "guest")]
             netmask: [255, 255, 0, 0],
             port: 15100,
             reverse: false,
@@ -47,8 +53,11 @@ impl TestNetPerf {
 
     pub fn new_passt_download() -> Self {
         Self {
+            #[cfg(feature = "guest")]
             guest_ip: [169, 254, 2, 1],
+            #[cfg(feature = "guest")]
             host_ip: [169, 254, 2, 2],
+            #[cfg(feature = "guest")]
             netmask: [255, 255, 0, 0],
             port: 15110,
             reverse: true,
@@ -63,8 +72,11 @@ impl TestNetPerf {
 
     pub fn new_tap_upload() -> Self {
         Self {
+            #[cfg(feature = "guest")]
             guest_ip: [10, 0, 0, 2],
+            #[cfg(feature = "guest")]
             host_ip: [10, 0, 0, 1],
+            #[cfg(feature = "guest")]
             netmask: [255, 255, 255, 0],
             port: 15101,
             reverse: false,
@@ -79,8 +91,11 @@ impl TestNetPerf {
 
     pub fn new_tap_download() -> Self {
         Self {
+            #[cfg(feature = "guest")]
             guest_ip: [10, 0, 0, 2],
+            #[cfg(feature = "guest")]
             host_ip: [10, 0, 0, 1],
+            #[cfg(feature = "guest")]
             netmask: [255, 255, 255, 0],
             port: 15111,
             reverse: true,
@@ -95,8 +110,11 @@ impl TestNetPerf {
 
     pub fn new_gvproxy_upload() -> Self {
         Self {
+            #[cfg(feature = "guest")]
             guest_ip: [192, 168, 127, 2],
+            #[cfg(feature = "guest")]
             host_ip: [192, 168, 127, 254],
+            #[cfg(feature = "guest")]
             netmask: [255, 255, 255, 0],
             port: 15102,
             reverse: false,
@@ -111,8 +129,11 @@ impl TestNetPerf {
 
     pub fn new_gvproxy_download() -> Self {
         Self {
+            #[cfg(feature = "guest")]
             guest_ip: [192, 168, 127, 2],
+            #[cfg(feature = "guest")]
             host_ip: [192, 168, 127, 254],
+            #[cfg(feature = "guest")]
             netmask: [255, 255, 255, 0],
             port: 15112,
             reverse: true,
@@ -120,6 +141,44 @@ impl TestNetPerf {
             should_run: crate::test_net::gvproxy::should_run,
             #[cfg(feature = "host")]
             setup_backend: crate::test_net::gvproxy::setup_backend,
+            #[cfg(feature = "host")]
+            cleanup: None,
+        }
+    }
+
+    pub fn new_vmnet_helper_upload() -> Self {
+        Self {
+            #[cfg(feature = "guest")]
+            guest_ip: [192, 168, 105, 2],
+            #[cfg(feature = "guest")]
+            host_ip: [192, 168, 105, 1],
+            #[cfg(feature = "guest")]
+            netmask: [255, 255, 255, 0],
+            port: 15103,
+            reverse: false,
+            #[cfg(feature = "host")]
+            should_run: crate::test_net::vmnet_helper::should_run,
+            #[cfg(feature = "host")]
+            setup_backend: crate::test_net::vmnet_helper::setup_backend,
+            #[cfg(feature = "host")]
+            cleanup: None,
+        }
+    }
+
+    pub fn new_vmnet_helper_download() -> Self {
+        Self {
+            #[cfg(feature = "guest")]
+            guest_ip: [192, 168, 105, 2],
+            #[cfg(feature = "guest")]
+            host_ip: [192, 168, 105, 1],
+            #[cfg(feature = "guest")]
+            netmask: [255, 255, 255, 0],
+            port: 15113,
+            reverse: true,
+            #[cfg(feature = "host")]
+            should_run: crate::test_net::vmnet_helper::should_run,
+            #[cfg(feature = "host")]
+            setup_backend: crate::test_net::vmnet_helper::setup_backend,
             #[cfg(feature = "host")]
             cleanup: None,
         }
@@ -212,7 +271,11 @@ mod host {
         fn fmt_text(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             let i = f.width().unwrap_or(0);
             writeln!(f, "{:i$}iperf3 — {}\n", "", self.label())?;
-            writeln!(f, "{:i$}{:<9}  {:>18}  {:>14}", "", "Interval", "Throughput", "Transferred")?;
+            writeln!(
+                f,
+                "{:i$}{:<9}  {:>18}  {:>14}",
+                "", "Interval", "Throughput", "Transferred"
+            )?;
             writeln!(f, "{:i$}{:-<9}  {:-<18}  {:-<14}", "", "", "", "")?;
             for interval in &self.output.intervals {
                 let s = &interval.sum;
@@ -268,7 +331,8 @@ mod host {
             if option_env!("IPERF_DURATION").is_none() {
                 return ShouldRun::No("IPERF_DURATION not set");
             }
-            if unsafe { krun_call_u32!(krun_has_feature(KRUN_FEATURE_NET.into())) }.ok() != Some(1) {
+            if unsafe { krun_call_u32!(krun_has_feature(KRUN_FEATURE_NET.into())) }.ok() != Some(1)
+            {
                 return ShouldRun::No("libkrun compiled without NET");
             }
             let backend_result = (self.should_run)();
@@ -292,9 +356,8 @@ mod host {
             std::thread::sleep(std::time::Duration::from_millis(200));
 
             // Check it's still running
-            match iperf_server.try_wait()? {
-                Some(status) => anyhow::bail!("iperf3 server exited early: {status}"),
-                None => {} // still running
+            if let Some(status) = iperf_server.try_wait()? {
+                anyhow::bail!("iperf3 server exited early: {status}");
             }
 
             unsafe {
@@ -352,6 +415,10 @@ mod guest {
             // Give the network a moment to come up
             std::thread::sleep(Duration::from_secs(2));
 
+            let Some(iperf_duration) = option_env!("IPERF_DURATION") else {
+                unreachable!()
+            };
+
             // Run iperf3 client with JSON output, retry up to 5 times
             let mut last_output = None;
             for attempt in 0..5 {
@@ -365,7 +432,7 @@ mod guest {
                     .arg("-p")
                     .arg(self.port.to_string())
                     .arg("-t")
-                    .arg(option_env!("IPERF_DURATION").expect("unreachable"))
+                    .arg(iperf_duration)
                     .arg("-J");
 
                 if self.reverse {
@@ -376,8 +443,7 @@ mod guest {
 
                 if output.status.success() {
                     // Print JSON output to stdout (host will read it)
-                    let stdout =
-                        String::from_utf8(output.stdout).expect("iperf3 output not UTF-8");
+                    let stdout = String::from_utf8(output.stdout).expect("iperf3 output not UTF-8");
                     print!("{}", stdout);
                     return;
                 }

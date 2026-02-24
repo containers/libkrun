@@ -12,18 +12,22 @@ use macros::{guest, host};
 use crate::{ShouldRun, TestSetup};
 
 #[cfg(feature = "host")]
+pub(crate) mod gvproxy;
+#[cfg(feature = "host")]
 pub(crate) mod passt;
 #[cfg(feature = "host")]
 pub(crate) mod tap;
 #[cfg(feature = "host")]
-pub(crate) mod gvproxy;
+pub(crate) mod vmnet_helper;
 
 /// Virtio-net test with configurable backend
 pub struct TestNet {
+    #[cfg(feature = "guest")]
     guest_ip: [u8; 4],
-    host_ip: [u8; 4],
+    #[cfg(feature = "guest")]
     netmask: [u8; 4],
-    port: u16,
+    #[cfg(feature = "guest")]
+    gateway: Option<[u8; 4]>,
     tcp_tester: TcpTester,
     #[cfg(feature = "host")]
     should_run: fn() -> ShouldRun,
@@ -36,11 +40,13 @@ pub struct TestNet {
 impl TestNet {
     pub fn new_passt() -> Self {
         Self {
+            #[cfg(feature = "guest")]
             guest_ip: [169, 254, 2, 1],
-            host_ip: [169, 254, 2, 2],
+            #[cfg(feature = "guest")]
             netmask: [255, 255, 0, 0],
-            port: 9000,
-            tcp_tester: TcpTester::new(9000),
+            #[cfg(feature = "guest")]
+            gateway: None,
+            tcp_tester: TcpTester::new(9000, [169, 254, 2, 2].into()),
             #[cfg(feature = "host")]
             should_run: passt::should_run,
             #[cfg(feature = "host")]
@@ -52,11 +58,13 @@ impl TestNet {
 
     pub fn new_tap() -> Self {
         Self {
+            #[cfg(feature = "guest")]
             guest_ip: [10, 0, 0, 2],
-            host_ip: [10, 0, 0, 1],
+            #[cfg(feature = "guest")]
             netmask: [255, 255, 255, 0],
-            port: 9001,
-            tcp_tester: TcpTester::new(9001),
+            #[cfg(feature = "guest")]
+            gateway: None,
+            tcp_tester: TcpTester::new(9001, [10, 0, 0, 1].into()),
             #[cfg(feature = "host")]
             should_run: tap::should_run,
             #[cfg(feature = "host")]
@@ -68,15 +76,37 @@ impl TestNet {
 
     pub fn new_gvproxy() -> Self {
         Self {
+            #[cfg(feature = "guest")]
             guest_ip: [192, 168, 127, 2],
-            host_ip: [192, 168, 127, 254],
+            #[cfg(feature = "guest")]
             netmask: [255, 255, 255, 0],
-            port: 9002,
-            tcp_tester: TcpTester::new(9002),
+            #[cfg(feature = "guest")]
+            gateway: None,
+            tcp_tester: TcpTester::new(9002, [192, 168, 127, 254].into()),
             #[cfg(feature = "host")]
             should_run: gvproxy::should_run,
             #[cfg(feature = "host")]
             setup_backend: gvproxy::setup_backend,
+            #[cfg(feature = "host")]
+            cleanup: None,
+        }
+    }
+
+    pub fn new_vmnet_helper() -> Self {
+        Self {
+            #[cfg(feature = "guest")]
+            guest_ip: [192, 168, 105, 2],
+            #[cfg(feature = "guest")]
+            netmask: [255, 255, 255, 0],
+            #[cfg(feature = "guest")]
+            gateway: Some([192, 168, 105, 1]),
+            // HACK: hardcoded host LAN IP for testing; guest needs a default
+            // route via the vmnet gateway (192.168.105.1) to reach it.
+            tcp_tester: TcpTester::new(9003, [10, 42, 0, 115].into()),
+            #[cfg(feature = "host")]
+            should_run: vmnet_helper::should_run,
+            #[cfg(feature = "host")]
+            setup_backend: vmnet_helper::setup_backend,
             #[cfg(feature = "host")]
             cleanup: None,
         }
@@ -93,7 +123,8 @@ mod host {
 
     impl Test for TestNet {
         fn should_run(&self) -> ShouldRun {
-            if unsafe { krun_call_u32!(krun_has_feature(KRUN_FEATURE_NET.into())) }.ok() != Some(1) {
+            if unsafe { krun_call_u32!(krun_has_feature(KRUN_FEATURE_NET.into())) }.ok() != Some(1)
+            {
                 return ShouldRun::No("libkrun compiled without NET");
             }
             (self.should_run)()
@@ -113,7 +144,7 @@ mod host {
 
         fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()> {
             // Start TCP server
-            let tcp_tester = self.tcp_tester.clone();
+            let tcp_tester = self.tcp_tester;
             let listener = tcp_tester.create_server_socket();
             thread::spawn(move || tcp_tester.run_server(listener));
 
@@ -137,54 +168,18 @@ mod guest {
     use super::*;
     use crate::net_config::configure_interface;
     use crate::Test;
-    use std::io::{Read, Write};
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
-    use std::time::Duration;
-
-    fn expect_msg(stream: &mut TcpStream, expected: &[u8]) {
-        let mut buf = vec![0; expected.len()];
-        stream.read_exact(&mut buf[..]).unwrap();
-        assert_eq!(&buf[..], expected);
-    }
-
-    fn set_timeouts(stream: &mut TcpStream) {
-        stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
-        stream.set_write_timeout(Some(Duration::from_secs(10))).unwrap();
-    }
 
     impl Test for TestNet {
         fn in_guest(self: Box<Self>) {
-            // Configure eth0 with static IP
             configure_interface("eth0", self.guest_ip, self.netmask)
                 .expect("Failed to configure eth0");
 
-            // Connect to host TCP server
-            let host_ip = self.host_ip;
-            let addr = SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::new(host_ip[0], host_ip[1], host_ip[2], host_ip[3])),
-                self.port,
-            );
-
-            // Retry connection a few times since network may take time to come up
-            let mut stream = None;
-            for _ in 0..10 {
-                match TcpStream::connect(addr) {
-                    Ok(s) => {
-                        stream = Some(s);
-                        break;
-                    }
-                    Err(_) => {
-                        std::thread::sleep(Duration::from_millis(500));
-                    }
-                }
+            if let Some(gw) = self.gateway {
+                crate::net_config::add_default_route(gw)
+                    .expect("Failed to add default route");
             }
-            let mut stream = stream.expect("Failed to connect to host");
-            set_timeouts(&mut stream);
 
-            // Run the TCP test protocol
-            expect_msg(&mut stream, b"ping!");
-            stream.write_all(b"pong!").unwrap();
-            expect_msg(&mut stream, b"bye!");
+            self.tcp_tester.run_client();
 
             println!("OK");
         }

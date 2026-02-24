@@ -58,7 +58,11 @@ pub fn setup_existing_rootfs_and_enter(
     test_setup: TestSetup,
     rootfs_dir: &Path,
 ) -> anyhow::Result<()> {
-    anyhow::ensure!(rootfs_dir.is_dir(), "rootfs directory not found: {}", rootfs_dir.display());
+    anyhow::ensure!(
+        rootfs_dir.is_dir(),
+        "rootfs directory not found: {}",
+        rootfs_dir.display()
+    );
     let path_str = CString::new(rootfs_dir.as_os_str().as_bytes()).context("CString::new")?;
     copy_guest_agent(rootfs_dir)?;
     unsafe {
