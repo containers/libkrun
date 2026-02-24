@@ -18,6 +18,8 @@ pub static QUEUE_CONFIG: [QueueConfig; NUM_QUEUES] = [QueueConfig::new(QUEUE_SIZ
 
 mod backend;
 pub mod device;
+#[cfg(target_os = "macos")]
+mod socket_x;
 #[cfg(target_os = "linux")]
 mod tap;
 mod unixgram;
@@ -28,13 +30,10 @@ fn vnet_hdr_len() -> usize {
     mem::size_of::<virtio_net_hdr_v1>()
 }
 
-// This initializes to all 0 the virtio_net_hdr part of a buf and return the length of the header
-// https://docs.oasis-open.org/virtio/virtio/v1.1/csprd01/virtio-v1.1-csprd01.html#x1-2050006
-fn write_virtio_net_hdr(buf: &mut [u8]) -> usize {
-    let len = vnet_hdr_len();
-    buf[0..len].fill(0);
-    len
-}
+/// Default zeroed virtio_net_hdr_v1 (12 bytes) - used as prefix when receiving from backends
+/// that don't include vnet headers (e.g., passt/unixstream)
+/// https://docs.oasis-open.org/virtio/virtio/v1.1/csprd01/virtio-v1.1-csprd01.html#x1-2050006
+static DEFAULT_VNET_HDR: [u8; 12] = [0u8; 12];
 
 pub use self::device::Net;
 #[derive(Debug)]
