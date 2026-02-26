@@ -267,24 +267,26 @@ impl Epoll {
             return Err(io::Error::last_os_error());
         }
 
-        for i in 0..ret {
-            debug!("kev: {:?}", kevs[i as usize]);
-            if kevs[i as usize].0.filter == libc::EVFILT_READ {
-                events[i as usize].events = EventSet::IN.bits();
-            } else if kevs[i as usize].0.filter == libc::EVFILT_WRITE {
-                events[i as usize].events = EventSet::OUT.bits();
+        let nevents = ret as usize;
+
+        for i in 0..nevents {
+            debug!("kev: {:?}", kevs[i]);
+            if kevs[i].0.filter == libc::EVFILT_READ {
+                events[i].events = EventSet::IN.bits();
+            } else if kevs[i].0.filter == libc::EVFILT_WRITE {
+                events[i].events = EventSet::OUT.bits();
             }
-            if kevs[i as usize].0.flags & libc::EV_EOF != 0 {
-                events[i as usize].events |= if kevs[i as usize].0.flags & libc::EV_CLEAR != 0 {
+            if kevs[i].0.flags & libc::EV_EOF != 0 {
+                events[i].events |= if kevs[i].0.flags & libc::EV_CLEAR != 0 {
                     EventSet::READ_HANG_UP.bits()
                 } else {
                     EventSet::HANG_UP.bits()
                 };
             }
-            events[i as usize].u64 = kevs[i as usize].udata();
+            events[i].u64 = kevs[i].udata();
         }
 
-        Ok(ret as usize)
+        Ok(nevents)
     }
 }
 
