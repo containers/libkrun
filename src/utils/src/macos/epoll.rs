@@ -12,6 +12,18 @@ use std::time::Duration;
 use bitflags::bitflags;
 use log::debug;
 
+fn event_name(event: u32) -> &'static str {
+    match event {
+        e if e == EventSet::IN.bits() => "READ",
+        e if e == EventSet::OUT.bits() => "WRITE",
+        e if e == (EventSet::IN | EventSet::READ_HANG_UP).bits() => "READ_EOF",
+        e if e == (EventSet::IN | EventSet::HANG_UP).bits() => "EOF",
+        e if e == EventSet::HANG_UP.bits() => "HANG_UP",
+        e if e == EventSet::READ_HANG_UP.bits() => "READ_HANG_UP",
+        _ => "UNKNOWN",
+    }
+}
+
 #[repr(i32)]
 pub enum ControlOperation {
     Add,
@@ -270,7 +282,6 @@ impl Epoll {
         let nevents = ret as usize;
 
         for i in 0..nevents {
-            debug!("kev: {:?}", kevs[i]);
             if kevs[i].0.filter == libc::EVFILT_READ {
                 events[i].events = EventSet::IN.bits();
             } else if kevs[i].0.filter == libc::EVFILT_WRITE {
@@ -284,6 +295,13 @@ impl Epoll {
                 };
             }
             events[i].u64 = kevs[i].udata();
+
+            let fd = kevs[i].0.ident;
+            let data = kevs[i].0.data;
+            debug!(
+                "kevent: {} fd={fd} data={data}",
+                event_name(events[i].events)
+            );
         }
 
         Ok(nevents)
