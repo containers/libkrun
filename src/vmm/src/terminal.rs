@@ -1,4 +1,4 @@
-use nix::sys::termios::{tcgetattr, tcsetattr, LocalFlags, SetArg, Termios};
+use nix::sys::termios::{cfmakeraw, tcgetattr, tcsetattr, LocalFlags, SetArg, Termios};
 use std::os::fd::BorrowedFd;
 
 #[must_use]
@@ -12,12 +12,12 @@ pub fn term_set_raw_mode(
     let mut termios = tcgetattr(term)?;
     let old_state = termios.clone();
 
-    let mut mask = LocalFlags::ECHO | LocalFlags::ICANON;
-    if !handle_signals_by_terminal {
-        mask |= LocalFlags::ISIG
+    cfmakeraw(&mut termios);
+
+    if handle_signals_by_terminal {
+        termios.local_flags |= LocalFlags::ISIG;
     }
 
-    termios.local_flags &= !mask;
     tcsetattr(term, SetArg::TCSANOW, &termios)?;
     Ok(TerminalMode(old_state))
 }
