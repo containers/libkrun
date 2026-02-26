@@ -8,13 +8,12 @@ use gtk_display::{
 use krun_sys::{
     KRUN_LOG_LEVEL_TRACE, KRUN_LOG_LEVEL_WARN, KRUN_LOG_STYLE_ALWAYS, KRUN_LOG_TARGET_DEFAULT,
     VIRGLRENDERER_RENDER_SERVER, VIRGLRENDERER_THREAD_SYNC, VIRGLRENDERER_USE_ASYNC_FENCE_CB,
-    VIRGLRENDERER_USE_EGL, VIRGLRENDERER_VENUS, krun_add_display, krun_add_input_device,
-    krun_add_input_device_fd, krun_create_ctx, krun_display_set_dpi,
+    VIRGLRENDERER_USE_EGL, VIRGLRENDERER_USE_EXTERNAL_BLOB, VIRGLRENDERER_VENUS, krun_add_display,
+    krun_add_input_device, krun_add_input_device_fd, krun_create_ctx, krun_display_set_dpi,
     krun_display_set_physical_size, krun_display_set_refresh_rate, krun_init_log,
     krun_set_display_backend, krun_set_exec, krun_set_gpu_options2, krun_set_root,
     krun_set_vm_config, krun_start_enter,
 };
-use log::LevelFilter;
 use regex::{Captures, Regex};
 use std::ffi::{CString, c_void};
 use std::fmt::Display;
@@ -156,8 +155,9 @@ fn krun_thread(
                 | VIRGLRENDERER_VENUS
                 | VIRGLRENDERER_RENDER_SERVER
                 | VIRGLRENDERER_THREAD_SYNC
-                | VIRGLRENDERER_USE_ASYNC_FENCE_CB,
-            4096
+                | VIRGLRENDERER_USE_ASYNC_FENCE_CB
+                | VIRGLRENDERER_USE_EXTERNAL_BLOB,
+            1 << 32
         ))?;
 
         krun_call!(krun_set_root(ctx, args.root_dir.as_ptr()))?;
@@ -224,9 +224,7 @@ fn krun_thread(
 }
 
 fn main() -> anyhow::Result<()> {
-    env_logger::builder()
-        .filter_level(LevelFilter::Debug)
-        .init();
+    env_logger::builder().parse_env("GUI_VM_LOG").init();
     let args = Args::parse();
 
     let mut per_display_inputs = vec![vec![]; args.display.len()];

@@ -502,9 +502,54 @@ impl RutabagaComponent for VirglRenderer {
         let ret = unsafe { virgl_renderer_resource_create(&mut args, null_mut(), 0) };
         ret_to_res(ret)?;
 
+        let mut resource_handle: Option<Arc<RutabagaHandle>> = self.export_blob(resource_id).ok();
+        let mut resource_info_3d: Option<Resource3DInfo> = self.query(resource_id).ok();
+
+        // Fallback if export_blob and query both fail to return a DMABUF handle or 3D info.
+        if resource_handle.is_none() && resource_info_3d.is_none() {
+            let mut info_ext = Default::default();
+
+            // SAFETY: virglrenderer is initialized; info_ext is a valid pointer.
+            // Function writes into info_ext but does not retain the pointer after returning.
+            let ret_info =
+                unsafe { virgl_renderer_resource_get_info_ext(resource_id as i32, &mut info_ext) };
+
+            if ret_info == 0 {
+                // Successfully got info_ext, now try to get the FD.
+                let mut fd = -1;
+
+                // SAFETY: virglrenderer is initialized; tex_id is from valid resource.
+                // fd is written by the call and remains owned by the caller.
+                let ret_fd =
+                    unsafe { virgl_renderer_get_fd_for_texture(info_ext.base.tex_id, &mut fd) };
+
+                if ret_fd == 0 && fd >= 0 {
+                    // Successfully got DMABUF FD.
+                    let fourcc: u32 = info_ext.base.drm_fourcc as u32;
+
+                    // SAFETY: `fd` is validated to be >= 0 and uniquely owned.
+                    let owned_fd = unsafe { SafeDescriptor::from_raw_descriptor(fd) };
+
+                    resource_handle = Some(Arc::new(RutabagaHandle {
+                        os_handle: owned_fd,
+                        handle_type: RUTABAGA_MEM_HANDLE_TYPE_DMABUF,
+                    }));
+
+                    resource_info_3d = Some(Resource3DInfo {
+                        width: info_ext.base.width,
+                        height: info_ext.base.height,
+                        drm_fourcc: fourcc,
+                        strides: [info_ext.base.stride, 0, 0, 0],
+                        offsets: [0, 0, 0, 0],
+                        modifier: info_ext.modifiers,
+                    });
+                }
+            }
+        }
+
         Ok(RutabagaResource {
             resource_id,
-            handle: self.export_blob(resource_id).ok(),
+            handle: resource_handle,
             blob: false,
             blob_mem: 0,
             blob_flags: 0,
@@ -512,7 +557,7 @@ impl RutabagaComponent for VirglRenderer {
             #[cfg(target_os = "macos")]
             map_ptr: None,
             info_2d: None,
-            info_3d: self.query(resource_id).ok(),
+            info_3d: resource_info_3d,
             vulkan_info: None,
             backing_iovecs: None,
             component_mask: 1 << (RutabagaComponentType::VirglRenderer as u8),
