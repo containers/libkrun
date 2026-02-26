@@ -263,6 +263,10 @@ impl Epoll {
 
         debug!("ret: {ret}");
 
+        if ret < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
         for i in 0..ret {
             debug!("kev: {:?}", kevs[i as usize]);
             if kevs[i as usize].0.filter == libc::EVFILT_READ {
@@ -280,11 +284,7 @@ impl Epoll {
             events[i as usize].u64 = kevs[i as usize].udata();
         }
 
-        match ret {
-            -1 => Err(io::Error::last_os_error()),
-            0 => Ok(0),
-            nev => Ok(nev as usize),
-        }
+        Ok(ret as usize)
     }
 }
 
