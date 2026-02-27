@@ -35,7 +35,6 @@ pub struct Gpu {
     pub(crate) acked_features: u64,
     pub(crate) device_state: DeviceState,
     shm_region: Option<VirtioShmRegion>,
-    virgl_flags: u32,
     #[cfg(target_os = "macos")]
     map_sender: Sender<WorkerMessage>,
     export_table: Option<ExportTable>,
@@ -45,7 +44,6 @@ pub struct Gpu {
 
 impl Gpu {
     pub fn new(
-        virgl_flags: u32,
         displays: Box<[DisplayInfo]>,
         display_backend: DisplayBackend<'static>,
         #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
@@ -55,7 +53,6 @@ impl Gpu {
             acked_features: 0,
             device_state: DeviceState::Inactive,
             shm_region: None,
-            virgl_flags,
             #[cfg(target_os = "macos")]
             map_sender,
             export_table: None,
@@ -212,7 +209,6 @@ impl VirtioDevice for Gpu {
             mem.clone(),
             interrupt.clone(),
             shm_region,
-            self.virgl_flags,
             #[cfg(target_os = "macos")]
             self.map_sender.clone(),
             self.export_table.take(),

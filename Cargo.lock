@@ -1022,6 +1022,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mesa3d_util"
+version = "0.1.76-libkrun.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a95e11093683dd73b2e70dbd3f848cddd54f05a971fdcb5e3dc655773062fd79"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "log",
+ "remain",
+ "rustix",
+ "thiserror 1.0.69",
+ "zerocopy",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1381,18 +1396,19 @@ checksum = "8a0d197bd2c9dc6e53b84da9556a69ba4cdfab8619eb41a8bd1cc2027a0f6b1d"
 
 [[package]]
 name = "rutabaga_gfx"
-version = "0.1.2"
+version = "0.1.76-libkrun.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fdc1abc0bccf93a5c59147192b24963d449e14fdcd0dfe02f61c457c069ea4c"
 dependencies = [
- "anyhow",
  "cfg-if",
  "libc",
  "log",
- "nix 0.30.1",
+ "mesa3d_util",
  "pkg-config",
  "remain",
+ "serde",
+ "serde_json",
  "thiserror 1.0.69",
- "vmm-sys-util 0.14.0",
- "winapi",
  "zerocopy",
 ]
 

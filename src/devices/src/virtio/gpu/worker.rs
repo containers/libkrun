@@ -36,7 +36,6 @@ pub struct Worker {
     mem: GuestMemoryMmap,
     interrupt: InterruptTransport,
     shm_region: VirtioShmRegion,
-    virgl_flags: u32,
     #[cfg(target_os = "macos")]
     map_sender: Sender<WorkerMessage>,
     export_table: Option<ExportTable>,
@@ -51,7 +50,6 @@ impl Worker {
         mem: GuestMemoryMmap,
         interrupt: InterruptTransport,
         shm_region: VirtioShmRegion,
-        virgl_flags: u32,
         #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
         export_table: Option<ExportTable>,
         displays: Box<[DisplayInfo]>,
@@ -71,7 +69,6 @@ impl Worker {
             mem,
             interrupt,
             shm_region,
-            virgl_flags,
             #[cfg(target_os = "macos")]
             map_sender,
             export_table,
@@ -92,7 +89,6 @@ impl Worker {
             self.mem.clone(),
             self.control_queue.clone(),
             self.interrupt.clone(),
-            self.virgl_flags,
             #[cfg(target_os = "macos")]
             self.map_sender.clone(),
             self.export_table.take(),
@@ -162,7 +158,13 @@ impl Worker {
             }
             GpuCommand::TransferToHost2d(info) => {
                 let resource_id = info.resource_id;
-                let transfer = Transfer3D::new_2d(info.r.x, info.r.y, info.r.width, info.r.height);
+                let transfer = Transfer3D::new_2d(
+                    info.r.x,
+                    info.r.y,
+                    info.r.width,
+                    info.r.height,
+                    info.offset,
+                );
                 virtio_gpu.transfer_write(0, resource_id, transfer)
             }
             GpuCommand::ResourceAttachBacking(info) => {

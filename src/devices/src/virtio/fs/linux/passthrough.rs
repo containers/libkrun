@@ -20,6 +20,8 @@ use nix::{request_code_none, request_code_read};
 
 use vm_memory::ByteValued;
 
+#[cfg(feature = "gpu")]
+use super::super::filesystem::VirtioFsKey;
 use super::super::filesystem::{
     Context, DirEntry, Entry, ExportTable, Extensions, FileSystem, FsOptions, GetxattrReply,
     ListxattrReply, OpenOptions, SetattrValid, ZeroCopyReader, ZeroCopyWriter,
@@ -814,7 +816,19 @@ impl PassthroughFs {
                         .unwrap()
                         .lock()
                         .unwrap()
-                        .remove(&(self.cfg.export_fsid, handle));
+                        .remove({
+                            #[cfg(feature = "gpu")]
+                            {
+                                &VirtioFsKey {
+                                    fs_id: self.cfg.export_fsid,
+                                    handle,
+                                }
+                            }
+                            #[cfg(not(feature = "gpu"))]
+                            {
+                                &(self.cfg.export_fsid, handle)
+                            }
+                        });
                 }
 
                 // We don't need to close the file here because that will happen automatically when
@@ -2251,6 +2265,15 @@ impl FileSystem for PassthroughFs {
 
                 let fd = data.file.read().unwrap().try_clone()?;
 
+                #[cfg(feature = "gpu")]
+                exports.insert(
+                    VirtioFsKey {
+                        fs_id: self.cfg.export_fsid,
+                        handle,
+                    },
+                    fd,
+                );
+                #[cfg(not(feature = "gpu"))]
                 exports.insert((self.cfg.export_fsid, handle), fd);
 
                 let mut ret: Vec<_> = self.cfg.export_fsid.to_ne_bytes().into();
