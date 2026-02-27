@@ -259,9 +259,20 @@ impl NetWorker {
         loop {
             self.tx_q.queue.disable_notification(&self.mem).unwrap();
 
-            if let Err(e) = self.process_tx() {
-                log::error!("Failed to process rx: {e:?} (triggered by backend socket readable)");
-            };
+            match self.process_tx() {
+                Err(TxError::Backend(WriteError::NothingWritten)) => {
+                    // Return to the event loop; the socket will fire a writable
+                    // event when ready. We don't enable notifications since we
+                    // already have pending work.
+                    break;
+                }
+                Err(e) => {
+                    log::error!(
+                        "Failed to process tx: {e:?} (triggered by backend socket readable)"
+                    );
+                }
+                _ => (),
+            }
 
             if !self.tx_q.queue.enable_notification(&self.mem).unwrap() {
                 break;
@@ -332,7 +343,7 @@ impl NetWorker {
                 }
                 Err(WriteError::NothingWritten) => {
                     tx_queue.undo_pop();
-                    break;
+                    return Err(TxError::Backend(WriteError::NothingWritten));
                 }
                 Err(WriteError::PartialWrite) => {
                     log::trace!("process_tx: partial write");
