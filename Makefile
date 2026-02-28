@@ -233,14 +233,21 @@ clean:
 
 clean-all: clean clean-sysroot
 
-test-prefix/lib64/libkrun.pc: $(LIBRARY_RELEASE_$(OS))
+test-prefix/$(LIBDIR_$(OS))/libkrun.pc: $(LIBRARY_RELEASE_$(OS))
 	mkdir -p test-prefix
 	PREFIX="$$(realpath test-prefix)" make install
 
-test-prefix: test-prefix/lib64/libkrun.pc
+test-prefix: test-prefix/$(LIBDIR_$(OS))/libkrun.pc
 
 TEST ?= all
 TEST_FLAGS ?=
 
+# Library path variable differs by OS
+LIBPATH_VAR_Linux = LD_LIBRARY_PATH
+LIBPATH_VAR_Darwin = DYLD_LIBRARY_PATH
+# Extra library paths needed for tests (libkrunfw, llvm)
+EXTRA_LIBPATH_Linux =
+EXTRA_LIBPATH_Darwin = /opt/homebrew/opt/libkrunfw/lib:/opt/homebrew/opt/llvm/lib
+
 test: test-prefix
-	cd tests; RUST_LOG=trace LD_LIBRARY_PATH="$$(realpath ../test-prefix/lib64/)" PKG_CONFIG_PATH="$$(realpath ../test-prefix/lib64/pkgconfig/)" ./run.sh test --test-case "$(TEST)" $(TEST_FLAGS)
+	cd tests; RUST_LOG=trace $(LIBPATH_VAR_$(OS))="$$(realpath ../test-prefix/$(LIBDIR_$(OS))/):$(EXTRA_LIBPATH_$(OS)):$${$(LIBPATH_VAR_$(OS))}" PKG_CONFIG_PATH="$$(realpath ../test-prefix/$(LIBDIR_$(OS))/pkgconfig/)" ./run.sh test --test-case "$(TEST)" $(TEST_FLAGS)

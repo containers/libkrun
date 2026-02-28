@@ -26,31 +26,15 @@ fn set_timeouts(stream: &mut TcpStream) {
         .unwrap();
 }
 
-fn connect(port: u16) -> TcpStream {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
-    let mut tries = 0;
-    loop {
-        match TcpStream::connect(addr) {
-            Ok(stream) => return stream,
-            Err(err) => {
-                if tries == 5 {
-                    panic!("Couldn't connect to server after 5 attempts: {err}");
-                }
-                tries += 1;
-                thread::sleep(Duration::from_secs(1));
-            }
-        }
-    }
-}
-
 #[derive(Debug, Copy, Clone)]
 pub struct TcpTester {
+    server_ip: Ipv4Addr,
     port: u16,
 }
 
 impl TcpTester {
-    pub const fn new(port: u16) -> Self {
-        Self { port }
+    pub const fn new(port: u16, server_ip: Ipv4Addr) -> Self {
+        Self { server_ip, port }
     }
 
     pub fn create_server_socket(&self) -> TcpListener {
@@ -66,10 +50,24 @@ impl TcpTester {
         stream.write_all(b"bye!").unwrap();
         // We leak the file descriptor for now, since there is no easy way to close it on libkrun exit
         mem::forget(listener);
+        mem::forget(stream);
     }
 
     pub fn run_client(&self) {
-        let mut stream = connect(self.port);
+        let addr = SocketAddr::new(IpAddr::V4(self.server_ip), self.port);
+        let mut tries = 0;
+        let mut stream = loop {
+            match TcpStream::connect(addr) {
+                Ok(stream) => break stream,
+                Err(err) => {
+                    if tries == 5 {
+                        panic!("Couldn't connect to {addr} after 5 attempts: {err}");
+                    }
+                    tries += 1;
+                    thread::sleep(Duration::from_secs(1));
+                }
+            }
+        };
         set_timeouts(&mut stream);
         expect_msg(&mut stream, b"ping!");
         expect_wouldblock(&mut stream);

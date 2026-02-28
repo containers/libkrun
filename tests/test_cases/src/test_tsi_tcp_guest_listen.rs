@@ -1,5 +1,6 @@
 use crate::tcp_tester::TcpTester;
 use macros::{guest, host};
+use std::net::Ipv4Addr;
 
 const PORT: u16 = 8001;
 
@@ -10,7 +11,7 @@ pub struct TestTsiTcpGuestListen {
 impl TestTsiTcpGuestListen {
     pub fn new() -> Self {
         Self {
-            tcp_tester: TcpTester::new(PORT),
+            tcp_tester: TcpTester::new(PORT, Ipv4Addr::LOCALHOST),
         }
     }
 }
