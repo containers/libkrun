@@ -144,6 +144,11 @@ impl Epoll {
         }
     }
 
+    /// Register, modify, or remove interest in events for a file descriptor.
+    ///
+    /// Note: `READ_HANG_UP` (`EPOLLRDHUP`) is ignored. kqueue always
+    /// reports `EV_EOF` without opt-in, so `wait()` reports
+    /// `READ_HANG_UP` on read EOF regardless of registration.
     pub fn ctl(
         &self,
         operation: ControlOperation,
@@ -282,15 +287,14 @@ impl Epoll {
         for i in 0..nevents {
             if kevs[i].0.filter == libc::EVFILT_READ {
                 events[i].events = EventSet::IN.bits();
+                if kevs[i].0.flags & libc::EV_EOF != 0 {
+                    events[i].events |= EventSet::READ_HANG_UP.bits();
+                }
             } else if kevs[i].0.filter == libc::EVFILT_WRITE {
                 events[i].events = EventSet::OUT.bits();
-            }
-            if kevs[i].0.flags & libc::EV_EOF != 0 {
-                events[i].events |= if kevs[i].0.flags & libc::EV_CLEAR != 0 {
-                    EventSet::READ_HANG_UP.bits()
-                } else {
-                    EventSet::HANG_UP.bits()
-                };
+                if kevs[i].0.flags & libc::EV_EOF != 0 {
+                    events[i].events |= EventSet::HANG_UP.bits();
+                }
             }
             events[i].u64 = kevs[i].udata();
 
