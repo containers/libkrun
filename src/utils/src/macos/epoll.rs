@@ -12,14 +12,12 @@ use std::time::Duration;
 use bitflags::bitflags;
 use log::debug;
 
-fn event_name(event: u32) -> &'static str {
-    match event {
-        e if e == EventSet::IN.bits() => "READ",
-        e if e == EventSet::OUT.bits() => "WRITE",
-        e if e == (EventSet::IN | EventSet::READ_HANG_UP).bits() => "READ_EOF",
-        e if e == (EventSet::IN | EventSet::HANG_UP).bits() => "EOF",
-        e if e == EventSet::HANG_UP.bits() => "HANG_UP",
-        e if e == EventSet::READ_HANG_UP.bits() => "READ_HANG_UP",
+fn event_name(filter: i16, flags: u16) -> &'static str {
+    match (filter, flags & libc::EV_EOF != 0) {
+        (libc::EVFILT_READ, false) => "READ",
+        (libc::EVFILT_READ, true) => "READ+EOF",
+        (libc::EVFILT_WRITE, false) => "WRITE",
+        (libc::EVFILT_WRITE, true) => "WRITE+EOF",
         _ => "UNKNOWN",
     }
 }
@@ -146,6 +144,11 @@ impl Epoll {
         }
     }
 
+    /// Register, modify, or remove interest in events for a file descriptor.
+    ///
+    /// Note: `READ_HANG_UP` (`EPOLLRDHUP`) is ignored. kqueue always
+    /// reports `EV_EOF` without opt-in, so `wait()` reports
+    /// `READ_HANG_UP` on read EOF regardless of registration.
     pub fn ctl(
         &self,
         operation: ControlOperation,
@@ -284,15 +287,14 @@ impl Epoll {
         for i in 0..nevents {
             if kevs[i].0.filter == libc::EVFILT_READ {
                 events[i].events = EventSet::IN.bits();
+                if kevs[i].0.flags & libc::EV_EOF != 0 {
+                    events[i].events |= EventSet::READ_HANG_UP.bits();
+                }
             } else if kevs[i].0.filter == libc::EVFILT_WRITE {
                 events[i].events = EventSet::OUT.bits();
-            }
-            if kevs[i].0.flags & libc::EV_EOF != 0 {
-                events[i].events |= if kevs[i].0.flags & libc::EV_CLEAR != 0 {
-                    EventSet::READ_HANG_UP.bits()
-                } else {
-                    EventSet::HANG_UP.bits()
-                };
+                if kevs[i].0.flags & libc::EV_EOF != 0 {
+                    events[i].events |= EventSet::HANG_UP.bits();
+                }
             }
             events[i].u64 = kevs[i].udata();
 
@@ -300,7 +302,7 @@ impl Epoll {
             let data = kevs[i].0.data;
             debug!(
                 "kevent: {} fd={fd} data={data}",
-                event_name(events[i].events)
+                event_name(kevs[i].0.filter, kevs[i].0.flags)
             );
         }
 
