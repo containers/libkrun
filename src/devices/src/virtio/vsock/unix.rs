@@ -45,7 +45,13 @@ pub struct UnixProxy {
     last_tx_cnt_sent: Wrapping<u32>,
     push_cnt: Wrapping<u32>,
     rx_cnt: Wrapping<u32>,
+    /// Number of OP_REQUEST retries after guest RST during ReverseInit.
+    connect_retries: u32,
 }
+
+/// Safety cap on OP_REQUEST retries. Each retry is naturally paced by
+/// the vsock virtio round-trip (~100-500μs), so 10000 retries ≈ 1-5s.
+const MAX_CONNECT_RETRIES: u32 = 10000;
 
 fn proxy_fd_create(id: u64) -> Result<OwnedFd, ProxyError> {
     let fd = socket(
@@ -119,6 +125,7 @@ impl UnixProxy {
             last_tx_cnt_sent: Wrapping(0),
             push_cnt: Wrapping(0),
             rx_cnt: Wrapping(0),
+            connect_retries: 0,
         })
     }
 
@@ -152,6 +159,7 @@ impl UnixProxy {
             peer_fwd_cnt: Wrapping(0),
             push_cnt: Wrapping(0),
             path: Default::default(),
+            connect_retries: 0,
         }
     }
 
@@ -551,10 +559,33 @@ impl Proxy for UnixProxy {
             "release: id={}, tx_cnt={}, last_tx_cnt={}",
             self.id, self.tx_cnt, self.last_tx_cnt_sent
         );
-        let remove_proxy = ProxyRemoval::Deferred;
+
+        // If we're in ReverseInit (sent OP_REQUEST, got RST because guest
+        // listener isn't ready yet), immediately re-send OP_REQUEST.
+        // The vsock virtio round-trip (~100-500μs) naturally throttles retries.
+        if self.status == ProxyStatus::ReverseInit
+            && self.connect_retries < MAX_CONNECT_RETRIES
+        {
+            self.connect_retries += 1;
+            if self.connect_retries.is_multiple_of(100) {
+                debug!(
+                    "connect retry #{} for id={:#x}",
+                    self.connect_retries, self.id
+                );
+            }
+            self.push_op_request();
+            return ProxyUpdate::default();
+        }
+
+        if self.connect_retries >= MAX_CONNECT_RETRIES {
+            warn!(
+                "giving up after {} connect retries for id={:#x}",
+                self.connect_retries, self.id
+            );
+        }
 
         ProxyUpdate {
-            remove_proxy,
+            remove_proxy: ProxyRemoval::Deferred,
             ..Default::default()
         }
     }
