@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
@@ -19,11 +20,11 @@ use super::unix::UnixProxy;
 use super::TsiFlags;
 use super::VsockError;
 use crossbeam_channel::{unbounded, Sender};
+use nix::sys::socket::SockaddrStorage;
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};
 use vm_memory::GuestMemoryMmap;
 
 use crate::virtio::InterruptTransport;
-use std::net::{Ipv4Addr, SocketAddrV4};
 
 pub type ProxyMap = Arc<RwLock<HashMap<u64, Mutex<Box<dyn Proxy>>>>>;
 
@@ -113,6 +114,9 @@ pub struct VsockMuxer {
     reaper_sender: Option<Sender<u64>>,
     unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
     tsi_flags: TsiFlags,
+    /// Optional egress policy: list of allowed CIDR ranges (ip, prefix_len).
+    /// None = no policy (allow all). Some(vec) = only matching IPs allowed.
+    egress_cidrs: Option<Vec<(IpAddr, u8)>>,
 }
 
 impl VsockMuxer {
@@ -121,7 +125,14 @@ impl VsockMuxer {
         host_port_map: Option<HashMap<u16, u16>>,
         unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
         tsi_flags: TsiFlags,
+        egress_cidrs: Option<Vec<(IpAddr, u8)>>,
     ) -> Self {
+        if let Some(ref cidrs) = egress_cidrs {
+            info!(
+                "egress policy configured with {} CIDR rule(s)",
+                cidrs.len()
+            );
+        }
         VsockMuxer {
             cid,
             host_port_map,
@@ -134,7 +145,63 @@ impl VsockMuxer {
             reaper_sender: None,
             unix_ipc_port_map,
             tsi_flags,
+            egress_cidrs,
         }
+    }
+
+    /// Check if the given socket address is allowed by the egress policy.
+    /// Returns true if no policy is set (allow all) or the IP matches a CIDR.
+    fn is_ip_allowed(&self, addr: &SockaddrStorage) -> bool {
+        let cidrs = match &self.egress_cidrs {
+            None => return true, // no policy = allow all
+            Some(cidrs) => cidrs,
+        };
+
+        // Extract IP from sockaddr
+        let ip: IpAddr = if let Some(sin) = addr.as_sockaddr_in() {
+            IpAddr::V4(sin.ip())
+        } else if let Some(sin6) = addr.as_sockaddr_in6() {
+            IpAddr::V6(sin6.ip())
+        } else {
+            // Non-IP address (e.g., Unix socket) — allow
+            return true;
+        };
+
+        for (cidr_ip, prefix_len) in cidrs {
+            match (ip, cidr_ip) {
+                (IpAddr::V4(addr_v4), IpAddr::V4(cidr_v4)) => {
+                    let mask = if *prefix_len == 0 {
+                        0u32
+                    } else if *prefix_len >= 32 {
+                        u32::MAX
+                    } else {
+                        u32::MAX << (32 - prefix_len)
+                    };
+                    let addr_bits = u32::from(addr_v4);
+                    let cidr_bits = u32::from(*cidr_v4);
+                    if addr_bits & mask == cidr_bits & mask {
+                        return true;
+                    }
+                }
+                (IpAddr::V6(addr_v6), IpAddr::V6(cidr_v6)) => {
+                    let mask = if *prefix_len == 0 {
+                        0u128
+                    } else if *prefix_len >= 128 {
+                        u128::MAX
+                    } else {
+                        u128::MAX << (128 - prefix_len)
+                    };
+                    let addr_bits = u128::from(addr_v6);
+                    let cidr_bits = u128::from(*cidr_v6);
+                    if addr_bits & mask == cidr_bits & mask {
+                        return true;
+                    }
+                }
+                _ => {} // v4/v6 mismatch — skip this CIDR
+            }
+        }
+
+        false
     }
 
     pub(crate) fn activate(
@@ -372,6 +439,17 @@ impl VsockMuxer {
     fn process_connect(&self, pkt: &VsockPacket) {
         debug!("proxy connect request");
         if let Some(req) = pkt.read_connect_req() {
+            // Enforce egress policy before connecting
+            if !self.is_ip_allowed(&req.addr) {
+                debug!("egress policy denied connect to {}", req.addr);
+                self.push_packet(MuxerRx::ConnResponse {
+                    local_port: pkt.dst_port(),
+                    peer_port: pkt.src_port(),
+                    result: -libc::EACCES,
+                });
+                return;
+            }
+
             let id = ((req.peer_port as u64) << 32) | (defs::TSI_PROXY_PORT as u64);
             debug!("proxy connect request: id={id}");
             match self.proxy_map.read().unwrap().get(&id) {
@@ -414,6 +492,12 @@ impl VsockMuxer {
     fn process_sendto_addr(&self, pkt: &VsockPacket) {
         debug!("new DGRAM sendto addr: src={}", pkt.src_port());
         if let Some(req) = pkt.read_sendto_addr() {
+            // Enforce egress policy before storing destination
+            if !self.is_ip_allowed(&req.addr) {
+                debug!("egress policy denied sendto {}", req.addr);
+                return;
+            }
+
             let id = ((req.peer_port as u64) << 32) | (defs::TSI_PROXY_PORT as u64);
             debug!("new DGRAM sendto addr: id={id}");
             let update = self

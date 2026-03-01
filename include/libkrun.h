@@ -888,6 +888,26 @@ int32_t krun_add_vsock_port2(uint32_t ctx_id,
 int32_t krun_add_vsock(uint32_t ctx_id, uint32_t tsi_features);
 
 /**
+ * Set the egress policy for TSI networking.
+ *
+ * When set, only outbound connections to IP addresses matching the specified
+ * CIDR ranges are allowed. All other egress is denied at the TSI muxer layer.
+ *
+ * Arguments:
+ *  "ctx_id"  - the configuration context ID.
+ *  "c_cidrs" - a null-terminated array of null-terminated CIDR strings
+ *              (e.g., "10.0.0.0/8", "1.1.1.1/32"). Bare IPs without a
+ *              prefix are treated as /32 (IPv4) or /128 (IPv6).
+ *              An empty array (just the null terminator) means deny all.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ *  -EINVAL if c_cidrs is NULL or contains an invalid CIDR string.
+ *  -ENODEV if vsock is disabled.
+ */
+int32_t krun_set_egress_policy(uint32_t ctx_id, const char **c_cidrs);
+
+/**
  * Returns the eventfd file descriptor to signal the guest to shut down orderly. This must be
  * called before starting the microVM with "krun_start_event". Only available in libkrun-efi.
  *

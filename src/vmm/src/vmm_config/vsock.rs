@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -30,7 +31,7 @@ type Result<T> = std::result::Result<T, VsockConfigError>;
 
 /// This struct represents the strongly typed equivalent of the json body
 /// from vsock related requests.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct VsockDeviceConfig {
     /// ID of the vsock device.
     pub vsock_id: String,
@@ -42,6 +43,8 @@ pub struct VsockDeviceConfig {
     pub unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
     /// TSI feature flags
     pub tsi_flags: TsiFlags,
+    /// Optional egress policy: list of allowed CIDR ranges (ip, prefix_len).
+    pub egress_cidrs: Option<Vec<(IpAddr, u8)>>,
 }
 
 struct VsockWrapper {
@@ -90,6 +93,7 @@ impl VsockBuilder {
             cfg.host_port_map,
             cfg.unix_ipc_port_map,
             cfg.tsi_flags,
+            cfg.egress_cidrs,
         )
         .map_err(VsockConfigError::CreateVsockDevice)
     }
@@ -128,6 +132,7 @@ pub(crate) mod tests {
             host_port_map: None,
             unix_ipc_port_map: None,
             tsi_flags: TsiFlags::empty(),
+            egress_cidrs: None,
         }
     }
 
