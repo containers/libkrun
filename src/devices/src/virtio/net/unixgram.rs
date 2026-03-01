@@ -135,11 +135,7 @@ impl NetBackend for Unixgram {
             );
             self.retries = 0;
         }
-        debug!(
-            "Written frame size={}, written={}",
-            buf.len() - hdr_len,
-            ret
-        );
+        debug!("Written eth frame to proxy: {ret} bytes");
         Ok(())
     }
 
