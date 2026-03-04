@@ -75,17 +75,49 @@ fn run_single_test(
     let log_path = test_dir.join("log.txt");
     let log_file = File::create(&log_path).context("Failed to create log file")?;
 
-    let child = Command::new(&executable)
-        .arg("start-vm")
-        .arg("--test-case")
-        .arg(test_case.name)
-        .arg("--tmp-dir")
-        .arg(&test_dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(log_file)
-        .spawn()
-        .context("Failed to start subprocess for test")?;
+    // Wrap start-vm in unshare on Linux for network namespace isolation.
+    // Fall back to running directly (with a warning) if unshare isn't available.
+    let use_unshare = cfg!(target_os = "linux")
+        && std::env::var_os("KRUN_NO_UNSHARE").is_none()
+        && Command::new("unshare")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+    let child = if use_unshare {
+        let exe = executable.display();
+        let name = test_case.name;
+        let dir = test_dir.display();
+        Command::new("unshare")
+            .args(["--user", "--map-root-user", "--net", "--", "sh", "-c"])
+            .arg(format!(
+                "ifconfig lo 127.0.0.1 && exec {exe} start-vm --test-case {name} --tmp-dir {dir}"
+            ))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(log_file)
+            .spawn()
+            .context("Failed to start subprocess for test")?
+    } else {
+        if cfg!(target_os = "linux") {
+            eprintln!("WARNING: unshare not available, running without network namespace.");
+            eprintln!("Tests may fail if the required network ports are already in use.");
+        }
+        Command::new(&executable)
+            .arg("start-vm")
+            .arg("--test-case")
+            .arg(test_case.name)
+            .arg("--tmp-dir")
+            .arg(&test_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(log_file)
+            .spawn()
+            .context("Failed to start subprocess for test")?
+    };
 
     let test_name = test_case.name.to_string();
     let result = catch_unwind(|| {
