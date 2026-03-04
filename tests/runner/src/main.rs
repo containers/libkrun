@@ -72,6 +72,22 @@ fn run_single_test(
     let test_dir = base_dir.join(test_case.name);
     fs::create_dir(&test_dir).context("Failed to create test directory")?;
 
+    // Prepare rootfs: build from container image if needed, otherwise create empty dir
+    let rootfs_dir = test_dir.join("rootfs");
+    if let Some(containerfile) = test_case.rootfs_image() {
+        use test_cases::rootfs;
+        if let Err(e) = rootfs::prepare_rootfs(containerfile, &rootfs_dir) {
+            eprintln!("SKIP ({e})");
+            return Ok(TestResult {
+                name: test_case.name.to_string(),
+                outcome: TestOutcome::Skip("rootfs image build failed"),
+                log_path: None,
+            });
+        }
+    } else {
+        fs::create_dir(&rootfs_dir).context("Failed to create rootfs directory")?;
+    }
+
     let log_path = test_dir.join("log.txt");
     let log_file = File::create(&log_path).context("Failed to create log file")?;
 
