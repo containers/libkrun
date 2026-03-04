@@ -8,7 +8,7 @@ use std::panic::catch_unwind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tempdir::TempDir;
-use test_cases::{test_cases, ShouldRun, Test, TestCase, TestOutcome, TestSetup};
+use test_cases::{test_cases, Report, ShouldRun, Test, TestCase, TestOutcome, TestSetup};
 
 struct TestResult {
     name: String,
@@ -155,6 +155,13 @@ fn run_single_test(
         TestOutcome::Skip(reason) => {
             eprintln!("SKIP ({})", reason);
         }
+        TestOutcome::Report(report) => {
+            eprintln!("REPORT");
+            eprintln!("{:2}", report.text());
+            if !keep_all {
+                let _ = fs::remove_dir_all(&test_dir);
+            }
+        }
     }
 
     Ok(TestResult {
@@ -169,6 +176,7 @@ fn write_github_summary(
     num_pass: usize,
     num_fail: usize,
     num_skip: usize,
+    num_report: usize,
 ) -> anyhow::Result<()> {
     let summary_path = env::var("GITHUB_STEP_SUMMARY")
         .context("GITHUB_STEP_SUMMARY environment variable not set")?;
@@ -181,15 +189,22 @@ fn write_github_summary(
 
     let num_ran = num_pass + num_fail;
     let status = if num_fail == 0 { "✅" } else { "❌" };
-    let skip_msg = if num_skip > 0 {
-        format!(" ({num_skip} skipped)")
-    } else {
+    let mut extra = Vec::new();
+    if num_skip > 0 {
+        extra.push(format!("{num_skip} skipped"));
+    }
+    if num_report > 0 {
+        extra.push(format!("{num_report} reports"));
+    }
+    let extra_msg = if extra.is_empty() {
         String::new()
+    } else {
+        format!(" ({})", extra.join(", "))
     };
 
     writeln!(
         file,
-        "## {status} Integration Tests - {num_pass}/{num_ran} passed{skip_msg}\n"
+        "## {status} Integration Tests - {num_pass}/{num_ran} passed{extra_msg}\n"
     )?;
 
     for result in results {
@@ -197,6 +212,7 @@ fn write_github_summary(
             TestOutcome::Pass => ("✅", String::new()),
             TestOutcome::Fail => ("❌", String::new()),
             TestOutcome::Skip(reason) => ("⏭️", format!(" - {}", reason)),
+            TestOutcome::Report(_) => ("📊", String::new()),
         };
 
         writeln!(file, "<details>")?;
@@ -206,7 +222,9 @@ fn write_github_summary(
             result.name, status_text
         )?;
 
-        if let Some(log_path) = &result.log_path {
+        if let TestOutcome::Report(report) = &result.outcome {
+            writeln!(file, "{}", report.gh_markdown())?;
+        } else if let Some(log_path) = &result.log_path {
             let log_content = fs::read_to_string(log_path).unwrap_or_default();
             writeln!(file, "```")?;
             // Limit log size to avoid huge summaries (2 MiB limit)
@@ -280,28 +298,39 @@ fn run_tests(
         .iter()
         .filter(|r| matches!(r.outcome, TestOutcome::Skip(_)))
         .count();
+    let num_report = results
+        .iter()
+        .filter(|r| matches!(r.outcome, TestOutcome::Report(_)))
+        .count();
     let num_ran = num_pass + num_fail;
 
     // Write GitHub Actions summary if requested
     if github_summary {
-        write_github_summary(&results, num_pass, num_fail, num_skip)?;
+        write_github_summary(&results, num_pass, num_fail, num_skip, num_report)?;
     }
 
-    let skip_msg = if num_skip > 0 {
-        format!(" ({num_skip} skipped)")
-    } else {
+    let mut extra = Vec::new();
+    if num_skip > 0 {
+        extra.push(format!("{num_skip} skipped"));
+    }
+    if num_report > 0 {
+        extra.push(format!("{num_report} reports"));
+    }
+    let extra_msg = if extra.is_empty() {
         String::new()
+    } else {
+        format!(" ({})", extra.join(", "))
     };
 
     if num_fail > 0 {
         eprintln!("(See test artifacts at: {})", base_dir.display());
-        println!("\nFAIL - {num_pass}/{num_ran} passed{skip_msg}");
+        println!("\nFAIL - {num_pass}/{num_ran} passed{extra_msg}");
         anyhow::bail!("")
     } else {
         if keep_all {
             eprintln!("(See test artifacts at: {})", base_dir.display());
         }
-        eprintln!("\nOK - {num_pass}/{num_ran} passed{skip_msg}");
+        eprintln!("\nOK - {num_pass}/{num_ran} passed{extra_msg}");
     }
 
     Ok(())
