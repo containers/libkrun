@@ -80,6 +80,9 @@ mod common;
 
 #[cfg(feature = "host")]
 mod krun;
+
+#[cfg(feature = "host")]
+pub mod rootfs;
 mod tcp_tester;
 
 #[host]
@@ -105,6 +108,13 @@ pub trait Test {
     fn should_run(&self) -> ShouldRun {
         ShouldRun::Yes
     }
+
+    /// Return Containerfile content if this test needs a custom rootfs image.
+    /// The runner will build the image via podman and extract it before launching the VM.
+    /// If podman is unavailable, the test is skipped.
+    fn rootfs_image(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 #[guest]
@@ -129,6 +139,11 @@ impl TestCase {
     #[host]
     pub fn should_run(&self) -> ShouldRun {
         self.test.should_run()
+    }
+
+    #[host]
+    pub fn rootfs_image(&self) -> Option<&'static str> {
+        self.test.rootfs_image()
     }
 
     #[allow(dead_code)]
