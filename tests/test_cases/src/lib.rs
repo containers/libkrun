@@ -20,6 +20,7 @@ pub enum TestOutcome {
     Pass,
     Fail,
     Skip(&'static str),
+    Report(Box<dyn ReportImpl>),
 }
 
 pub enum ShouldRun {
@@ -72,6 +73,40 @@ pub fn test_cases() -> Vec<TestCase> {
 ////////////////////
 // Implementation details:
 //////////////////
+
+pub trait ReportImpl {
+    fn fmt_text(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+    fn fmt_gh_markdown(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+}
+
+pub trait Report: ReportImpl {
+    fn text(&self) -> ReportText<'_, Self> {
+        ReportText(self)
+    }
+
+    fn gh_markdown(&self) -> ReportGhMarkdown<'_, Self> {
+        ReportGhMarkdown(self)
+    }
+}
+
+impl<T: ReportImpl + ?Sized> Report for T {}
+
+pub struct ReportText<'a, T: ReportImpl + ?Sized>(pub &'a T);
+
+impl<T: ReportImpl + ?Sized> std::fmt::Display for ReportText<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt_text(f)
+    }
+}
+
+pub struct ReportGhMarkdown<'a, T: ReportImpl + ?Sized>(pub &'a T);
+
+impl<T: ReportImpl + ?Sized> std::fmt::Display for ReportGhMarkdown<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt_gh_markdown(f)
+    }
+}
+
 use macros::{guest, host};
 #[host]
 use std::path::PathBuf;
