@@ -16,6 +16,12 @@ use test_multiport_console::TestMultiportConsole;
 mod test_virtiofs_root_ro;
 use test_virtiofs_root_ro::TestVirtiofsRootRo;
 
+pub enum TestOutcome {
+    Pass,
+    Fail,
+    Skip(&'static str),
+}
+
 pub enum ShouldRun {
     Yes,
     No(&'static str),
@@ -99,9 +105,13 @@ pub trait Test {
     fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()>;
 
     /// Checks the output of the (host) process which started the VM
-    fn check(self: Box<Self>, child: Child) {
+    fn check(self: Box<Self>, child: Child) -> TestOutcome {
         let output = child.wait_with_output().unwrap();
-        assert_eq!(String::from_utf8(output.stdout).unwrap(), "OK\n");
+        if String::from_utf8(output.stdout).unwrap() == "OK\n" {
+            TestOutcome::Pass
+        } else {
+            TestOutcome::Fail
+        }
     }
 
     /// Check if this test should run on this platform.
