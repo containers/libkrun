@@ -25,19 +25,15 @@ fn copy_guest_agent(dir: &Path) -> anyhow::Result<()> {
 /// filesystem yourself (e.g. via `krun_add_virtiofs3` for read-only mounts) rather than
 /// using the default `setup_fs_and_enter`.
 pub fn setup_rootfs(test_setup: &TestSetup) -> anyhow::Result<PathBuf> {
-    let root_dir = test_setup.tmp_dir.join("root");
-    create_dir(&root_dir).context("Failed to create root directory")?;
+    let root_dir = test_setup.tmp_dir.join("rootfs");
+    if !root_dir.exists() {
+        create_dir(&root_dir).context("Failed to create rootfs directory")?;
+    }
     copy_guest_agent(&root_dir)?;
     Ok(root_dir)
 }
 
-/// Common part of most test. This setups an empty root filesystem, copies the guest agent there
-/// and runs the guest agent in the VM.
-/// Note that some tests might want to use a different root file system (perhaps a qcow image),
-/// in which case the test can implement the equivalent functionality itself, or better if there
-/// are more test doing that, add another utility method in this file.
-///
-/// The returned object is used for deleting the temporary files.
+/// Sets up the root filesystem, copies the guest agent into it, and enters the VM.
 pub fn setup_fs_and_enter(ctx: u32, test_setup: TestSetup) -> anyhow::Result<()> {
     let root_dir = setup_rootfs(&test_setup)?;
 
