@@ -8,14 +8,7 @@ use std::panic::catch_unwind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tempdir::TempDir;
-use test_cases::{test_cases, ShouldRun, Test, TestCase, TestSetup};
-
-#[derive(Clone)]
-enum TestOutcome {
-    Pass,
-    Fail,
-    Skip(&'static str),
-}
+use test_cases::{test_cases, ShouldRun, Test, TestCase, TestOutcome, TestSetup};
 
 struct TestResult {
     name: String,
@@ -141,21 +134,28 @@ fn run_single_test(
     };
 
     let test_name = test_case.name.to_string();
-    let result = catch_unwind(|| {
+    let outcome = match catch_unwind(|| {
         let test = get_test(&test_name).unwrap();
-        test.check(child);
-    });
-
-    let outcome = if result.is_ok() {
-        eprintln!("OK");
-        if !keep_all {
-            let _ = fs::remove_dir_all(&test_dir);
-        }
-        TestOutcome::Pass
-    } else {
-        eprintln!("FAIL");
-        TestOutcome::Fail
+        test.check(child)
+    }) {
+        Ok(outcome) => outcome,
+        Err(_) => TestOutcome::Fail,
     };
+
+    match &outcome {
+        TestOutcome::Pass => {
+            eprintln!("OK");
+            if !keep_all {
+                let _ = fs::remove_dir_all(&test_dir);
+            }
+        }
+        TestOutcome::Fail => {
+            eprintln!("FAIL");
+        }
+        TestOutcome::Skip(reason) => {
+            eprintln!("SKIP ({})", reason);
+        }
+    }
 
     Ok(TestResult {
         name: test_case.name.to_string(),
