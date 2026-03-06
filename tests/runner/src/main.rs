@@ -38,6 +38,48 @@ fn start_vm(test_setup: TestSetup) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Kill background processes registered for cleanup via
+/// [`TestSetup::register_cleanup_pid`]. Sends SIGTERM first, waits up to 5s
+/// for graceful exit, then SIGKILL any survivors.
+fn kill_cleanup_pids(test_dir: &Path) {
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::Pid;
+    use std::io::BufRead;
+
+    let Ok(file) = File::open(test_dir.join("cleanup.pids")) else {
+        return;
+    };
+
+    let mut pids = Vec::new();
+    for line in std::io::BufReader::new(file).lines() {
+        let Ok(line) = line else { continue };
+        if let Ok(raw) = line.trim().parse::<i32>() {
+            pids.push(Pid::from_raw(raw));
+        }
+    }
+
+    for &pid in &pids {
+        let _ = kill(pid, Signal::SIGTERM);
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        pids.retain(|&pid| kill(pid, None).is_ok());
+        if pids.is_empty() || std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    for &pid in &pids {
+        eprintln!(
+            "WARNING: cleanup process {} did not exit after SIGTERM, sending SIGKILL",
+            pid
+        );
+        let _ = kill(pid, Signal::SIGKILL);
+    }
+}
+
 fn run_single_test(
     test_case: &TestCase,
     base_dir: &Path,
@@ -141,6 +183,11 @@ fn run_single_test(
         Ok(outcome) => outcome,
         Err(_) => TestOutcome::Fail,
     };
+
+    // Kill any background processes registered for cleanup (e.g. gvproxy).
+    // Runs after check() regardless of outcome, so leaked processes are
+    // cleaned up even if the test crashed.
+    kill_cleanup_pids(&test_dir);
 
     match &outcome {
         TestOutcome::Pass => {
