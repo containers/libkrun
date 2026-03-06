@@ -135,6 +135,25 @@ pub struct TestSetup {
 }
 
 #[host]
+impl TestSetup {
+    /// Register a PID to be killed after the test finishes.
+    ///
+    /// The runner will SIGKILL these PIDs after check() returns, even if the
+    /// test crashed. Use this for background processes (e.g. gvproxy) that
+    /// outlive the VM.
+    pub fn register_cleanup_pid(&self, pid: u32) {
+        use std::io::Write;
+        let path = self.tmp_dir.join("cleanup.pids");
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("Failed to open cleanup.pids");
+        writeln!(file, "{}", pid).expect("Failed to write cleanup PID");
+    }
+}
+
+#[host]
 pub trait Test {
     /// Start the VM
     fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()>;
