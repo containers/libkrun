@@ -19,6 +19,7 @@ use test_virtiofs_root_ro::TestVirtiofsRootRo;
 pub enum TestOutcome {
     Pass,
     Fail,
+    Timeout,
     Skip(&'static str),
     Report(Box<dyn ReportImpl>),
 }
@@ -179,6 +180,11 @@ pub trait Test {
     fn rootfs_image(&self) -> Option<&'static str> {
         None
     }
+
+    /// Per-test timeout in seconds. The runner kills the test if it exceeds this.
+    fn timeout_secs(&self) -> u64 {
+        15
+    }
 }
 
 #[guest]
@@ -208,6 +214,11 @@ impl TestCase {
     #[host]
     pub fn rootfs_image(&self) -> Option<&'static str> {
         self.test.rootfs_image()
+    }
+
+    #[host]
+    pub fn timeout_secs(&self) -> u64 {
+        self.test.timeout_secs()
     }
 
     #[allow(dead_code)]
