@@ -27,7 +27,7 @@ use std::result;
 use nix::sys::socket::{sockaddr, AddressFamily};
 use nix::sys::socket::{SockaddrLike, SockaddrStorage};
 use utils::byte_order;
-use vm_memory::{self, Address, GuestAddress, GuestMemory, GuestMemoryError};
+use vm_memory::{self, Address, GuestAddress, GuestMemoryBackend, GuestMemoryError};
 
 use super::super::DescriptorChain;
 use super::defs;
@@ -193,7 +193,7 @@ pub struct VsockPacket {
     buf_size: usize,
 }
 
-fn get_host_address<T: GuestMemory>(
+fn get_host_address<T: GuestMemoryBackend>(
     mem: &T,
     guest_addr: GuestAddress,
     size: usize,

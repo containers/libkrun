@@ -36,7 +36,7 @@ use rutabaga_gfx::{
 };
 #[cfg(target_os = "macos")]
 use utils::worker_message::WorkerMessage;
-use vm_memory::{GuestAddress, GuestMemory, GuestMemoryMmap, VolatileSlice};
+use vm_memory::{GuestAddress, GuestMemoryBackend, GuestMemoryMmap, VolatileSlice};
 
 use super::{GpuError, Result};
 use crate::virtio::display::DisplayInfo;
