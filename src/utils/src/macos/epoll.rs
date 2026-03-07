@@ -14,6 +14,7 @@ use log::debug;
 
 fn event_name(event: u32) -> &'static str {
     match event {
+        0 => "TIMER",
         e if e == EventSet::IN.bits() => "READ",
         e if e == EventSet::OUT.bits() => "WRITE",
         e if e == (EventSet::IN | EventSet::READ_HANG_UP).bits() => "READ_EOF",
@@ -286,6 +287,9 @@ impl Epoll {
                 events[i].events = EventSet::IN.bits();
             } else if kevs[i].0.filter == libc::EVFILT_WRITE {
                 events[i].events = EventSet::OUT.bits();
+            } else if kevs[i].0.filter == libc::EVFILT_TIMER {
+                // No epoll equivalent; caller identifies timer by udata.
+                events[i].events = EventSet::empty().bits();
             }
             if kevs[i].0.flags & libc::EV_EOF != 0 {
                 events[i].events |= if kevs[i].0.flags & libc::EV_CLEAR != 0 {
@@ -305,6 +309,22 @@ impl Epoll {
         }
 
         Ok(nevents)
+    }
+
+    /// Register a one-shot timer that fires after `delay_us` microseconds.
+    /// The resulting event will have `data` set to `udata`.
+    pub fn add_oneshot_timer(&self, delay_us: u64, udata: u64) {
+        let kev = libc::kevent {
+            ident: 0,
+            filter: libc::EVFILT_TIMER,
+            flags: libc::EV_ADD | libc::EV_ONESHOT,
+            fflags: libc::NOTE_USECONDS,
+            data: delay_us as isize,
+            udata: udata as *mut libc::c_void,
+        };
+        unsafe {
+            libc::kevent(self.queue, &kev, 1, ptr::null_mut(), 0, ptr::null());
+        }
     }
 }
 
