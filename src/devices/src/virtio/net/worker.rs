@@ -10,6 +10,8 @@ use super::backend::{NetBackend, ReadError, WriteError};
 use super::device::{FrontendError, RxError, TxError, VirtioNetBackend};
 use super::VNET_HDR_LEN;
 
+#[cfg(target_os = "macos")]
+use std::os::fd::RawFd;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::thread;
 use std::{cmp, result};
@@ -31,6 +33,7 @@ pub struct NetWorker {
     tx_iovec: Vec<(GuestAddress, usize)>,
     tx_frame_buf: [u8; MAX_BUFFER_SIZE],
     tx_frame_len: usize,
+    tx_has_deferred_frame: bool,
 }
 
 impl NetWorker {
@@ -82,6 +85,7 @@ impl NetWorker {
             tx_frame_buf: [0u8; MAX_BUFFER_SIZE],
             tx_frame_len: 0,
             tx_iovec: Vec::with_capacity(QUEUE_SIZE as usize),
+            tx_has_deferred_frame: false,
         })
     }
 
@@ -93,6 +97,9 @@ impl NetWorker {
     }
 
     fn work(mut self) {
+        #[cfg(target_os = "macos")]
+        const TX_TIMER_FD: RawFd = -2;
+
         let virtq_rx_ev_fd = self.rx_q.event.as_raw_fd();
         let virtq_tx_ev_fd = self.tx_q.event.as_raw_fd();
         let backend_socket = self.backend.raw_socket_fd();
@@ -148,11 +155,25 @@ impl NetWorker {
                                     }
                                 }
                             }
+                            #[cfg(target_os = "macos")]
+                            _ if event_set.is_empty() && source == TX_TIMER_FD => {
+                                self.process_tx_loop();
+                            }
                             _ => {
                                 log::warn!(
                                     "Received unknown event: {event_set:?} from fd: {source:?}"
                                 );
                             }
+                        }
+                    }
+
+                    // Arm the retry timer after processing all events, so it
+                    // reflects the final state of tx_has_deferred_frame.
+                    #[cfg(target_os = "macos")]
+                    if self.tx_has_deferred_frame {
+                        let delay = self.backend.write_retry_delay_us();
+                        if delay > 0 {
+                            epoll.add_oneshot_timer(delay, TX_TIMER_FD as u64);
                         }
                     }
                 }
@@ -259,7 +280,7 @@ impl NetWorker {
         loop {
             self.tx_q.queue.disable_notification(&self.mem).unwrap();
 
-            let retry_later = match self.process_tx() {
+            self.tx_has_deferred_frame = match self.process_tx() {
                 Err(TxError::Backend(WriteError::NothingWritten)) => true,
                 Err(e) => {
                     log::error!("Failed to process tx: {e:?}");
@@ -269,7 +290,7 @@ impl NetWorker {
             };
 
             let has_new_entries = self.tx_q.queue.enable_notification(&self.mem).unwrap();
-            if retry_later || !has_new_entries {
+            if self.tx_has_deferred_frame || !has_new_entries {
                 break;
             }
         }
