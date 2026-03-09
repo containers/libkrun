@@ -9,8 +9,22 @@ use std::path::PathBuf;
 
 use super::backend::{ConnectError, NetBackend, ReadError, WriteError};
 use super::write_virtio_net_hdr;
+#[cfg(target_os = "macos")]
+use super::{MAX_BUFFER_SIZE, VNET_HDR_LEN};
 
 const VFKIT_MAGIC: [u8; 4] = *b"VFKT";
+const DEFAULT_SOCKET_BUF_SIZE: usize = 7 * 1024 * 1024;
+
+// On macOS, with UNIX datagram sockets the send buffer is not used for queuing;
+// it determines the maximum frame size.
+// https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/uipc_usrreq.c#L953
+#[cfg(target_os = "macos")]
+const SOCKET_SNDBUF: usize = MAX_BUFFER_SIZE - VNET_HDR_LEN;
+
+#[cfg(not(target_os = "macos"))]
+const SOCKET_SNDBUF: usize = DEFAULT_SOCKET_BUF_SIZE;
+
+const SOCKET_RCVBUF: usize = DEFAULT_SOCKET_BUF_SIZE;
 
 pub struct Unixgram {
     fd: OwnedFd,
@@ -77,11 +91,11 @@ impl Unixgram {
                 .map_err(ConnectError::SendingMagic)?;
         }
 
-        if let Err(e) = setsockopt(&fd, sockopt::SndBuf, &(7 * 1024 * 1024)) {
-            log::warn!("Failed to increase SO_SNDBUF (performance may be decreased): {e}");
+        if let Err(e) = setsockopt(&fd, sockopt::SndBuf, &SOCKET_SNDBUF) {
+            log::warn!("Failed to set SO_SNDBUF: {e}");
         }
-        if let Err(e) = setsockopt(&fd, sockopt::RcvBuf, &(7 * 1024 * 1024)) {
-            log::warn!("Failed to increase SO_SNDBUF (performance may be decreased): {e}");
+        if let Err(e) = setsockopt(&fd, sockopt::RcvBuf, &SOCKET_RCVBUF) {
+            log::warn!("Failed to set SO_RCVBUF: {e}");
         }
 
         log::debug!(
