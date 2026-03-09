@@ -45,6 +45,19 @@ impl Unixgram {
                     std::mem::size_of_val(&option_value) as libc::socklen_t,
                 )
             };
+
+            // Set write low watermark so kqueue only reports writable when
+            // there is enough space for a maximum size frame.
+            let lowat: libc::c_int = 65550;
+            unsafe {
+                libc::setsockopt(
+                    fd.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_SNDLOWAT,
+                    &lowat as *const _ as *const libc::c_void,
+                    std::mem::size_of_val(&lowat) as libc::socklen_t,
+                )
+            };
         }
 
         Self { fd }
