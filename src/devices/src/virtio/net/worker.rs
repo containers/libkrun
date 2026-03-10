@@ -8,7 +8,7 @@ use crate::virtio::{DeviceQueue, InterruptTransport};
 
 use super::backend::{NetBackend, ReadError, WriteError};
 use super::device::{FrontendError, RxError, TxError, VirtioNetBackend};
-use super::vnet_hdr_len;
+use super::VNET_HDR_LEN;
 
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::thread;
@@ -202,7 +202,7 @@ impl NetWorker {
     pub(crate) fn process_backend_socket_writeable(&mut self) {
         match self
             .backend
-            .try_finish_write(vnet_hdr_len(), &self.tx_frame_buf[..self.tx_frame_len])
+            .try_finish_write(VNET_HDR_LEN, &self.tx_frame_buf[..self.tx_frame_len])
         {
             Ok(()) => self.process_tx_loop(),
             Err(WriteError::PartialWrite | WriteError::NothingWritten) => {}
@@ -275,7 +275,7 @@ impl NetWorker {
         if self.backend.has_unfinished_write()
             && self
                 .backend
-                .try_finish_write(vnet_hdr_len(), &self.tx_frame_buf[..self.tx_frame_len])
+                .try_finish_write(VNET_HDR_LEN, &self.tx_frame_buf[..self.tx_frame_len])
                 .is_err()
         {
             log::trace!("Cannot process tx because of unfinished partial write!");
@@ -321,7 +321,7 @@ impl NetWorker {
             self.tx_frame_len = read_count;
             match self
                 .backend
-                .write_frame(vnet_hdr_len(), &mut self.tx_frame_buf[..read_count])
+                .write_frame(VNET_HDR_LEN, &mut self.tx_frame_buf[..read_count])
             {
                 Ok(()) => {
                     self.tx_frame_len = 0;
