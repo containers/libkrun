@@ -6,17 +6,6 @@ ABI_VERSION=1
 FULL_VERSION=1.17.3
 
 INIT_SRC = init/init.c
-KBS_INIT_SRC =	init/tee/kbs/kbs.h		\
-		init/tee/kbs/kbs_util.c		\
-		init/tee/kbs/kbs_types.c	\
-		init/tee/kbs/kbs_curl.c		\
-		init/tee/kbs/kbs_crypto.c	\
-
-SNP_INIT_SRC =	init/tee/snp_attest.c		\
-		init/tee/snp_attest.h		\
-		$(KBS_INIT_SRC)			\
-
-TDX_INIT_SRC = $(KBS_INIT_SRC)
 AWS_NITRO_INIT_SRC = \
 		init/aws-nitro/include/*        	  	\
         init/aws-nitro/main.c				\
@@ -30,9 +19,6 @@ AWS_NITRO_INIT_SRC = \
 		init/aws-nitro/device/net_tap_afvsock.c	\
 		init/aws-nitro/device/signal.c		\
 
-KBS_LD_FLAGS =	-lcurl -lidn2 -lssl -lcrypto -lzstd -lz -lbrotlidec-static \
-		-lbrotlicommon-static
-
 AWS_NITRO_INIT_LD_FLAGS = -larchive -lnsm
 
 BUILD_INIT = 1
@@ -40,17 +26,11 @@ INIT_DEFS =
 ifeq ($(SEV),1)
     VARIANT = -sev
     FEATURE_FLAGS := --features amd-sev
-    INIT_DEFS += -DSEV=1
-    INIT_DEFS += $(KBS_LD_FLAGS)
-    INIT_SRC += $(SNP_INIT_SRC)
-	BUILD_INIT = 0
+    BUILD_INIT = 0
 endif
 ifeq ($(TDX),1)
     VARIANT = -tdx
     FEATURE_FLAGS := --features tdx
-    INIT_DEFS += -DTDX=1
-    INIT_DEFS += $(KBS_LD_FLAGS)
-    INIT_SRC += $(KBS_INIT_SRC)
     BUILD_INIT = 0
 endif
 ifeq ($(VIRGL_RESOURCE_MAP2),1)
