@@ -5,7 +5,6 @@ LIBRARY_HEADER_INPUT = include/libkrun_input.h
 ABI_VERSION=1
 FULL_VERSION=1.17.3
 
-INIT_SRC = init/init.c
 AWS_NITRO_INIT_SRC = \
 		init/aws-nitro/include/*        	  	\
         init/aws-nitro/main.c				\
@@ -21,17 +20,13 @@ AWS_NITRO_INIT_SRC = \
 
 AWS_NITRO_INIT_LD_FLAGS = -larchive -lnsm
 
-BUILD_INIT = 1
-INIT_DEFS =
 ifeq ($(SEV),1)
     VARIANT = -sev
     FEATURE_FLAGS := --features amd-sev
-    BUILD_INIT = 0
 endif
 ifeq ($(TDX),1)
     VARIANT = -tdx
     FEATURE_FLAGS := --features tdx
-    BUILD_INIT = 0
 endif
 ifeq ($(VIRGL_RESOURCE_MAP2),1)
 	FEATURE_FLAGS += --features virgl_resource_map2
@@ -45,7 +40,6 @@ endif
 ifeq ($(EFI),1)
     VARIANT = -efi
     FEATURE_FLAGS := --features efi # EFI Implies blk and net
-    BUILD_INIT = 0
 endif
 ifeq ($(GPU),1)
     FEATURE_FLAGS += --features gpu
@@ -59,11 +53,6 @@ endif
 ifeq ($(AWS_NITRO),1)
 	VARIANT = -awsnitro
 	FEATURE_FLAGS := --features aws-nitro,net
-	BUILD_INIT = 0
-endif
-
-ifeq ($(TIMESYNC),1)
-    INIT_DEFS += -D__TIMESYNC__
 endif
 
 OS = $(shell uname -s)
@@ -113,11 +102,8 @@ else
     SYSROOT_TARGET =
 endif
 
-ifeq ($(BUILD_INIT),1)
-INIT_BINARY = init/init
-$(INIT_BINARY): $(INIT_SRC) $(SYSROOT_TARGET)
-	$(CC_LINUX) -O2 -static -Wall $(INIT_DEFS) -o $@ $(INIT_SRC) $(INIT_DEFS)
-endif
+# Make the variable available to Rust build scripts.
+export CC_LINUX
 
 AWS_NITRO_INIT_BINARY= init/aws-nitro/init
 $(AWS_NITRO_INIT_BINARY): $(AWS_NITRO_INIT_SRC)
@@ -155,7 +141,7 @@ clean-sysroot:
 	rm -rf $(ROOTFS_DIR)
 
 
-$(LIBRARY_RELEASE_$(OS)): $(INIT_BINARY)
+$(LIBRARY_RELEASE_$(OS)): $(SYSROOT_TARGET)
 	cargo build --release $(FEATURE_FLAGS)
 ifeq ($(SEV),1)
 	mv target/release/libkrun.so target/release/$(KRUN_BASE_$(OS))
@@ -174,7 +160,7 @@ endif
 endif
 	cp target/release/$(KRUN_BASE_$(OS)) $(LIBRARY_RELEASE_$(OS))
 
-$(LIBRARY_DEBUG_$(OS)): $(INIT_BINARY)
+$(LIBRARY_DEBUG_$(OS)): $(SYSROOT_TARGET)
 	cargo build $(FEATURE_FLAGS)
 ifeq ($(SEV),1)
 	mv target/debug/libkrun.so target/debug/$(KRUN_BASE_$(OS))
@@ -206,7 +192,6 @@ install: libkrun.pc
 	cd $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/ ; ln -sf $(KRUN_BINARY_$(OS)) $(KRUN_SONAME_$(OS)) ; ln -sf $(KRUN_SONAME_$(OS)) $(KRUN_BASE_$(OS))
 
 clean:
-	rm -f $(INIT_BINARY)
 	cargo clean
 	rm -rf test-prefix
 	cd tests; cargo clean
