@@ -120,31 +120,17 @@ scoped_cred!(ScopedGid, libc::gid_t, libc::SYS_setresgid);
 
 #[must_use]
 pub struct ScopedCaps {
-    cap: capng::Capability,
+    cap: Capability,
 }
 
 impl ScopedCaps {
-    fn new(cap_name: &str) -> io::Result<Option<Self>> {
-        use capng::{Action, CUpdate, Set, Type};
-
-        let cap = capng::name_to_capability(cap_name).map_err(|_| {
-            let err = io::Error::last_os_error();
-            error!("couldn't get the capability id for name {cap_name}: {err:?}");
-            err
-        })?;
-
-        if capng::have_capability(Type::EFFECTIVE, cap) {
-            let req = vec![CUpdate {
-                action: Action::DROP,
-                cap_type: Type::EFFECTIVE,
-                capability: cap,
-            }];
-            capng::update(req).map_err(|e| {
-                error!("couldn't drop {cap} capability: {e:?}");
-                einval()
-            })?;
-            capng::apply(Set::CAPS).map_err(|e| {
-                error!("couldn't apply capabilities after dropping {cap}: {e:?}");
+    fn new(cap: Capability) -> io::Result<Option<Self>> {
+        if has_cap(None, CapSet::Effective, cap).map_err(|e| {
+            error!("couldn't check {cap:?} capability: {e}");
+            einval()
+        })? {
+            caps::drop(None, CapSet::Effective, cap).map_err(|e| {
+                error!("couldn't drop {cap:?} capability: {e}");
                 einval()
             })?;
             Ok(Some(Self { cap }))
@@ -156,28 +142,13 @@ impl ScopedCaps {
 
 impl Drop for ScopedCaps {
     fn drop(&mut self) {
-        use capng::{Action, CUpdate, Set, Type};
-
-        let req = vec![CUpdate {
-            action: Action::ADD,
-            cap_type: Type::EFFECTIVE,
-            capability: self.cap,
-        }];
-
-        if let Err(e) = capng::update(req) {
-            panic!("couldn't restore {} capability: {:?}", self.cap, e);
-        }
-        if let Err(e) = capng::apply(Set::CAPS) {
-            panic!(
-                "couldn't apply capabilities after restoring {}: {:?}",
-                self.cap, e
-            );
-        }
+        caps::raise(None, CapSet::Effective, self.cap)
+            .unwrap_or_else(|e| panic!("couldn't restore {:?} capability: {e}", self.cap));
     }
 }
 
-pub fn drop_effective_cap(cap_name: &str) -> io::Result<Option<ScopedCaps>> {
-    ScopedCaps::new(cap_name)
+pub fn drop_effective_cap(cap: Capability) -> io::Result<Option<ScopedCaps>> {
+    ScopedCaps::new(cap)
 }
 
 fn ebadf() -> io::Error {
@@ -766,7 +737,7 @@ impl PassthroughFs {
 
         let file = {
             let _killpriv_guard = if kill_priv {
-                drop_effective_cap("FSETID")?
+                drop_effective_cap(Capability::CAP_FSETID)?
             } else {
                 None
             };
@@ -1195,7 +1166,7 @@ impl FileSystem for PassthroughFs {
 
         let (_uid, _gid) = self.set_creds(ctx.uid, ctx.gid)?;
         let _killpriv_guard = if kill_priv {
-            drop_effective_cap("FSETID")?
+            drop_effective_cap(Capability::CAP_FSETID)?
         } else {
             None
         };
@@ -1305,7 +1276,7 @@ impl FileSystem for PassthroughFs {
             // We need to drop FSETID during a write so that the kernel will remove setuid
             // or setgid bits from the file if it was written to by someone other than the
             // owner.
-            drop_effective_cap("FSETID")?
+            drop_effective_cap(Capability::CAP_FSETID)?
         } else {
             None
         };
