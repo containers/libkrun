@@ -893,6 +893,9 @@ pub unsafe extern "C" fn krun_set_data_disk(ctx_id: u32, c_disk_path: *const c_c
 #[cfg(feature = "net")]
 const NET_FLAG_VFKIT: u32 = 1 << 0;
 
+#[cfg(feature = "net")]
+const NET_FLAG_INCLUDE_VNET_HEADER: u32 = 1 << 1;
+
 /* Taken from uapi/linux/virtio_net.h */
 #[cfg(feature = "net")]
 const NET_FEATURE_CSUM: u32 = 1 << 0;
@@ -970,19 +973,21 @@ pub unsafe extern "C" fn krun_add_net_unixstream(
         Err(_) => return -libc::EINVAL,
     };
 
-    /* The unixstream backend doesn't support any flags */
-    if flags != 0 {
-        return -libc::EINVAL;
-    }
-
     if (features & !NET_ALL_FEATURES) != 0 {
         return -libc::EINVAL;
     }
 
+    // Unixstream backends don't support NET_FLAG_VFKIT.
+    if (flags & !NET_FLAG_INCLUDE_VNET_HEADER) != 0 {
+        return -libc::EINVAL;
+    }
+
+    let include_vnet_header: bool = flags & NET_FLAG_INCLUDE_VNET_HEADER != 0;
+
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            create_virtio_net(cfg, backend, mac, features);
+            create_virtio_net(cfg, backend, mac, features, include_vnet_header);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -1025,10 +1030,11 @@ pub unsafe extern "C" fn krun_add_net_unixgram(
         return -libc::EINVAL;
     }
 
-    if (flags & !NET_FLAG_VFKIT) != 0 {
+    if (flags & !(NET_FLAG_VFKIT | NET_FLAG_INCLUDE_VNET_HEADER)) != 0 {
         return -libc::EINVAL;
     }
     let send_vfkit_magic: bool = flags & NET_FLAG_VFKIT != 0;
+    let include_vnet_header: bool = flags & NET_FLAG_INCLUDE_VNET_HEADER != 0;
 
     let backend = if let Some(path) = path {
         VirtioNetBackend::UnixgramPath(path, send_vfkit_magic)
@@ -1039,7 +1045,7 @@ pub unsafe extern "C" fn krun_add_net_unixgram(
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            create_virtio_net(cfg, backend, mac, features);
+            create_virtio_net(cfg, backend, mac, features, include_vnet_header);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -1088,7 +1094,7 @@ pub unsafe extern "C" fn krun_add_net_tap(
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
-            create_virtio_net(cfg, VirtioNetBackend::Tap(tap_name), mac, features);
+            create_virtio_net(cfg, VirtioNetBackend::Tap(tap_name), mac, features, true);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -1968,12 +1974,14 @@ fn create_virtio_net(
     backend: VirtioNetBackend,
     mac: [u8; 6],
     features: u32,
+    include_vnet_header: bool,
 ) {
     let network_interface_config = NetworkInterfaceConfig {
         iface_id: format!("eth{}", ctx_cfg.net_index),
         backend,
         mac,
         features,
+        include_vnet_header,
     };
     ctx_cfg.net_index += 1;
     ctx_cfg
@@ -2621,7 +2629,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             let mac = ctx_cfg
                 .legacy_mac
                 .unwrap_or([0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xee]);
-            create_virtio_net(&mut ctx_cfg, backend, mac, NET_COMPAT_FEATURES);
+            create_virtio_net(&mut ctx_cfg, backend, mac, NET_COMPAT_FEATURES, false);
         }
     }
 

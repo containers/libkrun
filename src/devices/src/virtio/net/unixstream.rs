@@ -10,11 +10,7 @@ use std::{
 use crate::virtio::net::backend::ConnectError;
 
 use super::backend::{NetBackend, ReadError, WriteError};
-use super::write_virtio_net_hdr;
-
-/// Each frame the network proxy is prepended by a 4 byte "header".
-/// It is interpreted as a big-endian u32 integer and is the length of the following ethernet frame.
-const FRAME_HEADER_LEN: usize = 4;
+use super::{write_virtio_net_hdr, FRAME_HEADER_LEN};
 
 pub struct Unixstream {
     fd: OwnedFd,
@@ -22,11 +18,12 @@ pub struct Unixstream {
     expecting_frame_length: u32,
     // 0 if last write is fully complete, otherwise the length that was written
     last_partial_write_length: usize,
+    include_vnet_header: bool,
 }
 
 impl Unixstream {
     /// Create the backend with a pre-established connection to the userspace network proxy.
-    pub fn new(fd: OwnedFd) -> Self {
+    pub fn new(fd: OwnedFd, include_vnet_header: bool) -> Self {
         if let Err(e) = setsockopt(&fd, sockopt::SndBuf, &(16 * 1024 * 1024)) {
             log::warn!("Failed to increase SO_SNDBUF (performance may be decreased): {e}");
         }
@@ -41,11 +38,12 @@ impl Unixstream {
             fd,
             expecting_frame_length: 0,
             last_partial_write_length: 0,
+            include_vnet_header,
         }
     }
 
     /// Create the backend opening a connection to the userspace network proxy.
-    pub fn open(path: PathBuf) -> Result<Self, ConnectError> {
+    pub fn open(path: PathBuf, include_vnet_header: bool) -> Result<Self, ConnectError> {
         let fd = socket(
             AddressFamily::Unix,
             SockType::Stream,
@@ -70,6 +68,7 @@ impl Unixstream {
             fd,
             expecting_frame_length: 0,
             last_partial_write_length: 0,
+            include_vnet_header,
         })
     }
 
@@ -159,13 +158,17 @@ impl NetBackend for Unixstream {
             };
         }
 
-        let hdr_len = write_virtio_net_hdr(buf);
-        let buf = &mut buf[hdr_len..];
+        let buf_offset = if !self.include_vnet_header {
+            write_virtio_net_hdr(buf)
+        } else {
+            0
+        };
+        let buf = &mut buf[buf_offset..];
         let frame_length = self.expecting_frame_length as usize;
         self.read_loop(&mut buf[..frame_length], false)?;
         self.expecting_frame_length = 0;
         log::trace!("Read eth frame from network proxy: {frame_length} bytes");
-        Ok(hdr_len + frame_length)
+        Ok(buf_offset + frame_length)
     }
 
     /// Try to write a frame to the proxy.
@@ -188,10 +191,18 @@ impl NetBackend for Unixstream {
         assert!(buf.len() > hdr_len);
         let frame_length = buf.len() - hdr_len;
 
-        buf[hdr_len - FRAME_HEADER_LEN..hdr_len]
+        // If the vnet header is not included, overwrite it with the frame length, otherwise
+        // write the frame length before the vnet header.
+        let buf_offset = if !self.include_vnet_header {
+            hdr_len - FRAME_HEADER_LEN
+        } else {
+            0
+        };
+
+        buf[buf_offset..buf_offset + FRAME_HEADER_LEN]
             .copy_from_slice(&(frame_length as u32).to_be_bytes());
 
-        self.write_loop(&buf[hdr_len - FRAME_HEADER_LEN..])?;
+        self.write_loop(&buf[buf_offset..buf_offset + frame_length])?;
         Ok(())
     }
 
