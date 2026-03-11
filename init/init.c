@@ -1202,6 +1202,7 @@ int main(int argc, char **argv)
 #ifdef __TIMESYNC__
     if (fork() == 0) {
         clock_worker();
+        _exit(1);
     }
 #endif
 
