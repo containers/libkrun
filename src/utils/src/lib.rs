@@ -6,6 +6,7 @@ pub use vmm_sys_util::{errno, tempdir, tempfile, terminal};
 pub use vmm_sys_util::{eventfd, ioctl};
 
 pub mod byte_order;
+pub mod fd;
 #[cfg(target_os = "linux")]
 pub mod linux;
 #[cfg(target_os = "linux")]

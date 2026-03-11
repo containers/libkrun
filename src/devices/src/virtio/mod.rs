@@ -12,6 +12,8 @@ use std::io::Error as IOError;
 
 #[cfg(not(feature = "tee"))]
 pub mod balloon;
+#[cfg(feature = "batch_queue")]
+pub mod batch_queue;
 #[allow(dead_code)]
 #[allow(non_camel_case_types)]
 pub mod bindings;
@@ -36,6 +38,8 @@ mod queue;
 pub mod rng;
 #[cfg(feature = "snd")]
 pub mod snd;
+#[cfg(all(feature = "batch_queue", test))]
+pub(crate) mod test_utils;
 pub mod vsock;
 
 #[cfg(not(feature = "tee"))]

@@ -8,12 +8,14 @@ use std::panic::catch_unwind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tempdir::TempDir;
-use test_cases::{test_cases, Test, TestCase, TestSetup};
+use test_cases::{
+    rootfs_images, test_cases, Report, ShouldRun, Test, TestCase, TestOutcome, TestSetup,
+};
 
 struct TestResult {
     name: String,
-    passed: bool,
-    log_path: PathBuf,
+    outcome: TestOutcome,
+    log_path: Option<PathBuf>,
 }
 
 fn get_test(name: &str) -> anyhow::Result<Box<dyn Test>> {
@@ -39,28 +41,39 @@ fn start_vm(test_setup: TestSetup) -> anyhow::Result<()> {
 }
 
 fn run_single_test(
-    test_case: &str,
+    test_case: &TestCase,
     base_dir: &Path,
     keep_all: bool,
     max_name_len: usize,
 ) -> anyhow::Result<TestResult> {
+    eprint!(
+        "[{}] {:.<width$} ",
+        test_case.name,
+        "",
+        width = max_name_len - test_case.name.len() + 3
+    );
+
+    // Check if test should run
+    if let ShouldRun::No(reason) = test_case.should_run() {
+        eprintln!("SKIP ({})", reason);
+        return Ok(TestResult {
+            name: test_case.name.to_string(),
+            outcome: TestOutcome::Skip(reason),
+            log_path: None,
+        });
+    }
+
     let executable = env::current_exe().context("Failed to detect current executable")?;
-    let test_dir = base_dir.join(test_case);
+    let test_dir = base_dir.join(test_case.name);
     fs::create_dir(&test_dir).context("Failed to create test directory")?;
 
     let log_path = test_dir.join("log.txt");
     let log_file = File::create(&log_path).context("Failed to create log file")?;
 
-    eprint!(
-        "[{test_case}] {:.<width$} ",
-        "",
-        width = max_name_len - test_case.len() + 3
-    );
-
     let child = Command::new(&executable)
         .arg("start-vm")
         .arg("--test-case")
-        .arg(test_case)
+        .arg(test_case.name)
         .arg("--tmp-dir")
         .arg(&test_dir)
         .stdin(Stdio::piped())
@@ -69,33 +82,47 @@ fn run_single_test(
         .spawn()
         .context("Failed to start subprocess for test")?;
 
-    let _ = get_test(test_case)?;
-    let result = catch_unwind(|| {
-        let test = get_test(test_case).unwrap();
-        test.check(child);
-    });
+    let test_name = test_case.name.to_string();
+    let outcome = match catch_unwind(|| {
+        let test = get_test(&test_name).unwrap();
+        test.check(child)
+    }) {
+        Ok(outcome) => outcome,
+        Err(_) => TestOutcome::Fail,
+    };
 
-    let passed = result.is_ok();
-    if passed {
-        eprintln!("OK");
-        if !keep_all {
-            let _ = fs::remove_dir_all(&test_dir);
+    match &outcome {
+        TestOutcome::Pass => {
+            eprintln!("OK");
+            if !keep_all {
+                let _ = fs::remove_dir_all(&test_dir);
+            }
         }
-    } else {
-        eprintln!("FAIL");
+        TestOutcome::Fail => {
+            eprintln!("FAIL");
+        }
+        TestOutcome::Skip(reason) => {
+            eprintln!("SKIP ({})", reason);
+        }
+        TestOutcome::Report(report) => {
+            eprintln!("REPORT");
+            eprintln!("{:2}", report.text());
+        }
     }
 
     Ok(TestResult {
-        name: test_case.to_string(),
-        passed,
-        log_path,
+        name: test_case.name.to_string(),
+        outcome,
+        log_path: Some(log_path),
     })
 }
 
 fn write_github_summary(
     results: &[TestResult],
-    num_ok: usize,
-    num_tests: usize,
+    num_pass: usize,
+    num_fail: usize,
+    num_skip: usize,
+    num_report: usize,
 ) -> anyhow::Result<()> {
     let summary_path = env::var("GITHUB_STEP_SUMMARY")
         .context("GITHUB_STEP_SUMMARY environment variable not set")?;
@@ -106,33 +133,60 @@ fn write_github_summary(
         .open(&summary_path)
         .context("Failed to open GITHUB_STEP_SUMMARY")?;
 
-    let all_passed = num_ok == num_tests;
-    let status = if all_passed { "✅" } else { "❌" };
+    let num_ran = num_pass + num_fail;
+    let status = if num_fail == 0 { "✅" } else { "❌" };
+    let mut extra = Vec::new();
+    if num_skip > 0 {
+        extra.push(format!("{num_skip} skipped"));
+    }
+    if num_report > 0 {
+        extra.push(format!("{num_report} reports"));
+    }
+    let extra_msg = if extra.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", extra.join(", "))
+    };
 
     writeln!(
         file,
-        "## {status} Integration Tests ({num_ok}/{num_tests} passed)\n"
+        "## {status} Integration Tests - {num_pass}/{num_ran} passed{extra_msg}\n"
     )?;
 
     for result in results {
-        let icon = if result.passed { "✅" } else { "❌" };
-        let log_content = fs::read_to_string(&result.log_path).unwrap_or_default();
+        let (icon, status_text) = match &result.outcome {
+            TestOutcome::Pass => ("✅", String::new()),
+            TestOutcome::Fail => ("❌", String::new()),
+            TestOutcome::Skip(reason) => ("⏭️", format!(" - {}", reason)),
+            TestOutcome::Report(_) => ("📊", String::new()),
+        };
 
         writeln!(file, "<details>")?;
-        writeln!(file, "<summary>{icon} {}</summary>\n", result.name)?;
-        writeln!(file, "```")?;
-        // Limit log size to avoid huge summaries (2 MiB limit)
-        const MAX_LOG_SIZE: usize = 2 * 1024 * 1024;
-        let truncated = if log_content.len() > MAX_LOG_SIZE {
-            format!(
-                "... (truncated, showing last 1 MiB) ...\n{}",
-                &log_content[log_content.len() - MAX_LOG_SIZE..]
-            )
-        } else {
-            log_content
-        };
-        writeln!(file, "{truncated}")?;
-        writeln!(file, "```")?;
+        writeln!(
+            file,
+            "<summary>{icon} {}{}</summary>\n",
+            result.name, status_text
+        )?;
+
+        if let TestOutcome::Report(report) = &result.outcome {
+            writeln!(file, "{}", report.gh_markdown())?;
+        } else if let Some(log_path) = &result.log_path {
+            let log_content = fs::read_to_string(log_path).unwrap_or_default();
+            writeln!(file, "```")?;
+            // Limit log size to avoid huge summaries (2 MiB limit)
+            const MAX_LOG_SIZE: usize = 2 * 1024 * 1024;
+            let truncated = if log_content.len() > MAX_LOG_SIZE {
+                format!(
+                    "... (truncated, showing last 1 MiB) ...\n{}",
+                    &log_content[log_content.len() - MAX_LOG_SIZE..]
+                )
+            } else {
+                log_content
+            };
+            writeln!(file, "{truncated}")?;
+            writeln!(file, "```")?;
+        }
+
         writeln!(file, "</details>\n")?;
     }
 
@@ -151,46 +205,78 @@ fn run_tests(
             fs::create_dir_all(&path).context("Failed to create base directory")?;
             path
         }
-        None => TempDir::new("libkrun-tests")
+        None => TempDir::new_in("/tmp", "libkrun-tests")
             .context("Failed to create temp base directory")?
             .into_path(),
     };
 
     let mut results: Vec<TestResult> = Vec::new();
+    let all_tests = test_cases();
 
-    if test_case == "all" {
-        let all_tests = test_cases();
-        let max_name_len = all_tests.iter().map(|t| t.name.len()).max().unwrap_or(0);
-
-        for TestCase { name, test: _ } in all_tests {
-            results.push(run_single_test(name, &base_dir, keep_all, max_name_len).context(name)?);
-        }
+    let tests_to_run: Vec<_> = if test_case == "all" {
+        all_tests
     } else {
-        let max_name_len = test_case.len();
-        results.push(
-            run_single_test(test_case, &base_dir, keep_all, max_name_len)
-                .context(test_case.to_string())?,
-        );
+        all_tests
+            .into_iter()
+            .filter(|t| t.name == test_case)
+            .collect()
+    };
+
+    if tests_to_run.is_empty() {
+        anyhow::bail!("No such test: {test_case}");
     }
 
-    let num_tests = results.len();
-    let num_ok = results.iter().filter(|r| r.passed).count();
+    let max_name_len = tests_to_run.iter().map(|t| t.name.len()).max().unwrap_or(0);
+
+    for tc in &tests_to_run {
+        results.push(run_single_test(tc, &base_dir, keep_all, max_name_len).context(tc.name)?);
+    }
+
+    let num_pass = results
+        .iter()
+        .filter(|r| matches!(r.outcome, TestOutcome::Pass))
+        .count();
+    let num_fail = results
+        .iter()
+        .filter(|r| matches!(r.outcome, TestOutcome::Fail))
+        .count();
+    let num_skip = results
+        .iter()
+        .filter(|r| matches!(r.outcome, TestOutcome::Skip(_)))
+        .count();
+    let num_report = results
+        .iter()
+        .filter(|r| matches!(r.outcome, TestOutcome::Report(_)))
+        .count();
+    let num_ran = num_pass + num_fail;
 
     // Write GitHub Actions summary if requested
     if github_summary {
-        write_github_summary(&results, num_ok, num_tests)?;
+        write_github_summary(&results, num_pass, num_fail, num_skip, num_report)?;
     }
 
-    let num_failures = num_tests - num_ok;
-    if num_failures > 0 {
+    let mut extra = Vec::new();
+    if num_skip > 0 {
+        extra.push(format!("{num_skip} skipped"));
+    }
+    if num_report > 0 {
+        extra.push(format!("{num_report} reports"));
+    }
+    let extra_msg = if extra.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", extra.join(", "))
+    };
+
+    if num_fail > 0 {
         eprintln!("(See test artifacts at: {})", base_dir.display());
-        println!("\nFAIL (PASSED {num_ok}/{num_tests})");
+        println!("\nFAIL - {num_pass}/{num_ran} passed{extra_msg}");
         anyhow::bail!("")
     } else {
         if keep_all {
             eprintln!("(See test artifacts at: {})", base_dir.display());
         }
-        eprintln!("\nOK ({num_ok}/{num_tests} passed)");
+        eprintln!("\nOK - {num_pass}/{num_ran} passed{extra_msg}");
     }
 
     Ok(())
@@ -218,6 +304,8 @@ enum CliCommand {
         #[arg(long)]
         tmp_dir: PathBuf,
     },
+    /// Build all registered rootfs images (requires network; run before unshare)
+    BuildImages,
 }
 
 impl Default for CliCommand {
@@ -237,6 +325,19 @@ struct Cli {
     command: Option<CliCommand>,
 }
 
+fn build_images() -> anyhow::Result<()> {
+    use test_cases::rootfs;
+
+    for (name, _) in rootfs_images() {
+        eprint!("Building rootfs image {name}...");
+        match rootfs::build_rootfs(name) {
+            Ok(()) => eprintln!(" done"),
+            Err(e) => eprintln!(" skipped ({e})"),
+        }
+    }
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let command = cli.command.unwrap_or_default();
@@ -249,5 +350,6 @@ fn main() -> anyhow::Result<()> {
             keep_all,
             github_summary,
         } => run_tests(&test_case, base_dir, keep_all, github_summary),
+        CliCommand::BuildImages => build_images(),
     }
 }
