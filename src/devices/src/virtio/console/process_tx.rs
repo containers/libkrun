@@ -61,10 +61,10 @@ fn pop_head_blocking<'mem>(
             Some(descriptor) => break Some(descriptor),
             None => {
                 interrupt.signal_used_queue();
-                thread::park();
                 if stop.load(Ordering::Acquire) {
                     break None;
                 }
+                thread::park();
                 log::trace!("tx unparked, queue len {}", queue.len(mem))
             }
         }
