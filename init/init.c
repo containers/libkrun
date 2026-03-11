@@ -849,7 +849,7 @@ void clock_worker()
 
     sockfd = socket(AF_VSOCK, SOCK_DGRAM, 0);
     if (sockfd < 0) {
-        perror("Couldn't create timesync socket\n");
+        perror("Couldn't create timesync socket");
         return;
     }
 
@@ -869,7 +869,7 @@ void clock_worker()
     while (1) {
         n = recv(sockfd, buf, BUFSIZE, 0);
         if (n < 0) {
-            perror("Error in timesync recv\n");
+            perror("Error in timesync recv");
             return;
         } else if (n != 8) {
             printf("Ignoring bogus timesync packet\n");
@@ -1202,6 +1202,7 @@ int main(int argc, char **argv)
 #ifdef __TIMESYNC__
     if (fork() == 0) {
         clock_worker();
+        _exit(1);
     }
 #endif
 

@@ -101,7 +101,7 @@ use vm_memory::{GuestAddress, GuestMemoryMmap};
 
 #[cfg(target_arch = "aarch64")]
 #[allow(dead_code)]
-static EDK2_BINARY: &[u8] = include_bytes!("../../../edk2/KRUN_EFI.silent.fd");
+static EDK2_BINARY: &[u8] = include_bytes!(env!("KRUN_EDK2_BINARY_PATH"));
 
 /// Errors associated with starting the instance.
 #[derive(Debug)]
@@ -747,12 +747,12 @@ pub fn build_microvm(
     let mut serial_ttys = Vec::new();
 
     for s in &vm_resources.serial_consoles {
-        let input = unsafe { BorrowedFd::borrow_raw(s.input_fd) };
-        if input.is_terminal() {
-            serial_ttys.push(input);
-        }
         let input: Option<Box<dyn devices::legacy::ReadableFd + Send>> = if s.input_fd >= 0 {
-            Some(Box::new(unsafe { File::from_raw_fd(s.input_fd) }))
+            let file = unsafe { File::from_raw_fd(s.input_fd) };
+            if file.is_terminal() {
+                serial_ttys.push(unsafe { BorrowedFd::borrow_raw(file.as_raw_fd()) });
+            }
+            Some(Box::new(file))
         } else {
             None
         };

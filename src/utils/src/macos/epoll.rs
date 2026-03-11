@@ -12,14 +12,12 @@ use std::time::Duration;
 use bitflags::bitflags;
 use log::debug;
 
-fn event_name(event: u32) -> &'static str {
-    match event {
-        e if e == EventSet::IN.bits() => "READ",
-        e if e == EventSet::OUT.bits() => "WRITE",
-        e if e == (EventSet::IN | EventSet::READ_HANG_UP).bits() => "READ_EOF",
-        e if e == (EventSet::IN | EventSet::HANG_UP).bits() => "EOF",
-        e if e == EventSet::HANG_UP.bits() => "HANG_UP",
-        e if e == EventSet::READ_HANG_UP.bits() => "READ_HANG_UP",
+fn event_name(filter: i16, flags: u16) -> &'static str {
+    match (filter, flags & libc::EV_EOF != 0) {
+        (libc::EVFILT_READ, false) => "READ",
+        (libc::EVFILT_READ, true) => "READ+EOF",
+        (libc::EVFILT_WRITE, false) => "WRITE",
+        (libc::EVFILT_WRITE, true) => "WRITE+EOF",
         _ => "UNKNOWN",
     }
 }
@@ -300,7 +298,7 @@ impl Epoll {
             let data = kevs[i].0.data;
             debug!(
                 "kevent: {} fd={fd} data={data}",
-                event_name(events[i].events)
+                event_name(kevs[i].0.filter, kevs[i].0.flags)
             );
         }
 
