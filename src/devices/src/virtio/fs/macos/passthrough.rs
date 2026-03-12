@@ -1174,6 +1174,18 @@ impl FileSystem for PassthroughFs {
             self.announce_submounts.store(true, Ordering::Relaxed);
         }
 
+        // Enable POSIX ACL support when the kernel is capable and xattrs are enabled.
+        // For a passthrough filesystem, the host kernel handles ACL semantics —
+        // we just forward the system.posix_acl_* xattrs.
+        // ALLOW_IDMAP requires POSIX_ACL on Linux 6.12+ (see containers/libkrun#568).
+        if self.cfg.xattr && capable.contains(FsOptions::POSIX_ACL) {
+            opts |= FsOptions::POSIX_ACL;
+
+            if capable.contains(FsOptions::ALLOW_IDMAP) {
+                opts |= FsOptions::ALLOW_IDMAP;
+            }
+        }
+
         Ok(opts)
     }
 

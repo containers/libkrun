@@ -895,8 +895,7 @@ impl<F: FileSystem + Sync> Server<F> {
             | FsOptions::MAX_PAGES
             | FsOptions::SUBMOUNTS
             | FsOptions::HANDLE_KILLPRIV_V2
-            | FsOptions::INIT_EXT
-            | FsOptions::ALLOW_IDMAP;
+            | FsOptions::INIT_EXT;
 
         if cfg!(target_os = "macos") {
             supported |= FsOptions::SECURITY_CTX;
