@@ -28,6 +28,7 @@ const SOCKET_RCVBUF: usize = DEFAULT_SOCKET_BUF_SIZE;
 
 pub struct Unixgram {
     fd: OwnedFd,
+    retries: u64,
 }
 
 impl Unixgram {
@@ -61,7 +62,7 @@ impl Unixgram {
             };
         }
 
-        Self { fd }
+        Self { fd, retries: 0 }
     }
 
     /// Create the backend opening a connection to the userspace network proxy.
@@ -128,13 +129,27 @@ impl NetBackend for Unixgram {
 
     /// Try to write a frame to the proxy.
     fn write_frame(&mut self, hdr_len: usize, buf: &mut [u8]) -> Result<(), WriteError> {
-        let ret = send(self.fd.as_raw_fd(), &buf[hdr_len..], MsgFlags::empty())
-            .map_err(WriteError::Internal)?;
-        debug!(
-            "Written frame size={}, written={}",
-            buf.len() - hdr_len,
-            ret
-        );
+        let ret = match send(self.fd.as_raw_fd(), &buf[hdr_len..], MsgFlags::empty()) {
+            Ok(ret) => ret,
+            // macOS returns ENOBUFS when the kernel socket buffer is full,
+            // rather than blocking or returning EAGAIN on non-blocking sockets.
+            Err(nix::Error::ENOBUFS) => {
+                if self.retries == 0 {
+                    info!("write_frame: ENOBUFS");
+                }
+                self.retries += 1;
+                return Err(WriteError::NothingWritten);
+            }
+            Err(e) => return Err(WriteError::Internal(e)),
+        };
+        if self.retries > 0 {
+            info!(
+                "write_frame: ENOBUFS resolved after {} retries",
+                self.retries
+            );
+            self.retries = 0;
+        }
+        debug!("Written eth frame to proxy: {ret} bytes");
         Ok(())
     }
 
@@ -149,5 +164,10 @@ impl NetBackend for Unixgram {
 
     fn raw_socket_fd(&self) -> RawFd {
         self.fd.as_raw_fd()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn write_retry_delay_us(&self) -> u64 {
+        50
     }
 }
