@@ -6,7 +6,9 @@ fn build_default_init() -> PathBuf {
     let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let libkrun_root = manifest_dir.join("../..");
     let init_src = libkrun_root.join("init/init.c");
-    let init_bin = libkrun_root.join("init/init");
+
+    let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    let init_bin = out_dir.join("init");
 
     println!("cargo:rerun-if-env-changed=CC_LINUX");
     println!("cargo:rerun-if-env-changed=CC");
@@ -45,7 +47,12 @@ fn build_default_init() -> PathBuf {
 fn main() {
     let init_binary_path = std::env::var_os("KRUN_INIT_BINARY_PATH")
         .map(PathBuf::from)
-        .unwrap_or_else(build_default_init);
+        .unwrap_or_else(|| {
+            let init_path = build_default_init();
+            // SAFETY: The build script is single threaded.
+            unsafe { std::env::set_var("KRUN_INIT_BINARY_PATH", &init_path) };
+            init_path
+        });
     println!(
         "cargo:rustc-env=KRUN_INIT_BINARY_PATH={}",
         init_binary_path.display()
