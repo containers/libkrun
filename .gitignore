@@ -7,7 +7,6 @@ __pycache__
 *.pyc
 *~
 /libkrun.pc
-init/init
 init/nitro/init
 examples/chroot_vm
 examples/launch-tee
