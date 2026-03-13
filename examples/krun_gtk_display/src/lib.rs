@@ -9,7 +9,10 @@ use crate::input_backend::{GtkInputEventProvider, GtkKeyboardConfig, GtkTouchscr
 use anyhow::Context;
 pub use display_backend::DisplayEvent;
 pub use display_backend::GtkDisplayBackend;
-use krun_display::{DisplayBackend, IntoDisplayBackend};
+#[cfg(not(target_os = "linux"))]
+use krun_display::{DisplayBackend, into_display_backend_basic_framebuffer};
+#[cfg(target_os = "linux")]
+use krun_display::{DisplayBackend, into_display_backend_dmabuf};
 use krun_input::{InputAbsInfo, InputConfigBackend, InputEventProviderBackend};
 use krun_input::{InputEvent, IntoInputConfig, IntoInputEvents};
 use utils::pollable_channel::{PollableChannelReciever, PollableChannelSender, pollable_channel};
@@ -20,7 +23,14 @@ pub struct DisplayBackendHandle {
 
 impl DisplayBackendHandle {
     pub fn get(&self) -> DisplayBackend<'_> {
-        GtkDisplayBackend::into_display_backend(Some(&self.tx))
+        #[cfg(target_os = "linux")]
+        {
+            into_display_backend_dmabuf::<_, GtkDisplayBackend>(Some(&self.tx))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            into_display_backend_basic_framebuffer::<_, GtkDisplayBackend>(Some(&self.tx))
+        }
     }
 }
 
@@ -167,6 +177,7 @@ pub fn init(
 
     let (display_tx, display_rx) =
         pollable_channel().context("Failed to create display events channel")?;
+
     let display_backend = DisplayBackendHandle { tx: display_tx };
 
     let worker = DisplayBackendWorker {

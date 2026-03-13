@@ -1,6 +1,6 @@
 use crate::{
-    DisplayBackendBasicFramebuffer, DisplayBackendError, DisplayBasicFramebufferVtable,
-    DisplayFeatures, DisplayVtable, Rect, ResourceFormat, header,
+    DisplayBackendBasicFramebuffer, DisplayBackendError, DisplayFeatures, DisplayVtable, Rect,
+    ResourceFormat, header,
 };
 use log::{error, warn};
 use static_assertions::assert_not_impl_any;
@@ -33,18 +33,10 @@ macro_rules! into_rust_result {
     };
 }
 
-macro_rules! method_call {
-    ($self:ident.$method:ident($($args:expr),*) ) => {
-        unsafe {
-            $self.vtable.$method
-                .ok_or(DisplayBackendError::MethodNotSupported)?( $self.instance, $($args),* )
-        }
-    };
-}
-
 pub struct DisplayBackendInstance {
     instance: *mut c_void,
-    vtable: DisplayBasicFramebufferVtable,
+    vtable: DisplayVtable,
+    features: DisplayFeatures,
 }
 
 // By design the struct is !Send and !Sync to allow for the implementation to safely assume that
@@ -53,13 +45,22 @@ assert_not_impl_any!(DisplayBackendInstance: Sync, Send);
 
 impl Drop for DisplayBackendInstance {
     fn drop(&mut self) {
-        let Some(destroy_fn) = self.vtable.destroy else {
+        // SAFETY: destroy is at the same offset in both vtable variants
+        let destroy_fn = unsafe { self.vtable.basic_framebuffer.destroy };
+
+        let Some(destroy_fn) = destroy_fn else {
             return;
         };
 
         if let Err(e) = into_rust_result!(unsafe { destroy_fn(self.instance) }) {
             error!("Failed to destroy krun_gtk_display instance: {e}");
         }
+    }
+}
+
+impl DisplayBackendInstance {
+    pub fn supports_dmabuf(&self) -> bool {
+        self.features.contains(DisplayFeatures::DMABUF_CONSUMER)
     }
 }
 
@@ -73,43 +74,58 @@ impl DisplayBackendBasicFramebuffer for DisplayBackendInstance {
         height: u32,
         format: ResourceFormat,
     ) -> Result<(), DisplayBackendError> {
-        into_rust_result!(method_call! {
-        self.configure_scanout(
-            scanout_id,
-            display_width,
-            display_height,
-            width,
-            height,
-            format as u32
-        )
+        // SAFETY: configure_scanout is at the same offset in both vtable variants
+        let configure_scanout = unsafe { self.vtable.basic_framebuffer.configure_scanout };
+
+        into_rust_result!(unsafe {
+            configure_scanout.ok_or(DisplayBackendError::MethodNotSupported)?(
+                self.instance,
+                scanout_id,
+                display_width,
+                display_height,
+                width,
+                height,
+                format as u32,
+            )
         })
     }
 
     fn disable_scanout(&mut self, scanout_id: u32) -> Result<(), DisplayBackendError> {
-        into_rust_result! {
-            method_call! {
-                self.disable_scanout(scanout_id)
-            }
-        }
+        // SAFETY: disable_scanout is at the same offset in both vtable variants
+        let disable_scanout = unsafe { self.vtable.basic_framebuffer.disable_scanout };
+
+        into_rust_result!(unsafe {
+            disable_scanout.ok_or(DisplayBackendError::MethodNotSupported)?(
+                self.instance,
+                scanout_id,
+            )
+        })
     }
 
     // Soundness note: this method has to take &mut self in order for the lifetime of the returned
     // slice to be tied to self. This way the returned slice cannot stay borrowed once another method
     // on self is called.
     fn alloc_frame(&mut self, scanout_id: u32) -> Result<(u32, &mut [u8]), DisplayBackendError> {
+        // SAFETY: alloc_frame is at the same offset in both vtable variants
+        let alloc_frame = unsafe { self.vtable.basic_framebuffer.alloc_frame };
+
         let mut buffer: *mut u8 = null_mut();
         let mut buffer_len: usize = 0;
         let frame_id = into_rust_result! {
-            method_call! {
-                self.alloc_frame(scanout_id, &raw mut buffer, &raw mut buffer_len)
+            unsafe {
+                alloc_frame
+                    .ok_or(DisplayBackendError::MethodNotSupported)?(
+                    self.instance,
+                    scanout_id,
+                    &raw mut buffer,
+                    &raw mut buffer_len
+                )
             },
             result @ 0.. => Ok(result as u32)
         }?;
 
         assert_ne!(buffer, null_mut());
         assert_ne!(buffer_len, 0);
-        // SAFETY: We have obtained the buffer and buffer_len from the krun_gtk_display impl. Because
-        //         the alloc_frame_fn return an error we assume they should be valid.
         let buffer = unsafe {
             slice_from_raw_parts_mut(buffer, buffer_len)
                 .as_mut()
@@ -124,11 +140,107 @@ impl DisplayBackendBasicFramebuffer for DisplayBackendInstance {
         frame_id: u32,
         rect: Option<&Rect>,
     ) -> Result<(), DisplayBackendError> {
-        into_rust_result! {
-            method_call!{
-                self.present_frame(scanout_id, frame_id, rect.map(|r| r as *const _).unwrap_or(null()))
-            }
+        // SAFETY: present_frame is at the same offset in both vtable variants
+        let present_frame = unsafe { self.vtable.basic_framebuffer.present_frame };
+
+        let rect_ptr = rect.map_or(null(), std::ptr::from_ref);
+        into_rust_result!(unsafe {
+            present_frame.ok_or(DisplayBackendError::MethodNotSupported)?(
+                self.instance,
+                scanout_id,
+                frame_id,
+                rect_ptr,
+            )
+        })
+    }
+}
+
+impl DisplayBackendInstance {
+    pub fn import_dmabuf(
+        &mut self,
+        dmabuf_export: &crate::DmabufExport,
+    ) -> Result<u32, DisplayBackendError> {
+        if !self.features.contains(DisplayFeatures::DMABUF_CONSUMER) {
+            return Err(DisplayBackendError::MethodNotSupported);
         }
+
+        into_rust_result! {
+            unsafe {
+                self.vtable
+                    .dmabuf
+                    .import_dmabuf
+                    .ok_or(DisplayBackendError::MethodNotSupported)?(
+                    self.instance,
+                    dmabuf_export as *const _,
+                )
+            },
+            result @ 0.. => Ok(result as u32)
+        }
+    }
+
+    pub fn unref_dmabuf(&mut self, dmabuf_id: u32) -> Result<(), DisplayBackendError> {
+        if !self.features.contains(DisplayFeatures::DMABUF_CONSUMER) {
+            return Err(DisplayBackendError::MethodNotSupported);
+        }
+
+        into_rust_result!(unsafe {
+            self.vtable
+                .dmabuf
+                .unref_dmabuf
+                .ok_or(DisplayBackendError::MethodNotSupported)?(
+                self.instance, dmabuf_id
+            )
+        })
+    }
+
+    pub fn configure_scanout_dmabuf(
+        &mut self,
+        scanout_id: u32,
+        display_width: u32,
+        display_height: u32,
+        dmabuf_id: u32,
+        src_rect: Option<&Rect>,
+    ) -> Result<(), DisplayBackendError> {
+        if !self.features.contains(DisplayFeatures::DMABUF_CONSUMER) {
+            return Err(DisplayBackendError::MethodNotSupported);
+        }
+
+        let rect_ptr = src_rect.map_or(null(), std::ptr::from_ref);
+        into_rust_result!(unsafe {
+            self.vtable
+                .dmabuf
+                .configure_scanout_dmabuf
+                .ok_or(DisplayBackendError::MethodNotSupported)?(
+                self.instance,
+                scanout_id,
+                display_width,
+                display_height,
+                dmabuf_id,
+                rect_ptr,
+            )
+        })
+    }
+
+    pub fn present_dmabuf(
+        &mut self,
+        scanout_id: u32,
+        rect: Option<&Rect>,
+    ) -> Result<(), DisplayBackendError> {
+        if !self.features.contains(DisplayFeatures::DMABUF_CONSUMER) {
+            return Err(DisplayBackendError::MethodNotSupported);
+        }
+
+        let rect_ptr = rect.map_or(null(), std::ptr::from_ref);
+        into_rust_result!(unsafe {
+            self.vtable
+                .dmabuf
+                .present_dmabuf
+                .ok_or(DisplayBackendError::MethodNotSupported)?(
+                self.instance,
+                scanout_id,
+                rect_ptr,
+            )
+        })
     }
 }
 
@@ -154,37 +266,64 @@ impl DisplayBackend<'_> {
         }
         assert!(self.verify());
 
+        let features = DisplayFeatures::from_bits_retain(self.features);
+
         Ok(DisplayBackendInstance {
             instance,
-            // SAFETY: we have checked the feature flags, so basic_framebuffer should be populated
-            vtable: unsafe { self.vtable.basic_framebuffer },
+            vtable: self.vtable,
+            features,
         })
     }
 
     pub fn verify(&self) -> bool {
         let features = DisplayFeatures::from_bits_retain(self.features);
 
-        // This requirement might change in the future when we add support for alternatives to this
-        if !features.contains(DisplayFeatures::BASIC_FRAMEBUFFER) {
-            error!("This version of libkrun requires BASIC_FRAMEBUFFER feature");
+        // Require at least one display feature
+        if !features.contains(DisplayFeatures::BASIC_FRAMEBUFFER)
+            && !features.contains(DisplayFeatures::DMABUF_CONSUMER)
+        {
+            error!(
+                "This version of libkrun requires BASIC_FRAMEBUFFER or DMABUF_CONSUMER display feature"
+            );
             return false;
         }
 
         for feature in features {
-            if feature.contains(DisplayFeatures::BASIC_FRAMEBUFFER) {
-                // SAFETY: We have checked the feature flag is enabled, so we should be able to
-                // access the union field.
-                if unsafe {
-                    self.vtable.basic_framebuffer.disable_scanout.is_none()
-                        || self.vtable.basic_framebuffer.configure_scanout.is_none()
-                        || self.vtable.basic_framebuffer.alloc_frame.is_none()
-                        || self.vtable.basic_framebuffer.present_frame.is_none()
-                } {
-                    error!("Missing required methods for BASIC_FRAMEBUFFER");
-                    return false;
+            match feature {
+                DisplayFeatures::BASIC_FRAMEBUFFER => {
+                    // SAFETY: We have checked the feature flag is enabled, so we should be able to
+                    // access the these union fields.
+                    if unsafe {
+                        self.vtable.basic_framebuffer.disable_scanout.is_none()
+                            || self.vtable.basic_framebuffer.configure_scanout.is_none()
+                            || self.vtable.basic_framebuffer.alloc_frame.is_none()
+                            || self.vtable.basic_framebuffer.present_frame.is_none()
+                    } {
+                        error!("Missing required methods for BASIC_FRAMEBUFFER");
+                        return false;
+                    }
                 }
-            } else {
-                warn!("Unknown display features ({feature:x}) will be ignored")
+                DisplayFeatures::DMABUF_CONSUMER => {
+                    // SAFETY: We have checked the feature flag is enabled, so we should be able to
+                    // access the these union fields.
+                    if unsafe {
+                        self.vtable
+                            .dmabuf
+                            .basic_framebuffer
+                            .disable_scanout
+                            .is_none()
+                            || self.vtable.dmabuf.import_dmabuf.is_none()
+                            || self.vtable.dmabuf.unref_dmabuf.is_none()
+                            || self.vtable.dmabuf.configure_scanout_dmabuf.is_none()
+                            || self.vtable.dmabuf.present_dmabuf.is_none()
+                    } {
+                        error!("Missing required methods for DMABUF_CONSUMER");
+                        return false;
+                    }
+                }
+                features => {
+                    warn!("Unknown display features ({features:x}) will be ignored")
+                }
             }
         }
         true
