@@ -18,6 +18,7 @@ pub enum Error {
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[allow(unused_unsafe)]
 pub fn get_cpuid(function: u32, count: u32) -> Result<CpuidResult, Error> {
     // TODO: replace with validation based on `has_cpuid()` when it becomes stable:
     //  https://doc.rust-lang.org/core/arch/x86/fn.has_cpuid.html
