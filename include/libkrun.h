@@ -903,6 +903,7 @@ int32_t krun_add_vsock(uint32_t ctx_id, uint32_t tsi_features);
  * Returns:
  *  Zero on success or a negative error number on failure.
  *  -EINVAL if c_cidrs is NULL or contains an invalid CIDR string.
+ *  -ENOENT if ctx_id is invalid.
  *  -ENODEV if vsock is disabled.
  */
 int32_t krun_set_egress_policy(uint32_t ctx_id, const char **c_cidrs);

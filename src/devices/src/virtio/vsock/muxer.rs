@@ -119,6 +119,57 @@ pub struct VsockMuxer {
     egress_cidrs: Option<Vec<(IpAddr, u8)>>,
 }
 
+/// Check if a socket address matches any of the given CIDR ranges.
+/// Returns true if the IP matches at least one CIDR, false otherwise.
+/// Non-IP addresses (e.g., Unix sockets) are always allowed.
+fn ip_matches_cidrs(addr: &SockaddrStorage, cidrs: &[(IpAddr, u8)]) -> bool {
+    // Extract IP from sockaddr
+    let ip: IpAddr = if let Some(sin) = addr.as_sockaddr_in() {
+        IpAddr::V4(sin.ip())
+    } else if let Some(sin6) = addr.as_sockaddr_in6() {
+        IpAddr::V6(sin6.ip())
+    } else {
+        // Non-IP address (e.g., Unix socket) — allow
+        return true;
+    };
+
+    for (cidr_ip, prefix_len) in cidrs {
+        match (ip, cidr_ip) {
+            (IpAddr::V4(addr_v4), IpAddr::V4(cidr_v4)) => {
+                let mask = if *prefix_len == 0 {
+                    0u32
+                } else if *prefix_len >= 32 {
+                    u32::MAX
+                } else {
+                    u32::MAX << (32 - prefix_len)
+                };
+                let addr_bits = u32::from(addr_v4);
+                let cidr_bits = u32::from(*cidr_v4);
+                if addr_bits & mask == cidr_bits & mask {
+                    return true;
+                }
+            }
+            (IpAddr::V6(addr_v6), IpAddr::V6(cidr_v6)) => {
+                let mask = if *prefix_len == 0 {
+                    0u128
+                } else if *prefix_len >= 128 {
+                    u128::MAX
+                } else {
+                    u128::MAX << (128 - prefix_len)
+                };
+                let addr_bits = u128::from(addr_v6);
+                let cidr_bits = u128::from(*cidr_v6);
+                if addr_bits & mask == cidr_bits & mask {
+                    return true;
+                }
+            }
+            _ => {} // v4/v6 mismatch — skip this CIDR
+        }
+    }
+
+    false
+}
+
 impl VsockMuxer {
     pub(crate) fn new(
         cid: u64,
@@ -156,52 +207,7 @@ impl VsockMuxer {
             None => return true, // no policy = allow all
             Some(cidrs) => cidrs,
         };
-
-        // Extract IP from sockaddr
-        let ip: IpAddr = if let Some(sin) = addr.as_sockaddr_in() {
-            IpAddr::V4(sin.ip())
-        } else if let Some(sin6) = addr.as_sockaddr_in6() {
-            IpAddr::V6(sin6.ip())
-        } else {
-            // Non-IP address (e.g., Unix socket) — allow
-            return true;
-        };
-
-        for (cidr_ip, prefix_len) in cidrs {
-            match (ip, cidr_ip) {
-                (IpAddr::V4(addr_v4), IpAddr::V4(cidr_v4)) => {
-                    let mask = if *prefix_len == 0 {
-                        0u32
-                    } else if *prefix_len >= 32 {
-                        u32::MAX
-                    } else {
-                        u32::MAX << (32 - prefix_len)
-                    };
-                    let addr_bits = u32::from(addr_v4);
-                    let cidr_bits = u32::from(*cidr_v4);
-                    if addr_bits & mask == cidr_bits & mask {
-                        return true;
-                    }
-                }
-                (IpAddr::V6(addr_v6), IpAddr::V6(cidr_v6)) => {
-                    let mask = if *prefix_len == 0 {
-                        0u128
-                    } else if *prefix_len >= 128 {
-                        u128::MAX
-                    } else {
-                        u128::MAX << (128 - prefix_len)
-                    };
-                    let addr_bits = u128::from(addr_v6);
-                    let cidr_bits = u128::from(*cidr_v6);
-                    if addr_bits & mask == cidr_bits & mask {
-                        return true;
-                    }
-                }
-                _ => {} // v4/v6 mismatch — skip this CIDR
-            }
-        }
-
-        false
+        ip_matches_cidrs(addr, cidrs)
     }
 
     pub(crate) fn activate(
@@ -441,7 +447,7 @@ impl VsockMuxer {
         if let Some(req) = pkt.read_connect_req() {
             // Enforce egress policy before connecting
             if !self.is_ip_allowed(&req.addr) {
-                debug!("egress policy denied connect to {}", req.addr);
+                warn!("egress policy denied connect to {}", req.addr);
                 self.push_packet(MuxerRx::ConnResponse {
                     local_port: pkt.dst_port(),
                     peer_port: pkt.src_port(),
@@ -494,7 +500,7 @@ impl VsockMuxer {
         if let Some(req) = pkt.read_sendto_addr() {
             // Enforce egress policy before storing destination
             if !self.is_ip_allowed(&req.addr) {
-                debug!("egress policy denied sendto {}", req.addr);
+                warn!("egress policy denied sendto {}", req.addr);
                 return;
             }
 
@@ -839,5 +845,138 @@ impl VsockMuxer {
             _ => warn!("stream: unhandled op={}", pkt.op()),
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nix::sys::socket::{SockaddrIn, SockaddrIn6, SockaddrLike};
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    /// Helper: create a SockaddrStorage from an IPv4 address.
+    fn sockaddr_v4(a: u8, b: u8, c: u8, d: u8, port: u16) -> SockaddrStorage {
+        let sa = SockaddrIn::new(a, b, c, d, port);
+        unsafe { SockaddrStorage::from_raw(sa.as_ptr(), Some(sa.len())).unwrap() }
+    }
+
+    /// Helper: create a SockaddrStorage from an IPv6 address.
+    fn sockaddr_v6(addr: Ipv6Addr, port: u16) -> SockaddrStorage {
+        let std_addr = std::net::SocketAddrV6::new(addr, port, 0, 0);
+        let sa = SockaddrIn6::from(std_addr);
+        unsafe { SockaddrStorage::from_raw(sa.as_ptr(), Some(sa.len())).unwrap() }
+    }
+
+    #[test]
+    fn test_empty_cidrs_denies_all() {
+        let cidrs: Vec<(IpAddr, u8)> = vec![];
+        let addr = sockaddr_v4(10, 0, 0, 1, 80);
+        assert!(!ip_matches_cidrs(&addr, &cidrs));
+    }
+
+    #[test]
+    fn test_exact_ipv4_match() {
+        let cidrs = vec![(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 32)];
+        assert!(ip_matches_cidrs(&sockaddr_v4(10, 0, 0, 1, 80), &cidrs));
+        assert!(!ip_matches_cidrs(&sockaddr_v4(10, 0, 0, 2, 80), &cidrs));
+    }
+
+    #[test]
+    fn test_ipv4_cidr_8() {
+        let cidrs = vec![(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0)), 8)];
+        assert!(ip_matches_cidrs(&sockaddr_v4(10, 0, 0, 1, 80), &cidrs));
+        assert!(ip_matches_cidrs(&sockaddr_v4(10, 255, 255, 255, 80), &cidrs));
+        assert!(!ip_matches_cidrs(&sockaddr_v4(11, 0, 0, 1, 80), &cidrs));
+        assert!(!ip_matches_cidrs(&sockaddr_v4(192, 168, 1, 1, 80), &cidrs));
+    }
+
+    #[test]
+    fn test_ipv4_cidr_16() {
+        let cidrs = vec![(IpAddr::V4(Ipv4Addr::new(192, 168, 0, 0)), 16)];
+        assert!(ip_matches_cidrs(&sockaddr_v4(192, 168, 0, 1, 80), &cidrs));
+        assert!(ip_matches_cidrs(&sockaddr_v4(192, 168, 255, 255, 80), &cidrs));
+        assert!(!ip_matches_cidrs(&sockaddr_v4(192, 169, 0, 1, 80), &cidrs));
+    }
+
+    #[test]
+    fn test_ipv4_cidr_0_matches_all() {
+        let cidrs = vec![(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0)];
+        assert!(ip_matches_cidrs(&sockaddr_v4(1, 2, 3, 4, 80), &cidrs));
+        assert!(ip_matches_cidrs(&sockaddr_v4(255, 255, 255, 255, 80), &cidrs));
+    }
+
+    #[test]
+    fn test_multiple_cidrs() {
+        let cidrs = vec![
+            (IpAddr::V4(Ipv4Addr::new(10, 0, 0, 0)), 8),
+            (IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), 32),
+        ];
+        assert!(ip_matches_cidrs(&sockaddr_v4(10, 0, 0, 5, 80), &cidrs));
+        assert!(ip_matches_cidrs(&sockaddr_v4(1, 1, 1, 1, 53), &cidrs));
+        assert!(!ip_matches_cidrs(&sockaddr_v4(8, 8, 8, 8, 53), &cidrs));
+    }
+
+    #[test]
+    fn test_ipv6_exact_match() {
+        let cidrs = vec![(IpAddr::V6(Ipv6Addr::LOCALHOST), 128)];
+        assert!(ip_matches_cidrs(
+            &sockaddr_v6(Ipv6Addr::LOCALHOST, 80),
+            &cidrs
+        ));
+        assert!(!ip_matches_cidrs(
+            &sockaddr_v6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 2), 80),
+            &cidrs
+        ));
+    }
+
+    #[test]
+    fn test_ipv6_cidr_64() {
+        let cidrs = vec![(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0)), 32)];
+        assert!(ip_matches_cidrs(
+            &sockaddr_v6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1), 80),
+            &cidrs
+        ));
+        assert!(ip_matches_cidrs(
+            &sockaddr_v6(Ipv6Addr::new(0x2001, 0xdb8, 0xffff, 0, 0, 0, 0, 0), 80),
+            &cidrs
+        ));
+        assert!(!ip_matches_cidrs(
+            &sockaddr_v6(Ipv6Addr::new(0x2001, 0xdb9, 0, 0, 0, 0, 0, 0), 80),
+            &cidrs
+        ));
+    }
+
+    #[test]
+    fn test_ipv6_cidr_0_matches_all() {
+        let cidrs = vec![(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)];
+        assert!(ip_matches_cidrs(
+            &sockaddr_v6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1), 80),
+            &cidrs
+        ));
+    }
+
+    #[test]
+    fn test_v4_addr_v6_cidr_no_match() {
+        // IPv4 address should not match IPv6 CIDR
+        let cidrs = vec![(IpAddr::V6(Ipv6Addr::LOCALHOST), 128)];
+        assert!(!ip_matches_cidrs(&sockaddr_v4(127, 0, 0, 1, 80), &cidrs));
+    }
+
+    #[test]
+    fn test_v6_addr_v4_cidr_no_match() {
+        // IPv6 address should not match IPv4 CIDR
+        let cidrs = vec![(IpAddr::V4(Ipv4Addr::LOCALHOST), 32)];
+        assert!(!ip_matches_cidrs(
+            &sockaddr_v6(Ipv6Addr::LOCALHOST, 80),
+            &cidrs
+        ));
+    }
+
+    #[test]
+    fn test_non_canonical_cidr() {
+        // 10.0.0.1/8 — host bits set in CIDR network, should still match 10.x.x.x
+        let cidrs = vec![(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 8)];
+        assert!(ip_matches_cidrs(&sockaddr_v4(10, 99, 99, 99, 80), &cidrs));
+        assert!(!ip_matches_cidrs(&sockaddr_v4(11, 0, 0, 0, 80), &cidrs));
     }
 }

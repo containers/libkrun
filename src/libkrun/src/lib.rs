@@ -2709,7 +2709,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
                 host_port_map: ctx_cfg.tsi_port_map,
                 unix_ipc_port_map: ctx_cfg.unix_ipc_port_map.clone(),
                 tsi_flags: *tsi_flags,
-                egress_cidrs: egress_cidrs.clone(),
+                egress_cidrs,
             };
             ctx_cfg.vmr.set_vsock_device(vsock_device_config).unwrap();
         }
