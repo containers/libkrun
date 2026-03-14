@@ -455,7 +455,7 @@ dependencies = [
  "polly",
  "rand",
  "rutabaga_gfx",
- "thiserror 2.0.12",
+ "thiserror 2.0.18",
  "utils",
  "virtio-bindings",
  "vm-fdt",
@@ -809,7 +809,7 @@ dependencies = [
  "sha2",
  "sm3",
  "strum",
- "thiserror 2.0.12",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -828,7 +828,7 @@ dependencies = [
  "bitflags 2.10.0",
  "log",
  "static_assertions",
- "thiserror 2.0.12",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -840,7 +840,7 @@ dependencies = [
  "libc",
  "log",
  "static_assertions",
- "thiserror 2.0.12",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -958,9 +958,8 @@ dependencies = [
 
 [[package]]
 name = "linux-loader"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "870c3814345f050991f99869417779f6062542bcf4ed81db7a1b926ad1306638"
+version = "0.13.2"
+source = "git+https://github.com/d-e-s-o/linux-loader.git?branch=topic%2Fvm-memory-0.18#7bf0eb82734ff5cad8a1e5d263925f825ea22c6d"
 dependencies = [
  "vm-memory",
 ]
@@ -1606,11 +1605,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.12"
+version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "567b8a2dae586314f7be2a752ec7474332959c6460e02bde30d702a66d488708"
+checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
 dependencies = [
- "thiserror-impl 2.0.12",
+ "thiserror-impl 2.0.18",
 ]
 
 [[package]]
@@ -1626,9 +1625,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.12"
+version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f7cf42b4507d8ea322120659672cf1b9dbb93f8f2d4ecfd6e51350ff5b17a1d"
+checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1801,12 +1800,12 @@ checksum = "7e21282841a059bb62627ce8441c491f09603622cd5a21c43bfedc85a2952f23"
 
 [[package]]
 name = "vm-memory"
-version = "0.16.2"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fd5e56d48353c5f54ef50bd158a0452fc82f5383da840f7b8efc31695dd3b9d"
+checksum = "9b55e753c7725603745cb32b2287ef7ef3da05c03c7702cda3fa8abe25ae0465"
 dependencies = [
  "libc",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "winapi",
 ]
 

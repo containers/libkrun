@@ -13,7 +13,7 @@ use launch::{error::FirmwareError, firmware::Firmware, *};
 use kvm_bindings::{kvm_enc_region, CpuId, KVM_CPUID_FLAG_SIGNIFCANT_INDEX};
 use kvm_ioctls::VmFd;
 use vm_memory::{
-    Bytes, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion, GuestRegionMmap,
+    Bytes, GuestAddress, GuestMemoryBackend, GuestMemoryMmap, GuestMemoryRegion, GuestRegionMmap,
 };
 
 #[derive(Debug)]
