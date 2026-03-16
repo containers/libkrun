@@ -6,6 +6,10 @@ fn build_default_init() -> PathBuf {
     let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let libkrun_root = manifest_dir.join("../..");
     let init_src = libkrun_root.join("init/init.c");
+    let utils_src = libkrun_root.join("init/utils.c");
+    let parser_src = libkrun_root.join("init/parser.c");
+    let fs_src = libkrun_root.join("init/fs.c");
+    let timesync_src = libkrun_root.join("init/timesync.c");
 
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let init_bin = out_dir.join("init");
@@ -14,14 +18,33 @@ fn build_default_init() -> PathBuf {
     println!("cargo:rerun-if-env-changed=CC");
     println!("cargo:rerun-if-env-changed=TIMESYNC");
     println!("cargo:rerun-if-changed={}", init_src.display());
+    println!("cargo:rerun-if-changed={}", utils_src.display());
     println!(
         "cargo:rerun-if-changed={}",
-        libkrun_root.join("init/jsmn.h").display()
+        libkrun_root.join("init/jsmn.h.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        libkrun_root.join("init/utils.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        libkrun_root.join("init/parser.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        libkrun_root.join("init/fs.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        libkrun_root.join("init/timesync.h").display()
     );
 
     let mut init_cc_flags = vec!["-O2", "-static", "-Wall"];
+    let mut timesync_enabled = false;
     if std::env::var_os("TIMESYNC").as_deref() == Some(OsStr::new("1")) {
         init_cc_flags.push("-D__TIMESYNC__");
+        timesync_enabled = true;
     }
 
     let cc_value = std::env::var("CC_LINUX")
@@ -29,12 +52,22 @@ fn build_default_init() -> PathBuf {
         .unwrap_or_else(|_| "cc".to_string());
     let mut cc_parts = cc_value.split_ascii_whitespace();
     let cc = cc_parts.next().expect("CC_LINUX/CC must not be empty");
-    let status = Command::new(cc)
+    let mut command_binding = Command::new(cc);
+    let mut status = command_binding
         .args(cc_parts)
         .args(&init_cc_flags)
         .arg("-o")
         .arg(&init_bin)
         .arg(&init_src)
+        .arg(&utils_src)
+        .arg(&parser_src)
+        .arg(&fs_src);
+
+    if timesync_enabled {
+        status = status.arg(&timesync_src);
+    }
+
+    let status = status
         .status()
         .unwrap_or_else(|e| panic!("failed to execute {cc}: {e}"));
 
