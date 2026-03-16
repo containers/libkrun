@@ -1059,6 +1059,11 @@ pub fn build_microvm(
 
     #[cfg(feature = "net")]
     attach_net_devices(&mut vmm, &vm_resources.net, intc.clone())?;
+    #[cfg(feature = "net")]
+    if vm_resources.dhcp_client {
+        vmm.kernel_cmdline.insert_str("KRUN_DHCP=1")?;
+    }
+
     #[cfg(feature = "snd")]
     if vm_resources.snd_device {
         attach_snd_device(&mut vmm, intc.clone())?;

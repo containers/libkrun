@@ -189,6 +189,8 @@ pub struct VmResources {
     pub serial_consoles: Vec<SerialConsoleConfig>,
     /// Virtio consoles to attach to the guest
     pub virtio_consoles: Vec<VirtioConsoleConfigMode>,
+    /// Enable the embedded dhcp client in init.c
+    pub dhcp_client: bool,
 }
 
 impl VmResources {
@@ -433,6 +435,7 @@ mod tests {
             serial_consoles: Vec::new(),
             virtio_consoles: Vec::new(),
             kernel_console: None,
+            dhcp_client: false,
         }
     }
 

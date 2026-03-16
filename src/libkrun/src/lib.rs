@@ -898,6 +898,10 @@ pub unsafe extern "C" fn krun_set_data_disk(ctx_id: u32, c_disk_path: *const c_c
  */
 #[cfg(feature = "net")]
 const NET_FLAG_VFKIT: u32 = 1 << 0;
+#[cfg(feature = "net")]
+const NET_FLAG_DHCP_CLIENT: u32 = 1 << 1;
+#[cfg(feature = "net")]
+const NET_FLAG_ALL: u32 = NET_FLAG_VFKIT | NET_FLAG_DHCP_CLIENT;
 
 /* Taken from uapi/linux/virtio_net.h */
 #[cfg(feature = "net")]
@@ -976,10 +980,10 @@ pub unsafe extern "C" fn krun_add_net_unixstream(
         Err(_) => return -libc::EINVAL,
     };
 
-    /* The unixstream backend doesn't support any flags */
-    if flags != 0 {
+    if (flags & !NET_FLAG_DHCP_CLIENT) != 0 {
         return -libc::EINVAL;
     }
+    let enable_dhcp_client: bool = flags & NET_FLAG_DHCP_CLIENT != 0;
 
     if (features & !NET_ALL_FEATURES) != 0 {
         return -libc::EINVAL;
@@ -989,6 +993,9 @@ pub unsafe extern "C" fn krun_add_net_unixstream(
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             create_virtio_net(cfg, backend, mac, features);
+            if enable_dhcp_client {
+                cfg.vmr.dhcp_client = true;
+            }
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -1031,10 +1038,11 @@ pub unsafe extern "C" fn krun_add_net_unixgram(
         return -libc::EINVAL;
     }
 
-    if (flags & !NET_FLAG_VFKIT) != 0 {
+    if (flags & !NET_FLAG_ALL) != 0 {
         return -libc::EINVAL;
     }
     let send_vfkit_magic: bool = flags & NET_FLAG_VFKIT != 0;
+    let enable_dhcp_client: bool = flags & NET_FLAG_DHCP_CLIENT != 0;
 
     let backend = if let Some(path) = path {
         VirtioNetBackend::UnixgramPath(path, send_vfkit_magic)
@@ -1046,6 +1054,9 @@ pub unsafe extern "C" fn krun_add_net_unixgram(
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             create_virtio_net(cfg, backend, mac, features);
+            if enable_dhcp_client {
+                cfg.vmr.dhcp_client = true;
+            }
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -1086,15 +1097,18 @@ pub unsafe extern "C" fn krun_add_net_tap(
         return -libc::EINVAL;
     }
 
-    /* The tap backend doesn't support any flags */
-    if flags != 0 {
+    if (flags & !NET_FLAG_DHCP_CLIENT) != 0 {
         return -libc::EINVAL;
     }
+    let enable_dhcp_client: bool = flags & NET_FLAG_DHCP_CLIENT != 0;
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             create_virtio_net(cfg, VirtioNetBackend::Tap(tap_name), mac, features);
+            if enable_dhcp_client {
+                cfg.vmr.dhcp_client = true;
+            }
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
