@@ -24,6 +24,7 @@
 
 #include <linux/vm_sockets.h>
 
+#include "dhcp.h"
 #include "jsmn.h"
 
 #ifdef SEV
@@ -1147,6 +1148,20 @@ int main(int argc, char **argv)
         strncpy(ifr.ifr_name, "lo", IFNAMSIZ);
         ifr.ifr_flags |= IFF_UP;
         ioctl(sockfd, SIOCSIFFLAGS, &ifr);
+
+        memset(&ifr, 0, sizeof ifr);
+        strncpy(ifr.ifr_name, "eth0", IFNAMSIZ);
+        if (ioctl(sockfd, SIOCGIFFLAGS, &ifr) == 0) {
+            /* eth0 exists, bring it up first */
+            ifr.ifr_flags |= IFF_UP;
+            ioctl(sockfd, SIOCSIFFLAGS, &ifr);
+
+            /* Configure eth0 with DHCP */
+            if (do_dhcp("eth0") != 0) {
+                printf("Warning: DHCP configuration for eth0 failed\n");
+            }
+        }
+
         close(sockfd);
     }
 
