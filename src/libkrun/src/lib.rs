@@ -34,8 +34,9 @@ use std::os::fd::{BorrowedFd, FromRawFd, RawFd};
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::LazyLock;
-use std::sync::Mutex;
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+use std::sync::Arc;
+use std::sync::{LazyLock, Mutex};
 use utils::eventfd::EventFd;
 use vmm::resources::{
     DefaultVirtioConsoleConfig, PortConfig, SerialConsoleConfig, TsiFlags, VirtioConsoleConfigMode,
@@ -52,7 +53,7 @@ use vmm::vmm_config::fs::FsDeviceConfig;
 use vmm::vmm_config::kernel_bundle::KernelBundle;
 #[cfg(feature = "tee")]
 use vmm::vmm_config::kernel_bundle::{InitrdBundle, QbootBundle};
-use vmm::vmm_config::kernel_cmdline::{KernelCmdlineConfig, DEFAULT_KERNEL_CMDLINE};
+use vmm::vmm_config::kernel_cmdline::{InitPolicy, KernelCmdlineConfig, DEFAULT_KERNEL_CMDLINE};
 use vmm::vmm_config::machine_config::VmConfig;
 #[cfg(feature = "net")]
 use vmm::vmm_config::net::NetworkInterfaceConfig;
@@ -89,6 +90,10 @@ const INIT_PATH: &str = "/init.krun";
 
 static KRUNFW: LazyLock<Option<libloading::Library>> =
     LazyLock::new(|| unsafe { libloading::Library::new(KRUNFW_NAME).ok() });
+
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+static DEFAULT_INIT_PAYLOAD: LazyLock<Arc<[u8]>> =
+    LazyLock::new(|| Arc::from(krun_init::DEFAULT_INIT));
 
 pub struct KrunfwBindings {
     get_kernel: libloading::Symbol<
@@ -164,6 +169,8 @@ struct ContextConfig {
     console_output: Option<PathBuf>,
     vmm_uid: Option<libc::uid_t>,
     vmm_gid: Option<libc::gid_t>,
+    #[cfg(not(feature = "tee"))]
+    init_payload: Option<Arc<[u8]>>,
 }
 
 impl ContextConfig {
@@ -230,6 +237,18 @@ impl ContextConfig {
 
     fn set_args(&mut self, args: String) {
         self.args = Some(args);
+    }
+
+    #[cfg(not(feature = "tee"))]
+    fn set_init_payload(&mut self, init_payload: Arc<[u8]>) {
+        self.init_payload = Some(init_payload);
+    }
+
+    #[cfg(not(feature = "tee"))]
+    fn get_init_payload(&self) -> Arc<[u8]> {
+        self.init_payload
+            .clone()
+            .unwrap_or_else(|| DEFAULT_INIT_PAYLOAD.clone())
     }
 
     fn get_args(&self) -> String {
@@ -595,7 +614,37 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
                 allow_root_dir_delete: false,
+                init_payload: Some(cfg.get_init_payload()),
             });
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(not(feature = "tee"))]
+pub unsafe extern "C" fn krun_set_init(
+    ctx_id: u32,
+    init_binary: *const u8,
+    init_binary_len: size_t,
+) -> i32 {
+    if init_binary.is_null() || init_binary_len == 0 {
+        return -libc::EINVAL;
+    }
+
+    let payload = Arc::<[u8]>::from(slice::from_raw_parts(init_binary, init_binary_len));
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg_entry) => {
+            let ctx_cfg = ctx_cfg_entry.get_mut();
+            ctx_cfg.set_init_payload(payload.clone());
+
+            for fs_cfg in &mut ctx_cfg.vmr.fs {
+                fs_cfg.init_payload = Some(payload.clone());
+            }
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -628,6 +677,7 @@ pub unsafe extern "C" fn krun_add_virtiofs(
                 shared_dir: path.to_string(),
                 shm_size: None,
                 allow_root_dir_delete: false,
+                init_payload: Some(cfg.get_init_payload()),
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -662,6 +712,7 @@ pub unsafe extern "C" fn krun_add_virtiofs2(
                 shared_dir: path.to_string(),
                 shm_size: Some(shm_size.try_into().unwrap()),
                 allow_root_dir_delete: false,
+                init_payload: Some(cfg.get_init_payload()),
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -2294,6 +2345,7 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
                 allow_root_dir_delete: true,
+                init_payload: Some(ctx_cfg.get_init_payload()),
             });
 
             ctx_cfg.set_block_root(device, fstype, options);
@@ -2603,6 +2655,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             ctx_cfg.get_env(),
         )),
         epilog: Some(format!(" -- {}", ctx_cfg.get_args())),
+        init_policy: InitPolicy::InitKrunFromVirtioFs,
     };
 
     if ctx_cfg.vmr.set_kernel_cmdline(kernel_cmdline).is_err() {

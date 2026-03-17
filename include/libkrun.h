@@ -110,6 +110,22 @@ int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus, uint32_t ram_mib)
 int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
 
 /**
+ * Sets the init binary payload that will be exposed as /init.krun inside the guest.
+ *
+ * The payload is copied when this API is called. It will be used for /dev/root
+ * virtio-fs devices configured in this context.
+ *
+ * Arguments:
+ *  "ctx_id"          - the configuration context ID.
+ *  "init_binary"     - pointer to init binary bytes.
+ *  "init_binary_len" - number of bytes at init_binary.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_init(uint32_t ctx_id, const uint8_t *init_binary, size_t init_binary_len);
+
+/**
  * DEPRECATED. Use krun_add_disk instead.
  *
  * Sets the path to the disk image that contains the file-system to be used as root for the microVM.

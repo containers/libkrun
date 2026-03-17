@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process::Command;
 
-fn build_default_init() -> PathBuf {
+fn build_default_init() -> Option<PathBuf> {
     let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let libkrun_root = manifest_dir.join("../..");
     let init_src = libkrun_root.join("init/init.c");
@@ -39,20 +39,35 @@ fn build_default_init() -> PathBuf {
         .unwrap_or_else(|e| panic!("failed to execute {cc}: {e}"));
 
     if !status.success() {
-        panic!("failed to compile init/init.c: {status}");
+        return None;
     }
-    init_bin
+    Some(init_bin)
 }
 
 fn main() {
+    let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let repo_init_bin = manifest_dir.join("../..").join("init/init");
+    println!("cargo:rerun-if-changed={}", repo_init_bin.display());
+
     let init_binary_path = std::env::var_os("KRUN_INIT_BINARY_PATH")
         .map(PathBuf::from)
+        .or_else(build_default_init)
+        .or_else(|| {
+            if repo_init_bin.exists() {
+                Some(repo_init_bin)
+            } else {
+                None
+            }
+        })
         .unwrap_or_else(|| {
-            let init_path = build_default_init();
-            // SAFETY: The build script is single threaded.
-            unsafe { std::env::set_var("KRUN_INIT_BINARY_PATH", &init_path) };
-            init_path
+            panic!(
+                "failed to produce an init binary: set KRUN_INIT_BINARY_PATH or ensure init/init exists"
+            )
         });
+
+    // SAFETY: The build script is single threaded.
+    unsafe { std::env::set_var("KRUN_INIT_BINARY_PATH", &init_binary_path) };
+
     println!(
         "cargo:rustc-env=KRUN_INIT_BINARY_PATH={}",
         init_binary_path.display()

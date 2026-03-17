@@ -832,6 +832,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "krun_init"
+version = "0.1.0"
+
+[[package]]
 name = "krun_input"
 version = "0.1.0"
 dependencies = [
@@ -892,6 +896,7 @@ dependencies = [
  "env_logger",
  "hvf",
  "krun_display",
+ "krun_init",
  "krun_input",
  "kvm-bindings",
  "kvm-ioctls",
