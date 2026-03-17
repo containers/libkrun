@@ -943,7 +943,8 @@ pub fn build_microvm(
             &vm,
             &mut mmio_device_manager,
             &mut kernel_cmdline,
-            serial_device,
+            intc.clone(),
+            serial_devices,
         )?;
     }
 

@@ -199,7 +199,10 @@ impl MMIODeviceManager {
         vm.register_irqfd(serial.lock().unwrap().interrupt_evt(), self.irq)
             .map_err(Error::RegisterIrqFd)?;
 
+        #[cfg(target_arch = "aarch64")]
         serial.lock().unwrap().set_intc(intc);
+        #[cfg(target_arch = "riscv64")]
+        let _ = intc;
 
         self.bus
             .insert(serial, self.mmio_base, MMIO_LEN)
