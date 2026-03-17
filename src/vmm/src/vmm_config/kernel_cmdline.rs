@@ -10,6 +10,16 @@ pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 nomodu
 pub const DEFAULT_KERNEL_CMDLINE: &str = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 \
                                           rootfstype=virtiofs rw quiet no-kvmapf";
 
+/// Contract for how init is provided to the guest.
+#[derive(Debug, Default, Eq, PartialEq, Clone, Copy)]
+pub enum InitPolicy {
+    /// No libkrun-specific init contract is required.
+    #[default]
+    Unspecified,
+    /// VM startup expects `/init.krun` to be provided by the synthetic virtio-fs entry.
+    InitKrunFromVirtioFs,
+}
+
 /// Strongly typed data structure used to configure the boot source of the
 /// microvm.
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -17,6 +27,7 @@ pub struct KernelCmdlineConfig {
     pub prolog: Option<String>,
     pub krun_env: Option<String>,
     pub epilog: Option<String>,
+    pub init_policy: InitPolicy,
 }
 
 /// Errors associated with actions on `KernelCmdlineConfig`.
