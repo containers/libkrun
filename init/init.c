@@ -43,9 +43,6 @@ int main(int argc, char **argv)
     char *krun_home;
     char *krun_term;
     char *krun_init;
-    char *krun_root;
-    char *krun_root_fstype;
-    char *krun_root_options;
     char *env_init_pid1;
     char *config_workdir, *env_workdir;
     char *rlimits;
@@ -56,51 +53,7 @@ int main(int argc, char **argv)
         exit(-2);
     }
 
-    krun_root = getenv("KRUN_BLOCK_ROOT_DEVICE");
-    if (krun_root) {
-        if (mkdir("/newroot", 0755) < 0 && errno != EEXIST) {
-            perror("mkdir(/newroot)");
-            exit(-1);
-        }
-
-        krun_root_fstype = getenv("KRUN_BLOCK_ROOT_FSTYPE");
-        krun_root_options = getenv("KRUN_BLOCK_ROOT_OPTIONS");
-
-        if (try_mount(krun_root, "/newroot", krun_root_fstype, 0,
-                      krun_root_options) < 0) {
-            perror("mount KRUN_BLOCK_ROOT_DEVICE");
-            exit(-1);
-        }
-
-        chdir("/newroot");
-
-        fd = open("/", O_RDONLY);
-        if (fd < 0) {
-            perror("Couldn't open temporary root directory for removing");
-            exit(-1);
-        }
-        if (ioctl(fd, KRUN_REMOVE_ROOT_DIR_IOCTL) < 0) {
-            perror("Error removing temporary root directory");
-        }
-        close(fd);
-
-        if (mount(".", "/", NULL, MS_MOVE, NULL) < 0) {
-            perror("remount root");
-            exit(-1);
-        }
-        chroot(".");
-
-        // we must mount filesystems again after chrooting
-        if (mount_filesystems() < 0) {
-            printf("Couldn't mount filesystems, bailing out\n");
-            exit(-2);
-        }
-    }
-
-    if (mount(NULL, "/", NULL, MS_REC | MS_SHARED, NULL) < 0) {
-        perror("Couldn't set shared propagation on the root mount");
-        exit(-1);
-    }
+    setup_root_block_device();
 
     setsid();
     ioctl(0, TIOCSCTTY, 1);
