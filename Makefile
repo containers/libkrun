@@ -95,7 +95,7 @@ else
     SYSROOT_TARGET =
 endif
     # Cross-compile on macOS with the LLVM linker (brew install lld)
-    CC_LINUX=/usr/bin/clang -target $(ARCH)-linux-gnu -fuse-ld=lld -Wl,-strip-debug --sysroot $(SYSROOT_LINUX) -Wno-c23-extensions
+    CC_LINUX=/usr/bin/clang -target $(ARCH)-linux-gnu -fuse-ld=lld -Wl,-strip-debug --sysroot $(shell realpath $(SYSROOT_LINUX)) -Wno-c23-extensions
 else
     # Build on Linux host
     CC_LINUX=$(CC)
