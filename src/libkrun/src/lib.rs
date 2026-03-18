@@ -94,8 +94,7 @@ static KRUNFW: LazyLock<Option<libloading::Library>> =
     LazyLock::new(|| unsafe { libloading::Library::new(KRUNFW_NAME).ok() });
 
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-static DEFAULT_INIT_PAYLOAD: LazyLock<InitPayload> =
-    LazyLock::new(|| InitPayload::Static(krun_init::DEFAULT_INIT));
+const DEFAULT_INIT_PAYLOAD: InitPayload = InitPayload::Static(krun_init::DEFAULT_INIT);
 
 pub struct KrunfwBindings {
     get_kernel: libloading::Symbol<
@@ -248,9 +247,7 @@ impl ContextConfig {
 
     #[cfg(not(feature = "tee"))]
     fn get_init_payload(&self) -> InitPayload {
-        self.init_payload
-            .clone()
-            .unwrap_or_else(|| DEFAULT_INIT_PAYLOAD.clone())
+        self.init_payload.clone().unwrap_or(DEFAULT_INIT_PAYLOAD)
     }
 
     fn get_args(&self) -> String {
