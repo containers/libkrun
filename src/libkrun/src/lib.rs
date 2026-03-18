@@ -14,6 +14,8 @@ use env_logger::{Env, Target};
 #[cfg(feature = "gpu")]
 use krun_display::DisplayBackend;
 
+#[cfg(not(feature = "tee"))]
+use devices::virtio::fs::InitPayload;
 use libc::{c_char, c_int, size_t};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
@@ -92,8 +94,8 @@ static KRUNFW: LazyLock<Option<libloading::Library>> =
     LazyLock::new(|| unsafe { libloading::Library::new(KRUNFW_NAME).ok() });
 
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-static DEFAULT_INIT_PAYLOAD: LazyLock<Arc<[u8]>> =
-    LazyLock::new(|| Arc::from(krun_init::DEFAULT_INIT));
+static DEFAULT_INIT_PAYLOAD: LazyLock<InitPayload> =
+    LazyLock::new(|| InitPayload::Static(krun_init::DEFAULT_INIT));
 
 pub struct KrunfwBindings {
     get_kernel: libloading::Symbol<
@@ -170,7 +172,7 @@ struct ContextConfig {
     vmm_uid: Option<libc::uid_t>,
     vmm_gid: Option<libc::gid_t>,
     #[cfg(not(feature = "tee"))]
-    init_payload: Option<Arc<[u8]>>,
+    init_payload: Option<InitPayload>,
 }
 
 impl ContextConfig {
@@ -240,12 +242,12 @@ impl ContextConfig {
     }
 
     #[cfg(not(feature = "tee"))]
-    fn set_init_payload(&mut self, init_payload: Arc<[u8]>) {
+    fn set_init_payload(&mut self, init_payload: InitPayload) {
         self.init_payload = Some(init_payload);
     }
 
     #[cfg(not(feature = "tee"))]
-    fn get_init_payload(&self) -> Arc<[u8]> {
+    fn get_init_payload(&self) -> InitPayload {
         self.init_payload
             .clone()
             .unwrap_or_else(|| DEFAULT_INIT_PAYLOAD.clone())
@@ -635,7 +637,10 @@ pub unsafe extern "C" fn krun_set_init(
         return -libc::EINVAL;
     }
 
-    let payload = Arc::<[u8]>::from(slice::from_raw_parts(init_binary, init_binary_len));
+    let payload = InitPayload::Owned(Arc::<[u8]>::from(slice::from_raw_parts(
+        init_binary,
+        init_binary_len,
+    )));
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg_entry) => {

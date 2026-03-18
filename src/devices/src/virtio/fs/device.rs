@@ -17,8 +17,8 @@ use super::super::{
 };
 use super::passthrough;
 use super::worker::FsWorker;
-use super::ExportTable;
 use super::{defs, defs::uapi};
+use super::{ExportTable, InitPayload};
 use crate::virtio::InterruptTransport;
 
 #[derive(Copy, Clone)]
@@ -59,7 +59,7 @@ impl Fs {
         shared_dir: String,
         exit_code: Arc<AtomicI32>,
         allow_root_dir_delete: bool,
-        init_payload: Option<Arc<[u8]>>,
+        init_payload: Option<InitPayload>,
     ) -> super::Result<Fs> {
         let avail_features = (1u64 << VIRTIO_F_VERSION_1) | (1u64 << VIRTIO_RING_F_EVENT_IDX);
 

@@ -30,6 +30,7 @@ use super::super::filesystem::{
 };
 use super::super::fuse;
 use super::super::multikey::MultikeyBTreeMap;
+use super::super::InitPayload;
 
 const INIT_CSTR: &[u8] = b"init.krun\0";
 const XATTR_KEY: &[u8] = b"user.containers.override_stat\0";
@@ -515,7 +516,7 @@ pub struct Config {
     /// Table of exported FDs to share with other subsystems. Not supported for macos.
     pub export_table: Option<ExportTable>,
     pub allow_root_dir_delete: bool,
-    pub init_payload: Option<Arc<[u8]>>,
+    pub init_payload: Option<InitPayload>,
 }
 
 impl Default for Config {
@@ -599,7 +600,11 @@ impl PassthroughFs {
     }
 
     fn init_payload(&self) -> io::Result<&[u8]> {
-        self.cfg.init_payload.as_deref().ok_or_else(ebadf)
+        self.cfg
+            .init_payload
+            .as_ref()
+            .map(InitPayload::as_slice)
+            .ok_or_else(ebadf)
     }
 
     fn inode_to_handle(&self, inode: Inode, supports_fd: bool) -> io::Result<InodeHandle> {

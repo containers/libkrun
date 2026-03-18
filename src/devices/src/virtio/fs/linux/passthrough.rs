@@ -26,6 +26,7 @@ use super::super::filesystem::{
 };
 use super::super::fuse;
 use super::super::multikey::MultikeyBTreeMap;
+use super::super::InitPayload;
 
 const CURRENT_DIR_CSTR: &[u8] = b".\0";
 const PARENT_DIR_CSTR: &[u8] = b"..\0";
@@ -326,7 +327,7 @@ pub struct Config {
     /// Table of exported FDs to share with other subsystems.
     pub export_table: Option<ExportTable>,
     pub allow_root_dir_delete: bool,
-    pub init_payload: Option<Arc<[u8]>>,
+    pub init_payload: Option<InitPayload>,
 }
 
 impl Default for Config {
@@ -461,7 +462,11 @@ impl PassthroughFs {
     }
 
     fn init_payload(&self) -> io::Result<&[u8]> {
-        self.cfg.init_payload.as_deref().ok_or_else(ebadf)
+        self.cfg
+            .init_payload
+            .as_ref()
+            .map(InitPayload::as_slice)
+            .ok_or_else(ebadf)
     }
 
     fn open_inode(&self, inode: Inode, mut flags: i32) -> io::Result<File> {

@@ -27,6 +27,35 @@ pub use self::defs::uapi::VIRTIO_ID_FS as TYPE_FS;
 pub use self::device::Fs;
 pub use self::filesystem::ExportTable;
 
+/// Payload backing for the synthetic `/init.krun` file exposed by virtio-fs.
+///
+/// We support two storage modes:
+/// - `Static` for any compile-time embedded payload (for example via
+///   `include_bytes!`), including but not limited to libkrun's default init.
+///   This keeps the common embedded case zero-copy.
+/// - `Owned` for runtime-provided bytes (for example from the C API), where we
+///   must not borrow caller memory.
+///
+/// This keeps read paths uniform via `as_slice()` while preserving zero-copy for
+/// embedded payloads and safe ownership for dynamic payload injection.
+#[derive(Clone, Debug)]
+pub enum InitPayload {
+    /// Compile-time embedded payload (`&'static [u8]`) with zero-copy use.
+    Static(&'static [u8]),
+    /// Runtime-provided payload with owned, reference-counted backing storage.
+    Owned(Arc<[u8]>),
+}
+
+impl InitPayload {
+    /// View the payload as a byte slice regardless of backing representation.
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            InitPayload::Static(bytes) => bytes,
+            InitPayload::Owned(bytes) => bytes,
+        }
+    }
+}
+
 mod defs {
     use super::super::QueueConfig;
 
@@ -46,6 +75,7 @@ mod defs {
 
 use std::ffi::{FromBytesWithNulError, FromVecWithNulError};
 use std::io;
+use std::sync::Arc;
 
 use descriptor_utils::Error as DescriptorError;
 
