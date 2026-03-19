@@ -1552,6 +1552,23 @@ pub(crate) fn setup_vm(
         .map_err(StartMicrovmError::Internal)?;
     Ok(vm)
 }
+
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
+fn validate_tee_config(tee: Tee) -> std::result::Result<(), StartMicrovmError> {
+    match tee {
+        #[cfg(feature = "amd-sev")]
+        Tee::Snp => Ok(()),
+        #[cfg(feature = "tdx")]
+        Tee::Tdx => Ok(()),
+        _ => Err(StartMicrovmError::InvalidTee),
+    }
+}
+
+#[cfg(all(feature = "tee", not(target_arch = "x86_64")))]
+fn validate_tee_config(_tee: Tee) -> std::result::Result<(), StartMicrovmError> {
+    Err(StartMicrovmError::InvalidTee)
+}
+
 #[cfg(all(target_os = "linux", feature = "tee"))]
 pub(crate) fn setup_vm(
     kvm: &KvmContext,
@@ -1559,6 +1576,8 @@ pub(crate) fn setup_vm(
     resources: &super::resources::VmResources,
     #[cfg(feature = "tdx")] _sender: Sender<WorkerMessage>,
 ) -> std::result::Result<Vm, StartMicrovmError> {
+    validate_tee_config(resources.tee_config().tee)?;
+
     let mut vm = Vm::new(
         kvm.fd(),
         resources.tee_config(),
