@@ -60,6 +60,8 @@ use crate::terminal::{term_restore_mode, term_set_raw_mode};
 use crate::vmm_config::block::BlockBuilder;
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 use crate::vmm_config::fs::FsDeviceConfig;
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+use crate::vmm_config::kernel_cmdline::InitPolicy;
 use crate::vmm_config::kernel_cmdline::DEFAULT_KERNEL_CMDLINE;
 #[cfg(target_os = "linux")]
 use crate::vstate::KvmContext;
@@ -170,6 +172,8 @@ pub enum StartMicrovmError {
     MicroVMAlreadyRunning,
     /// Cannot start the VM because the kernel was not configured.
     MissingKernelConfig,
+    /// Cannot start the VM because init=/init.krun was requested without an init payload.
+    MissingInitPayload,
     /// Cannot start the VM because the size of the guest memory  was not specified.
     MissingMemSizeConfig,
     /// The net device configuration is missing the tap device.
@@ -345,6 +349,10 @@ impl Display for StartMicrovmError {
             }
             MicroVMAlreadyRunning => write!(f, "Microvm already running."),
             MissingKernelConfig => write!(f, "Cannot start microvm without kernel configuration."),
+            MissingInitPayload => write!(
+                f,
+                "Cannot start microvm with init=/init.krun without a /dev/root init payload."
+            ),
             MissingMemSizeConfig => {
                 write!(f, "Cannot start microvm without guest mem_size config.")
             }
@@ -607,6 +615,18 @@ pub fn build_microvm(
         );
         kernel_cmdline = Cmdline::new(arch::CMDLINE_MAX_SIZE);
         kernel_cmdline.insert_str(cmdline).unwrap();
+    }
+
+    #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+    if matches!(
+        vm_resources.kernel_cmdline.init_policy,
+        InitPolicy::InitKrunFromVirtioFs
+    ) && !vm_resources
+        .fs
+        .iter()
+        .any(|fs| fs.fs_id == "/dev/root" && fs.init_payload.is_some())
+    {
+        return Err(StartMicrovmError::MissingInitPayload);
     }
 
     #[cfg(not(feature = "tee"))]
@@ -1891,6 +1911,7 @@ fn attach_fs_devices(
                 config.shared_dir.clone(),
                 exit_code.clone(),
                 config.allow_root_dir_delete,
+                config.init_payload,
             )
             .unwrap(),
         ));

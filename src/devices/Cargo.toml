@@ -3,7 +3,6 @@ name = "devices"
 version = "0.1.0"
 authors = ["The Chromium OS Authors"]
 edition = "2021"
-build = "build.rs"
 
 [features]
 tee = []
