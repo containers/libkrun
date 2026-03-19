@@ -1,20 +1,20 @@
 use std::io;
 use std::sync::{Arc, Mutex};
 
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use utils::worker_message::MemoryProperties;
 use utils::worker_message::WorkerMessage;
 
 use crossbeam_channel::Receiver;
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use crossbeam_channel::Sender;
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use kvm_bindings::{KVM_MEMORY_ATTRIBUTE_PRIVATE, kvm_memory_attributes};
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use libc::{FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, MADV_DONTNEED, fallocate, madvise};
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use std::ffi::c_void;
-#[cfg(feature = "tee")]
+#[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use vm_memory::{
     Address, GuestAddress, GuestMemoryRegion, MemoryRegionAddress, guest_memory::GuestMemory,
 };
@@ -62,15 +62,21 @@ impl super::Vmm {
                     .send(self.vm.fd().set_irq_line(irq, active).is_ok())
                     .unwrap();
             }
-            WorkerMessage::ConvertMemory(_sender, _properties) =>
-            {
-                #[cfg(feature = "tee")]
-                self.convert_memory(_sender, _properties)
+            WorkerMessage::ConvertMemory(_sender, _properties) => {
+                #[cfg(all(feature = "tee", target_arch = "x86_64"))]
+                {
+                    self.convert_memory(_sender, _properties);
+                }
+
+                #[cfg(not(all(feature = "tee", target_arch = "x86_64")))]
+                {
+                    let _ = _sender.send(false);
+                }
             }
         }
     }
 
-    #[cfg(feature = "tee")]
+    #[cfg(all(feature = "tee", target_arch = "x86_64"))]
     fn convert_memory(&self, sender: Sender<bool>, properties: MemoryProperties) {
         let Some((guest_memfd, region_start)) = self.kvm_vm().guest_memfd_get(properties.gpa)
         else {
