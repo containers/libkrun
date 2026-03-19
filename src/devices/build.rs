@@ -16,7 +16,7 @@ fn build_default_init() -> PathBuf {
     println!("cargo:rerun-if-changed={}", init_src.display());
     println!(
         "cargo:rerun-if-changed={}",
-        libkrun_root.join("init/jsmn.h").display()
+        libkrun_root.join("init/utils.h").display()
     );
 
     let mut init_cc_flags = vec!["-O2", "-static", "-Wall"];
