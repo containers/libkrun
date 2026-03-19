@@ -112,8 +112,10 @@ int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
 /**
  * Sets the init binary payload that will be exposed as /init.krun inside the guest.
  *
- * The payload is copied when this API is called. It will be used for /dev/root
- * virtio-fs devices configured in this context.
+ * IMPORTANT LIFETIME CONTRACT:
+ * The memory range [init_binary, init_binary + init_binary_len) is NOT copied.
+ * The caller MUST keep that memory valid and unchanged for the full VM lifetime
+ * in this context (until krun_start_enter() returns and the VM is torn down).
  *
  * Arguments:
  *  "ctx_id"          - the configuration context ID.

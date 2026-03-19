@@ -14,8 +14,6 @@ use env_logger::{Env, Target};
 #[cfg(feature = "gpu")]
 use krun_display::DisplayBackend;
 
-#[cfg(not(feature = "tee"))]
-use devices::virtio::fs::InitPayload;
 use libc::{c_char, c_int, size_t};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
@@ -36,8 +34,6 @@ use std::os::fd::{BorrowedFd, FromRawFd, RawFd};
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
-#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-use std::sync::Arc;
 use std::sync::{LazyLock, Mutex};
 use utils::eventfd::EventFd;
 use vmm::resources::{
@@ -94,7 +90,7 @@ static KRUNFW: LazyLock<Option<libloading::Library>> =
     LazyLock::new(|| unsafe { libloading::Library::new(KRUNFW_NAME).ok() });
 
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-const DEFAULT_INIT_PAYLOAD: InitPayload = InitPayload::Static(krun_init::DEFAULT_INIT);
+const DEFAULT_INIT_PAYLOAD: &[u8] = krun_init::DEFAULT_INIT;
 
 pub struct KrunfwBindings {
     get_kernel: libloading::Symbol<
@@ -171,7 +167,7 @@ struct ContextConfig {
     vmm_uid: Option<libc::uid_t>,
     vmm_gid: Option<libc::gid_t>,
     #[cfg(not(feature = "tee"))]
-    init_payload: Option<InitPayload>,
+    init_payload: Option<&'static [u8]>,
 }
 
 impl ContextConfig {
@@ -241,13 +237,13 @@ impl ContextConfig {
     }
 
     #[cfg(not(feature = "tee"))]
-    fn set_init_payload(&mut self, init_payload: InitPayload) {
-        self.init_payload = Some(init_payload);
+    fn set_init_binary(&mut self, init_binary: &'static [u8]) {
+        self.init_payload = Some(init_binary);
     }
 
     #[cfg(not(feature = "tee"))]
-    fn get_init_payload(&self) -> InitPayload {
-        self.init_payload.clone().unwrap_or(DEFAULT_INIT_PAYLOAD)
+    fn get_init_binary(&self) -> &'static [u8] {
+        self.init_payload.unwrap_or(DEFAULT_INIT_PAYLOAD)
     }
 
     fn get_args(&self) -> String {
@@ -613,7 +609,7 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
                 allow_root_dir_delete: false,
-                init_payload: Some(cfg.get_init_payload()),
+                init_payload: Some(cfg.get_init_binary()),
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -634,18 +630,18 @@ pub unsafe extern "C" fn krun_set_init(
         return -libc::EINVAL;
     }
 
-    let payload = InitPayload::Owned(Arc::<[u8]>::from(slice::from_raw_parts(
-        init_binary,
-        init_binary_len,
-    )));
+    // SAFETY CONTRACT: The caller guarantees that this memory range remains
+    // valid for the full VM lifetime (until krun_start_enter() returns and the
+    // context is dropped). We do not copy the bytes.
+    let payload: &'static [u8] = slice::from_raw_parts(init_binary, init_binary_len);
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg_entry) => {
             let ctx_cfg = ctx_cfg_entry.get_mut();
-            ctx_cfg.set_init_payload(payload.clone());
+            ctx_cfg.set_init_binary(payload);
 
             for fs_cfg in &mut ctx_cfg.vmr.fs {
-                fs_cfg.init_payload = Some(payload.clone());
+                fs_cfg.init_payload = Some(payload);
             }
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -679,7 +675,7 @@ pub unsafe extern "C" fn krun_add_virtiofs(
                 shared_dir: path.to_string(),
                 shm_size: None,
                 allow_root_dir_delete: false,
-                init_payload: Some(cfg.get_init_payload()),
+                init_payload: Some(cfg.get_init_binary()),
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -714,7 +710,7 @@ pub unsafe extern "C" fn krun_add_virtiofs2(
                 shared_dir: path.to_string(),
                 shm_size: Some(shm_size.try_into().unwrap()),
                 allow_root_dir_delete: false,
-                init_payload: Some(cfg.get_init_payload()),
+                init_payload: Some(cfg.get_init_binary()),
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -2347,7 +2343,7 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
                 allow_root_dir_delete: true,
-                init_payload: Some(ctx_cfg.get_init_payload()),
+                init_payload: Some(ctx_cfg.get_init_binary()),
             });
 
             ctx_cfg.set_block_root(device, fstype, options);
