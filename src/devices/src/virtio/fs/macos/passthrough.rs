@@ -2209,7 +2209,7 @@ impl FileSystem for PassthroughFs {
         _ctx: Context,
         inode: Inode,
         handle: Handle,
-        _mode: u32,
+        mode: u32,
         offset: u64,
         length: u64,
     ) -> io::Result<()> {
@@ -2224,36 +2224,79 @@ impl FileSystem for PassthroughFs {
 
         let fd = data.file.write().unwrap().as_raw_fd();
 
-        let proposed_length = (offset + length) as i64;
-        let mut fs = libc::fstore_t {
-            fst_flags: libc::F_ALLOCATECONTIG,
-            fst_posmode: libc::F_PEOFPOSMODE,
-            fst_offset: 0,
-            fst_length: proposed_length,
-            fst_bytesalloc: 0,
-        };
+        const SUPPORTED_FLAGS: i32 = bindings::LINUX_FALLOC_FL_ALLOCATE_RANGE
+            | bindings::LINUX_FALLOC_FL_KEEP_SIZE
+            | bindings::LINUX_FALLOC_FL_PUNCH_HOLE;
 
-        let res = unsafe { libc::fcntl(fd, libc::F_PREALLOCATE, &mut fs as *mut _) };
-        if res < 0 {
-            fs.fst_flags = libc::F_ALLOCATEALL;
-            let res = unsafe { libc::fcntl(fd, libc::F_PREALLOCATE, &mut fs as &mut _) };
-            if res < 0 {
-                return Err(linux_error(io::Error::last_os_error()));
+        if mode as i32 & !SUPPORTED_FLAGS != 0 {
+            return Err(linux_error(io::Error::from_raw_os_error(libc::EOPNOTSUPP)));
+        }
+
+        let keep_size = mode & bindings::LINUX_FALLOC_FL_KEEP_SIZE as u32 != 0;
+        let mode = mode & !bindings::LINUX_FALLOC_FL_KEEP_SIZE as u32;
+
+        match mode as i32 {
+            bindings::LINUX_FALLOC_FL_ALLOCATE_RANGE => {
+                // The closest thing we have on macOS to posix_fallocate is F_PREALLOCATE,
+                // but this one doesn't allow us to allocate arbitrary ranges, only allocate
+                // blocks to the file's end.
+                //
+                // The best thing we can do here is extend the file to (offset + length).
+                // This doesn't adhere to the same semantics, but should work fine (albeit
+                // less performant) for most guest applications.
+                let st = fstat(fd, true)?;
+                let new_length = (offset + length) as i64;
+
+                if keep_size {
+                    // Check the number of allocated blocks instead of the file size.
+                    let disk_size = st.st_blocks * 512_i64;
+                    if disk_size >= new_length {
+                        return Ok(());
+                    }
+                    let mut fs = libc::fstore_t {
+                        fst_flags: libc::F_ALLOCATEALL,
+                        fst_posmode: libc::F_PEOFPOSMODE,
+                        fst_offset: 0,
+                        fst_length: new_length - disk_size,
+                        fst_bytesalloc: 0,
+                    };
+
+                    let res = unsafe { libc::fcntl(fd, libc::F_PREALLOCATE, &mut fs as *mut _) };
+                    if res < 0 {
+                        return Err(linux_error(io::Error::last_os_error()));
+                    }
+                } else {
+                    if st.st_size >= new_length {
+                        return Ok(());
+                    }
+                    let res = unsafe { libc::ftruncate(fd, new_length) };
+                    if res < 0 {
+                        return Err(linux_error(io::Error::last_os_error()));
+                    }
+                }
             }
+            bindings::LINUX_FALLOC_FL_PUNCH_HOLE => {
+                if !keep_size {
+                    // Linux forbids the use of PUNCH_HOLE without KEEP_SIZE.
+                    return Err(linux_error(io::Error::from_raw_os_error(libc::EINVAL)));
+                }
+
+                let mut hole = libc::fpunchhole_t {
+                    fp_offset: offset as i64,
+                    fp_flags: 0,
+                    reserved: 0,
+                    fp_length: length as i64,
+                };
+
+                let res = unsafe { libc::fcntl(fd, libc::F_PUNCHHOLE, &mut hole as *mut _) };
+                if res < 0 {
+                    return Err(linux_error(io::Error::last_os_error()));
+                }
+            }
+            _ => unreachable!(),
         }
 
-        let st = fstat(fd, true)?;
-        if st.st_size >= proposed_length {
-            // fallocate should not shrink the file. The file is already larger than needed.
-            return Ok(());
-        }
-        let res = unsafe { libc::ftruncate(fd, proposed_length) };
-
-        if res == 0 {
-            Ok(())
-        } else {
-            Err(linux_error(io::Error::last_os_error()))
-        }
+        Ok(())
     }
 
     fn lseek(
