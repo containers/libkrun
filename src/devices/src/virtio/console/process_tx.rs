@@ -34,6 +34,13 @@ pub(crate) fn process_tx(
                 }
                 Err(e) => {
                     log::error!("Failed to write output: {e}");
+                    if matches!(e, GuestMemoryError::IOError(e) if e.kind() == io::ErrorKind::BrokenPipe)
+                    {
+                        // Errors could conceivably be spurious. Broken
+                        // pipe is not and there is no point in attempting
+                        // to write more.
+                        return;
+                    }
                 }
             }
         }
