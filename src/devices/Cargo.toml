@@ -30,7 +30,7 @@ pw = { package = "pipewire", version = "0.8.0", optional = true }
 rand = "0.9.2"
 thiserror = { version = "2.0", optional = true }
 virtio-bindings = "0.2.0"
-vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
+vm-memory = { version = "0.17", features = ["backend-mmap"] }
 zerocopy = { version = "0.8.26", optional = true, features = ["derive"] }
 krun_display = { path = "../krun_display", optional = true, features = ["bindgen_clang_runtime"] }
 krun_input = { path = "../krun_input", features = ["bindgen_clang_runtime"], optional = true }
@@ -39,7 +39,7 @@ arch = { path = "../arch" }
 utils = { path = "../utils" }
 polly = { path = "../polly" }
 rutabaga_gfx = { path = "../rutabaga_gfx", features = ["virgl_renderer", "virgl_renderer_next"], optional = true }
-imago = { version = "0.2.1", features = ["sync-wrappers", "vm-memory"] }
+imago = { version = "0.2.2", features = ["sync-wrappers", "vm-memory"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 hvf = { path = "../hvf" }
@@ -48,8 +48,8 @@ lru = ">=0.9"
 [target.'cfg(target_os = "linux")'.dependencies]
 rutabaga_gfx = { path = "../rutabaga_gfx", features = ["x"], optional = true }
 caps = "0.5.5"
-kvm-bindings = { version = ">=0.11", features = ["fam-wrappers"] }
-kvm-ioctls = ">=0.21"
+kvm-bindings = { version = "0.12", features = ["fam-wrappers"] }
+kvm-ioctls = "0.22"
 
 [target.'cfg(any(target_arch = "aarch64", target_arch = "riscv64"))'.dependencies]
 vm-fdt = ">= 0.2.0"
