@@ -38,11 +38,11 @@ rand = "0.9.2"
 hvf = { path = "../hvf" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-kvm-bindings = { version = ">=0.11", features = ["fam-wrappers"] }
-kvm-ioctls = ">=0.21"
+kvm-bindings = { version = "0.12", features = ["fam-wrappers"] }
+kvm-ioctls = "0.22"
 aws-nitro = { path = "../aws_nitro", optional = true }
 nitro-enclaves = { version = "0.5.0", optional = true }
-vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
+vm-memory = { version = "0.17", features = ["backend-mmap"] }
 
 [lib]
 name = "krun"

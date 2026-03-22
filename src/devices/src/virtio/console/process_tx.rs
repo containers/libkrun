@@ -83,6 +83,9 @@ fn write_desc_to_output(
     output: &mut (dyn PortOutput + Send),
     interrupt: &InterruptTransport,
 ) -> Result<usize, GuestMemoryError> {
+    // TODO: Switch to using `get_slices()` with the next vm-memory
+    //       bump.
+    #[allow(deprecated)]
     desc.mem
         .try_access(desc.len as usize, desc.addr, |_, len, addr, region| {
             let src = region.get_slice(addr, len).unwrap();
