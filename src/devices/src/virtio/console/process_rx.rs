@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{io, thread};
 
-use vm_memory::{GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion};
+use vm_memory::{GuestMemory, GuestMemoryError, GuestMemoryMmap};
 
 use crate::virtio::console::console_control::ConsoleControl;
 use crate::virtio::console::port_io::PortInput;
@@ -89,19 +89,18 @@ fn read_to_desc(
     input: &mut (dyn PortInput + Send),
     eof: &mut bool,
 ) -> Result<usize, GuestMemoryError> {
-    desc.mem
-        .try_access(desc.len as usize, desc.addr, |_, len, addr, region| {
-            let mut target = region.get_slice(addr, len).unwrap();
-            match input.read_volatile(&mut target) {
-                Ok(n) => {
-                    if n == 0 {
-                        *eof = true
-                    }
-                    Ok(n)
-                }
-                // We can't return an error otherwise we would not know how many bytes were processed before WouldBlock
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(0),
-                Err(e) => Err(GuestMemoryError::IOError(e)),
+    let mut total = 0;
+    for slice in desc.mem.get_slices(desc.addr, desc.len as usize) {
+        let mut slice = slice?;
+        match input.read_volatile(&mut slice) {
+            Ok(0) => {
+                *eof = true;
+                break;
             }
-        })
+            Ok(n) => total += n,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+            Err(e) => return Err(GuestMemoryError::IOError(e)),
+        }
+    }
+    Ok(total)
 }

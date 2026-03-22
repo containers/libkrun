@@ -125,7 +125,7 @@ pub enum StartMicrovmError {
     /// Cannot read firmware contents from file.
     FirmwareRead(io::Error),
     /// Memory regions are overlapping or mmap fails.
-    GuestMemoryMmap(vm_memory::Error),
+    GuestMemoryMmap(String),
     /// The BZIP2 decoder couldn't decompress the kernel.
     ImageBz2Decoder(io::Error),
     /// Cannot find compressed kernel in file.
@@ -1339,9 +1339,13 @@ fn load_payload(
                 guest_mem
                     .insert_region(Arc::new(
                         GuestRegionMmap::new(kernel_region, GuestAddress(kernel_guest_addr))
-                            .map_err(StartMicrovmError::GuestMemoryMmap)?,
+                            .ok_or_else(|| {
+                                StartMicrovmError::GuestMemoryMmap(
+                                    "Failed to create GuestRegionMmap".to_string(),
+                                )
+                            })?,
                     ))
-                    .map_err(StartMicrovmError::GuestMemoryMmap)?,
+                    .map_err(|e| StartMicrovmError::GuestMemoryMmap(format!("{e:?}")))?,
                 GuestAddress(kernel_entry_addr),
                 None,
                 None,
@@ -1500,7 +1504,7 @@ pub fn create_guest_memory(
     arch_mem_regions.extend(shm_manager.regions());
 
     let guest_mem = GuestMemoryMmap::from_ranges(&arch_mem_regions)
-        .map_err(StartMicrovmError::GuestMemoryMmap)?;
+        .map_err(|e| StartMicrovmError::GuestMemoryMmap(format!("{e:?}")))?;
 
     let (guest_mem, entry_addr, initrd_config, cmdline) =
         load_payload(vm_resources, guest_mem, &arch_mem_info, payload)?;

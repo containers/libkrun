@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{io, thread};
 
-use vm_memory::{GuestMemory, GuestMemoryError, GuestMemoryMmap, GuestMemoryRegion};
+use vm_memory::{GuestMemory, GuestMemoryError, GuestMemoryMmap};
 
 use crate::virtio::console::port_io::PortOutput;
 use crate::virtio::{DescriptorChain, InterruptTransport, Queue};
@@ -76,22 +76,24 @@ fn write_desc_to_output(
     output: &mut (dyn PortOutput + Send),
     interrupt: &InterruptTransport,
 ) -> Result<usize, GuestMemoryError> {
-    desc.mem
-        .try_access(desc.len as usize, desc.addr, |_, len, addr, region| {
-            let src = region.get_slice(addr, len).unwrap();
-            loop {
-                log::trace!("Tx {src:?}, write_volatile {len} bytes");
-                match output.write_volatile(&src) {
-                    // try_access seem to handle partial write for us (we will be invoked again with an offset)
-                    Ok(n) => break Ok(n),
-                    // We can't return an error otherwise we would not know how many bytes were processed before WouldBlock
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        log::trace!("Tx wait for output (would block)");
-                        interrupt.signal_used_queue();
-                        output.wait_until_writable();
-                    }
-                    Err(e) => break Err(GuestMemoryError::IOError(e)),
+    let mut total = 0;
+    for slice in desc.mem.get_slices(desc.addr, desc.len as usize) {
+        let slice = slice?;
+        loop {
+            log::trace!("Tx {slice:?}, write_volatile {} bytes", slice.len());
+            match output.write_volatile(&slice) {
+                Ok(n) => {
+                    total += n;
+                    break;
                 }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    log::trace!("Tx wait for output (would block)");
+                    interrupt.signal_used_queue();
+                    output.wait_until_writable();
+                }
+                Err(e) => return Err(GuestMemoryError::IOError(e)),
             }
-        })
+        }
+    }
+    Ok(total)
 }

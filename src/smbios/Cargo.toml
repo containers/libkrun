@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-vm-memory = { version = ">=0.13", features = ["backend-mmap"] }
+vm-memory = { version = "0.17", features = ["backend-mmap"] }
