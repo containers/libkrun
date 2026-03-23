@@ -37,7 +37,6 @@
 #define KRUN_FOOTER_LEN 12
 #define CMDLINE_SECRET_PATH "/sfs/secrets/coco/cmdline"
 #define CONFIG_FILE_PATH "/.krun_config.json"
-#define MAX_ARGS 32
 #define MAX_PASS_SIZE 512
 #define MAX_TOKENS 16384
 
@@ -624,14 +623,15 @@ static char **config_parse_args(char *data, jsmntok_t *token)
     char **argv;
     int len;
     int i;
+    const int n_args = token->size;
 
-    argv = malloc((MAX_ARGS + 1) * sizeof(char *));
+    argv = malloc((n_args + 1) * sizeof(char *));
     if (!argv) {
         perror("malloc(config_parse_args)");
         return NULL;
     }
 
-    for (i = 0; i < token->size && i < MAX_ARGS; i++) {
+    for (i = 0; i < n_args; i++) {
         targ = &token[i + 1];
 
         value = data + targ->start;
@@ -701,18 +701,24 @@ char **concat_entrypoint_argv(char **entrypoint, char **config_argv)
 {
     char **argv;
     int i, j;
+    int n_args = 0;
 
-    argv = malloc((2 * MAX_ARGS + 1) * sizeof(char *));
+    for (i = 0; entrypoint[i]; i++)
+        n_args++;
+    for (j = 0; config_argv[j]; j++)
+        n_args++;
+
+    argv = malloc((n_args + 1) * sizeof(char *));
     if (!argv) {
         perror("malloc(concat_entrypoint_argv)");
         return NULL;
     }
 
-    for (i = 0; i < MAX_ARGS && entrypoint[i]; i++) {
+    for (i = 0; entrypoint[i]; i++) {
         argv[i] = entrypoint[i];
     }
 
-    for (j = 0; j < MAX_ARGS && config_argv[j]; i++, j++) {
+    for (j = 0; config_argv[j]; i++, j++) {
         argv[i] = config_argv[j];
     }
 
