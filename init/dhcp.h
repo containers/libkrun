@@ -37,15 +37,17 @@ struct dhcp_packet {
  * Perform DHCP discovery and configuration for a network interface
  *
  * This function:
- * 1. Sets up a temporary link-local address (169.254.1.1/16)
+ * 1. Binds a UDP socket to the interface using SO_BINDTODEVICE
  * 2. Sends a DHCP DISCOVER message with Rapid Commit option
- * 3. Waits up to 100ms for a DHCP ACK response
- * 4. Parses the response and configures:
+ * 3. Waits up to 100ms for a response:
+ *    - If DHCPACK (Rapid Commit): applies configuration directly
+ *    - If DHCPOFFER: sends DHCPREQUEST and waits for DHCPACK
+ *    - If no response: returns success (VM may be IPv6-only)
+ * 4. Parses the ACK and configures:
  *    - IPv4 address with appropriate prefix length
  *    - Default gateway route
  *    - DNS servers (overwriting /etc/resolv.conf)
  *    - Interface MTU
- * 5. Cleans up temporary configuration
  *
  * Parameters:
  *   iface - The name of the network interface to be configured.
