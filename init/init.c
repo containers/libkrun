@@ -714,6 +714,7 @@ static int config_parse_file(char ***argv, char **workdir)
     jsmntok_t *tokens;
     struct stat stat;
     char *data;
+    off_t data_len;
     char *config_file;
     char **config_argv;
     char **entrypoint;
@@ -738,13 +739,14 @@ static int config_parse_file(char ***argv, char **workdir)
         goto cleanup_fd;
     }
 
-    data = malloc(stat.st_size);
+    data_len = stat.st_size;
+    data = malloc(data_len);
     if (!data) {
         perror("Couldn't allocate memory");
         goto cleanup_fd;
     }
 
-    if (read(fd, data, stat.st_size) < 0) {
+    if (read(fd, data, data_len) < 0) {
         perror("Error reading config file");
         goto cleanup_data;
     }
@@ -756,7 +758,7 @@ static int config_parse_file(char ***argv, char **workdir)
     }
 
     jsmn_init(&parser);
-    num_tokens = jsmn_parse(&parser, data, strlen(data), tokens, MAX_TOKENS);
+    num_tokens = jsmn_parse(&parser, data, data_len, tokens, MAX_TOKENS);
     if (num_tokens < 0) {
         printf("Error parsing config file\n");
         goto cleanup_tokens;
