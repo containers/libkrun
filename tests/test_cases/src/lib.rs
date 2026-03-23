@@ -10,6 +10,9 @@ use test_tsi_tcp_guest_connect::TestTsiTcpGuestConnect;
 mod test_tsi_tcp_guest_listen;
 use test_tsi_tcp_guest_listen::TestTsiTcpGuestListen;
 
+mod test_net;
+use test_net::TestNet;
+
 mod test_multiport_console;
 use test_multiport_console::TestMultiportConsole;
 
@@ -66,6 +69,10 @@ pub fn test_cases() -> Vec<TestCase> {
             "tsi-tcp-guest-listen",
             Box::new(TestTsiTcpGuestListen::new()),
         ),
+        TestCase::new("net-passt", Box::new(TestNet::new_passt())),
+        TestCase::new("net-tap", Box::new(TestNet::new_tap())),
+        TestCase::new("net-gvproxy", Box::new(TestNet::new_gvproxy())),
+        TestCase::new("net-vmnet-helper", Box::new(TestNet::new_vmnet_helper())),
         TestCase::new("multiport-console", Box::new(TestMultiportConsole)),
         TestCase::new("virtiofs-root-ro", Box::new(TestVirtiofsRootRo)),
     ]
