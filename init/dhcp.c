@@ -290,20 +290,6 @@ int do_dhcp(const char *iface)
         goto cleanup;
     }
 
-    /* Temporary link-local address and route avoid the need for raw sockets */
-    struct in_addr temp_addr;
-    inet_pton(AF_INET, "169.254.1.1", &temp_addr);
-    struct in_addr temp_gw = {.s_addr = INADDR_ANY};
-
-    if (mod_route4(nl_sock, iface_index, RTM_NEWROUTE, temp_gw) != 0) {
-        printf("couldn't add temporary route\n");
-        goto cleanup;
-    }
-    if (mod_addr4(nl_sock, iface_index, RTM_NEWADDR, temp_addr, 16) != 0) {
-        printf("couldn't add temporary address\n");
-        goto cleanup;
-    }
-
     /* Send request (DHCPDISCOVER) */
     sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) {
@@ -315,6 +301,12 @@ int do_dhcp(const char *iface)
     if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast,
                    sizeof(broadcast)) < 0) {
         perror("setsockopt SO_BROADCAST failed");
+        goto cleanup;
+    }
+
+    if (setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, iface,
+                   strlen(iface) + 1) < 0) {
+        perror("setsockopt SO_BINDTODEVICE failed");
         goto cleanup;
     }
 
@@ -469,16 +461,6 @@ int do_dhcp(const char *iface)
         /* Calculate prefix length from netmask */
         unsigned char prefix_len = count_leading_ones(ntohl(netmask.s_addr));
 
-        /* Drop temporary address and route, configure what we got instead */
-        if (mod_route4(nl_sock, iface_index, RTM_DELROUTE, temp_gw) != 0) {
-            printf("couldn't remove temporary route\n");
-            goto cleanup;
-        }
-        if (mod_addr4(nl_sock, iface_index, RTM_DELADDR, temp_addr, 16) != 0) {
-            printf("couldn't remove temporary address\n");
-            goto cleanup;
-        }
-
         if (mod_addr4(nl_sock, iface_index, RTM_NEWADDR, addr, prefix_len) !=
             0) {
             printf("couldn't add the address provided by the DHCP server\n");
@@ -489,16 +471,7 @@ int do_dhcp(const char *iface)
                 "couldn't add the default route provided by the DHCP server\n");
             goto cleanup;
         }
-
         set_mtu(nl_sock, iface_index, mtu);
-    } else {
-        /* Clean up: we're clearly too cool for IPv4 */
-        if (mod_route4(nl_sock, iface_index, RTM_DELROUTE, temp_gw) != 0) {
-            printf("couldn't remove temporary route\n");
-        }
-        if (mod_addr4(nl_sock, iface_index, RTM_DELADDR, temp_addr, 16) != 0) {
-            printf("couldn't remove temporary address\n");
-        }
     }
 
     ret = 0;
