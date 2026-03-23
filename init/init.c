@@ -623,17 +623,15 @@ static char **config_parse_args(char *data, jsmntok_t *token)
     char *arg, *value;
     char **argv;
     int len;
-    int i, j;
+    int i;
 
-    argv = malloc(MAX_ARGS * sizeof(char *));
+    argv = malloc((MAX_ARGS + 1) * sizeof(char *));
     if (!argv) {
         perror("malloc(config_parse_args)");
         return NULL;
     }
 
-    j = 0;
-
-    for (i = 0; i < token->size; i++) {
+    for (i = 0; i < token->size && i < MAX_ARGS; i++) {
         targ = &token[i + 1];
 
         value = data + targ->start;
@@ -642,8 +640,8 @@ static char **config_parse_args(char *data, jsmntok_t *token)
         arg = malloc(len + 1);
         if (!arg) {
             perror("malloc(config_parse_args arg)");
-            while (--j >= 0)
-                free(argv[j]);
+            while (--i >= 0)
+                free(argv[i]);
             free(argv);
             return NULL;
         }
@@ -652,15 +650,14 @@ static char **config_parse_args(char *data, jsmntok_t *token)
 
         unescape_string(arg, len);
 
-        argv[j] = arg;
-        j++;
+        argv[i] = arg;
     }
 
-    if (j == 0) {
+    if (i == 0) {
         free(argv);
         argv = NULL;
     } else {
-        argv[j] = NULL;
+        argv[i] = NULL;
     }
 
     return argv;
@@ -705,7 +702,7 @@ char **concat_entrypoint_argv(char **entrypoint, char **config_argv)
     char **argv;
     int i, j;
 
-    argv = malloc(MAX_ARGS * sizeof(char *));
+    argv = malloc((2 * MAX_ARGS + 1) * sizeof(char *));
     if (!argv) {
         perror("malloc(concat_entrypoint_argv)");
         return NULL;
