@@ -84,7 +84,7 @@ impl TestNet {
 mod host {
     use super::*;
     use crate::common::setup_fs_and_enter;
-    use crate::{krun_call, krun_call_u32, Test, TestSetup};
+    use crate::{krun_call, krun_call_u32, Test, TestOutcome, TestSetup};
     use krun_sys::*;
     use std::thread;
 
@@ -97,14 +97,15 @@ mod host {
             (self.should_run)()
         }
 
-        fn check(self: Box<Self>, stdout: Vec<u8>) -> crate::TestOutcome {
+        fn check(self: Box<Self>, stdout: Vec<u8>) -> TestOutcome {
             if let Some(cleanup) = self.cleanup {
                 cleanup();
             }
-            if String::from_utf8(stdout).unwrap() == "OK\n" {
-                crate::TestOutcome::Pass
+            let output = String::from_utf8(stdout).unwrap();
+            if output == "OK\n" {
+                TestOutcome::Pass
             } else {
-                crate::TestOutcome::Fail
+                TestOutcome::Fail(format!("expected exactly {:?}, got {:?}", "OK\n", output))
             }
         }
 
