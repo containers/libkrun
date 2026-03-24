@@ -2,6 +2,7 @@ use windows_sys::Win32::Foundation::HANDLE;
 
 pub(crate) mod bindings;
 pub mod epoll;
+pub mod eventfd;
 
 /// Cross-platform alias used by the rest of the codebase.  On Windows this
 /// is just [`HANDLE`] — the two names are interchangeable.
