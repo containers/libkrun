@@ -5,7 +5,7 @@
 
 int main(int argc, char **argv)
 {
-    char *config_workdir, *env_workdir;
+    char *config_workdir;
     char **config_argv, **exec_argv;
 
     if (mount_filesystems() < 0) {
