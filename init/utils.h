@@ -5,14 +5,23 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <stdlib.h>
+#include <limits.h>
 
+#include <net/if.h>
+#include <linux/vm_sockets.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <sys/statfs.h>
+#include <sys/resource.h>
 
 #include "jsmn.h"
 
 #define CONFIG_FILE_PATH "/.krun_config.json"
-
+#define KRUN_REMOVE_ROOT_DIR_IOCTL 0x7603
 #define KRUN_EXIT_CODE_IOCTL 0x7602
 
 #define MAX_ARGS 32
@@ -21,6 +30,8 @@
 
 #define KRUN_MAGIC "KRUN"
 #define KRUN_FOOTER_LEN 12
+
+char DEFAULT_KRUN_INIT[] = "/bin/sh";
 
 int mount_filesystems();
 int try_mount(const char *source, const char *target, const char *fstype,
@@ -724,6 +735,7 @@ void clock_worker()
 
 void setup_root_block_device(void)
 {
+    int fd;
     char *krun_root;
     char *krun_root_fstype;
     char *krun_root_options;
@@ -773,6 +785,139 @@ void setup_root_block_device(void)
         perror("Couldn't set shared propagation on the root mount");
         exit(-1);
     }
+}
+
+void exec_child(char **exec_argv, int *saved_errno)
+{
+    if (setup_redirects() < 0) {
+        exit(125);
+    }
+    if (execvp(exec_argv[0], exec_argv) < 0) {
+        *saved_errno = errno;
+        printf("Couldn't execute '%s' inside the vm: %s\n", exec_argv[0],
+                strerror(errno));
+        // Use the same exit code as chroot and podman do.
+        if (*saved_errno == ENOENT) {
+            exit(127);
+        } else {
+            exit(126);
+        }
+    }
+}
+
+void parent_proc_wait(int child, int *status)
+{
+    // Wait until the workload's entrypoint has exited, ignoring any other
+    // children.
+    while (waitpid(-1, status, 0) != child) {
+        // Not the first child, ignore it.
+    };
+
+    // The workload's entrypoint has exited, record its exit code and exit
+    // ourselves.
+    if (WIFEXITED(*status)) {
+        set_exit_code(WEXITSTATUS(*status));
+    } else if (WIFSIGNALED(*status)) {
+        set_exit_code(WTERMSIG(*status) + 128);
+    }
+}
+
+void handle_env_variables(char *config_workdir)
+{
+    char *hostname;
+    char localhost[] = "localhost\0";
+    char *krun_home;
+    char *krun_term;
+    char *rlimits;
+    char *env_workdir;
+    
+    krun_home = getenv("KRUN_HOME");
+    if (krun_home) {
+        setenv("HOME", krun_home, 1);
+    }
+
+    krun_term = getenv("KRUN_TERM");
+    if (krun_term) {
+        setenv("TERM", krun_term, 1);
+    }
+
+    hostname = getenv("HOSTNAME");
+    if (hostname) {
+        sethostname(hostname, strlen(hostname));
+    } else {
+        sethostname(&localhost[0], strlen(localhost));
+    }
+
+    rlimits = getenv("KRUN_RLIMITS");
+    if (rlimits) {
+        set_rlimits(rlimits);
+    }
+
+    env_workdir = getenv("KRUN_WORKDIR");
+    if (env_workdir) {
+        chdir(env_workdir);
+    } else if (config_workdir) {
+        chdir(config_workdir);
+    }
+
+}
+
+void exec_init(char ***config_argv, char ***exec_argv)
+{
+    int saved_errno;
+    int status;
+    char *krun_init;
+    char *env_init_pid1;
+    bool init_pid1 = false;
+
+    krun_init = getenv("KRUN_INIT");
+    if (krun_init) {
+        (*exec_argv)[0] = krun_init;
+    } else if (config_argv) {
+        *exec_argv = *config_argv;
+    } else {
+        (*exec_argv)[0] = &DEFAULT_KRUN_INIT[0];
+    }
+
+    env_init_pid1 = getenv("KRUN_INIT_PID1");
+    if (env_init_pid1 && *env_init_pid1 == '1') {
+        init_pid1 = true;
+    }
+
+    if (init_pid1) {
+        goto exec_init;
+    }
+
+    // We need to fork ourselves, because pid 1 cannot doesn't receive SIGINT
+    // signal
+    int child = fork();
+    if (child < 0) {
+        perror("fork");
+        set_exit_code(125);
+        exit(125);
+    }
+    if (child == 0) { // child
+    exec_init:
+        exec_child(*exec_argv, &saved_errno);
+    } else { // parent
+        parent_proc_wait(child, &status);
+    }
+}
+
+void setup_socket(void)
+{
+    struct ifreq ifr;
+    int sockfd;
+
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd >= 0) {
+        memset(&ifr, 0, sizeof ifr);
+        strncpy(ifr.ifr_name, "lo", IFNAMSIZ);
+        ifr.ifr_flags |= IFF_UP;
+        ioctl(sockfd, SIOCSIFFLAGS, &ifr);
+        close(sockfd);
+    }
+
 }
 
 #endif
