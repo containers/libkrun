@@ -5,6 +5,10 @@
 #include "parser.h"
 #include "fs.h"
 
+#ifdef __TIMESYNC__
+#include "timesync.h"
+#endif
+
 int main(int argc, char **argv)
 {
     char *config_workdir;
