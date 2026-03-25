@@ -7,6 +7,7 @@ fn build_default_init() -> PathBuf {
     let libkrun_root = manifest_dir.join("../..");
     let init_src = libkrun_root.join("init/init.c");
     let utils_src = libkrun_root.join("init/utils.c");
+    let parser_src = libkrun_root.join("init/parser.c");
 
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let init_bin = out_dir.join("init");
@@ -23,6 +24,10 @@ fn build_default_init() -> PathBuf {
     println!(
         "cargo:rerun-if-changed={}",
         libkrun_root.join("init/utils.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        libkrun_root.join("init/parser.h").display()
     );
 
     let mut init_cc_flags = vec!["-O2", "-static", "-Wall"];
@@ -42,6 +47,7 @@ fn build_default_init() -> PathBuf {
         .arg(&init_bin)
         .arg(&init_src)
         .arg(&utils_src)
+        .arg(&parser_src)
         .status()
         .unwrap_or_else(|e| panic!("failed to execute {cc}: {e}"));
 

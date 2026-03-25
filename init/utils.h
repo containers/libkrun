@@ -18,13 +18,10 @@
 #include <sys/statfs.h>
 #include <sys/resource.h>
 
-#define CONFIG_FILE_PATH "/.krun_config.json"
 #define KRUN_REMOVE_ROOT_DIR_IOCTL 0x7603
 #define KRUN_EXIT_CODE_IOCTL 0x7602
 
-#define MAX_ARGS 32
 #define MAX_PASS_SIZE 512
-#define MAX_TOKENS 16384
 
 #define KRUN_MAGIC "KRUN"
 #define KRUN_FOOTER_LEN 12
@@ -32,11 +29,9 @@
 int mount_filesystems();
 int try_mount(const char *source, const char *target, const char *fstype,
               unsigned long mountflags, const void *data);
-int config_parse_file(char ***argv, char **workdir);
 void set_exit_code(int code);
 int setup_redirects(void);
 void set_rlimits(const char *rlimits);
-char **concat_entrypoint_argv(char **entrypoint, char **config_argv);
 int is_virtiofs(const char *path);
 void setup_root_block_device(void);
 void setup_socket(void);
