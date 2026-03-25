@@ -3,6 +3,7 @@
 
 #include "utils.h"
 #include "parser.h"
+#include "fs.h"
 
 int main(int argc, char **argv)
 {

@@ -8,6 +8,7 @@ fn build_default_init() -> PathBuf {
     let init_src = libkrun_root.join("init/init.c");
     let utils_src = libkrun_root.join("init/utils.c");
     let parser_src = libkrun_root.join("init/parser.c");
+    let fs_src = libkrun_root.join("init/fs.c");
 
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let init_bin = out_dir.join("init");
@@ -29,6 +30,10 @@ fn build_default_init() -> PathBuf {
         "cargo:rerun-if-changed={}",
         libkrun_root.join("init/parser.h").display()
     );
+    println!(
+        "cargo:rerun-if-changed={}",
+        libkrun_root.join("init/fs.h").display()
+    );
 
     let mut init_cc_flags = vec!["-O2", "-static", "-Wall"];
     if std::env::var_os("TIMESYNC").as_deref() == Some(OsStr::new("1")) {
@@ -48,6 +53,7 @@ fn build_default_init() -> PathBuf {
         .arg(&init_src)
         .arg(&utils_src)
         .arg(&parser_src)
+        .arg(&fs_src)
         .status()
         .unwrap_or_else(|e| panic!("failed to execute {cc}: {e}"));
 
