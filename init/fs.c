@@ -1,5 +1,8 @@
 #include "fs.h"
 
+static int try_mount(const char *source, const char *target, const char *fstype,
+              unsigned long mountflags, const void *data);
+
 void setup_root_block_device(void)
 {
     int fd;
@@ -116,7 +119,7 @@ int mount_filesystems()
     return 0;
 }
 
-int try_mount(const char *source, const char *target, const char *fstype,
+static int try_mount(const char *source, const char *target, const char *fstype,
               unsigned long mountflags, const void *data)
 {
     FILE *f;

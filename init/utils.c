@@ -6,8 +6,11 @@ char DEFAULT_KRUN_INIT[] = "/bin/sh";
 static int reopen_fd(int fd, char *path, int flags);
 static void exec_child(char **exec_argv, int *saved_errno);
 static void parent_proc_wait(int child, int *status);
+static void set_exit_code(int code);
+static int setup_redirects(void);
+static void set_rlimits(const char *rlimits);
 
-void set_exit_code(int code)
+static void set_exit_code(int code)
 {
     int fd;
     int ret;
@@ -38,7 +41,7 @@ void set_exit_code(int code)
     close(fd);
 }
 
-int setup_redirects()
+static int setup_redirects()
 {
     DIR *ports_dir = opendir("/sys/class/virtio-ports");
     if (ports_dir == NULL) {
@@ -107,7 +110,7 @@ static int reopen_fd(int fd, char *path, int flags)
     return 0;
 }
 
-void set_rlimits(const char *rlimits)
+static void set_rlimits(const char *rlimits)
 {
     unsigned long long int lim_id, lim_cur, lim_max;
     struct rlimit rlim;
