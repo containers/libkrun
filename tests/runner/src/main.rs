@@ -75,26 +75,31 @@ fn run_single_test(
     let log_path = test_dir.join("log.txt");
     let log_file = File::create(&log_path).context("Failed to create log file")?;
 
-    // Wrap start-vm in unshare on Linux for network namespace isolation.
-    // Fall back to running directly (with a warning) if unshare isn't available.
-    let use_unshare = cfg!(target_os = "linux")
-        && std::env::var_os("KRUN_NO_UNSHARE").is_none()
-        && Command::new("unshare")
+    // Use `buildah unshare` for full subuid/subgid mapping + `unshare --net`
+    // for network namespace isolation.
+    // Fall back to running directly (with a warning) if buildah or unshare isn't available.
+    let has_cmd = |cmd: &str| {
+        Command::new(cmd)
             .arg("--version")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
             .map(|s| s.success())
-            .unwrap_or(false);
+            .unwrap_or(false)
+    };
+    let use_buildah_unshare = cfg!(target_os = "linux")
+        && std::env::var_os("KRUN_NO_UNSHARE").is_none()
+        && has_cmd("buildah")
+        && has_cmd("unshare");
 
-    let child = if use_unshare {
+    let child = if use_buildah_unshare {
         let exe = executable.display();
         let name = test_case.name;
         let dir = test_dir.display();
-        Command::new("unshare")
-            .args(["--user", "--map-root-user", "--net", "--", "sh", "-c"])
+        Command::new("buildah")
+            .args(["unshare", "--", "unshare", "--net", "--", "sh", "-c"])
             .arg(format!(
-                "ifconfig lo 127.0.0.1 && exec {exe} start-vm --test-case {name} --tmp-dir {dir}"
+                "echo '=== namespace debug ===' >&2; id >&2; cat /proc/self/uid_map >&2; cat /proc/self/gid_map >&2; ip link >&2; ifconfig lo 127.0.0.1; echo '=== ifconfig exit: '$?' ===' >&2; ip addr >&2; echo '=== end debug ===' >&2; exec {exe} start-vm --test-case {name} --tmp-dir {dir}"
             ))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -103,7 +108,7 @@ fn run_single_test(
             .context("Failed to start subprocess for test")?
     } else {
         if cfg!(target_os = "linux") {
-            eprintln!("WARNING: unshare not available, running without network namespace.");
+            eprintln!("WARNING: buildah not available, running without namespace isolation.");
             eprintln!("Tests may fail if the required network ports are already in use.");
         }
         Command::new(&executable)
