@@ -68,6 +68,7 @@ jobs:
           path: |
             /tmp/libkrun-tests/
             !/tmp/libkrun-tests/**/guest-agent
+            !/tmp/libkrun-tests/**/rootfs
           if-no-files-found: ignore
 
   integration-tests-aarch64:
@@ -132,4 +133,5 @@ jobs:
           path: |
             /tmp/libkrun-tests/
             !/tmp/libkrun-tests/**/guest-agent
+            !/tmp/libkrun-tests/**/rootfs
           if-no-files-found: ignore
