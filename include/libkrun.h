@@ -763,6 +763,13 @@ int32_t krun_set_snd_device(uint32_t ctx_id, bool enable);
 #define KRUN_VHOST_USER_RNG_QUEUE_SIZES ((uint16_t[]){256})
 
 /**
+ * Vhost-user sound device default queue configuration.
+ * Sound device uses 4 queues: control (idx 0), event (idx 1), TX/playback (idx 2), RX/capture (idx 3).
+ */
+#define KRUN_VHOST_USER_SND_NUM_QUEUES 4
+#define KRUN_VHOST_USER_SND_QUEUE_SIZES ((uint16_t[]){64, 64, 64, 64})
+
+/**
  * Add a vhost-user device to the VM.
  *
  * This function adds a vhost-user device by connecting to an external
