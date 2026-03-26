@@ -45,7 +45,14 @@ jobs:
           sudo usermod -a -G kvm $USER
       
       - name: Install additional packages
-        run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools
+        run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools buildah dnsmasq iperf3
+      
+      - name: Install passt from source
+        run: |
+          curl -L https://passt.top/passt/snapshot/passt-2026_01_20.386b5f5.tar.gz | tar xz
+          cd passt-2026_01_20.386b5f5
+          make
+          sudo make install
       
       - name: Install libkrunfw
         run: TAG=`curl -sL https://api.github.com/repos/containers/libkrunfw/releases/latest |jq -r .tag_name` && curl -L -o /tmp/libkrunfw-x86_64.tgz https://github.com/containers/libkrunfw/releases/download/$TAG/libkrunfw-x86_64.tgz && mkdir tmp && tar xf /tmp/libkrunfw-x86_64.tgz -C tmp && sudo mv tmp/lib64/* /lib/x86_64-linux-gnu
@@ -99,7 +106,14 @@ jobs:
           cargo clippy --locked --target aarch64-unknown-linux-musl -p guest-agent -- -D warnings
       
       - name: Install additional packages
-        run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools
+        run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools dnsmasq iperf3 git uidmap
+      
+      - name: Install passt from source
+        run: |
+          curl -L https://passt.top/passt/snapshot/passt-2026_01_20.386b5f5.tar.gz | tar xz
+          cd passt-2026_01_20.386b5f5
+          make
+          sudo make install
       
       - name: Install libkrunfw
         run: TAG=`curl -sL https://api.github.com/repos/containers/libkrunfw/releases/latest |jq -r .tag_name` && curl -L -o /tmp/libkrunfw-aarch64.tgz https://github.com/containers/libkrunfw/releases/download/$TAG/libkrunfw-aarch64.tgz && mkdir tmp && tar xf /tmp/libkrunfw-aarch64.tgz -C tmp && sudo mv tmp/lib64/* /lib/aarch64-linux-gnu
