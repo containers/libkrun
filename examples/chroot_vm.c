@@ -40,6 +40,7 @@ static void print_help(char *const name)
         "              --net=NET_MODE        Set network mode\n"
         "              --passt-socket=PATH   Instead of starting passt, connect to passt socket at PATH\n"
         "              --vhost-user-rng=PATH Use vhost-user RNG backend at socket PATH\n"
+        "              --vhost-user-snd=PATH Use vhost-user sound backend at socket PATH\n"
         "NET_MODE can be either TSI (default) or PASST\n"
         "\n"
         "NEWROOT:      the root directory of the vm\n"
@@ -66,6 +67,7 @@ static const struct option long_options[] = {
     { "net_mode", required_argument, NULL, 'N' },
     { "passt-socket", required_argument, NULL, 'P' },
     { "vhost-user-rng", required_argument, NULL, 'V' },
+    { "vhost-user-snd", required_argument, NULL, 'S' },
     { NULL, 0, NULL, 0 }
 };
 
@@ -76,6 +78,7 @@ struct cmdline {
     enum net_mode net_mode;
     char const *passt_socket_path;
     char const *vhost_user_rng_socket;
+    char const *vhost_user_snd_socket;
     char const *new_root;
     char *const *guest_argv;
 };
@@ -103,6 +106,7 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         .net_mode = NET_MODE_TSI,
         .passt_socket_path = NULL,
         .vhost_user_rng_socket = NULL,
+        .vhost_user_snd_socket = NULL,
         .new_root = NULL,
         .guest_argv = NULL,
         .log_target = KRUN_LOG_TARGET_DEFAULT,
@@ -140,6 +144,9 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
             break;
         case 'V':
             cmdline->vhost_user_rng_socket = optarg;
+            break;
+        case 'S':
+            cmdline->vhost_user_snd_socket = optarg;
             break;
         case '?':
             return false;
@@ -277,6 +284,18 @@ int main(int argc, char *const argv[])
             return -1;
         }
         printf("Using vhost-user RNG backend at %s (custom queue size: 512)\n", cmdline.vhost_user_rng_socket);
+    }
+
+    // Configure vhost-user sound if requested
+    if (cmdline.vhost_user_snd_socket != NULL) {
+        if (!check_krun_error(krun_add_vhost_user_device(ctx_id, KRUN_VIRTIO_DEVICE_SND,
+                                                          cmdline.vhost_user_snd_socket, NULL,
+                                                          KRUN_VHOST_USER_SND_NUM_QUEUES,
+                                                          KRUN_VHOST_USER_SND_QUEUE_SIZES),
+                              "Error adding vhost-user sound device")) {
+            return -1;
+        }
+        printf("Using vhost-user sound backend at %s\n", cmdline.vhost_user_snd_socket);
     }
 
     // Raise RLIMIT_NOFILE to the maximum allowed to create some room for virtio-fs
