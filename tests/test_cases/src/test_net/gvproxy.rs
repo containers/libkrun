@@ -1,7 +1,7 @@
 //! Gvproxy backend for virtio-net test (macOS only)
 
 use crate::{krun_call, ShouldRun, TestSetup};
-use krun_sys::{COMPAT_NET_FEATURES, NET_FLAG_VFKIT};
+use krun_sys::{COMPAT_NET_FEATURES, NET_FLAG_DHCP_CLIENT, NET_FLAG_VFKIT};
 use nix::libc;
 use std::ffi::CString;
 
@@ -105,7 +105,7 @@ pub(crate) fn setup_backend(ctx: u32, test_setup: &TestSetup) -> anyhow::Result<
             -1,
             mac.as_mut_ptr(),
             COMPAT_NET_FEATURES,
-            NET_FLAG_VFKIT,
+            NET_FLAG_VFKIT | NET_FLAG_DHCP_CLIENT,
         ))?;
     }
     Ok(())

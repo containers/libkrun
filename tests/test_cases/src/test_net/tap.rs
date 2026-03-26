@@ -1,7 +1,7 @@
 //! TAP backend for virtio-net test
 
 use crate::{krun_call, ShouldRun, TestSetup};
-use krun_sys::COMPAT_NET_FEATURES;
+use krun_sys::{COMPAT_NET_FEATURES, NET_FLAG_DHCP_CLIENT};
 use nix::libc;
 use nix::sys::socket::{socket, AddressFamily, SockFlag, SockType};
 use std::ffi::CString;
@@ -210,7 +210,7 @@ pub(crate) fn setup_backend(ctx: u32, test_setup: &TestSetup) -> anyhow::Result<
             tap_name_c.as_ptr(),
             mac.as_mut_ptr(),
             COMPAT_NET_FEATURES,
-            0,
+            NET_FLAG_DHCP_CLIENT,
         ))?;
     }
     Ok(())
