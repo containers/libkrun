@@ -1,7 +1,7 @@
 //! Passt backend for virtio-net test
 
 use crate::{krun_call, ShouldRun, TestSetup};
-use krun_sys::COMPAT_NET_FEATURES;
+use krun_sys::{COMPAT_NET_FEATURES, NET_FLAG_DHCP_CLIENT};
 use nix::libc;
 use std::ffi::CString;
 use std::os::unix::io::RawFd;
@@ -98,7 +98,7 @@ pub(crate) fn setup_backend(ctx: u32, _test_setup: &TestSetup) -> anyhow::Result
             passt_fd,
             mac.as_mut_ptr(),
             COMPAT_NET_FEATURES,
-            0,
+            NET_FLAG_DHCP_CLIENT,
         ))?;
     }
     Ok(())

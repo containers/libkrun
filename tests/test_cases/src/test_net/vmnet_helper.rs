@@ -3,6 +3,7 @@
 use crate::{krun_call, ShouldRun, TestSetup};
 use krun_sys::{
     NET_FEATURE_CSUM, NET_FEATURE_GUEST_CSUM, NET_FEATURE_GUEST_TSO4, NET_FEATURE_HOST_TSO4,
+    NET_FLAG_DHCP_CLIENT,
 };
 use nix::libc;
 use std::ffi::CString;
@@ -178,7 +179,7 @@ pub(crate) fn setup_backend(ctx: u32, test_setup: &TestSetup) -> anyhow::Result<
                 | NET_FEATURE_GUEST_CSUM
                 | NET_FEATURE_GUEST_TSO4
                 | NET_FEATURE_HOST_TSO4,
-            0, // no VFKIT flag
+            NET_FLAG_DHCP_CLIENT,
         ))?;
     }
     Ok(())
