@@ -125,6 +125,8 @@ fn run_single_test(
 
     let log_path = test_dir.join("log.txt");
     let log_file = File::create(&log_path).context("Failed to create log file")?;
+    let stdout_path = test_dir.join("stdout.txt");
+    let stdout_file = File::create(&stdout_path).context("Failed to create stdout file")?;
 
     // Use `buildah unshare` for full subuid/subgid mapping + `unshare --net`
     // for network namespace isolation.
@@ -153,7 +155,7 @@ fn run_single_test(
                 "echo '=== namespace debug ===' >&2; id >&2; cat /proc/self/uid_map >&2; cat /proc/self/gid_map >&2; ip link >&2; ifconfig lo 127.0.0.1; echo '=== ifconfig exit: '$?' ===' >&2; ip addr >&2; echo '=== end debug ===' >&2; exec {exe} start-vm --test-case {name} --tmp-dir {dir}"
             ))
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
+            .stdout(stdout_file)
             .stderr(log_file)
             .spawn()
             .context("Failed to start subprocess for test")?
@@ -169,7 +171,7 @@ fn run_single_test(
             .arg("--tmp-dir")
             .arg(&test_dir)
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
+            .stdout(stdout_file)
             .stderr(log_file)
             .spawn()
             .context("Failed to start subprocess for test")?
@@ -187,14 +189,7 @@ fn run_single_test(
         if std::time::Instant::now() >= deadline {
             eprintln!("TIMEOUT ({}s)", timeout.as_secs());
             let _ = child.kill();
-            if let Ok(output) = child.wait_with_output() {
-                if !output.stdout.is_empty() {
-                    let stdout_path = test_dir.join("stdout.txt");
-                    let _ = fs::write(&stdout_path, &output.stdout);
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    eprintln!("--- stdout from timed-out test ---\n{stdout}---");
-                }
-            }
+            let _ = child.wait();
             kill_cleanup_pids(&test_dir);
             return Ok(TestResult {
                 name: test_case.name.to_string(),
@@ -205,13 +200,15 @@ fn run_single_test(
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
+    let stdout = fs::read(&stdout_path).unwrap_or_default();
+
     let test_name = test_case.name.to_string();
     let outcome = match catch_unwind(|| {
         let test = get_test(&test_name).unwrap();
-        test.check(child)
+        test.check(stdout)
     }) {
         Ok(outcome) => outcome,
-        Err(_) => TestOutcome::Fail,
+        Err(_) => TestOutcome::Fail("test.check() panicked".to_string()),
     };
 
     // Kill any background processes registered for cleanup (e.g. gvproxy).
@@ -226,8 +223,9 @@ fn run_single_test(
                 let _ = fs::remove_dir_all(&test_dir);
             }
         }
-        TestOutcome::Fail => {
-            eprintln!("FAIL");
+        TestOutcome::Fail(reason) => {
+            eprintln!("FAIL:");
+            eprintln!("{reason}");
         }
         TestOutcome::Skip(reason) => {
             eprintln!("SKIP ({})", reason);
@@ -290,7 +288,7 @@ fn write_github_summary(
     for result in results {
         let (icon, status_text) = match &result.outcome {
             TestOutcome::Pass => ("✅", String::new()),
-            TestOutcome::Fail => ("❌", String::new()),
+            TestOutcome::Fail(_) => ("❌", String::new()),
             TestOutcome::Skip(reason) => ("⏭️", format!(" - {}", reason)),
             TestOutcome::Timeout => ("⏳", String::from(" - Timeout")),
             TestOutcome::Report(_) => ("📊", String::new()),
@@ -373,7 +371,7 @@ fn run_tests(
         .count();
     let num_fail = results
         .iter()
-        .filter(|r| matches!(r.outcome, TestOutcome::Fail))
+        .filter(|r| matches!(r.outcome, TestOutcome::Fail(_)))
         .count();
     let num_skip = results
         .iter()
