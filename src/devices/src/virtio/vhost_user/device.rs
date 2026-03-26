@@ -13,6 +13,7 @@ use std::thread;
 
 use log::{debug, error};
 use utils::eventfd::EventFd;
+use vhost::vhost_user::message::VhostUserConfigFlags;
 use vhost::vhost_user::{Frontend, VhostUserFrontend, VhostUserProtocolFeatures};
 use vhost::{VhostBackend, VhostUserMemoryRegionInfo, VringConfigData};
 use vm_memory::{Address, GuestMemory, GuestMemoryMmap, GuestMemoryRegion};
@@ -137,14 +138,6 @@ impl VhostUserDevice {
         } else {
             num_queues as usize
         };
-
-        debug!(
-            "{}: using {} queues (requested: {}, sizes provided: {})",
-            device_name,
-            actual_num_queues,
-            num_queues,
-            queue_sizes.len()
-        );
 
         let default_size = queue_sizes.last().copied().unwrap_or(256);
         let queue_configs: Vec<_> = (0..actual_num_queues)
@@ -390,10 +383,44 @@ impl VirtioDevice for VhostUserDevice {
     }
 
     fn read_config(&self, offset: u64, data: &mut [u8]) {
-        // For now, configuration space reads are not supported
-        // This can be extended using VHOST_USER_GET_CONFIG
+        // Fetch config from backend on every read (same as QEMU/crosvm)
+        // No caching to avoid invalidation issues
+        if self.has_protocol_features {
+            if let Ok(mut frontend) = self.frontend.lock() {
+                let offset_usize = offset as usize;
+                let end = offset_usize + data.len();
+                let mut config_buf = vec![0u8; end];
+
+                match frontend.get_config(
+                    0,
+                    end as u32,
+                    VhostUserConfigFlags::empty(),
+                    &mut config_buf,
+                ) {
+                    Ok((_, returned_buf)) => {
+                        if end <= returned_buf.len() {
+                            data.copy_from_slice(&returned_buf[offset_usize..end]);
+                            debug!(
+                                "{}: read {} bytes from config at offset {}",
+                                self.device_name,
+                                data.len(),
+                                offset
+                            );
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        debug!(
+                            "{}: failed to read config from backend: {:?}",
+                            self.device_name, e
+                        );
+                    }
+                }
+            }
+        }
+
         debug!(
-            "{}: config read at offset {} (not yet implemented)",
+            "{}: config read at offset {} returning zeros (backend not available)",
             self.device_name, offset
         );
         data.fill(0);
