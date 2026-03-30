@@ -81,7 +81,11 @@ pub fn output_to_raw_fd_dup(fd: RawFd) -> Result<Box<dyn PortOutput + Send>, nix
 }
 
 pub fn output_to_log_as_err() -> Box<dyn PortOutput + Send> {
-    Box::new(PortOutputLog::new())
+    Box::new(PortOutputLog::new(Level::Error))
+}
+
+pub fn output_to_log(level: Level) -> Box<dyn PortOutput + Send> {
+    Box::new(PortOutputLog::new(level))
 }
 
 struct PortInputFd(OwnedFd);
@@ -183,21 +187,24 @@ fn make_non_blocking(as_rw_fd: &impl AsRawFd) -> Result<(), nix::Error> {
 
 // Utility to relay log from the VM (the kernel boot log and messages from init)
 // to the rust log
-#[derive(Default)]
 pub struct PortOutputLog {
     buf: Vec<u8>,
+    level: Level,
 }
 
 impl PortOutputLog {
     const FORCE_FLUSH_TRESHOLD: usize = 512;
     const LOG_TARGET: &'static str = "init_or_kernel";
 
-    fn new() -> Self {
-        Self::default()
+    fn new(level: Level) -> Self {
+        Self {
+            buf: Vec::new(),
+            level,
+        }
     }
 
     fn force_flush(&mut self) {
-        log::log!(target: PortOutputLog::LOG_TARGET, Level::Error, "[missing newline]{}", String::from_utf8_lossy(&self.buf));
+        log::log!(target: PortOutputLog::LOG_TARGET, self.level, "[missing newline]{}", String::from_utf8_lossy(&self.buf));
         self.buf.clear();
     }
 }
@@ -209,7 +216,7 @@ impl PortOutput for PortOutputLog {
         let mut start = 0;
         for (i, ch) in self.buf.iter().cloned().enumerate() {
             if ch == b'\n' {
-                log::log!(target: PortOutputLog::LOG_TARGET, Level::Error, "{}", String::from_utf8_lossy(&self.buf[start..i]));
+                log::log!(target: PortOutputLog::LOG_TARGET, self.level, "{}", String::from_utf8_lossy(&self.buf[start..i]));
                 start = i + 1;
             }
         }
