@@ -323,6 +323,26 @@ int32_t krun_add_virtiofs2(uint32_t ctx_id,
                            const char *c_path,
                            uint64_t shm_size);
 
+/**
+ * Adds an independent virtio-fs device pointing to a host's directory with a tag. This
+ * variant allows specifying the size of the DAX window and a read-only flag.
+ *
+ * Arguments:
+ *  "ctx_id"         - the configuration context ID.
+ *  "c_tag"          - tag to identify the filesystem in the guest.
+ *  "c_path"         - full path to the directory in the host to be exposed to the guest.
+ *  "shm_size"       - size of the DAX SHM window in bytes.
+ *  "read_only"      - if true, the filesystem will be exposed as read-only to the guest.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_virtiofs3(uint32_t ctx_id,
+                           const char *c_tag,
+                           const char *c_path,
+                           uint64_t shm_size,
+                           bool read_only);
+
 /* Send the VFKIT magic after establishing the connection,
    as required by gvproxy in vfkit mode. */
 #define NET_FLAG_VFKIT 1 << 0

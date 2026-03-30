@@ -13,7 +13,8 @@ use virtio_bindings::{virtio_config::VIRTIO_F_VERSION_1, virtio_ring::VIRTIO_RIN
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::super::{
-    ActivateResult, DeviceQueue, DeviceState, FsError, QueueConfig, VirtioDevice, VirtioShmRegion,
+    ActivateError, ActivateResult, DeviceQueue, DeviceState, FsError, QueueConfig, VirtioDevice,
+    VirtioShmRegion,
 };
 use super::passthrough;
 use super::worker::FsWorker;
@@ -46,6 +47,7 @@ pub struct Fs {
     config: VirtioFsConfig,
     shm_region: Option<VirtioShmRegion>,
     passthrough_cfg: passthrough::Config,
+    read_only: bool,
     worker_thread: Option<JoinHandle<()>>,
     worker_stopfd: EventFd,
     exit_code: Arc<AtomicI32>,
@@ -59,6 +61,7 @@ impl Fs {
         shared_dir: String,
         exit_code: Arc<AtomicI32>,
         allow_root_dir_delete: bool,
+        read_only: bool,
     ) -> super::Result<Fs> {
         let avail_features = (1u64 << VIRTIO_F_VERSION_1) | (1u64 << VIRTIO_RING_F_EVENT_IDX);
 
@@ -80,6 +83,7 @@ impl Fs {
             config,
             shm_region: None,
             passthrough_cfg: fs_cfg,
+            read_only,
             worker_thread: None,
             worker_stopfd: EventFd::new(EFD_NONBLOCK).map_err(FsError::EventFd)?,
             exit_code,
@@ -183,11 +187,16 @@ impl VirtioDevice for Fs {
             mem.clone(),
             self.shm_region.clone(),
             self.passthrough_cfg.clone(),
+            self.read_only,
             self.worker_stopfd.try_clone().unwrap(),
             self.exit_code.clone(),
             #[cfg(target_os = "macos")]
             self.map_sender.clone(),
-        );
+        )
+        .map_err(|e| {
+            error!("virtio_fs: failed to create worker: {}", e);
+            ActivateError::BadActivate
+        })?;
         self.worker_thread = Some(worker.run());
 
         self.device_state = DeviceState::Activated(mem, interrupt);
