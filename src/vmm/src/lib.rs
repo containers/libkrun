@@ -15,7 +15,7 @@ extern crate log;
 
 /// Handles setup and initialization a `Vmm` object.
 pub mod builder;
-pub(crate) mod device_manager;
+pub mod device_manager;
 /// Resource store for configured microVM resources.
 pub mod resources;
 /// Signal handling utilities.
@@ -25,16 +25,16 @@ pub mod signal_handler;
 pub mod vmm_config;
 
 #[cfg(target_os = "linux")]
-mod linux;
+pub mod linux;
 #[cfg(target_os = "linux")]
-use crate::linux::vstate;
+pub use crate::linux::vstate;
 #[cfg(target_os = "macos")]
-mod macos;
-mod terminal;
+pub mod macos;
+pub mod terminal;
 pub mod worker;
 
 #[cfg(target_os = "macos")]
-use macos::vstate;
+pub use macos::vstate;
 
 use std::fmt::{Display, Formatter};
 use std::io;
@@ -193,22 +193,17 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Contains the state and associated methods required for the Firecracker VMM.
 pub struct Vmm {
-    // Guest VM core resources.
-    guest_memory: GuestMemoryMmap,
-    arch_memory_info: ArchMemoryInfo,
-
-    kernel_cmdline: KernelCmdline,
-
-    vcpus_handles: Vec<VcpuHandle>,
-    exit_evt: EventFd,
-    vm: Vm,
-    exit_observers: Vec<Arc<Mutex<dyn VmmExitObserver>>>,
-    exit_code: Arc<AtomicI32>,
-
-    // Guest VM devices.
-    mmio_device_manager: MMIODeviceManager,
+    pub guest_memory: GuestMemoryMmap,
+    pub arch_memory_info: ArchMemoryInfo,
+    pub kernel_cmdline: KernelCmdline,
+    pub vcpus_handles: Vec<VcpuHandle>,
+    pub exit_evt: EventFd,
+    pub vm: Vm,
+    pub exit_observers: Vec<Arc<Mutex<dyn VmmExitObserver>>>,
+    pub exit_code: Arc<AtomicI32>,
+    pub mmio_device_manager: MMIODeviceManager,
     #[cfg(target_arch = "x86_64")]
-    pio_device_manager: PortIODeviceManager,
+    pub pio_device_manager: PortIODeviceManager,
 }
 
 impl Vmm {
@@ -368,11 +363,9 @@ impl Vmm {
                 .on_vmm_exit();
         }
 
-        // Exit from Firecracker using the provided exit code. Safe because we're terminating
-        // the process anyway.
-        unsafe {
-            libc::_exit(exit_code);
-        }
+        // Store exit code so callers can retrieve it, then terminate.
+        self.exit_code.store(exit_code, Ordering::SeqCst);
+        std::process::exit(exit_code);
     }
 
     /// Returns a reference to the inner KVM Vm object.
