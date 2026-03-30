@@ -34,6 +34,13 @@ pub(crate) fn process_tx(
                 }
                 Err(e) => {
                     log::error!("Failed to write output: {e}");
+                    if matches!(e, GuestMemoryError::IOError(e) if e.kind() == io::ErrorKind::BrokenPipe)
+                    {
+                        // Errors could conceivably be spurious. Broken
+                        // pipe is not and there is no point in attempting
+                        // to write more.
+                        return;
+                    }
                 }
             }
         }
@@ -61,10 +68,10 @@ fn pop_head_blocking<'mem>(
             Some(descriptor) => break Some(descriptor),
             None => {
                 interrupt.signal_used_queue();
-                thread::park();
                 if stop.load(Ordering::Acquire) {
                     break None;
                 }
+                thread::park();
                 log::trace!("tx unparked, queue len {}", queue.len(mem))
             }
         }

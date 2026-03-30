@@ -102,9 +102,10 @@ impl BrandString {
 
     /// Creates a brand string, initialized from the CPUID leaves 0x80000002 through 0x80000004
     /// of the host CPU.
+    #[allow(unused_unsafe)]
     pub fn from_host_cpuid() -> Result<Self, Error> {
         let mut this = Self::new();
-        let mut cpuid_regs = host_cpuid(0x8000_0000);
+        let mut cpuid_regs = unsafe { host_cpuid(0x8000_0000) };
 
         if cpuid_regs.eax < 0x8000_0004 {
             // Brand string not supported by the host CPU
@@ -112,7 +113,7 @@ impl BrandString {
         }
 
         for leaf in 0x8000_0002..=0x8000_0004 {
-            cpuid_regs = host_cpuid(leaf);
+            cpuid_regs = unsafe { host_cpuid(leaf) };
             this.set_reg_for_leaf(leaf, Reg::EAX, cpuid_regs.eax);
             this.set_reg_for_leaf(leaf, Reg::EBX, cpuid_regs.ebx);
             this.set_reg_for_leaf(leaf, Reg::ECX, cpuid_regs.ecx);

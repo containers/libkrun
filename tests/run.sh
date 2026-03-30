@@ -6,15 +6,59 @@
 
 set -e
 
+OS=$(uname -s)
+ # macOS uses the string "arm64" but Rust uses "aarch64"
+ARCH=$(uname -m | sed 's/^arm64$/aarch64/')
+
+# Set the OS-specific library path from LIBKRUN_LIB_PATH.
+# On macOS, SIP strips DYLD_LIBRARY_PATH when executing scripts via a shebang,
+# so the Makefile passes it through this alternative variable instead.
+# We do the same on Linux for consistency.
+if [ -n "${LIBKRUN_LIB_PATH}" ]; then
+	if [ "$OS" = "Darwin" ]; then
+		export DYLD_LIBRARY_PATH="${LIBKRUN_LIB_PATH}:${DYLD_LIBRARY_PATH}"
+	else
+		export LD_LIBRARY_PATH="${LIBKRUN_LIB_PATH}:${LD_LIBRARY_PATH}"
+	fi
+fi 
+
+GUEST_TARGET="${ARCH}-unknown-linux-musl"
+
 # Run the unit tests first (this tests the testing framework itself not libkrun)
 cargo test -p test_cases --features guest
 
-GUEST_TARGET_ARCH="$(uname -m)-unknown-linux-musl"
+# On macOS, we need to cross-compile for Linux musl
+if [ "$OS" = "Darwin" ]; then
+	SYSROOT="../linux-sysroot"
+	if [ ! -d "$SYSROOT" ]; then
+		echo "ERROR: Linux sysroot not found at $SYSROOT"
+		echo "Run 'make' in the libkrun root directory first to create it."
+		exit 1
+	fi
 
-cargo build --target=$GUEST_TARGET_ARCH -p guest-agent
+	export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="clang"
+	export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C link-arg=-target -C link-arg=aarch64-linux-gnu -C link-arg=-fuse-ld=lld -C link-arg=--sysroot=$SYSROOT -C link-arg=-static"
+	echo "Cross-compiling guest-agent for $GUEST_TARGET"
+fi
+
+cargo build --target=$GUEST_TARGET -p guest-agent
 cargo build -p runner
 
-export KRUN_TEST_GUEST_AGENT_PATH="target/$GUEST_TARGET_ARCH/debug/guest-agent"
+# On macOS, the runner needs entitlements to use Hypervisor.framework
+if [ "$OS" = "Darwin" ]; then
+	codesign --entitlements /dev/stdin --force -s - target/debug/runner <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.hypervisor</key>
+    <true/>
+</dict>
+</plist>
+EOF
+fi
+
+export KRUN_TEST_GUEST_AGENT_PATH="target/$GUEST_TARGET/debug/guest-agent"
 
 # Build runner args: pass through all arguments
 RUNNER_ARGS="$*"
@@ -24,7 +68,7 @@ if [ -n "${KRUN_TEST_BASE_DIR}" ]; then
 	RUNNER_ARGS="${RUNNER_ARGS} --base-dir ${KRUN_TEST_BASE_DIR}"
 fi
 
-if [ -z "${KRUN_NO_UNSHARE}" ] && which unshare 2>&1 >/dev/null; then
+if [ "$OS" != "Darwin" ] && [ -z "${KRUN_NO_UNSHARE}" ] && which unshare 2>&1 >/dev/null; then
 	unshare --user --map-root-user --net -- /bin/sh -c "ifconfig lo 127.0.0.1 && exec target/debug/runner ${RUNNER_ARGS}"
 else
 	echo "WARNING: Running tests without a network namespace."

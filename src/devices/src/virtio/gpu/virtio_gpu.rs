@@ -203,10 +203,13 @@ impl VirtioGpu {
                     i += 1;
                 }
             }
-            // Update the last completed fence for this context
-            fence_state
-                .completed_fences
-                .insert(ring, completed_fence.fence_id);
+            // Update the last completed fence for this context.
+            // Use max() to avoid a race where an out-of-order completion
+            // (e.g., immediate-retire for fence N+1 followed by timeline
+            // signal for fence N) would overwrite a higher fence_id with
+            // a lower one, causing fence N+1 to be stuck forever.
+            let entry = fence_state.completed_fences.entry(ring).or_insert(0);
+            *entry = (*entry).max(completed_fence.fence_id);
         })
     }
 

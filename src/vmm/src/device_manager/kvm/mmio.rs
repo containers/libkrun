@@ -199,7 +199,11 @@ impl MMIODeviceManager {
         vm.register_irqfd(serial.lock().unwrap().interrupt_evt(), self.irq)
             .map_err(Error::RegisterIrqFd)?;
 
-        serial.lock().unwrap().set_intc(intc);
+        {
+            let mut serial = serial.lock().unwrap();
+            serial.set_intc(intc);
+            serial.set_irq_line(self.irq);
+        }
 
         self.bus
             .insert(serial, self.mmio_base, MMIO_LEN)

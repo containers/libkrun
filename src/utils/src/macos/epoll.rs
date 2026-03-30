@@ -13,11 +13,23 @@ use bitflags::bitflags;
 use log::debug;
 
 fn event_name(filter: i16, flags: u16) -> &'static str {
-    match (filter, flags & libc::EV_EOF != 0) {
-        (libc::EVFILT_READ, false) => "READ",
-        (libc::EVFILT_READ, true) => "READ+EOF",
-        (libc::EVFILT_WRITE, false) => "WRITE",
-        (libc::EVFILT_WRITE, true) => "WRITE+EOF",
+    let eof = flags & libc::EV_EOF != 0;
+    match filter {
+        libc::EVFILT_READ => {
+            if eof {
+                "READ+EOF"
+            } else {
+                "READ"
+            }
+        }
+        libc::EVFILT_WRITE => {
+            if eof {
+                "WRITE+EOF"
+            } else {
+                "WRITE"
+            }
+        }
+        libc::EVFILT_TIMER => "TIMER",
         _ => "UNKNOWN",
     }
 }
@@ -144,6 +156,11 @@ impl Epoll {
         }
     }
 
+    /// Register, modify, or remove interest in events for a file descriptor.
+    ///
+    /// Note: `READ_HANG_UP` (`EPOLLRDHUP`) is ignored. kqueue always
+    /// reports `EV_EOF` without opt-in, so `wait()` reports
+    /// `READ_HANG_UP` on read EOF regardless of registration.
     pub fn ctl(
         &self,
         operation: ControlOperation,
@@ -282,15 +299,17 @@ impl Epoll {
         for i in 0..nevents {
             if kevs[i].0.filter == libc::EVFILT_READ {
                 events[i].events = EventSet::IN.bits();
+                if kevs[i].0.flags & libc::EV_EOF != 0 {
+                    events[i].events |= EventSet::READ_HANG_UP.bits();
+                }
             } else if kevs[i].0.filter == libc::EVFILT_WRITE {
                 events[i].events = EventSet::OUT.bits();
-            }
-            if kevs[i].0.flags & libc::EV_EOF != 0 {
-                events[i].events |= if kevs[i].0.flags & libc::EV_CLEAR != 0 {
-                    EventSet::READ_HANG_UP.bits()
-                } else {
-                    EventSet::HANG_UP.bits()
-                };
+                if kevs[i].0.flags & libc::EV_EOF != 0 {
+                    events[i].events |= EventSet::HANG_UP.bits();
+                }
+            } else if kevs[i].0.filter == libc::EVFILT_TIMER {
+                // No epoll equivalent; caller identifies timer by udata.
+                events[i].events = EventSet::empty().bits();
             }
             events[i].u64 = kevs[i].udata();
 
@@ -303,6 +322,21 @@ impl Epoll {
         }
 
         Ok(nevents)
+    }
+
+    /// Register a one-shot timer that fires after `delay_us` microseconds.
+    /// The resulting event will have `data` set to `udata`.
+    pub fn add_oneshot_timer(&self, delay_us: u64, udata: u64) {
+        let kev = libc::kevent {
+            ident: 0,
+            filter: libc::EVFILT_TIMER,
+            flags: libc::EV_ADD | libc::EV_ONESHOT,
+            fflags: libc::NOTE_USECONDS,
+            data: delay_us as isize,
+            udata: udata as *mut libc::c_void,
+        };
+        let ret = unsafe { libc::kevent(self.queue, &kev, 1, ptr::null_mut(), 0, ptr::null()) };
+        assert_eq!(ret, 0);
     }
 }
 

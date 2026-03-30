@@ -58,6 +58,8 @@ jobs:
       
       - name: Clippy (efi+gpu)
         run: cargo clippy --locked --features efi,gpu -- -D warnings
+        env:
+          KRUN_INIT_BINARY_PATH: ${{ github.workspace }}/init/init
 
   code-quality-examples:
     name: ${{ matrix.name }}

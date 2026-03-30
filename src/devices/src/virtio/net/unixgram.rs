@@ -9,11 +9,26 @@ use std::path::PathBuf;
 
 use super::backend::{ConnectError, NetBackend, ReadError, WriteError};
 use super::write_virtio_net_hdr;
+#[cfg(target_os = "macos")]
+use super::{MAX_BUFFER_SIZE, VNET_HDR_LEN};
 
 const VFKIT_MAGIC: [u8; 4] = *b"VFKT";
+const DEFAULT_SOCKET_BUF_SIZE: usize = 7 * 1024 * 1024;
+
+// On macOS, with UNIX datagram sockets the send buffer is not used for queuing;
+// it determines the maximum frame size.
+// https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/uipc_usrreq.c#L953
+#[cfg(target_os = "macos")]
+const SOCKET_SNDBUF: usize = MAX_BUFFER_SIZE - VNET_HDR_LEN;
+
+#[cfg(not(target_os = "macos"))]
+const SOCKET_SNDBUF: usize = DEFAULT_SOCKET_BUF_SIZE;
+
+const SOCKET_RCVBUF: usize = DEFAULT_SOCKET_BUF_SIZE;
 
 pub struct Unixgram {
     fd: OwnedFd,
+    retries: u64,
 }
 
 impl Unixgram {
@@ -47,7 +62,7 @@ impl Unixgram {
             };
         }
 
-        Self { fd }
+        Self { fd, retries: 0 }
     }
 
     /// Create the backend opening a connection to the userspace network proxy.
@@ -77,11 +92,11 @@ impl Unixgram {
                 .map_err(ConnectError::SendingMagic)?;
         }
 
-        if let Err(e) = setsockopt(&fd, sockopt::SndBuf, &(7 * 1024 * 1024)) {
-            log::warn!("Failed to increase SO_SNDBUF (performance may be decreased): {e}");
+        if let Err(e) = setsockopt(&fd, sockopt::SndBuf, &SOCKET_SNDBUF) {
+            log::warn!("Failed to set SO_SNDBUF: {e}");
         }
-        if let Err(e) = setsockopt(&fd, sockopt::RcvBuf, &(7 * 1024 * 1024)) {
-            log::warn!("Failed to increase SO_SNDBUF (performance may be decreased): {e}");
+        if let Err(e) = setsockopt(&fd, sockopt::RcvBuf, &SOCKET_RCVBUF) {
+            log::warn!("Failed to set SO_RCVBUF: {e}");
         }
 
         log::debug!(
@@ -114,13 +129,27 @@ impl NetBackend for Unixgram {
 
     /// Try to write a frame to the proxy.
     fn write_frame(&mut self, hdr_len: usize, buf: &mut [u8]) -> Result<(), WriteError> {
-        let ret = send(self.fd.as_raw_fd(), &buf[hdr_len..], MsgFlags::empty())
-            .map_err(WriteError::Internal)?;
-        debug!(
-            "Written frame size={}, written={}",
-            buf.len() - hdr_len,
-            ret
-        );
+        let ret = match send(self.fd.as_raw_fd(), &buf[hdr_len..], MsgFlags::empty()) {
+            Ok(ret) => ret,
+            // macOS returns ENOBUFS when the kernel socket buffer is full,
+            // rather than blocking or returning EAGAIN on non-blocking sockets.
+            Err(nix::Error::ENOBUFS) => {
+                if self.retries == 0 {
+                    info!("write_frame: ENOBUFS");
+                }
+                self.retries += 1;
+                return Err(WriteError::NothingWritten);
+            }
+            Err(e) => return Err(WriteError::Internal(e)),
+        };
+        if self.retries > 0 {
+            info!(
+                "write_frame: ENOBUFS resolved after {} retries",
+                self.retries
+            );
+            self.retries = 0;
+        }
+        debug!("Written eth frame to proxy: {ret} bytes");
         Ok(())
     }
 
@@ -135,5 +164,10 @@ impl NetBackend for Unixgram {
 
     fn raw_socket_fd(&self) -> RawFd {
         self.fd.as_raw_fd()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn write_retry_delay_us(&self) -> u64 {
+        50
     }
 }

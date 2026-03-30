@@ -37,7 +37,6 @@
 #define KRUN_FOOTER_LEN 12
 #define CMDLINE_SECRET_PATH "/sfs/secrets/coco/cmdline"
 #define CONFIG_FILE_PATH "/.krun_config.json"
-#define MAX_ARGS 32
 #define MAX_PASS_SIZE 512
 #define MAX_TOKENS 16384
 
@@ -623,32 +622,42 @@ static char **config_parse_args(char *data, jsmntok_t *token)
     char *arg, *value;
     char **argv;
     int len;
-    int i, j;
+    int i;
+    const int n_args = token->size;
 
-    argv = malloc(MAX_ARGS * sizeof(char *));
-    j = 0;
+    argv = malloc((n_args + 1) * sizeof(char *));
+    if (!argv) {
+        perror("malloc(config_parse_args)");
+        return NULL;
+    }
 
-    for (i = 0; i < token->size; i++) {
+    for (i = 0; i < n_args; i++) {
         targ = &token[i + 1];
 
         value = data + targ->start;
         len = targ->end - targ->start;
 
         arg = malloc(len + 1);
+        if (!arg) {
+            perror("malloc(config_parse_args arg)");
+            while (--i >= 0)
+                free(argv[i]);
+            free(argv);
+            return NULL;
+        }
         memcpy(arg, value, len);
         arg[len] = '\0';
 
         unescape_string(arg, len);
 
-        argv[j] = arg;
-        j++;
+        argv[i] = arg;
     }
 
-    if (j == 0) {
+    if (i == 0) {
         free(argv);
         argv = NULL;
     } else {
-        argv[j] = NULL;
+        argv[i] = NULL;
     }
 
     return argv;
@@ -692,14 +701,24 @@ char **concat_entrypoint_argv(char **entrypoint, char **config_argv)
 {
     char **argv;
     int i, j;
+    int n_args = 0;
 
-    argv = malloc(MAX_ARGS * sizeof(char *));
+    for (i = 0; entrypoint[i]; i++)
+        n_args++;
+    for (j = 0; config_argv[j]; j++)
+        n_args++;
 
-    for (i = 0; i < MAX_ARGS && entrypoint[i]; i++) {
+    argv = malloc((n_args + 1) * sizeof(char *));
+    if (!argv) {
+        perror("malloc(concat_entrypoint_argv)");
+        return NULL;
+    }
+
+    for (i = 0; entrypoint[i]; i++) {
         argv[i] = entrypoint[i];
     }
 
-    for (j = 0; j < MAX_ARGS && config_argv[j]; i++, j++) {
+    for (j = 0; config_argv[j]; i++, j++) {
         argv[i] = config_argv[j];
     }
 
@@ -714,6 +733,7 @@ static int config_parse_file(char ***argv, char **workdir)
     jsmntok_t *tokens;
     struct stat stat;
     char *data;
+    off_t data_len;
     char *config_file;
     char **config_argv;
     char **entrypoint;
@@ -738,13 +758,14 @@ static int config_parse_file(char ***argv, char **workdir)
         goto cleanup_fd;
     }
 
-    data = malloc(stat.st_size);
+    data_len = stat.st_size;
+    data = malloc(data_len);
     if (!data) {
         perror("Couldn't allocate memory");
         goto cleanup_fd;
     }
 
-    if (read(fd, data, stat.st_size) < 0) {
+    if (read(fd, data, data_len) < 0) {
         perror("Error reading config file");
         goto cleanup_data;
     }
@@ -756,7 +777,7 @@ static int config_parse_file(char ***argv, char **workdir)
     }
 
     jsmn_init(&parser);
-    num_tokens = jsmn_parse(&parser, data, strlen(data), tokens, MAX_TOKENS);
+    num_tokens = jsmn_parse(&parser, data, data_len, tokens, MAX_TOKENS);
     if (num_tokens < 0) {
         printf("Error parsing config file\n");
         goto cleanup_tokens;
