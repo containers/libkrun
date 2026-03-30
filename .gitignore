@@ -11,6 +11,7 @@ __pycache__
 init/init
 init/nitro/init
 examples/chroot_vm
+examples/chroot_vm_c
 examples/launch-tee
 examples/boot_efi
 examples/external_kernel

@@ -1,0 +1,7 @@
+[package]
+name = "libkrun-via-cdylib"
+version = "2.0.0"
+edition = "2021"
+
+[dependencies]
+ffier = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }

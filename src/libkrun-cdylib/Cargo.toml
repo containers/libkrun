@@ -1,0 +1,28 @@
+[package]
+name = "libkrun-cdylib"
+version = "2.0.0"
+edition = "2021"
+
+[lib]
+name = "krun"
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "gen-libkrun-header"
+path = "src/gen_header.rs"
+
+[[bin]]
+name = "gen-libkrun-rust-client"
+path = "src/gen_rust_client.rs"
+
+[dependencies]
+krun = { package = "libkrun", path = "../libkrun" }
+ffier = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }
+ffier-bridge = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }
+ffier-bridge-macros = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }
+ffier-gen-c-header = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }
+ffier-gen-rust-client = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }
+ffier-schema = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }
+serde_json = "1"
+libc = ">=0.2.39"
+log = "0.4"

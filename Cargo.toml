@@ -6,6 +6,8 @@ members = [
     "init/init-blob-cdylib",
     "init/init-blob-via-cdylib",
     "init/init-blob-via-cdylib-weak",
+    "src/libkrun-cdylib",
+    "src/libkrun-via-cdylib",
     "src/input",
     "src/display",
     "src/utils",
@@ -21,6 +23,7 @@ members = [
     "src/aws_nitro",
     "src/rutabaga_gfx",
     "src/whp",
+    "examples/chroot_vm",
 ]
 exclude = ["examples/gtk_display"]
 resolver = "2"
