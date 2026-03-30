@@ -1896,6 +1896,7 @@ fn attach_fs_devices(
                 config.shared_dir.clone(),
                 exit_code.clone(),
                 config.allow_root_dir_delete,
+                config.read_only,
             )
             .unwrap(),
         ));

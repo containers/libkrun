@@ -4,6 +4,7 @@ mod filesystem;
 pub mod fuse;
 #[allow(dead_code)]
 mod multikey;
+mod read_only;
 mod server;
 mod worker;
 
