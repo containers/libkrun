@@ -301,6 +301,10 @@ fn write_github_summary(
             result.name, status_text
         )?;
 
+        if let TestOutcome::Fail(reason) = &result.outcome {
+            writeln!(file, "**Error:**\n```\n{reason}\n```\n---\n")?;
+        }
+
         if let TestOutcome::Report(report) = &result.outcome {
             writeln!(file, "{}", report.gh_markdown())?;
         } else if let Some(log_path) = &result.log_path {
