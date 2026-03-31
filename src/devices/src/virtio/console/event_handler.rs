@@ -112,14 +112,19 @@ impl Subscriber for Console {
     fn process(&mut self, event: &EpollEvent, event_manager: &mut EventManager) {
         let source = event.fd();
 
-        let control_rxq = self.queue_events[CONTROL_RXQ_INDEX].as_raw_fd();
-        let control_txq = self.queue_events[CONTROL_TXQ_INDEX].as_raw_fd();
-        let control_rxq_control = self.control.queue_evt().as_raw_fd();
-
         let activate_evt = self.activate_evt.as_raw_fd();
         let sigwinch_evt = self.sigwinch_evt.as_raw_fd();
 
         if self.is_activated() {
+            // interest_list() registers sigwinch_evt and control.queue_evt() with
+            // epoll at creation time, but queue_events is only populated later in
+            // activate(). If a spurious event arrives before activation, indexing
+            // into the empty queue_events would panic — so these must stay inside
+            // the is_activated() guard.
+            let control_rxq = self.queue_events[CONTROL_RXQ_INDEX].as_raw_fd();
+            let control_txq = self.queue_events[CONTROL_TXQ_INDEX].as_raw_fd();
+            let control_rxq_control = self.control.queue_evt().as_raw_fd();
+
             let mut raise_irq = false;
 
             if source == control_txq {
