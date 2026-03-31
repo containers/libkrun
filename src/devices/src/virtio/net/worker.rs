@@ -284,7 +284,11 @@ impl NetWorker {
                 Err(TxError::Backend(WriteError::NothingWritten)) => true,
                 Err(e) => {
                     log::error!("Failed to process tx: {e:?}");
-                    false
+                    // Break immediately on non-recoverable errors to avoid a
+                    // busy-loop when the guest keeps supplying TX buffers.
+                    // The worker will be re-entered on the next TX queue kick
+                    // or backend-writable event.
+                    break;
                 }
                 _ => false,
             };
