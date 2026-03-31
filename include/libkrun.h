@@ -752,6 +752,7 @@ int32_t krun_set_snd_device(uint32_t ctx_id, bool enable);
  * These correspond to virtio device type IDs for devices.
  */
 #define KRUN_VIRTIO_DEVICE_RNG 4
+#define KRUN_VIRTIO_DEVICE_VSOCK 19
 #define KRUN_VIRTIO_DEVICE_SND 25
 #define KRUN_VIRTIO_DEVICE_CAN 36
 
@@ -768,6 +769,13 @@ int32_t krun_set_snd_device(uint32_t ctx_id, bool enable);
  */
 #define KRUN_VHOST_USER_SND_NUM_QUEUES 4
 #define KRUN_VHOST_USER_SND_QUEUE_SIZES ((uint16_t[]){64, 64, 64, 64})
+
+/**
+ * Vhost-user vsock device default queue configuration.
+ * Vsock device uses 3 queues: RX (idx 0), TX (idx 1), event (idx 2).
+ */
+#define KRUN_VHOST_USER_VSOCK_NUM_QUEUES 3
+#define KRUN_VHOST_USER_VSOCK_QUEUE_SIZES ((uint16_t[]){128, 128, 128})
 
 /**
  * Add a vhost-user device to the VM.
