@@ -10,8 +10,22 @@ use test_tsi_tcp_guest_connect::TestTsiTcpGuestConnect;
 mod test_tsi_tcp_guest_listen;
 use test_tsi_tcp_guest_listen::TestTsiTcpGuestListen;
 
+pub(crate) mod test_net;
+use test_net::TestNet;
+
+mod test_net_perf;
+use test_net_perf::TestNetPerf;
+
 mod test_multiport_console;
 use test_multiport_console::TestMultiportConsole;
+
+pub enum TestOutcome {
+    Pass,
+    Fail(String),
+    Timeout,
+    Skip(&'static str),
+    Report(Box<dyn ReportImpl>),
+}
 
 pub enum ShouldRun {
     Yes,
@@ -55,18 +69,74 @@ pub fn test_cases() -> Vec<TestCase> {
             "tsi-tcp-guest-listen",
             Box::new(TestTsiTcpGuestListen::new()),
         ),
+        TestCase::new("net-passt", Box::new(TestNet::new_passt())),
+        TestCase::new("net-tap", Box::new(TestNet::new_tap())),
+        TestCase::new("net-gvproxy", Box::new(TestNet::new_gvproxy())),
+        TestCase::new("net-vmnet-helper", Box::new(TestNet::new_vmnet_helper())),
         TestCase::new("multiport-console", Box::new(TestMultiportConsole)),
+        TestCase::new("perf-net-passt-tx", Box::new(TestNetPerf::new_passt_tx())),
+        TestCase::new("perf-net-passt-rx", Box::new(TestNetPerf::new_passt_rx())),
+        TestCase::new("perf-net-tap-tx", Box::new(TestNetPerf::new_tap_tx())),
+        TestCase::new("perf-net-tap-rx", Box::new(TestNetPerf::new_tap_rx())),
+        TestCase::new(
+            "perf-net-gvproxy-tx",
+            Box::new(TestNetPerf::new_gvproxy_tx()),
+        ),
+        TestCase::new(
+            "perf-net-gvproxy-rx",
+            Box::new(TestNetPerf::new_gvproxy_rx()),
+        ),
+        TestCase::new(
+            "perf-net-vmnet-helper-tx",
+            Box::new(TestNetPerf::new_vmnet_helper_tx()),
+        ),
+        TestCase::new(
+            "perf-net-vmnet-helper-rx",
+            Box::new(TestNetPerf::new_vmnet_helper_rx()),
+        ),
     ]
 }
 
 ////////////////////
 // Implementation details:
 //////////////////
+
+pub trait ReportImpl {
+    fn fmt_text(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+    fn fmt_gh_markdown(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+}
+
+pub trait Report: ReportImpl {
+    fn text(&self) -> ReportText<'_, Self> {
+        ReportText(self)
+    }
+
+    fn gh_markdown(&self) -> ReportGhMarkdown<'_, Self> {
+        ReportGhMarkdown(self)
+    }
+}
+
+impl<T: ReportImpl + ?Sized> Report for T {}
+
+pub struct ReportText<'a, T: ReportImpl + ?Sized>(pub &'a T);
+
+impl<T: ReportImpl + ?Sized> std::fmt::Display for ReportText<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt_text(f)
+    }
+}
+
+pub struct ReportGhMarkdown<'a, T: ReportImpl + ?Sized>(pub &'a T);
+
+impl<T: ReportImpl + ?Sized> std::fmt::Display for ReportGhMarkdown<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt_gh_markdown(f)
+    }
+}
+
 use macros::{guest, host};
 #[host]
 use std::path::PathBuf;
-#[host]
-use std::process::Child;
 
 #[cfg(all(feature = "guest", feature = "host"))]
 compile_error!("Cannot enable both guest and host in the same binary!");
@@ -76,6 +146,9 @@ mod common;
 
 #[cfg(feature = "host")]
 mod krun;
+
+#[cfg(feature = "host")]
+pub mod rootfs;
 mod tcp_tester;
 
 #[host]
@@ -87,19 +160,54 @@ pub struct TestSetup {
 }
 
 #[host]
+impl TestSetup {
+    /// Register a PID to be killed after the test finishes.
+    ///
+    /// The runner will SIGKILL these PIDs after check() returns, even if the
+    /// test crashed. Use this for background processes (e.g. gvproxy) that
+    /// outlive the VM.
+    pub fn register_cleanup_pid(&self, pid: u32) {
+        use std::io::Write;
+        let path = self.tmp_dir.join("cleanup.pids");
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("Failed to open cleanup.pids");
+        writeln!(file, "{}", pid).expect("Failed to write cleanup PID");
+    }
+}
+
+#[host]
 pub trait Test {
     /// Start the VM
     fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()>;
 
     /// Checks the output of the (host) process which started the VM
-    fn check(self: Box<Self>, child: Child) {
-        let output = child.wait_with_output().unwrap();
-        assert_eq!(String::from_utf8(output.stdout).unwrap(), "OK\n");
+    fn check(self: Box<Self>, stdout: Vec<u8>) -> TestOutcome {
+        let output = String::from_utf8(stdout).unwrap();
+        if output == "OK\n" {
+            TestOutcome::Pass
+        } else {
+            TestOutcome::Fail(format!("expected exactly {:?}, got {:?}", "OK\n", output))
+        }
     }
 
     /// Check if this test should run on this platform.
     fn should_run(&self) -> ShouldRun {
         ShouldRun::Yes
+    }
+
+    /// Return Containerfile content if this test needs a custom rootfs image.
+    /// The runner will build the image via podman and extract it before launching the VM.
+    /// If podman is unavailable, the test is skipped.
+    fn rootfs_image(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Per-test timeout in seconds. The runner kills the test if it exceeds this.
+    fn timeout_secs(&self) -> u64 {
+        15
     }
 }
 
@@ -125,6 +233,16 @@ impl TestCase {
     #[host]
     pub fn should_run(&self) -> ShouldRun {
         self.test.should_run()
+    }
+
+    #[host]
+    pub fn rootfs_image(&self) -> Option<&'static str> {
+        self.test.rootfs_image()
+    }
+
+    #[host]
+    pub fn timeout_secs(&self) -> u64 {
+        self.test.timeout_secs()
     }
 
     #[allow(dead_code)]
