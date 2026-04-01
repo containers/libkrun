@@ -15,6 +15,8 @@ use std::io::{self, IsTerminal, Read};
 use std::os::fd::AsRawFd;
 use std::os::fd::{BorrowedFd, FromRawFd};
 use std::path::PathBuf;
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
 
@@ -949,6 +951,8 @@ pub fn build_microvm(
 
     // We use this atomic to record the exit code set by init/init.c in the VM.
     let exit_code = Arc::new(AtomicI32::new(i32::MAX));
+    #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+    let exit_request = Arc::new(AtomicBool::new(false));
 
     let mut vmm = Vmm {
         guest_memory,
@@ -1031,6 +1035,13 @@ pub fn build_microvm(
     }
 
     #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+    let fs_exit_evt = vmm
+        .exit_evt
+        .try_clone()
+        .map_err(Error::EventFd)
+        .map_err(StartMicrovmError::Internal)?;
+
+    #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
     attach_fs_devices(
         &mut vmm,
         &vm_resources.fs,
@@ -1039,6 +1050,8 @@ pub fn build_microvm(
         export_table,
         intc.clone(),
         exit_code,
+        exit_request,
+        fs_exit_evt,
         #[cfg(target_os = "macos")]
         _sender,
     )?;
@@ -1873,6 +1886,7 @@ fn attach_mmio_device(
 }
 
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+#[allow(clippy::too_many_arguments)]
 fn attach_fs_devices(
     vmm: &mut Vmm,
     fs_devs: &[FsDeviceConfig],
@@ -1880,6 +1894,8 @@ fn attach_fs_devices(
     #[cfg(not(feature = "tee"))] export_table: Option<ExportTable>,
     intc: IrqChip,
     exit_code: Arc<AtomicI32>,
+    exit_request: Arc<AtomicBool>,
+    exit_evt: EventFd,
     #[cfg(target_os = "macos")] map_sender: Sender<WorkerMessage>,
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
@@ -1890,7 +1906,12 @@ fn attach_fs_devices(
                 config.fs_id.clone(),
                 config.shared_dir.clone(),
                 exit_code.clone(),
+                exit_request.clone(),
                 config.allow_root_dir_delete,
+                exit_evt
+                    .try_clone()
+                    .map_err(Error::EventFd)
+                    .map_err(Internal)?,
             )
             .unwrap(),
         ));

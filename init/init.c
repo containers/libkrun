@@ -14,6 +14,7 @@
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
+#include <sys/reboot.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -32,6 +33,7 @@
 
 #define KRUN_EXIT_CODE_IOCTL 0x7602
 #define KRUN_REMOVE_ROOT_DIR_IOCTL 0x7603
+#define KRUN_EXIT_VM_IOCTL 0x7604
 
 #define KRUN_MAGIC "KRUN"
 #define KRUN_FOOTER_LEN 12
@@ -1003,6 +1005,41 @@ void set_exit_code(int code)
     close(fd);
 }
 
+static void request_vm_exit(void)
+{
+    int fd;
+    int ret;
+    int virtiofs_check;
+
+    virtiofs_check = is_virtiofs("/");
+    if (virtiofs_check < 0) {
+        printf("Warning: Could not determine filesystem type for root\n");
+    }
+
+    if (virtiofs_check == 0) {
+        return;
+    }
+
+    fd = open("/", O_RDONLY);
+    if (fd < 0) {
+        perror("Couldn't open root filesystem to request VM exit");
+        return;
+    }
+
+    ret = ioctl(fd, KRUN_EXIT_VM_IOCTL, 0);
+    if (ret < 0) {
+        perror("Error using the ioctl to request VM exit");
+    }
+
+    close(fd);
+}
+
+static void shutdown_vm(void)
+{
+    sync();
+    request_vm_exit();
+}
+
 int try_mount(const char *source, const char *target, const char *fstype,
               unsigned long mountflags, const void *data)
 {
@@ -1241,13 +1278,12 @@ int main(int argc, char **argv)
             // Not the first child, ignore it.
         };
 
-        // The workload's entrypoint has exited, record its exit code and exit
-        // ourselves.
         if (WIFEXITED(status)) {
             set_exit_code(WEXITSTATUS(status));
         } else if (WIFSIGNALED(status)) {
             set_exit_code(WTERMSIG(status) + 128);
         }
+        shutdown_vm();
     }
 
     return 0;
