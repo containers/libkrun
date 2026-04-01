@@ -55,6 +55,11 @@ bitflags! {
 #[derive(Clone, Copy)]
 pub struct Kevent(libc::kevent);
 
+// Safety: udata is used as an integer tag (cast from u64), never dereferenced.
+// Needed because libc::kevent contains *mut c_void which is !Send, making
+// Vec<Kevent> !Send which in turn makes Epoll !Send which is unwanted.
+unsafe impl Send for Kevent {}
+
 impl std::fmt::Debug for Kevent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{{ ident: {}, data: {} }}", self.ident(), self.data())
@@ -141,9 +146,19 @@ impl EpollEvent {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Epoll {
     queue: RawFd,
+    kevs: Vec<Kevent>,
+}
+
+impl Clone for Epoll {
+    fn clone(&self) -> Self {
+        Epoll {
+            queue: self.queue,
+            kevs: Vec::new(),
+        }
+    }
 }
 
 impl Epoll {
@@ -152,7 +167,10 @@ impl Epoll {
         if queue == -1 {
             Err(io::Error::last_os_error())
         } else {
-            Ok(Epoll { queue })
+            Ok(Epoll {
+                queue,
+                kevs: Vec::new(),
+            })
         }
     }
 
@@ -264,6 +282,8 @@ impl Epoll {
         timeout: i32,
         events: &mut [EpollEvent],
     ) -> io::Result<usize> {
+        let max_events = events.len().min(max_events).min(i32::MAX as usize);
+
         let _tout = if timeout >= 0 {
             Some(Duration::from_millis(timeout as u64))
         } else {
@@ -275,14 +295,16 @@ impl Epoll {
             tv_nsec: 0,
         };
 
-        let mut kevs = vec![Kevent::default(); events.len()];
-        debug!("kevs len: {}", kevs.len());
+        self.kevs.clear();
+        self.kevs.reserve_exact(max_events);
+        let spare = self.kevs.spare_capacity_mut();
+        debug_assert!(spare.len() >= max_events);
         let ret = unsafe {
             libc::kevent(
                 self.queue,
                 ptr::null(),
                 0,
-                kevs.as_mut_ptr() as *mut libc::kevent,
+                spare.as_mut_ptr().cast::<libc::kevent>(),
                 max_events as i32,
                 &ts as *const libc::timespec,
             )
@@ -295,6 +317,9 @@ impl Epoll {
         }
 
         let nevents = ret as usize;
+        // Safety: kevent() initialized the first `nevents` elements of spare capacity.
+        unsafe { self.kevs.set_len(nevents) };
+        let kevs = &self.kevs;
 
         for i in 0..nevents {
             if kevs[i].0.filter == libc::EVFILT_READ {
