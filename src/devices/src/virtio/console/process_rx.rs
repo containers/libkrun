@@ -95,6 +95,9 @@ fn read_to_desc(
     input: &mut (dyn PortInput + Send),
     eof: &mut bool,
 ) -> Result<usize, GuestMemoryError> {
+    // TODO: Switch to using `get_slices()` with the next vm-memory
+    //       bump.
+    #[allow(deprecated)]
     desc.mem
         .try_access(desc.len as usize, desc.addr, |_, len, addr, region| {
             let mut target = region.get_slice(addr, len).unwrap();
