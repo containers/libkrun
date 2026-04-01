@@ -175,8 +175,8 @@ impl MuxerThread {
     fn work(mut self) {
         let mut thread_rng = rng();
         self.create_lisening_ipc_sockets();
+        let mut epoll_events = vec![EpollEvent::new(EventSet::empty(), 0); 32];
         loop {
-            let mut epoll_events = vec![EpollEvent::new(EventSet::empty(), 0); 32];
             match self
                 .epoll
                 .wait(epoll_events.len(), -1, epoll_events.as_mut_slice())
