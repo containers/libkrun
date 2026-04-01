@@ -71,7 +71,7 @@ impl FsWorker {
         let virtq_req_ev_fd = self.queue_evts[REQ_INDEX].as_raw_fd();
         let stop_ev_fd = self.stop_fd.as_raw_fd();
 
-        let epoll = Epoll::new().unwrap();
+        let mut epoll = Epoll::new().unwrap();
 
         let _ = epoll.ctl(
             ControlOperation::Add,

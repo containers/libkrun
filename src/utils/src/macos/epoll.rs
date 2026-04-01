@@ -259,7 +259,7 @@ impl Epoll {
     }
 
     pub fn wait(
-        &self,
+        &mut self,
         max_events: usize,
         timeout: i32,
         events: &mut [EpollEvent],
@@ -378,7 +378,7 @@ mod tests {
         const EVENT_BUFFER_SIZE: usize = 128;
         const MAX_EVENTS: usize = 10;
 
-        let epoll = Epoll::new().unwrap();
+        let mut epoll = Epoll::new().unwrap();
         assert_eq!(epoll.queue, epoll.as_raw_fd());
 
         // Let's test different scenarios for `epoll_ctl()` and `epoll_wait()` functionality.

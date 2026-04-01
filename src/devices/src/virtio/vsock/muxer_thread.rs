@@ -172,7 +172,7 @@ impl MuxerThread {
         }
     }
 
-    fn work(self) {
+    fn work(mut self) {
         let mut thread_rng = rng();
         self.create_lisening_ipc_sockets();
         loop {

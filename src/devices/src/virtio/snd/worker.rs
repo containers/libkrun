@@ -117,7 +117,7 @@ impl SndWorker {
     }
 
     fn work(mut self) {
-        let epoll = Epoll::new().unwrap();
+        let mut epoll = Epoll::new().unwrap();
 
         for idx in QUEUE_INDEXES {
             let fd = self.queue_events[idx].as_raw_fd();
