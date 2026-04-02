@@ -778,6 +778,13 @@ int32_t krun_set_snd_device(uint32_t ctx_id, bool enable);
 #define KRUN_VHOST_USER_VSOCK_QUEUE_SIZES ((uint16_t[]){128, 128, 128})
 
 /**
+ * Vhost-user CAN device default queue configuration.
+ * CAN device uses 3 queues: TX (idx 0), RX (idx 1), control (idx 2).
+ */
+#define KRUN_VHOST_USER_CAN_NUM_QUEUES 3
+#define KRUN_VHOST_USER_CAN_QUEUE_SIZES ((uint16_t[]){64, 64, 64})
+
+/**
  * Add a vhost-user device to the VM.
  *
  * This function adds a vhost-user device by connecting to an external
