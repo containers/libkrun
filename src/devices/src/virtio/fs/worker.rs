@@ -4,7 +4,7 @@ use crossbeam_channel::Sender;
 use utils::worker_message::WorkerMessage;
 
 use std::os::fd::AsRawFd;
-use std::sync::atomic::AtomicI32;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 use std::thread;
 
@@ -28,6 +28,8 @@ pub struct FsWorker {
     server: Server<PassthroughFs>,
     stop_fd: EventFd,
     exit_code: Arc<AtomicI32>,
+    exit_request: Arc<AtomicBool>,
+    exit_evt: EventFd,
     #[cfg(target_os = "macos")]
     map_sender: Option<Sender<WorkerMessage>>,
 }
@@ -43,6 +45,8 @@ impl FsWorker {
         passthrough_cfg: passthrough::Config,
         stop_fd: EventFd,
         exit_code: Arc<AtomicI32>,
+        exit_request: Arc<AtomicBool>,
+        exit_evt: EventFd,
         #[cfg(target_os = "macos")] map_sender: Option<Sender<WorkerMessage>>,
     ) -> Self {
         Self {
@@ -54,6 +58,8 @@ impl FsWorker {
             server: Server::new(PassthroughFs::new(passthrough_cfg).unwrap()),
             stop_fd,
             exit_code,
+            exit_request,
+            exit_evt,
             #[cfg(target_os = "macos")]
             map_sender,
         }
@@ -160,6 +166,7 @@ impl FsWorker {
                 writer,
                 &self.shm_region,
                 &self.exit_code,
+                &self.exit_request,
                 #[cfg(target_os = "macos")]
                 &self.map_sender,
             ) {
@@ -172,6 +179,14 @@ impl FsWorker {
 
             if queue.needs_notification(&self.mem).unwrap() {
                 self.interrupt.signal_used_queue();
+            }
+
+            if self.exit_request.swap(false, Ordering::SeqCst) {
+                debug!("virtiofs explicit exit request received; signaling VMM exit event");
+                if let Err(e) = self.exit_evt.write(1) {
+                    error!("failed to signal VMM exit event: {e}");
+                }
+                return;
             }
         }
     }

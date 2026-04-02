@@ -2,7 +2,7 @@
 use crossbeam_channel::Sender;
 use std::cmp;
 use std::io::Write;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
@@ -49,6 +49,8 @@ pub struct Fs {
     worker_thread: Option<JoinHandle<()>>,
     worker_stopfd: EventFd,
     exit_code: Arc<AtomicI32>,
+    exit_request: Arc<AtomicBool>,
+    exit_evt: EventFd,
     #[cfg(target_os = "macos")]
     map_sender: Option<Sender<WorkerMessage>>,
 }
@@ -58,7 +60,9 @@ impl Fs {
         fs_id: String,
         shared_dir: String,
         exit_code: Arc<AtomicI32>,
+        exit_request: Arc<AtomicBool>,
         allow_root_dir_delete: bool,
+        exit_evt: EventFd,
     ) -> super::Result<Fs> {
         let avail_features = (1u64 << VIRTIO_F_VERSION_1) | (1u64 << VIRTIO_RING_F_EVENT_IDX);
 
@@ -83,6 +87,8 @@ impl Fs {
             worker_thread: None,
             worker_stopfd: EventFd::new(EFD_NONBLOCK).map_err(FsError::EventFd)?,
             exit_code,
+            exit_request,
+            exit_evt,
             #[cfg(target_os = "macos")]
             map_sender: None,
         })
@@ -185,6 +191,8 @@ impl VirtioDevice for Fs {
             self.passthrough_cfg.clone(),
             self.worker_stopfd.try_clone().unwrap(),
             self.exit_code.clone(),
+            self.exit_request.clone(),
+            self.exit_evt.try_clone().unwrap(),
             #[cfg(target_os = "macos")]
             self.map_sender.clone(),
         );
