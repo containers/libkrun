@@ -3,7 +3,7 @@
 use anyhow::Context;
 use std::ffi::CString;
 use std::fs;
-use std::fs::create_dir;
+use std::fs::{create_dir, create_dir_all};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::ptr::null;
@@ -30,6 +30,9 @@ fn copy_guest_agent(dir: &Path) -> anyhow::Result<()> {
 pub fn setup_fs_and_enter(ctx: u32, test_setup: TestSetup) -> anyhow::Result<()> {
     let root_dir = test_setup.tmp_dir.join("root");
     create_dir(&root_dir).context("Failed to create root directory")?;
+    create_dir_all(root_dir.join("dev")).context("Failed to create /dev in rootfs")?;
+    create_dir_all(root_dir.join("proc")).context("Failed to create /proc in rootfs")?;
+    create_dir_all(root_dir.join("sys")).context("Failed to create /sys in rootfs")?;
 
     let path_str = CString::new(root_dir.as_os_str().as_bytes()).context("CString::new")?;
     copy_guest_agent(&root_dir)?;
