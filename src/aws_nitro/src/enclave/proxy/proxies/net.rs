@@ -95,14 +95,14 @@ impl DeviceProxy for NetProxy {
         let (mut vsock, _) = listener.accept().map_err(Error::VsockAccept)?;
 
         /*
-         * Upon initial connection, read the MTU size from the enclave and allocate the buffer
+         * Upon initial connection, read the MTU size + ethernet frame header from the enclave and allocate the buffer
          * accordingly.
          */
         let size = {
             let mut size_buf = [0u8; size_of::<u32>()];
-            let _ = vsock.read(&mut size_buf).map_err(Error::VsockRead)?;
+            vsock.read_exact(&mut size_buf).map_err(Error::VsockRead)?;
 
-            u32::from_ne_bytes(size_buf)
+            u32::from_be_bytes(size_buf)
         };
 
         self.buf
