@@ -59,6 +59,7 @@ OS = $(shell uname -s)
 ARCH = $(shell uname -m)
 DEBIAN_DIST ?= bookworm
 ROOTFS_DIR = linux-sysroot
+GCC_VERSION ?= 12
 
 KRUN_BINARY_Linux = libkrun$(VARIANT).so.$(FULL_VERSION)
 KRUN_SONAME_Linux = libkrun$(VARIANT).so.$(ABI_VERSION)
@@ -94,8 +95,13 @@ ifeq ($(SYSROOT_LINUX),)
 else
     SYSROOT_TARGET =
 endif
+    # The GCC runtime dir (e.g. usr/lib/gcc/aarch64-linux-gnu/12) holds crtbeginT.o,
+    # crtend.o, libgcc.a and libgcc_eh.a. Apple clang does not search it
+    # automatically, so we pass it via -B (startup files) and -L (libraries).
+    GCC_TRIPLET = $(subst arm64,aarch64,$(ARCH))-linux-gnu
+    GCC_LIB_DIR = $(abspath $(SYSROOT_LINUX))/usr/lib/gcc/$(GCC_TRIPLET)/$(GCC_VERSION)
     # Cross-compile on macOS with the LLVM linker (brew install lld)
-    CC_LINUX=/usr/bin/clang -target $(ARCH)-linux-gnu -fuse-ld=lld -Wl,-strip-debug --sysroot $(shell realpath $(SYSROOT_LINUX)) -Wno-c23-extensions
+    CC_LINUX=/usr/bin/clang -target $(GCC_TRIPLET) -fuse-ld=lld -Wl,-strip-debug --sysroot $(abspath $(SYSROOT_LINUX)) -B$(GCC_LIB_DIR) -L$(GCC_LIB_DIR) -Wno-c23-extensions
 else
     # Build on Linux host
     CC_LINUX=$(CC)
@@ -110,7 +116,7 @@ $(AWS_NITRO_INIT_BINARY): $(AWS_NITRO_INIT_SRC)
 	$(CC) -O2 -static -s -Wall $(AWS_NITRO_INIT_LD_FLAGS) -o $@ $(AWS_NITRO_INIT_SRC) $(AWS_NITRO_INIT_LD_FLAGS)
 
 # Sysroot preparation rules for cross-compilation on macOS
-DEBIAN_PACKAGES = libc6 libc6-dev libgcc-12-dev linux-libc-dev
+DEBIAN_PACKAGES = libc6 libc6-dev libgcc-$(GCC_VERSION)-dev linux-libc-dev
 ROOTFS_TMP = $(ROOTFS_DIR)/.tmp
 PACKAGES_FILE = $(ROOTFS_TMP)/Packages.xz
 
