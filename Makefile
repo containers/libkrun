@@ -94,8 +94,12 @@ ifeq ($(SYSROOT_LINUX),)
 else
     SYSROOT_TARGET =
 endif
+    # The GCC runtime dir (e.g. usr/lib/gcc/aarch64-linux-gnu/12) holds crtbeginT.o,
+    # crtend.o, libgcc.a and libgcc_eh.a. Apple clang does not search it
+    # automatically, so we pass it via -B (startup files) and -L (libraries).
+    GCC_LIB_DIR = $(abspath $(firstword $(wildcard $(SYSROOT_LINUX)/usr/lib/gcc/*/*)))
     # Cross-compile on macOS with the LLVM linker (brew install lld)
-    CC_LINUX=/usr/bin/clang -target $(ARCH)-linux-gnu -fuse-ld=lld -Wl,-strip-debug --sysroot $(shell realpath $(SYSROOT_LINUX)) -Wno-c23-extensions
+    CC_LINUX=/usr/bin/clang -target $(ARCH)-linux-gnu -fuse-ld=lld -Wl,-strip-debug --sysroot $(shell realpath $(SYSROOT_LINUX)) -B$(GCC_LIB_DIR) -L$(GCC_LIB_DIR) -Wno-c23-extensions
 else
     # Build on Linux host
     CC_LINUX=$(CC)
