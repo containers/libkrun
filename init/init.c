@@ -11,6 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <arpa/inet.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
@@ -1059,6 +1060,106 @@ int try_mount(const char *source, const char *target, const char *fstype,
     return mount_status;
 }
 
+static bool tsi_enabled()
+{
+    const char *const option = "tsi_hijack";
+    size_t length = strlen(option);
+    bool enabled = false;
+    FILE *f;
+    unsigned int i = 0;
+
+    f = fopen("/proc/cmdline", "r");
+    if (f == NULL) {
+        perror("fopen(/proc/cmdline)");
+        return false;
+    }
+
+    while (1) {
+        int c = fgetc(f);
+        if (c == ' ' || c == EOF) {
+            if (i == length) {
+                enabled = true;
+                break;
+            }
+            if (c == EOF) {
+                break;
+            }
+            i = 0;
+        } else if (i < length && c == option[i]) {
+            i++;
+        } else {
+            do {
+                c = fgetc(f);
+            } while (c != ' ' && c != EOF);
+            i = 0;
+        }
+    }
+
+    fclose(f);
+
+    return enabled;
+}
+
+static int enable_dummy_interface()
+{
+    // See https://www.man7.org/linux/man-pages/man7/netdevice.7.html
+
+    const char *const name = "dummy0";
+    struct ifreq ifr;
+    int sockfd;
+    struct sockaddr_in *addr = (struct sockaddr_in *)&ifr.ifr_addr;
+    struct sockaddr_in *netmask = (struct sockaddr_in *)&ifr.ifr_netmask;
+    int result = -1;
+
+    if (snprintf(ifr.ifr_name, IFNAMSIZ, "%s", name) >= IFNAMSIZ) {
+        printf("dummy interface name too long\n");
+        return -1;
+    }
+
+    sockfd = socket(PF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("dummy interface socket");
+        return -1;
+    }
+
+    ifr.ifr_flags = IFF_UP;
+    if (ioctl(sockfd, SIOCSIFFLAGS, &ifr) < 0) {
+        if (errno == ENODEV) {
+            // Most likely not enabled in the kernel, ignore quietly
+            result = 0;
+            goto close_socket;
+        }
+        perror("dummy interface up");
+        goto close_socket;
+    }
+
+    addr->sin_family = AF_INET;
+    if (inet_pton(AF_INET, "10.0.0.1", &addr->sin_addr) <= 0) {
+        printf("inet_pton address conversion failed\n");
+        goto close_socket;
+    }
+    if (ioctl(sockfd, SIOCSIFADDR, &ifr) < 0) {
+        perror("dummy interface address");
+        goto close_socket;
+    }
+
+    netmask->sin_family = AF_INET;
+    if (inet_pton(AF_INET, "0.0.0.0", &netmask->sin_addr) <= 0) {
+        printf("inet_pton netmask conversion failed\n");
+        goto close_socket;
+    }
+    if (ioctl(sockfd, SIOCSIFNETMASK, &ifr) < 0) {
+        perror("dummy interface mask");
+        goto close_socket;
+    }
+
+    result = 0;
+
+close_socket:
+    close(sockfd);
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     struct ifreq ifr;
@@ -1169,6 +1270,12 @@ int main(int argc, char **argv)
         ifr.ifr_flags |= IFF_UP;
         ioctl(sockfd, SIOCSIFFLAGS, &ifr);
         close(sockfd);
+    }
+
+    if (tsi_enabled()) {
+        if (enable_dummy_interface() < 0) {
+            printf("Warning: Couldn't enable dummy interface\n");
+        }
     }
 
     config_argv = NULL;
