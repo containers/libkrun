@@ -56,6 +56,10 @@ impl DeviceProxy for NetProxy {
     }
 
     /// Receive data from the proxy's vsock. Forward the data to the connected unix socket.
+    ///
+    /// The enclave and the virtio-net Unix stream backend use the same on-the-wire format (4-byte
+    /// big-endian length plus Ethernet frame). Forward the byte stream unchanged; stripping or
+    /// adding length headers here breaks the Unix socket peer.
     fn rcv(&mut self, vsock: &mut VsockStream) -> Result<usize> {
         let size = vsock.read(&mut self.buf).map_err(Error::VsockRead)?;
         if size > 0 {
@@ -72,7 +76,9 @@ impl DeviceProxy for NetProxy {
         match self.unix.read(&mut self.buf) {
             Ok(size) => {
                 if size > 0 {
-                    let _ = vsock.write_all(&self.buf[..size]);
+                    vsock
+                        .write_all(&self.buf[..size])
+                        .map_err(Error::VsockWrite)?;
                 }
 
                 Ok(size)
@@ -95,14 +101,14 @@ impl DeviceProxy for NetProxy {
         let (mut vsock, _) = listener.accept().map_err(Error::VsockAccept)?;
 
         /*
-         * Upon initial connection, read the MTU size from the enclave and allocate the buffer
+         * Upon initial connection, read the MTU size + ethernet frame header from the enclave and allocate the buffer
          * accordingly.
          */
         let size = {
             let mut size_buf = [0u8; size_of::<u32>()];
-            let _ = vsock.read(&mut size_buf).map_err(Error::VsockRead)?;
+            vsock.read_exact(&mut size_buf).map_err(Error::VsockRead)?;
 
-            u32::from_ne_bytes(size_buf)
+            u32::from_be_bytes(size_buf)
         };
 
         self.buf

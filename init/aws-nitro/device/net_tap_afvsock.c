@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,58 @@
 #define TUN_DEV_MINOR 200
 
 /*
+ * The Extended Ethernet Frame header is 14 bytes, representing the Destination
+ * Address (6 bytes), Source Address (6 bytes) and the Ethertype (2 bytes).
+ */
+#define ETH_HEADER_LEN 14
+
+#define PROXY_HEADER_LEN 4
+
+/*
+ * Read exactly n bytes into the buffer, retrying on partial reads.
+ * Returns n on success, 0 on clean EOF, or -1 on error.
+ */
+static ssize_t read_exact(int fd, void *buf, size_t num_bytes)
+{
+    ssize_t total = 0;
+    ssize_t bytes_read;
+
+    while (total < num_bytes) {
+        bytes_read = read(fd, (char *)buf + total, num_bytes - total);
+        if (bytes_read < 0) {
+            if (errno == EINTR)
+                continue;
+            return -1;
+        }
+        if (bytes_read == 0)
+            return (total > 0) ? -1 : 0;
+        total += bytes_read;
+    }
+    return total;
+}
+
+/*
+ * Write exactly n bytes from the buffer to the fd, retrying on partial writes.
+ * Returns n on success, or -1 on error.
+ */
+static ssize_t write_all(int fd, const void *buf, size_t num_bytes)
+{
+    ssize_t total = 0;
+    ssize_t bytes_written;
+
+    while (total < num_bytes) {
+        bytes_written = write(fd, (const char *)buf + total, num_bytes - total);
+        if (bytes_written < 0) {
+            if (errno == EINTR)
+                continue;
+            return -1;
+        }
+        total += bytes_written;
+    }
+    return total;
+}
+
+/*
  * Forward ethernet packets to/from the host vsock providing network access and
  * the guest TAP device routing application network traffic.
  */
@@ -43,7 +96,7 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
     bool event_found;
     struct ifreq ifr;
     int ret, sock_fd;
-    unsigned int sz;
+    uint32_t sz;
     ssize_t nread;
 
     /*
@@ -53,7 +106,7 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
     sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock_fd < 0) {
         perror("creating INET socket to get TAP MTU");
-        return -errno;
+        return -1;
     }
 
     memset(&ifr, 0, sizeof(struct ifreq));
@@ -63,22 +116,29 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
     if (ret < 0) {
         close(sock_fd);
         perror("fetch MTU of TAP device");
-        exit(-errno);
+        return -1;
     }
 
     close(sock_fd);
 
-    buf = (unsigned char *)malloc(ifr.ifr_mtu);
+    uint32_t eth_frame_size = ifr.ifr_mtu + ETH_HEADER_LEN;
+    buf = (unsigned char *)malloc(eth_frame_size);
     if (buf == NULL) {
         perror("allocate buffer for TAP/vsock communication");
-        exit(-1);
+        return -1;
     }
 
-    // Forward the MTU to the host for it to allocate a corresponding buffer.
-    ret = write(vsock_fd, (void *)&ifr.ifr_mtu, sizeof(int));
-    if (ret < sizeof(int)) {
-        perror("write TAP device MTU to host");
-        exit(-errno);
+    // Forward the max ethernet frame size to the host for it to allocate a
+    // corresponding buffer.
+
+    // To avoid issues where the host endianness and the enclave endianness is
+    // different, convert to big endian to pass the max ethernet frame size to
+    // the host.
+    uint32_t eth_frame_size_be = htonl(eth_frame_size);
+    ret = write_all(vsock_fd, &eth_frame_size_be, sizeof(eth_frame_size));
+    if (ret < 0) {
+        perror("write max ethernet frame size to host");
+        goto cleanup;
     }
 
     pfds[0].fd = vsock_fd;
@@ -93,29 +153,95 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
     // Signal to the parent process that initialization is complete.
     kill(getppid(), SIGUSR1);
 
-    while (poll(pfds, 3, -1) > 0) {
+    while (1) {
+        ret = poll(pfds, 3, -1);
+        if (ret < 0) {
+            if (errno == EINTR)
+                continue;
+            perror("poll on TAP/vsock proxy descriptors");
+            goto cleanup;
+        }
+        if (ret == 0)
+            continue;
+
         event_found = false;
         // Event on vsock. Read the frame and write it to the TAP device.
         if (pfds[0].revents & POLLIN) {
-            nread = read(vsock_fd, &sz, 4);
-            if (nread != 4)
-                exit(0);
+            nread = read_exact(vsock_fd, &sz, PROXY_HEADER_LEN);
+            if (nread == 0) {
+                // vsock connection closed cleanly
+                break;
+            } else if (nread < 0) {
+                perror("unable to read the proxy header from vsock");
+                ret = -1;
+                goto cleanup;
+            }
 
-            unsigned int len = htonl(sz);
+            uint32_t len = ntohl(sz);
+            if (len > eth_frame_size) {
+                fprintf(stderr,
+                        "ethernet frame size %u exceeds MTU + header size %u\n",
+                        len, eth_frame_size);
+                ret = -1;
+                goto cleanup;
+            }
 
-            nread = read(vsock_fd, buf, len);
-            write(tun_fd, buf, nread);
+            nread = read_exact(vsock_fd, buf, len);
+            if (nread != (ssize_t)len) {
+                if (nread == 0)
+                    errno = EIO;
+
+                perror("failed to read the ethernet frame from vsock");
+                ret = -1;
+                goto cleanup;
+            }
+
+            // TAP devices are expected to write an entire frame at once and not
+            // do partial writes. Only retry if the syscall is interrupted.
+            ssize_t bytes_written = 0;
+            do {
+                bytes_written = write(tun_fd, buf, nread);
+            } while (bytes_written < 0 && errno == EINTR);
+
+            if (bytes_written != nread) {
+                // the entire frame wasn't written
+                if (bytes_written >= 0)
+                    errno = EIO;
+
+                perror("unable to write the ethernet frame to the TAP device");
+                ret = -1;
+                goto cleanup;
+            }
 
             event_found = true;
         }
 
         // Event on the TAP device. Read the frame and write it to the vsock.
         if (pfds[1].revents & POLLIN) {
-            nread = read(tun_fd, buf, ifr.ifr_mtu);
-            if (nread > 0) {
-                sz = htonl(nread);
-                write(vsock_fd, (void *)&sz, 4);
-                write(vsock_fd, buf, nread);
+            // TAP devices are expected to read an entire frame at once and not
+            // do partial reads. Only retry if the syscall is interrupted.
+            do {
+                nread = read(tun_fd, buf, eth_frame_size);
+            } while (nread < 0 && errno == EINTR);
+            if (nread <= 0) {
+                if (nread == 0)
+                    errno = EIO;
+
+                perror("failed to read the ethernet frame from the TAP device");
+                ret = -1;
+                goto cleanup;
+            }
+
+            sz = htonl((uint32_t)nread);
+            ret = write_all(vsock_fd, (void *)&sz, PROXY_HEADER_LEN);
+            if (ret < 0) {
+                perror("unable to write the proxy header to vsock");
+                goto cleanup;
+            }
+            ret = write_all(vsock_fd, buf, nread);
+            if (ret < 0) {
+                perror("unable to write the ethernet frame to vsock");
+                goto cleanup;
             }
 
             event_found = true;
@@ -132,10 +258,9 @@ static int tap_vsock_forward(int tun_fd, int vsock_fd, int shutdown_fd,
             break;
     }
 
-    close(vsock_fd);
-    close(tun_fd);
-
-    exit(0);
+cleanup:
+    free(buf);
+    return ret;
 }
 
 /*
@@ -357,8 +482,8 @@ int tap_afvsock_init(unsigned int vsock_port, int shutdown_fd)
     // Initialize the TAP device.
     strcpy(tap_name, "tap0");
     tun_fd = tap_alloc(tap_name);
-    if (ret < 0)
-        return ret;
+    if (tun_fd < 0)
+        return tun_fd;
 
     pid = fork();
     switch (pid) {
@@ -396,9 +521,11 @@ int tap_afvsock_init(unsigned int vsock_port, int shutdown_fd)
 
         // Forward network traffic between the host and TAP device.
         ret = tap_vsock_forward(tun_fd, vsock_fd, shutdown_fd, tap_name);
-        if (ret < 0)
-            exit(EXIT_FAILURE);
+        close(vsock_fd);
+        close(tun_fd);
+        exit(ret < 0 ? EXIT_FAILURE : EXIT_SUCCESS);
     }
 
+    close(tun_fd);
     return 0;
 }
