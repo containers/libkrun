@@ -95,12 +95,18 @@ else
     SYSROOT_TARGET =
 endif
     # Cross-compile on macOS with the LLVM linker (brew install lld)
+    # Apple clang 21 (macOS 26.4) no longer auto-detects the GCC runtime inside
+    # the sysroot, so point it there explicitly with -B (startup objects) and
+    # -L (libraries).
+    GCC_LIB_DIR = $(shell find $(realpath $(SYSROOT_LINUX))/usr/lib/gcc -name crtbeginT.o -exec dirname {} \;)
     CC_LINUX = /usr/bin/clang \
         -target $(ARCH)-linux-gnu \
         -fuse-ld=lld \
         -Wl,-strip-debug \
         --sysroot $(realpath $(SYSROOT_LINUX)) \
-        -Wno-c23-extensions
+        -Wno-c23-extensions \
+        -B $(GCC_LIB_DIR) \
+        -L $(GCC_LIB_DIR)
 else
     # Build on Linux host
     CC_LINUX = $(CC)
