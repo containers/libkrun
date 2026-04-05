@@ -284,10 +284,10 @@ impl NetWorker {
                 Err(TxError::Backend(WriteError::NothingWritten)) => true,
                 Err(e) => {
                     log::error!("Failed to process tx: {e:?}");
-                    // Break immediately on non-recoverable errors to avoid a
-                    // busy-loop when the guest keeps supplying TX buffers.
-                    // The worker will be re-entered on the next TX queue kick
-                    // or backend-writable event.
+                    // Re-enable notifications before breaking so the guest
+                    // can still kick the TX queue on future descriptors.
+                    let _ = self.tx_q.queue.enable_notification(&self.mem);
+                    self.tx_has_deferred_frame = false;
                     break;
                 }
                 _ => false,
