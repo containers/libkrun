@@ -2179,6 +2179,7 @@ impl FileSystem for PassthroughFs {
         _in_size: u32,
         out_size: u32,
         exit_code: &Arc<AtomicI32>,
+        exit_request: &Arc<AtomicBool>,
     ) -> io::Result<Vec<u8>> {
         const VIRTIO_IOC_MAGIC: u8 = b'v';
 
@@ -2197,6 +2198,10 @@ impl FileSystem for PassthroughFs {
         const VIRTIO_IOC_REMOVE_ROOT_DIR_CODE: u8 = 3;
         const VIRTIO_IOC_REMOVE_ROOT_DIR_REQ: u32 =
             request_code_none!(VIRTIO_IOC_MAGIC, VIRTIO_IOC_REMOVE_ROOT_DIR_CODE) as u32;
+
+        const VIRTIO_IOC_TYPE_EXIT_REQUEST: u8 = 4;
+        const VIRTIO_IOC_EXIT_REQUEST_REQ: u32 =
+            request_code_none!(VIRTIO_IOC_MAGIC, VIRTIO_IOC_TYPE_EXIT_REQUEST) as u32;
 
         match cmd {
             VIRTIO_IOC_EXPORT_FD_REQ => {
@@ -2229,7 +2234,13 @@ impl FileSystem for PassthroughFs {
                 Ok(ret)
             }
             VIRTIO_IOC_EXIT_CODE_REQ => {
+                debug!("virtiofs exit-code ioctl received: {}", arg as i32);
                 exit_code.store(arg as i32, Ordering::SeqCst);
+                Ok(Vec::new())
+            }
+            VIRTIO_IOC_EXIT_REQUEST_REQ => {
+                debug!("virtiofs explicit-exit ioctl received");
+                exit_request.store(true, Ordering::SeqCst);
                 Ok(Vec::new())
             }
             VIRTIO_IOC_REMOVE_ROOT_DIR_REQ if self.cfg.allow_root_dir_delete => {

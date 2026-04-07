@@ -12,7 +12,7 @@ use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem::size_of;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use vm_memory::ByteValued;
@@ -85,6 +85,7 @@ impl<F: FileSystem + Sync> Server<F> {
         w: Writer,
         shm_region: &Option<VirtioShmRegion>,
         exit_code: &Arc<AtomicI32>,
+        exit_request: &Arc<AtomicBool>,
         #[cfg(target_os = "macos")] map_sender: &Option<Sender<WorkerMessage>>,
     ) -> Result<usize> {
         let in_header: InHeader = r.read_obj().map_err(Error::DecodeMessage)?;
@@ -134,7 +135,7 @@ impl<F: FileSystem + Sync> Server<F> {
             x if x == Opcode::Interrupt as u32 => self.interrupt(in_header),
             x if x == Opcode::Bmap as u32 => self.bmap(in_header, r, w),
             x if x == Opcode::Destroy as u32 => self.destroy(),
-            x if x == Opcode::Ioctl as u32 => self.ioctl(in_header, r, w, exit_code),
+            x if x == Opcode::Ioctl as u32 => self.ioctl(in_header, r, w, exit_code, exit_request),
             x if x == Opcode::Poll as u32 => self.poll(in_header, r, w),
             x if x == Opcode::NotifyReply as u32 => self.notify_reply(in_header, r, w),
             x if x == Opcode::BatchForget as u32 => self.batch_forget(in_header, r, w),
@@ -1185,6 +1186,7 @@ impl<F: FileSystem + Sync> Server<F> {
         mut r: Reader,
         w: Writer,
         exit_code: &Arc<AtomicI32>,
+        exit_request: &Arc<AtomicBool>,
     ) -> Result<usize> {
         let IoctlIn {
             fh,
@@ -1205,6 +1207,7 @@ impl<F: FileSystem + Sync> Server<F> {
             in_size,
             out_size,
             exit_code,
+            exit_request,
         ) {
             Ok(data) => {
                 let out = IoctlOut {

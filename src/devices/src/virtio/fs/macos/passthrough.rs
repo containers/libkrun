@@ -2435,15 +2435,21 @@ impl FileSystem for PassthroughFs {
         _in_size: u32,
         _out_size: u32,
         exit_code: &Arc<AtomicI32>,
+        exit_request: &Arc<AtomicBool>,
     ) -> io::Result<Vec<u8>> {
         // We can't use nix::request_code_none here since it's system-dependent
         // and we need the value from Linux.
         const VIRTIO_IOC_EXIT_CODE_REQ: u32 = 0x7602;
         const VIRTIO_IOC_REMOVE_ROOT_DIR_REQ: u32 = 0x7603;
+        const VIRTIO_IOC_EXIT_REQUEST_REQ: u32 = 0x7604;
 
         match cmd {
             VIRTIO_IOC_EXIT_CODE_REQ => {
                 exit_code.store(arg as i32, Ordering::SeqCst);
+                Ok(Vec::new())
+            }
+            VIRTIO_IOC_EXIT_REQUEST_REQ => {
+                exit_request.store(true, Ordering::SeqCst);
                 Ok(Vec::new())
             }
             VIRTIO_IOC_REMOVE_ROOT_DIR_REQ if self.cfg.allow_root_dir_delete => {
