@@ -1,0 +1,514 @@
+/*
+ * DHCP Client Implementation
+ *
+ * Standalone DHCP client for configuring IPv4 network interfaces.
+ * Translated from Rust implementation in muvm/src/guest/net.rs
+ */
+
+#include "dhcp.h"
+
+#include <net/if.h>
+
+#include <arpa/inet.h>
+#include <errno.h>
+#include <linux/if.h>
+#include <linux/if_arp.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
+#include <netinet/in.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#define DHCP_BUFFER_SIZE 576
+
+/* Helper function to send netlink message */
+static int nl_send(int sock, struct nlmsghdr *nlh)
+{
+    struct sockaddr_nl sa = {
+        .nl_family = AF_NETLINK,
+    };
+
+    struct iovec iov = {
+        .iov_base = nlh,
+        .iov_len = nlh->nlmsg_len,
+    };
+
+    struct msghdr msg = {
+        .msg_name = &sa,
+        .msg_namelen = sizeof(sa),
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+    };
+
+    return sendmsg(sock, &msg, 0);
+}
+
+/* Helper function to receive netlink response */
+static int nl_recv(int sock, char *buf, size_t len)
+{
+    struct sockaddr_nl sa;
+    struct iovec iov = {
+        .iov_base = buf,
+        .iov_len = len,
+    };
+
+    struct msghdr msg = {
+        .msg_name = &sa,
+        .msg_namelen = sizeof(sa),
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+    };
+
+    return recvmsg(sock, &msg, 0);
+}
+
+/* Add routing attribute to netlink message */
+static void add_rtattr(struct nlmsghdr *nlh, int type, const void *data,
+                       int len)
+{
+    int rtalen = RTA_SPACE(len);
+    struct rtattr *rta =
+        (struct rtattr *)(((char *)nlh) + NLMSG_ALIGN(nlh->nlmsg_len));
+    rta->rta_type = type;
+    rta->rta_len = RTA_LENGTH(len);
+    memcpy(RTA_DATA(rta), data, len);
+    nlh->nlmsg_len = NLMSG_ALIGN(nlh->nlmsg_len) + rtalen;
+}
+
+/* Set MTU */
+static int set_mtu(int nl_sock, int iface_index, unsigned int mtu)
+{
+    char buf[4096];
+    struct nlmsghdr *nlh;
+    struct nlmsgerr *err;
+    struct ifinfomsg *ifi;
+
+    memset(buf, 0, sizeof(buf));
+    nlh = (struct nlmsghdr *)buf;
+    nlh->nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+    nlh->nlmsg_type = RTM_NEWLINK;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+    nlh->nlmsg_seq = 1;
+    nlh->nlmsg_pid = getpid();
+
+    ifi = (struct ifinfomsg *)NLMSG_DATA(nlh);
+    ifi->ifi_family = AF_UNSPEC;
+    ifi->ifi_type = ARPHRD_ETHER;
+    ifi->ifi_index = iface_index;
+
+    add_rtattr(nlh, IFLA_MTU, &mtu, sizeof(mtu));
+
+    if (nl_send(nl_sock, nlh) < 0) {
+        perror("nl_send failed for set_mtu");
+        return -1;
+    }
+
+    /* Receive ACK */
+    int len = nl_recv(nl_sock, buf, sizeof(buf));
+    if (len < 0) {
+        perror("nl_recv failed for set_mtu");
+        return -1;
+    }
+
+    if (nlh->nlmsg_type != NLMSG_ERROR) {
+        printf("netlink didn't return a valid answer for set_mtu\n");
+        return -1;
+    }
+
+    err = (struct nlmsgerr *)NLMSG_DATA(nlh);
+    if (err->error != 0) {
+        printf("netlink returned an error for set_mtu: %d\n", err->error);
+        return -1;
+    }
+
+    return 0;
+}
+
+/* Add or delete IPv4 route */
+static int mod_route4(int nl_sock, int iface_index, int cmd, struct in_addr gw)
+{
+    char buf[4096];
+    struct nlmsghdr *nlh;
+    struct nlmsgerr *err;
+    struct rtmsg *rtm;
+    struct in_addr dst = {.s_addr = INADDR_ANY};
+
+    memset(buf, 0, sizeof(buf));
+    nlh = (struct nlmsghdr *)buf;
+    nlh->nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
+    nlh->nlmsg_type = cmd;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_ACK;
+    nlh->nlmsg_seq = 1;
+    nlh->nlmsg_pid = getpid();
+
+    rtm = (struct rtmsg *)NLMSG_DATA(nlh);
+    rtm->rtm_family = AF_INET;
+    rtm->rtm_dst_len = 0;
+    rtm->rtm_src_len = 0;
+    rtm->rtm_tos = 0;
+    rtm->rtm_table = RT_TABLE_MAIN;
+    rtm->rtm_protocol = RTPROT_BOOT;
+    rtm->rtm_scope = RT_SCOPE_UNIVERSE;
+    rtm->rtm_type = RTN_UNICAST;
+    rtm->rtm_flags = 0;
+
+    add_rtattr(nlh, RTA_OIF, &iface_index, sizeof(iface_index));
+    add_rtattr(nlh, RTA_DST, &dst, sizeof(dst));
+    add_rtattr(nlh, RTA_GATEWAY, &gw, sizeof(gw));
+
+    if (nl_send(nl_sock, nlh) < 0) {
+        perror("nl_send failed for mod_route4");
+        return -1;
+    }
+
+    /* Receive ACK */
+    int len = nl_recv(nl_sock, buf, sizeof(buf));
+    if (len < 0) {
+        perror("nl_recv failed for mod_route4");
+        return -1;
+    }
+
+    if (nlh->nlmsg_type != NLMSG_ERROR) {
+        printf("netlink didn't return a valid answer for mod_route4\n");
+        return -1;
+    }
+
+    err = (struct nlmsgerr *)NLMSG_DATA(nlh);
+    if (err->error != 0) {
+        printf("netlink returned an error for mod_route4: %d\n", err->error);
+        return -1;
+    }
+
+    return 0;
+}
+
+/* Add or delete IPv4 address */
+static int mod_addr4(int nl_sock, int iface_index, int cmd, struct in_addr addr,
+                     unsigned char prefix_len)
+{
+    char buf[4096];
+    struct nlmsghdr *nlh;
+    struct nlmsgerr *err;
+    struct ifaddrmsg *ifa;
+
+    memset(buf, 0, sizeof(buf));
+    nlh = (struct nlmsghdr *)buf;
+    nlh->nlmsg_len = NLMSG_LENGTH(sizeof(struct ifaddrmsg));
+    nlh->nlmsg_type = cmd;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_ACK;
+    nlh->nlmsg_seq = 1;
+    nlh->nlmsg_pid = getpid();
+
+    ifa = (struct ifaddrmsg *)NLMSG_DATA(nlh);
+    ifa->ifa_family = AF_INET;
+    ifa->ifa_prefixlen = prefix_len;
+    ifa->ifa_flags = 0;
+    ifa->ifa_scope = RT_SCOPE_UNIVERSE;
+    ifa->ifa_index = iface_index;
+
+    add_rtattr(nlh, IFA_LOCAL, &addr, sizeof(addr));
+    add_rtattr(nlh, IFA_ADDRESS, &addr, sizeof(addr));
+
+    if (nl_send(nl_sock, nlh) < 0) {
+        perror("nl_send failed for mod_addr4");
+        return -1;
+    }
+
+    /* Receive ACK */
+    int len = nl_recv(nl_sock, buf, sizeof(buf));
+    if (len < 0) {
+        perror("nl_recv failed for mod_addr4");
+        return -1;
+    }
+
+    if (nlh->nlmsg_type != NLMSG_ERROR) {
+        printf("netlink didn't return a valid answer for mod_addr4\n");
+        return -1;
+    }
+
+    err = (struct nlmsgerr *)NLMSG_DATA(nlh);
+    if (err->error != 0) {
+        printf("netlink returned an error for mod_addr4: %d\n", err->error);
+        return -1;
+    }
+
+    return 0;
+}
+
+/* Count leading ones in a 32-bit value */
+static unsigned char count_leading_ones(uint32_t val)
+{
+    unsigned char count = 0;
+    for (int i = 31; i >= 0; i--) {
+        if (val & (1U << i)) {
+            count++;
+        } else {
+            break;
+        }
+    }
+    return count;
+}
+
+/* Send DISCOVER with Rapid Commit, process ACK, configure address and route */
+int do_dhcp(const char *iface)
+{
+    struct sockaddr_in bind_addr, dest_addr;
+    struct dhcp_packet request = {0};
+    unsigned char response[DHCP_BUFFER_SIZE];
+    struct timeval timeout;
+    int iface_index;
+    int broadcast = 1;
+    int nl_sock = -1;
+    int sock = -1;
+    int ret = -1;
+
+    iface_index = if_nametoindex(iface);
+    if (iface_index == 0) {
+        perror("Failed to find index for network interface");
+        return ret;
+    }
+
+    nl_sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
+    if (nl_sock < 0) {
+        perror("Failed to create netlink socket");
+        return ret;
+    }
+
+    struct sockaddr_nl sa = {
+        .nl_family = AF_NETLINK,
+        .nl_pid = getpid(),
+        .nl_groups = 0,
+    };
+
+    if (bind(nl_sock, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+        perror("Failed to bind netlink socket");
+        goto cleanup;
+    }
+
+    /* Temporary link-local address and route avoid the need for raw sockets */
+    struct in_addr temp_addr;
+    inet_pton(AF_INET, "169.254.1.1", &temp_addr);
+    struct in_addr temp_gw = {.s_addr = INADDR_ANY};
+
+    if (mod_route4(nl_sock, iface_index, RTM_NEWROUTE, temp_gw) != 0) {
+        printf("couldn't add temporary route\n");
+        goto cleanup;
+    }
+    if (mod_addr4(nl_sock, iface_index, RTM_NEWADDR, temp_addr, 16) != 0) {
+        printf("couldn't add temporary address\n");
+        goto cleanup;
+    }
+
+    /* Send request (DHCPDISCOVER) */
+    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) {
+        perror("socket failed");
+        goto cleanup;
+    }
+
+    /* Allow broadcast */
+    if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast,
+                   sizeof(broadcast)) < 0) {
+        perror("setsockopt SO_BROADCAST failed");
+        goto cleanup;
+    }
+
+    /* Bind to port 68 (DHCP client) */
+    memset(&bind_addr, 0, sizeof(bind_addr));
+    bind_addr.sin_family = AF_INET;
+    bind_addr.sin_port = htons(68);
+    bind_addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(sock, (struct sockaddr *)&bind_addr, sizeof(bind_addr)) < 0) {
+        perror("bind failed");
+        goto cleanup;
+    }
+
+    request.op = 1;    /* BOOTREQUEST */
+    request.htype = 1; /* Hardware address type: Ethernet */
+    request.hlen = 6;  /* Hardware address length */
+    request.hops = 0;  /* DHCP relay Hops */
+    request.xid =
+        htonl(getpid()); /* Transaction ID: use PID for some randomness */
+    request.secs =
+        0; /* Seconds elapsed since beginning of acquisition or renewal */
+    request.flags = htons(0x8000); /* DHCP message flags: Broadcast */
+    request.ciaddr = 0;            /* Client IP address (not set yet) */
+    request.yiaddr = 0;            /* 'your' IP address (server will fill) */
+    request.siaddr = 0;            /* Server IP address (not set) */
+    request.giaddr = 0;            /* Relay agent IP address (not set) */
+    request.magic = htonl(0x63825363); /* Magic cookie */
+
+    /* chaddr, sname, and file are already zeroed by struct initialization */
+
+    /* Build DHCP options */
+    int opt_offset = 0;
+
+    /* Option 53: DHCP Message Type = DISCOVER (1) */
+    request.options[opt_offset++] = 53;
+    request.options[opt_offset++] = 1;
+    request.options[opt_offset++] = 1;
+
+    /* Option 80: Rapid Commit (RFC 4039) */
+    request.options[opt_offset++] = 80;
+    request.options[opt_offset++] = 0;
+
+    /* Option 255: End of options */
+    request.options[opt_offset++] = 0xff;
+
+    /* Remaining bytes are padding (up to 300 bytes) */
+
+    /* Send DHCP DISCOVER */
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(67);
+    dest_addr.sin_addr.s_addr = INADDR_BROADCAST;
+
+    if (sendto(sock, &request, sizeof(request), 0,
+               (struct sockaddr *)&dest_addr, sizeof(dest_addr)) < 0) {
+        perror("sendto failed");
+        goto cleanup;
+    }
+
+    /* Keep IPv6-only fast: set receive timeout to 100ms */
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 100000;
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) <
+        0) {
+        perror("setsockopt SO_RCVTIMEO failed");
+        goto cleanup;
+    }
+
+    /* Get and process response (DHCPACK) if any */
+    struct sockaddr_in from_addr;
+    socklen_t from_len = sizeof(from_addr);
+    ssize_t len = recvfrom(sock, response, sizeof(response), 0,
+                           (struct sockaddr *)&from_addr, &from_len);
+
+    close(sock);
+    sock = -1;
+
+    if (len > 0) {
+        /* Parse DHCP response */
+        struct in_addr addr;
+        /* yiaddr is at offset 16-19 in network byte order */
+        memcpy(&addr.s_addr, &response[16], sizeof(addr.s_addr));
+
+        struct in_addr netmask = {.s_addr = INADDR_ANY};
+        struct in_addr router = {.s_addr = INADDR_ANY};
+        /* Clamp MTU to passt's limit */
+        uint16_t mtu = 65520;
+
+        FILE *resolv = fopen("/etc/resolv.conf", "w");
+        if (!resolv) {
+            perror("Failed to open /etc/resolv.conf");
+        }
+
+        /* Parse DHCP options (start at offset 240 after magic cookie) */
+        size_t p = 240;
+        while (p < (size_t)len) {
+            unsigned char opt = response[p];
+
+            if (opt == 0xff) {
+                /* Option 255: End (of options) */
+                break;
+            }
+
+            if (opt == 0) { /* Padding */
+                p++;
+                continue;
+            }
+
+            unsigned char opt_len = response[p + 1];
+            p += 2; /* Length doesn't include code and length field itself */
+
+            if (p + opt_len > (size_t)len) {
+                /* Malformed packet, option length exceeds packet boundary */
+                break;
+            }
+
+            if (opt == 1) {
+                /* Option 1: Subnet Mask */
+                memcpy(&netmask.s_addr, &response[p], sizeof(netmask.s_addr));
+            } else if (opt == 3) {
+                /* Option 3: Router */
+                memcpy(&router.s_addr, &response[p], sizeof(router.s_addr));
+            } else if (opt == 6) {
+                /* Option 6: Domain Name Server */
+                if (resolv) {
+                    for (int dns_p = p; dns_p + 3 < p + opt_len; dns_p += 4) {
+                        fprintf(resolv, "nameserver %d.%d.%d.%d\n",
+                                response[dns_p], response[dns_p + 1],
+                                response[dns_p + 2], response[dns_p + 3]);
+                    }
+                }
+            } else if (opt == 26) {
+                /* Option 26: Interface MTU */
+                mtu = (response[p] << 8) | response[p + 1];
+
+                /* We don't know yet if IPv6 is available: don't go below 1280 B
+                 */
+                if (mtu < 1280)
+                    mtu = 1280;
+                if (mtu > 65520)
+                    mtu = 65520;
+            }
+
+            p += opt_len;
+        }
+
+        if (resolv) {
+            fclose(resolv);
+        }
+
+        /* Calculate prefix length from netmask */
+        unsigned char prefix_len = count_leading_ones(ntohl(netmask.s_addr));
+
+        /* Drop temporary address and route, configure what we got instead */
+        if (mod_route4(nl_sock, iface_index, RTM_DELROUTE, temp_gw) != 0) {
+            printf("couldn't remove temporary route\n");
+            goto cleanup;
+        }
+        if (mod_addr4(nl_sock, iface_index, RTM_DELADDR, temp_addr, 16) != 0) {
+            printf("couldn't remove temporary address\n");
+            goto cleanup;
+        }
+
+        if (mod_addr4(nl_sock, iface_index, RTM_NEWADDR, addr, prefix_len) !=
+            0) {
+            printf("couldn't add the address provided by the DHCP server\n");
+            goto cleanup;
+        }
+        if (mod_route4(nl_sock, iface_index, RTM_NEWROUTE, router) != 0) {
+            printf(
+                "couldn't add the default route provided by the DHCP server\n");
+            goto cleanup;
+        }
+
+        set_mtu(nl_sock, iface_index, mtu);
+    } else {
+        /* Clean up: we're clearly too cool for IPv4 */
+        if (mod_route4(nl_sock, iface_index, RTM_DELROUTE, temp_gw) != 0) {
+            printf("couldn't remove temporary route\n");
+        }
+        if (mod_addr4(nl_sock, iface_index, RTM_DELADDR, temp_addr, 16) != 0) {
+            printf("couldn't remove temporary address\n");
+        }
+    }
+
+    ret = 0;
+
+cleanup:
+    if (sock >= 0) {
+        close(sock);
+    }
+    if (nl_sock >= 0) {
+        close(nl_sock);
+    }
+    return ret;
+}
