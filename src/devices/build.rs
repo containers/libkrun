@@ -6,6 +6,7 @@ fn build_default_init() -> PathBuf {
     let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let libkrun_root = manifest_dir.join("../..");
     let init_src = libkrun_root.join("init/init.c");
+    let timesync_src = libkrun_root.join("init/timesync.c");
 
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
     let init_bin = out_dir.join("init");
@@ -18,10 +19,16 @@ fn build_default_init() -> PathBuf {
         "cargo:rerun-if-changed={}",
         libkrun_root.join("init/jsmn.h").display()
     );
+    println!(
+        "cargo:rerun-if-changed={}",
+        libkrun_root.join("init/timesync.h").display()
+    );
 
     let mut init_cc_flags = vec!["-O2", "-static", "-Wall"];
+    let mut timesync_enabled = false;
     if std::env::var_os("TIMESYNC").as_deref() == Some(OsStr::new("1")) {
         init_cc_flags.push("-D__TIMESYNC__");
+        timesync_enabled = true;
     }
 
     let cc_value = std::env::var("CC_LINUX")
@@ -29,12 +36,19 @@ fn build_default_init() -> PathBuf {
         .unwrap_or_else(|_| "cc".to_string());
     let mut cc_parts = cc_value.split_ascii_whitespace();
     let cc = cc_parts.next().expect("CC_LINUX/CC must not be empty");
-    let status = Command::new(cc)
+    let mut command_binding = Command::new(cc);
+    let mut status = command_binding
         .args(cc_parts)
         .args(&init_cc_flags)
         .arg("-o")
         .arg(&init_bin)
-        .arg(&init_src)
+        .arg(&init_src);
+
+    if timesync_enabled {
+        status = status.arg(&timesync_src);
+    }
+
+    let status = status
         .status()
         .unwrap_or_else(|e| panic!("failed to execute {cc}: {e}"));
 
