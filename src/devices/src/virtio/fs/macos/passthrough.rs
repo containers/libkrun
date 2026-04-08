@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use std::collections::btree_map;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::btree_map;
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
@@ -16,13 +16,13 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-use crossbeam_channel::{unbounded, Sender};
+use crossbeam_channel::{Sender, unbounded};
 use nix::errno::Errno;
 use utils::worker_message::WorkerMessage;
 
 use crate::virtio::fs::filesystem::SecContext;
 
-use super::super::super::linux_errno::{linux_error, LINUX_ERANGE};
+use super::super::super::linux_errno::{LINUX_ERANGE, linux_error};
 use super::super::bindings;
 use super::super::filesystem::{
     Context, DirEntry, Entry, ExportTable, Extensions, FileSystem, FsOptions, GetxattrReply,
@@ -2313,6 +2313,12 @@ impl FileSystem for PassthroughFs {
             return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
         }
 
+        let open_flags = if (flags & fuse::SetupmappingFlags::WRITE.bits()) != 0 {
+            libc::O_RDWR
+        } else {
+            libc::O_RDONLY
+        };
+
         let prot_flags = if (flags & fuse::SetupmappingFlags::WRITE.bits()) != 0 {
             libc::PROT_READ | libc::PROT_WRITE
         } else {
@@ -2327,7 +2333,7 @@ impl FileSystem for PassthroughFs {
 
         debug!("setupmapping: ino {inode:?} guest_addr={guest_addr:x} len={len}");
 
-        let file = self.open_inode(inode, libc::O_RDWR)?;
+        let file = self.open_inode(inode, open_flags)?;
         let fd = file.as_raw_fd();
 
         let host_addr = unsafe {
@@ -2344,10 +2350,7 @@ impl FileSystem for PassthroughFs {
             return Err(linux_error(io::Error::last_os_error()));
         }
 
-        let ret = unsafe { libc::close(fd) };
-        if ret == -1 {
-            return Err(linux_error(io::Error::last_os_error()));
-        }
+        drop(file);
 
         // We've checked that map_sender is something above.
         let sender = map_sender.as_ref().unwrap();
