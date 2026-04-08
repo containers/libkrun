@@ -1,189 +1,16 @@
-#include <dirent.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <limits.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <termios.h>
-#include <unistd.h>
-
-#include <net/if.h>
 #include <sys/ioctl.h>
-#include <sys/resource.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-
-#include <linux/vm_sockets.h>
 
 #include "fs.h"
 #include "parser.h"
-
-#define KRUN_EXIT_CODE_IOCTL 0x7602
-
-#define KRUN_MAGIC "KRUN"
-#define KRUN_FOOTER_LEN 12
-#define MAX_PASS_SIZE 512
-
-char DEFAULT_KRUN_INIT[] = "/bin/sh";
-
-static void set_rlimits(const char *rlimits)
-{
-    unsigned long long int lim_id, lim_cur, lim_max;
-    struct rlimit rlim;
-    char *item = (char *)rlimits;
-
-    while (1) {
-        lim_id = lim_cur = lim_max = ULLONG_MAX;
-
-        lim_id = strtoull(item, &item, 10);
-        if (lim_id == ULLONG_MAX) {
-            printf("Invalid rlimit ID\n");
-            break;
-        }
-
-        item++;
-        lim_cur = strtoull(item, &item, 10);
-        item++;
-        lim_max = strtoull(item, &item, 10);
-
-        rlim.rlim_cur = lim_cur;
-        rlim.rlim_max = lim_max;
-        if (setrlimit(lim_id, &rlim) != 0) {
-            printf("Error setting rlimit for ID=%lld\n", lim_id);
-        }
-
-        if (*item != '\0') {
-            item++;
-        } else {
-            break;
-        }
-    }
-}
+#include "utils.h"
 
 #ifdef __TIMESYNC__
 #include "timesync.h"
 #endif
 
-int reopen_fd(int fd, char *path, int flags)
-{
-    int newfd = open(path, flags);
-    if (newfd < 0) {
-        printf("Failed to open '%s': %s\n", path, strerror(errno));
-        return -1;
-    }
-
-    close(fd);
-    if (dup2(newfd, fd) < 0) {
-        perror("dup2");
-        close(newfd);
-        return -1;
-    }
-    close(newfd);
-    return 0;
-}
-
-int setup_redirects()
-{
-    DIR *ports_dir = opendir("/sys/class/virtio-ports");
-    if (ports_dir == NULL) {
-        printf("Unable to open ports directory!\n");
-        return -4;
-    }
-
-    char path[2048];
-    char name_buf[1024];
-
-    struct dirent *entry = NULL;
-    while ((entry = readdir(ports_dir))) {
-        char *port_identifier = entry->d_name;
-        int result_len =
-            snprintf(path, sizeof(path), "/sys/class/virtio-ports/%s/name",
-                     port_identifier);
-
-        // result was truncated
-        if (result_len > sizeof(name_buf) - 1) {
-            printf("Path buffer too small");
-            return -1;
-        }
-
-        FILE *port_name_file = fopen(path, "r");
-        if (port_name_file == NULL) {
-            continue;
-        }
-
-        char *port_name = fgets(name_buf, sizeof(name_buf), port_name_file);
-        fclose(port_name_file);
-
-        if (port_name != NULL && strcmp(port_name, "krun-stdin\n") == 0) {
-            // if previous snprintf didn't fail, this one cannot fail either
-            snprintf(path, sizeof(path), "/dev/%s", port_identifier);
-            reopen_fd(STDIN_FILENO, path, O_RDONLY);
-        } else if (port_name != NULL &&
-                   strcmp(port_name, "krun-stdout\n") == 0) {
-            snprintf(path, sizeof(path), "/dev/%s", port_identifier);
-            reopen_fd(STDOUT_FILENO, path, O_WRONLY);
-        } else if (port_name != NULL &&
-                   strcmp(port_name, "krun-stderr\n") == 0) {
-            snprintf(path, sizeof(path), "/dev/%s", port_identifier);
-            reopen_fd(STDERR_FILENO, path, O_WRONLY);
-        }
-    }
-
-    closedir(ports_dir);
-    return 0;
-}
-
-void set_exit_code(int code)
-{
-    int fd;
-    int ret;
-    int virtiofs_check;
-
-    // Only use the ioctl if virtiofs is used for root filesystem
-    virtiofs_check = is_virtiofs("/");
-    if (virtiofs_check < 0) {
-        printf("Warning: Could not determine filesystem type for root\n");
-    }
-
-    if (virtiofs_check == 0) {
-        // Root filesystem is not virtiofs, skip the ioctl
-        return;
-    }
-
-    fd = open("/", O_RDONLY);
-    if (fd < 0) {
-        perror("Couldn't open root filesystem to report exit code");
-        return;
-    }
-
-    ret = ioctl(fd, KRUN_EXIT_CODE_IOCTL, code);
-    if (ret < 0) {
-        perror("Error using the ioctl to set the exit code");
-    }
-
-    close(fd);
-}
-
 int main(int argc, char **argv)
 {
-    struct ifreq ifr;
-    int sockfd;
-    int status;
-    int saved_errno;
-    bool init_pid1 = false;
-    char localhost[] = "localhost\0";
-    char *hostname;
-    char *krun_home;
-    char *krun_term;
-    char *krun_init;
-    char *env_init_pid1;
-    char *config_workdir, *env_workdir;
-    char *rlimits;
+    char *config_workdir;
     char **config_argv, **exec_argv;
 
     if (mount_filesystems() < 0) {
@@ -196,63 +23,14 @@ int main(int argc, char **argv)
     setsid();
     ioctl(0, TIOCSCTTY, 1);
 
-    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sockfd >= 0) {
-        memset(&ifr, 0, sizeof ifr);
-        strncpy(ifr.ifr_name, "lo", IFNAMSIZ);
-        ifr.ifr_flags |= IFF_UP;
-        ioctl(sockfd, SIOCSIFFLAGS, &ifr);
-        close(sockfd);
-    }
+    setup_socket();
 
     config_argv = NULL;
     config_workdir = NULL;
 
     config_parse_file(&config_argv, &config_workdir);
 
-    krun_home = getenv("KRUN_HOME");
-    if (krun_home) {
-        setenv("HOME", krun_home, 1);
-    }
-
-    krun_term = getenv("KRUN_TERM");
-    if (krun_term) {
-        setenv("TERM", krun_term, 1);
-    }
-
-    hostname = getenv("HOSTNAME");
-    if (hostname) {
-        sethostname(hostname, strlen(hostname));
-    } else {
-        sethostname(&localhost[0], strlen(localhost));
-    }
-
-    rlimits = getenv("KRUN_RLIMITS");
-    if (rlimits) {
-        set_rlimits(rlimits);
-    }
-
-    env_workdir = getenv("KRUN_WORKDIR");
-    if (env_workdir) {
-        chdir(env_workdir);
-    } else if (config_workdir) {
-        chdir(config_workdir);
-    }
-
-    exec_argv = argv;
-    krun_init = getenv("KRUN_INIT");
-    if (krun_init) {
-        exec_argv[0] = krun_init;
-    } else if (config_argv) {
-        exec_argv = config_argv;
-    } else {
-        exec_argv[0] = &DEFAULT_KRUN_INIT[0];
-    }
-
-    env_init_pid1 = getenv("KRUN_INIT_PID1");
-    if (env_init_pid1 && *env_init_pid1 == '1') {
-        init_pid1 = true;
-    }
+    handle_env_variables(config_workdir);
 
 #ifdef __TIMESYNC__
     if (fork() == 0) {
@@ -261,49 +39,8 @@ int main(int argc, char **argv)
     }
 #endif
 
-    if (init_pid1) {
-        goto exec_init;
-    }
-
-    // We need to fork ourselves, because pid 1 cannot doesn't receive SIGINT
-    // signal
-    int child = fork();
-    if (child < 0) {
-        perror("fork");
-        set_exit_code(125);
-        exit(125);
-    }
-    if (child == 0) { // child
-    exec_init:
-        if (setup_redirects() < 0) {
-            exit(125);
-        }
-        if (execvp(exec_argv[0], exec_argv) < 0) {
-            saved_errno = errno;
-            printf("Couldn't execute '%s' inside the vm: %s\n", exec_argv[0],
-                   strerror(errno));
-            // Use the same exit code as chroot and podman do.
-            if (saved_errno == ENOENT) {
-                exit(127);
-            } else {
-                exit(126);
-            }
-        }
-    } else { // parent
-        // Wait until the workload's entrypoint has exited, ignoring any other
-        // children.
-        while (waitpid(-1, &status, 0) != child) {
-            // Not the first child, ignore it.
-        };
-
-        // The workload's entrypoint has exited, record its exit code and exit
-        // ourselves.
-        if (WIFEXITED(status)) {
-            set_exit_code(WEXITSTATUS(status));
-        } else if (WIFSIGNALED(status)) {
-            set_exit_code(WTERMSIG(status) + 128);
-        }
-    }
+    exec_argv = argv;
+    exec_init(&config_argv, &exec_argv);
 
     return 0;
 }
