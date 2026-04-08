@@ -117,7 +117,7 @@ impl SndWorker {
     }
 
     fn work(mut self) {
-        let epoll = Epoll::new().unwrap();
+        let mut epoll = Epoll::new().unwrap();
 
         for idx in QUEUE_INDEXES {
             let fd = self.queue_events[idx].as_raw_fd();
@@ -139,8 +139,8 @@ impl SndWorker {
             )
             .unwrap();
 
+        let mut epoll_events = vec![EpollEvent::new(EventSet::empty(), 0); 32];
         loop {
-            let mut epoll_events = vec![EpollEvent::new(EventSet::empty(), 0); 32];
             match epoll.wait(epoll_events.len(), -1, epoll_events.as_mut_slice()) {
                 Ok(ev_cnt) => {
                     for event in &epoll_events[0..ev_cnt] {
