@@ -29,6 +29,10 @@ pub const LINUX_RENAME_WHITEOUT: libc::c_int = 1 << 2;
 pub const LINUX_XATTR_CREATE: libc::c_int = 1;
 pub const LINUX_XATTR_REPLACE: libc::c_int = 2;
 
+pub const LINUX_FALLOC_FL_ALLOCATE_RANGE: libc::c_int = 0;
+pub const LINUX_FALLOC_FL_KEEP_SIZE: libc::c_int = 1;
+pub const LINUX_FALLOC_FL_PUNCH_HOLE: libc::c_int = 2;
+
 #[cfg(target_os = "macos")]
 pub type stat64 = libc::stat;
 #[cfg(target_os = "linux")]
