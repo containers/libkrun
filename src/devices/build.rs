@@ -6,6 +6,7 @@ fn build_default_init() -> PathBuf {
     let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let libkrun_root = manifest_dir.join("../..");
     let init_src = libkrun_root.join("init/init.c");
+    let fs_src = libkrun_root.join("init/fs.c");
     let timesync_src = libkrun_root.join("init/timesync.c");
 
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
@@ -18,6 +19,10 @@ fn build_default_init() -> PathBuf {
     println!(
         "cargo:rerun-if-changed={}",
         libkrun_root.join("init/jsmn.h").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        libkrun_root.join("init/fs.h").display()
     );
     println!(
         "cargo:rerun-if-changed={}",
@@ -42,7 +47,8 @@ fn build_default_init() -> PathBuf {
         .args(&init_cc_flags)
         .arg("-o")
         .arg(&init_bin)
-        .arg(&init_src);
+        .arg(&init_src)
+        .arg(&fs_src);
 
     if timesync_enabled {
         status = status.arg(&timesync_src);
