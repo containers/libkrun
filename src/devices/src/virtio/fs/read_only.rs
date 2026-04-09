@@ -13,8 +13,8 @@
 use crossbeam_channel::Sender;
 use std::ffi::CStr;
 use std::io;
-use std::sync::Arc;
 use std::sync::atomic::AtomicI32;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(target_os = "macos")]
@@ -34,6 +34,10 @@ type Handle = u64;
 fn erofs() -> io::Error {
     io::Error::from_raw_os_error(libc::EROFS)
 }
+
+// Keep the Linux ioctl number so read-only virtio-fs can still handle
+// non-mutating control ioctls while rejecting host-side root deletion.
+const VIRTIO_IOC_REMOVE_ROOT_DIR_REQ: u32 = 0x7603;
 
 fn read_only_open_flags(flags: u32) -> io::Result<u32> {
     let f = flags as i32;
@@ -304,17 +308,23 @@ impl FileSystem for PassthroughFsRo {
 
     fn ioctl(
         &self,
-        _ctx: Context,
-        _inode: Inode,
-        _handle: Handle,
-        _flags: u32,
-        _cmd: u32,
-        _arg: u64,
-        _in_size: u32,
-        _out_size: u32,
-        _exit_code: &Arc<AtomicI32>,
+        ctx: Context,
+        inode: Inode,
+        handle: Handle,
+        flags: u32,
+        cmd: u32,
+        arg: u64,
+        in_size: u32,
+        out_size: u32,
+        exit_code: &Arc<AtomicI32>,
     ) -> io::Result<Vec<u8>> {
-        Err(erofs())
+        if cmd == VIRTIO_IOC_REMOVE_ROOT_DIR_REQ {
+            return Err(erofs());
+        }
+
+        self.inner.ioctl(
+            ctx, inode, handle, flags, cmd, arg, in_size, out_size, exit_code,
+        )
     }
 
     // --- Write operations rejected with EROFS ---
