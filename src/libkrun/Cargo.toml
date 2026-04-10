@@ -17,6 +17,7 @@ snd = []
 input = ["krun_input", "vmm/input", "devices/input"]
 virgl_resource_map2 = []
 aws-nitro = [ "dep:aws-nitro", "dep:nitro-enclaves" ]
+vhost-user = ["vmm/vhost-user", "devices/vhost-user"]
 
 [dependencies]
 crossbeam-channel = ">=0.5.15"
@@ -38,8 +39,8 @@ rand = "0.9.2"
 hvf = { path = "../hvf" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-kvm-bindings = { version = "0.12", features = ["fam-wrappers"] }
-kvm-ioctls = "0.22"
+kvm-bindings = { version = "0.14", features = ["fam-wrappers"] }
+kvm-ioctls = "0.24"
 aws-nitro = { path = "../aws_nitro", optional = true }
 nitro-enclaves = { version = "0.5.0", optional = true }
 vm-memory = { version = "0.17", features = ["backend-mmap"] }
