@@ -117,6 +117,12 @@ impl Fs {
         cfg.export_fsid
     }
 
+    /// Replace the exit code handle. Used by the API layer to wire
+    /// the VMM's exit code into a device that was constructed earlier.
+    pub fn set_exit_code(&mut self, exit_code: Arc<AtomicI32>) {
+        self.exit_code = exit_code;
+    }
+
     #[cfg(target_os = "macos")]
     pub fn set_map_sender(&mut self, map_sender: Sender<WorkerMessage>) {
         self.map_sender = Some(map_sender);

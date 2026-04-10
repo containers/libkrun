@@ -19,33 +19,6 @@ use super::payload::{KrunPayload, Payload};
 // VmmBuilder
 // ---------------------------------------------------------------------------
 
-/// Builder for constructing and launching a virtual machine.
-///
-/// Configure the VM's resources (vCPUs, RAM), payload (what to run inside),
-/// and devices, then call [`build`](VmmBuilder::build) to create the VM.
-///
-/// # Example
-///
-/// ```no_run
-/// let rootfs = FsDevice::new("/dev/root", "/path/to/rootfs")?;
-/// let mut console_builder = ConsoleDevice::builder();
-/// let payload = Init::builder(&rootfs, &mut console_builder)
-///     .exec("/bin/sh", &[])?
-///     .build()?;
-/// let console = console_builder.build()?;
-///
-/// let mut devices = MmioDeviceManager::new();
-/// devices.add(rootfs);
-/// devices.add(console);
-///
-/// let mut vmm = VmmBuilder::new()
-///     .vcpus(2)?
-///     .ram_mib(512)?
-///     .payload(payload)
-///     .devices(devices)
-///     .build()?;
-/// vmm.run();
-/// ```
 pub struct VmmBuilder<'a> {
     vcpus: Option<u8>,
     ram_mib: Option<u32>,
@@ -55,7 +28,6 @@ pub struct VmmBuilder<'a> {
 
 #[ffier::exportable]
 impl<'a> VmmBuilder<'a> {
-    /// Create a new VM builder with no configuration.
     pub fn new() -> Self {
         VmmBuilder {
             vcpus: None,
@@ -65,7 +37,6 @@ impl<'a> VmmBuilder<'a> {
         }
     }
 
-    /// Set the number of virtual CPUs. Must be at least 1.
     pub fn vcpus(mut self, count: u8) -> Result<Self, Error> {
         if count == 0 {
             return Err(Error::OutOfRange);
@@ -74,7 +45,6 @@ impl<'a> VmmBuilder<'a> {
         Ok(self)
     }
 
-    /// Set the amount of guest RAM in mebibytes. Must be at least 1.
     pub fn ram_mib(mut self, mib: u32) -> Result<Self, Error> {
         if mib == 0 {
             return Err(Error::OutOfRange);
@@ -83,27 +53,16 @@ impl<'a> VmmBuilder<'a> {
         Ok(self)
     }
 
-    /// Set the payload to run inside the VM.
-    ///
-    /// Currently the only payload type is `Init`, which runs a process
-    /// as PID 1 inside the guest using the built-in krun init.
     pub fn payload(mut self, payload: impl Payload) -> Self {
         self.payload = Some(payload.into_payload());
         self
     }
 
-    /// Set the device manager containing all virtio devices.
-    ///
-    /// The device manager determines which transport bus is used (currently
-    /// only [`MmioDeviceManager`] for virtio-mmio).
     pub fn devices(mut self, devices: MmioDeviceManager<'a>) -> Self {
         self.device_manager = Some(Box::new(devices));
         self
     }
 
-    /// Build the VM, creating guest memory, attaching devices, and starting
-    /// vCPUs. All required fields (`vcpus`, `ram_mib`, `payload`, `devices`)
-    /// must have been set.
     pub fn build(self) -> Result<Vmm<'a>, Error> {
         build_vm(self).map_err(|e| {
             log::error!("{e}");
@@ -116,25 +75,15 @@ impl<'a> VmmBuilder<'a> {
 // Vmm — the running VM handle
 // ---------------------------------------------------------------------------
 
-/// A running virtual machine.
-///
-/// Returned by [`VmmBuilder::build`]. Call [`run`](Vmm::run) to enter the
-/// event loop and execute the guest payload.
 pub struct Vmm<'a> {
     #[allow(dead_code)]
     inner: Arc<Mutex<InnerVmm>>,
     event_manager: EventManager,
-    /// Keep the worker channel sender alive so the worker thread's receiver
-    /// doesn't get `RecvError` from a dropped channel.
-    #[allow(dead_code)]
-    _worker_sender: crossbeam_channel::Sender<utils::worker_message::WorkerMessage>,
     _lifetime: PhantomData<&'a ()>,
 }
 
 #[ffier::exportable]
 impl<'a> Vmm<'a> {
-    /// Run the VM event loop. This call blocks until the VM exits or a
-    /// fatal error occurs.
     pub fn run(&mut self) {
         loop {
             if let Err(e) = self.event_manager.run() {
@@ -185,17 +134,6 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
     let requirements = device_manager.requirements();
     let fs_shm_sizes: Vec<Option<usize>> = requirements.iter().map(|r| r.shm_size).collect();
 
-    #[cfg(feature = "gpu")]
-    let (gpu_virgl_flags, gpu_shm_size) = {
-        let gpu_req = requirements.iter().find_map(|r| r.gpu_shm.as_ref());
-        match gpu_req {
-            Some(req) => (Some(req.virgl_flags), Some(req.shm_size)),
-            None => (None, None),
-        }
-    };
-    #[cfg(not(feature = "gpu"))]
-    let (gpu_virgl_flags, gpu_shm_size): (Option<u32>, Option<usize>) = (None, None);
-
     // 4. Create guest memory
     let (guest_memory, arch_memory_info, shm_manager, payload_config) = create_guest_memory(
         ram_mib as usize,
@@ -206,8 +144,8 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
         None,
         None, // firmware_config
         &fs_shm_sizes,
-        gpu_virgl_flags,
-        gpu_shm_size,
+        None, // gpu_virgl_flags
+        None, // gpu_shm_size
         &payload_type,
     )
     .map_err(|e| DetailedError::new(Error::BootError, format!("{e:?}")))?;
@@ -403,19 +341,8 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
         pio_device_manager,
     };
 
-    // 11. Create worker thread channel (used for macOS GPU mapping, x86 GSI, TEE)
-    #[allow(unused_variables)]
-    let (worker_sender, worker_receiver) = crossbeam_channel::unbounded();
-
-    // 12. Attach all devices via the device manager
-    device_manager.attach_all(
-        &mut vmm,
-        &mut event_manager,
-        &shm_manager,
-        intc.clone(),
-        #[cfg(target_os = "macos")]
-        Some(worker_sender.clone()),
-    )?;
+    // 11. Attach all devices via the device manager
+    device_manager.attach_all(&mut vmm, &mut event_manager, &shm_manager, intc.clone())?;
 
     // 12. Append "-- args" epilog (must come after device attachment,
     //     because MMIO device params are appended to the cmdline during
@@ -446,23 +373,16 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
     vmm.start_vcpus(vcpus)
         .map_err(|e| DetailedError::new(Error::Internal, format!("{e:?}")))?;
 
-    // 16. Register with EventManager and start worker thread
+    // 16. Register with EventManager
     #[allow(clippy::arc_with_non_send_sync)]
     let vmm = Arc::new(Mutex::new(vmm));
     event_manager
         .add_subscriber(vmm.clone())
         .map_err(|e| DetailedError::new(Error::Internal, format!("{e:?}")))?;
 
-    // Start the VMM worker thread. It processes messages from devices that
-    // need VMM-level operations (macOS GPU memory mapping, x86_64 GSI routing,
-    // TEE memory conversion).
-    vmm::worker::start_worker_thread(vmm.clone(), worker_receiver)
-        .map_err(|e| DetailedError::new(Error::Internal, format!("worker thread: {e}")))?;
-
     Ok(Vmm {
         inner: vmm,
         event_manager,
-        _worker_sender: worker_sender,
         _lifetime: PhantomData,
     })
 }

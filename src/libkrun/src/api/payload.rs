@@ -1,7 +1,7 @@
 use std::os::fd::{BorrowedFd, FromRawFd};
 
 use devices::virtio::port_io;
-use libc::{STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO};
+use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 
 use super::devices::{ConsoleBuilder, FsDevice};
 use super::error::{DetailedError, Error};
@@ -28,7 +28,6 @@ pub trait KrunPayload: Send {
     /// Load the kernel and return the bundle. Called during VM construction.
     fn load_kernel(&self) -> Result<vmm::vmm_config::kernel_bundle::KernelBundle, DetailedError>;
 }
-
 
 // ---------------------------------------------------------------------------
 // Init — krunfw-based payload (runs a command inside the VM)
@@ -75,7 +74,10 @@ impl Init {
         // Kernel cmdline has console=hvc0, so boot messages go here.
         // init.krun's stdio starts on hvc0 too; setup_redirects() in init.krun
         // moves payload stdio to a named port (krun-tty or krun-stdin/stdout/stderr).
-        console.add_console_port("krun-init-console", port_io::output_to_log(log::Level::Info));
+        console.add_console_port(
+            "krun-init-console",
+            port_io::output_to_log(log::Level::Info),
+        );
 
         InitBuilder {
             console,
@@ -98,7 +100,11 @@ impl<'a, 'b> InitBuilder<'a, 'b> {
     pub fn console_auto(mut self) -> Result<Self, Error> {
         // /dev/tty always refers to the controlling terminal, even if
         // stdin/stdout are redirected.
-        if let Ok(tty) = std::fs::File::options().read(true).write(true).open("/dev/tty") {
+        if let Ok(tty) = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+        {
             use std::os::fd::AsRawFd;
             let raw_fd = tty.as_raw_fd();
             std::mem::forget(tty); // leak the fd — add_tty_port dups it
@@ -114,8 +120,7 @@ impl<'a, 'b> InitBuilder<'a, 'b> {
     /// terminal. Raw mode is enabled automatically if `tty_fd` is a
     /// real terminal.
     pub fn console_tty(mut self, tty_fd: BorrowedFd<'a>) -> Result<Self, Error> {
-        self.console
-            .add_tty_port("krun-payload-tty", tty_fd)?;
+        self.console.add_tty_port("krun-payload-tty", tty_fd)?;
         self.payload_console_configured = true;
         Ok(self)
     }
@@ -248,7 +253,9 @@ pub trait Payload {
 #[ffier::trait_impl]
 impl Payload for Init {
     #[ffier(skip)]
-    fn into_payload(self) -> Box<dyn KrunPayload> { Box::new(self) }
+    fn into_payload(self) -> Box<dyn KrunPayload> {
+        Box::new(self)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -260,8 +267,8 @@ impl KrunPayload for Init {
         &self,
         cmdline: &mut kernel::cmdline::Cmdline,
     ) -> Result<(), DetailedError> {
-        let cmdline_base = vmm::vmm_config::kernel_cmdline::DEFAULT_KERNEL_CMDLINE
-            .replace(" quiet", "");
+        let cmdline_base =
+            vmm::vmm_config::kernel_cmdline::DEFAULT_KERNEL_CMDLINE.replace(" quiet", "");
         cmdline
             .insert_str(&format!("{cmdline_base} init={INIT_PATH}"))
             .map_err(|e| DetailedError::new(Error::Internal, format!("{e:?}")))?;
@@ -277,10 +284,7 @@ impl KrunPayload for Init {
 
     fn load_kernel(&self) -> Result<vmm::vmm_config::kernel_bundle::KernelBundle, DetailedError> {
         let lib = KRUNFW.as_ref().ok_or_else(|| {
-            DetailedError::new(
-                Error::FileNotFound,
-                format!("could not load {KRUNFW_NAME}"),
-            )
+            DetailedError::new(Error::FileNotFound, format!("could not load {KRUNFW_NAME}"))
         })?;
         let get_kernel: libloading::Symbol<
             unsafe extern "C" fn(*mut u64, *mut u64, *mut usize) -> *mut libc::c_char,
@@ -292,11 +296,12 @@ impl KrunPayload for Init {
         let mut guest_addr: u64 = 0;
         let mut entry_addr: u64 = 0;
         let mut size: usize = 0;
-        let host_addr = unsafe {
-            get_kernel(&mut guest_addr, &mut entry_addr, &mut size)
-        };
+        let host_addr = unsafe { get_kernel(&mut guest_addr, &mut entry_addr, &mut size) };
         if host_addr.is_null() {
-            return Err(DetailedError::new(Error::BootError, "krunfw_get_kernel returned null"));
+            return Err(DetailedError::new(
+                Error::BootError,
+                "krunfw_get_kernel returned null",
+            ));
         }
         Ok(vmm::vmm_config::kernel_bundle::KernelBundle {
             host_addr: host_addr as u64,

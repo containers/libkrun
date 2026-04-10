@@ -1,7 +1,7 @@
 use std::io::IsTerminal;
 use std::marker::PhantomData;
 use std::os::fd::RawFd;
-use std::os::fd::{AsRawFd, BorrowedFd};
+use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd};
 use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
 
@@ -26,19 +26,6 @@ use super::error::{DetailedError, Error};
 pub struct DeviceRequirements {
     /// Size of shared memory (DAX) window needed, if any.
     pub shm_size: Option<usize>,
-    /// GPU shared memory size and virgl flags, if this is a GPU device.
-    #[cfg(feature = "gpu")]
-    pub gpu_shm: Option<GpuShmRequirement>,
-}
-
-/// GPU shared memory requirements.
-#[cfg(feature = "gpu")]
-pub struct GpuShmRequirement {
-    /// Virgl renderer flags (bitmask of `VIRGL_RENDERER_*` constants).
-    pub virgl_flags: u32,
-    /// Size of the GPU shared memory region in bytes.
-    /// Defaults to 8 GiB if not specified.
-    pub shm_size: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -61,8 +48,6 @@ pub struct AttachContext<'a> {
         dyn Fn(&mut Vmm, String, IrqChip, Arc<Mutex<dyn VirtioDevice>>) -> Result<(), DetailedError>
             + 'a,
     >,
-    #[cfg(target_os = "macos")]
-    map_sender: Option<crossbeam_channel::Sender<utils::worker_message::WorkerMessage>>,
 }
 
 impl<'a> AttachContext<'a> {
@@ -72,9 +57,6 @@ impl<'a> AttachContext<'a> {
         shm_manager: &'a ShmManager,
         intc: IrqChip,
         device_index: usize,
-        #[cfg(target_os = "macos")] map_sender: Option<
-            crossbeam_channel::Sender<utils::worker_message::WorkerMessage>,
-        >,
     ) -> Self {
         Self {
             vmm,
@@ -87,8 +69,6 @@ impl<'a> AttachContext<'a> {
                     .map_err(|e| DetailedError::new(Error::Internal, format!("{e:?}")))?;
                 Ok(())
             }),
-            #[cfg(target_os = "macos")]
-            map_sender,
         }
     }
 
@@ -148,23 +128,6 @@ impl<'a> AttachContext<'a> {
         })
     }
 
-    /// The resolved GPU SHM region, if GPU is enabled and a region was allocated.
-    #[cfg(feature = "gpu")]
-    pub fn resolved_gpu_shm_region(&self) -> Option<ResolvedShmRegion> {
-        self.shm_manager.gpu_region().map(|r| {
-            let host_addr = self
-                .vmm
-                .guest_memory
-                .get_host_address(r.guest_addr)
-                .expect("gpu shm region host address");
-            ResolvedShmRegion {
-                host_addr: host_addr as u64,
-                guest_addr: r.guest_addr.raw_value(),
-                size: r.size,
-            }
-        })
-    }
-
     /// The index of the current device within its device manager.
     pub fn device_index(&self) -> usize {
         self.device_index
@@ -183,37 +146,12 @@ impl<'a> AttachContext<'a> {
     pub fn setup_terminal_raw_mode(&mut self, fd: BorrowedFd<'_>) {
         setup_terminal_raw_mode(self.vmm, Some(fd), false);
     }
-
-    /// Get the macOS memory mapping channel sender, if available.
-    /// Used by GPU and Fs devices for DAX memory mapping on macOS.
-    #[cfg(target_os = "macos")]
-    pub fn map_sender(
-        &self,
-    ) -> Option<crossbeam_channel::Sender<utils::worker_message::WorkerMessage>> {
-        self.map_sender.clone()
-    }
-
-    /// Append a string to the kernel command line.
-    /// Used by devices that need to pass parameters to the guest kernel
-    /// (e.g., vsock TSI flags).
-    pub fn append_kernel_cmdline(&mut self, s: &str) {
-        self.vmm
-            .kernel_cmdline
-            .insert_str(s)
-            .unwrap_or_else(|e| log::error!("failed to append '{s}' to cmdline: {e}"));
-    }
 }
 
-/// A resolved shared memory region with both host and guest addresses.
-///
-/// Returned by [`AttachContext::resolved_shm_region`] after guest memory has been
-/// created and the SHM region mapped.
+/// A resolved shared memory region with host and guest addresses.
 pub struct ResolvedShmRegion {
-    /// Host virtual address of the start of the SHM region.
     pub host_addr: u64,
-    /// Guest physical address of the start of the SHM region.
     pub guest_addr: u64,
-    /// Size of the SHM region in bytes.
     pub size: usize,
 }
 
@@ -279,9 +217,6 @@ pub trait DeviceManager<'a>: sealed::Sealed + Send + 'a {
         event_manager: &mut EventManager,
         shm_manager: &ShmManager,
         intc: IrqChip,
-        #[cfg(target_os = "macos")] map_sender: Option<
-            crossbeam_channel::Sender<utils::worker_message::WorkerMessage>,
-        >,
     ) -> Result<(), DetailedError>;
 }
 
@@ -299,18 +234,12 @@ pub struct MmioDeviceManager<'a> {
 
 #[ffier::exportable]
 impl<'a> MmioDeviceManager<'a> {
-    /// Create an empty device manager.
     pub fn new() -> Self {
         Self {
             devices: Vec::new(),
         }
     }
 
-    /// Add a device to this manager.
-    ///
-    /// Devices are attached in the order they are added. The device must
-    /// implement [`AttachDevice`] — all built-in device types
-    /// (`FsDevice`, `ConsoleDevice`, etc.) implement this trait.
     pub fn add(&mut self, device: impl AttachDevice<'a>) -> &mut Self {
         self.devices.push(Box::new(device));
         self
@@ -330,20 +259,9 @@ impl<'a> DeviceManager<'a> for MmioDeviceManager<'a> {
         event_manager: &mut EventManager,
         shm_manager: &ShmManager,
         intc: IrqChip,
-        #[cfg(target_os = "macos")] map_sender: Option<
-            crossbeam_channel::Sender<utils::worker_message::WorkerMessage>,
-        >,
     ) -> Result<(), DetailedError> {
         for (i, device) in self.devices.into_iter().enumerate() {
-            let mut ctx = AttachContext::new_mmio(
-                vmm,
-                event_manager,
-                shm_manager,
-                intc.clone(),
-                i,
-                #[cfg(target_os = "macos")]
-                map_sender.clone(),
-            );
+            let mut ctx = AttachContext::new_mmio(vmm, event_manager, shm_manager, intc.clone(), i);
             device.attach(&mut ctx)?;
         }
         Ok(())
@@ -354,11 +272,6 @@ impl<'a> DeviceManager<'a> for MmioDeviceManager<'a> {
 // FsDevice
 // ---------------------------------------------------------------------------
 
-/// A virtio-fs (virtiofs) shared filesystem device.
-///
-/// Exposes a host directory to the guest as a shared filesystem.
-/// The `tag` is used by the guest to mount the filesystem
-/// (e.g. `mount -t virtiofs /dev/root /mnt`).
 pub struct FsDevice<'a> {
     pub(crate) inner: Arc<Mutex<devices::virtio::Fs>>,
     #[allow(dead_code)]
@@ -369,12 +282,6 @@ pub struct FsDevice<'a> {
 
 #[ffier::exportable]
 impl<'a> FsDevice<'a> {
-    /// Create a new virtiofs device.
-    ///
-    /// # Arguments
-    ///
-    /// - `tag`: the filesystem tag visible to the guest (e.g. `"/dev/root"`).
-    /// - `host_path`: the host directory to share.
     pub fn new(tag: &str, host_path: &str) -> Result<Self, Error> {
         let exit_code = Arc::new(AtomicI32::new(i32::MAX));
         let fs = devices::virtio::Fs::new(
@@ -396,11 +303,6 @@ impl<'a> FsDevice<'a> {
         })
     }
 
-    /// Set the size of the DAX (direct access) shared memory window.
-    ///
-    /// When set, the guest can memory-map files from the shared filesystem
-    /// directly into its address space, avoiding data copies. If not set,
-    /// no DAX window is allocated.
     pub fn set_dax_window_size(&mut self, bytes: u64) {
         self.shm_size = Some(bytes as usize);
     }
@@ -422,7 +324,6 @@ impl<'a> AttachDevice<'a> for FsDevice<'a> {
             // Wire exit code from VMM into the fs device
             fs.set_exit_code(ctx.exit_code().clone());
             // Set up SHM region if allocated
-            #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
             if let Some(region) = ctx.resolved_shm_region() {
                 fs.set_shm_region(region.into());
             }
@@ -436,14 +337,6 @@ impl<'a> AttachDevice<'a> for FsDevice<'a> {
 // ConsoleDevice + Builder
 // ---------------------------------------------------------------------------
 
-/// A virtio multiport console device.
-///
-/// The console provides one or more serial ports to the guest, each
-/// backed by a host file descriptor (typically a TTY). The guest kernel
-/// sees these as `/dev/hvcN` devices.
-///
-/// Use [`ConsoleDevice::builder`] to configure ports, then
-/// [`ConsoleBuilder::build`] to finalize.
 pub struct ConsoleDevice<'a> {
     pub(crate) ports: Vec<PortDescription>,
     #[allow(dead_code)]
@@ -453,10 +346,6 @@ pub struct ConsoleDevice<'a> {
     _lifetime: PhantomData<&'a ()>,
 }
 
-/// Builder for configuring a [`ConsoleDevice`].
-///
-/// Add one or more ports with [`add_tty_port`](ConsoleBuilder::add_tty_port),
-/// then call [`build`](ConsoleBuilder::build) to create the device.
 pub struct ConsoleBuilder<'a> {
     ports: Vec<PortDescription>,
     kernel_console_port: Option<u32>,
@@ -466,7 +355,6 @@ pub struct ConsoleBuilder<'a> {
 
 #[ffier::exportable]
 impl<'a> ConsoleDevice<'a> {
-    /// Create a new console builder.
     pub fn builder() -> ConsoleBuilder<'a> {
         ConsoleBuilder {
             ports: Vec::new(),
@@ -479,30 +367,12 @@ impl<'a> ConsoleDevice<'a> {
 
 #[ffier::exportable]
 impl<'a> ConsoleBuilder<'a> {
-    /// Add a TTY-backed port to the console.
-    ///
-    /// If the fd refers to a real terminal, raw mode will be enabled on it
-    /// when the VM starts, and restored on shutdown.
-    ///
-    /// # Arguments
-    ///
-    /// - `name`: the port name visible to the guest (e.g. `"tty0"`).
-    /// - `tty_fd`: borrowed fd for the host TTY; duplicated internally, caller retains ownership.
-    ///
-    /// # Returns
-    ///
-    /// The zero-based port index, usable with [`set_kernel_console`](ConsoleBuilder::set_kernel_console).
     pub fn add_tty_port(&mut self, name: &str, tty_fd: BorrowedFd<'a>) -> Result<u32, Error> {
         let index = self.ports.len() as u32;
         self.add_tty_port_inner(name, tty_fd)?;
         Ok(index)
     }
 
-    /// Designate a port as the kernel console (`console=hvcN`).
-    ///
-    /// # Arguments
-    ///
-    /// - `port_index`: a value returned by [`add_tty_port`](ConsoleBuilder::add_tty_port).
     pub fn set_kernel_console(&mut self, port_index: u32) -> Result<(), Error> {
         if port_index as usize >= self.ports.len() {
             return Err(Error::OutOfRange);
@@ -511,7 +381,6 @@ impl<'a> ConsoleBuilder<'a> {
         Ok(())
     }
 
-    /// Build the console device. At least one port must have been added.
     pub fn build(self) -> Result<ConsoleDevice<'a>, Error> {
         if self.ports.is_empty() {
             return Err(Error::MissingConfig);
@@ -601,7 +470,9 @@ impl ConsoleBuilder<'_> {
             Error::BadFd
         })?);
 
-        let is_term = tty_fd.is_terminal();
+        let file_check = unsafe { std::fs::File::from_raw_fd(raw_fd) };
+        let is_term = file_check.is_terminal();
+        std::mem::forget(file_check);
         let terminal: Option<Box<dyn devices::virtio::port_io::PortTerminalProperties>> = if is_term
         {
             Some(port_io::term_fd(raw_fd).map_err(|e| {
@@ -657,17 +528,12 @@ impl<'a> AttachDevice<'a> for ConsoleDevice<'a> {
 // BalloonDevice
 // ---------------------------------------------------------------------------
 
-/// A virtio balloon device for dynamic memory management.
-///
-/// The balloon allows the host to reclaim guest memory by inflating
-/// (requesting pages back) or deflating (returning pages).
 pub struct BalloonDevice {
     pub(crate) inner: Arc<Mutex<devices::virtio::Balloon>>,
 }
 
 #[ffier::exportable]
 impl BalloonDevice {
-    /// Create a new balloon device.
     pub fn new() -> Result<Self, Error> {
         let balloon = devices::virtio::Balloon::new().map_err(|e| {
             log::error!("balloon: {e:?}");
@@ -692,17 +558,12 @@ impl<'a> AttachDevice<'a> for BalloonDevice {
 // RngDevice
 // ---------------------------------------------------------------------------
 
-/// A virtio entropy source (RNG) device.
-///
-/// Provides the guest with hardware-quality randomness from the host's
-/// entropy pool (`/dev/urandom`).
 pub struct RngDevice {
     pub(crate) inner: Arc<Mutex<devices::virtio::Rng>>,
 }
 
 #[ffier::exportable]
 impl RngDevice {
-    /// Create a new RNG device.
     pub fn new() -> Result<Self, Error> {
         let rng = devices::virtio::Rng::new().map_err(|e| {
             log::error!("rng: {e:?}");
@@ -720,266 +581,5 @@ impl<'a> AttachDevice<'a> for RngDevice {
     fn attach(self: Box<Self>, ctx: &mut AttachContext) -> Result<(), DetailedError> {
         ctx.subscribe_events(self.inner.clone())?;
         ctx.register("rng", self.inner)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// VsockDevice
-// ---------------------------------------------------------------------------
-
-/// A virtio vsock device for host-guest communication.
-///
-/// Provides a socket-based communication channel between the guest and
-/// host using the VM sockets (AF_VSOCK) address family. Optionally
-/// supports Transparent Socket Impersonation (TSI) for transparent
-/// networking.
-pub struct VsockDevice {
-    pub(crate) inner: Arc<Mutex<devices::virtio::Vsock>>,
-    pub(crate) tsi_flags: devices::virtio::TsiFlags,
-}
-
-impl VsockDevice {
-    /// Create a new vsock device.
-    ///
-    /// # Arguments
-    ///
-    /// - `cid`: the guest Context ID (must be >= 3; 0-2 are reserved).
-    /// - `host_port_map`: optional guest-to-host port forwarding map.
-    /// - `unix_ipc_port_map`: optional guest port to host Unix socket path map for IPC.
-    /// - `tsi_flags`: Transparent Socket Impersonation flags (`TsiFlags::empty()` to disable).
-    pub fn new(
-        cid: u64,
-        host_port_map: Option<std::collections::HashMap<u16, u16>>,
-        unix_ipc_port_map: Option<std::collections::HashMap<u32, (std::path::PathBuf, bool)>>,
-        tsi_flags: devices::virtio::TsiFlags,
-    ) -> Result<Self, Error> {
-        let vsock = devices::virtio::Vsock::new(cid, host_port_map, unix_ipc_port_map, tsi_flags)
-            .map_err(|e| {
-            log::error!("vsock: {e:?}");
-            Error::Internal
-        })?;
-        Ok(Self {
-            inner: Arc::new(Mutex::new(vsock)),
-            tsi_flags,
-        })
-    }
-}
-
-impl<'a> AttachDevice<'a> for VsockDevice {
-    fn attach(self: Box<Self>, ctx: &mut AttachContext) -> Result<(), DetailedError> {
-        ctx.subscribe_events(self.inner.clone())?;
-
-        let id = self.inner.lock().unwrap().id().to_string();
-        ctx.register(&id, self.inner)?;
-
-        // Insert TSI kernel cmdline flags
-        if self
-            .tsi_flags
-            .contains(devices::virtio::TsiFlags::HIJACK_INET)
-        {
-            ctx.append_kernel_cmdline("tsi_hijack");
-        }
-        if self
-            .tsi_flags
-            .contains(devices::virtio::TsiFlags::HIJACK_UNIX)
-        {
-            ctx.append_kernel_cmdline("tsi_hijack_unix");
-        }
-
-        Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// NetDevice
-// ---------------------------------------------------------------------------
-
-/// A virtio network device.
-///
-/// Requires the `net` feature. Supports multiple backends including
-/// Unix stream/datagram sockets and TAP interfaces.
-#[cfg(feature = "net")]
-pub struct NetDevice {
-    pub(crate) inner: Arc<Mutex<devices::virtio::Net>>,
-}
-
-#[cfg(feature = "net")]
-impl NetDevice {
-    /// Create a new network device.
-    ///
-    /// # Arguments
-    ///
-    /// - `id`: unique device identifier (e.g. `"net0"`).
-    /// - `backend`: the network backend (Unix socket, TAP, etc.).
-    /// - `mac`: the 6-byte MAC address for the guest interface.
-    /// - `features`: virtio feature flags.
-    pub fn new(
-        id: &str,
-        backend: devices::virtio::net::device::VirtioNetBackend,
-        mac: [u8; 6],
-        features: u32,
-    ) -> Result<Self, Error> {
-        let net =
-            devices::virtio::Net::new(id.to_string(), backend, mac, features).map_err(|e| {
-                log::error!("net: {e:?}");
-                Error::Internal
-            })?;
-        Ok(Self {
-            inner: Arc::new(Mutex::new(net)),
-        })
-    }
-}
-
-#[cfg(feature = "net")]
-impl<'a> AttachDevice<'a> for NetDevice {
-    fn attach(self: Box<Self>, ctx: &mut AttachContext) -> Result<(), DetailedError> {
-        let id = self.inner.lock().unwrap().id().to_string();
-        ctx.register(&id, self.inner)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// BlockDevice
-// ---------------------------------------------------------------------------
-
-/// A virtio block device backed by a disk image.
-///
-/// Requires the `blk` feature. Currently supports raw disk images with
-/// writeback caching and dsync.
-#[cfg(feature = "blk")]
-pub struct BlockDevice {
-    pub(crate) inner: Arc<Mutex<devices::virtio::Block>>,
-}
-
-#[cfg(feature = "blk")]
-impl BlockDevice {
-    /// Create a new block device.
-    ///
-    /// # Arguments
-    ///
-    /// - `id`: unique device identifier (e.g. `"blk0"`).
-    /// - `disk_image_path`: path to the raw disk image file on the host.
-    /// - `is_read_only`: if `true`, the guest cannot write to the disk.
-    pub fn new(id: &str, disk_image_path: &str, is_read_only: bool) -> Result<Self, Error> {
-        use devices::virtio::block::device::{ImageType, SyncMode};
-        let block = devices::virtio::Block::new(
-            id.to_string(),
-            None, // partuuid
-            devices::virtio::CacheType::Writeback,
-            disk_image_path.to_string(),
-            ImageType::Raw,
-            is_read_only,
-            false, // direct_io
-            SyncMode::Dsync,
-        )
-        .map_err(|e| {
-            log::error!("block: {e}");
-            Error::Internal
-        })?;
-        Ok(Self {
-            inner: Arc::new(Mutex::new(block)),
-        })
-    }
-}
-
-#[cfg(feature = "blk")]
-impl<'a> AttachDevice<'a> for BlockDevice {
-    fn attach(self: Box<Self>, ctx: &mut AttachContext) -> Result<(), DetailedError> {
-        let id = self.inner.lock().unwrap().id().to_string();
-        ctx.register(&id, self.inner)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// GpuDevice
-// ---------------------------------------------------------------------------
-
-/// A virtio GPU device with virgl 3D acceleration.
-///
-/// Requires the `gpu` feature. The GPU device uses a shared memory region
-/// for efficient host-guest buffer sharing. If both GPU and virtiofs are
-/// present, they can share file descriptors via an [`ExportTable`](devices::virtio::fs::ExportTable).
-#[cfg(feature = "gpu")]
-pub struct GpuDevice {
-    pub(crate) inner: Arc<Mutex<devices::virtio::Gpu>>,
-    pub(crate) virgl_flags: u32,
-    pub(crate) shm_size: usize,
-}
-
-#[cfg(feature = "gpu")]
-impl GpuDevice {
-    /// Default GPU SHM size: 8 GiB.
-    const DEFAULT_SHM_SIZE: usize = 1 << 33;
-
-    /// Create a new GPU device.
-    ///
-    /// # Arguments
-    ///
-    /// - `virgl_flags`: virgl renderer flags.
-    /// - `displays`: display configuration (resolution, EDID, etc.).
-    /// - `display_backend`: the host display backend (e.g. GTK, headless).
-    /// - `map_sender` (macOS only): channel for GPU memory mapping requests to the VMM worker thread.
-    pub fn new(
-        virgl_flags: u32,
-        displays: Box<[devices::virtio::gpu::display::DisplayInfo]>,
-        display_backend: krun_display::DisplayBackend<'static>,
-        #[cfg(target_os = "macos")] map_sender: crossbeam_channel::Sender<
-            utils::worker_message::WorkerMessage,
-        >,
-    ) -> Result<Self, Error> {
-        let gpu = devices::virtio::Gpu::new(
-            virgl_flags,
-            displays,
-            display_backend,
-            #[cfg(target_os = "macos")]
-            map_sender,
-        )
-        .map_err(|e| {
-            log::error!("gpu: {e:?}");
-            Error::Internal
-        })?;
-        Ok(Self {
-            inner: Arc::new(Mutex::new(gpu)),
-            virgl_flags,
-            shm_size: Self::DEFAULT_SHM_SIZE,
-        })
-    }
-
-    /// Set the GPU shared memory region size in bytes.
-    /// Defaults to 8 GiB.
-    pub fn set_shm_size(&mut self, size: usize) {
-        self.shm_size = size;
-    }
-
-    /// Set the export table for cross-device fd sharing (with virtiofs).
-    pub fn set_export_table(&mut self, table: devices::virtio::fs::ExportTable) {
-        self.inner.lock().unwrap().set_export_table(table);
-    }
-}
-
-#[cfg(feature = "gpu")]
-impl<'a> AttachDevice<'a> for GpuDevice {
-    fn requirements(&self) -> DeviceRequirements {
-        DeviceRequirements {
-            shm_size: None,
-            gpu_shm: Some(GpuShmRequirement {
-                virgl_flags: self.virgl_flags,
-                shm_size: self.shm_size,
-            }),
-        }
-    }
-
-    fn attach(self: Box<Self>, ctx: &mut AttachContext) -> Result<(), DetailedError> {
-        // Set up GPU SHM region
-        if let Some(region) = ctx.resolved_gpu_shm_region() {
-            self.inner.lock().unwrap().set_shm_region(VirtioShmRegion {
-                host_addr: region.host_addr,
-                guest_addr: region.guest_addr,
-                size: region.size,
-            });
-        }
-
-        let id = self.inner.lock().unwrap().id().to_string();
-        ctx.register(&id, self.inner)
     }
 }
