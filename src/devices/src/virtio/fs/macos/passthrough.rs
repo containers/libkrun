@@ -37,8 +37,6 @@ const SECURITY_CAPABILITY: &[u8] = b"security.capability\0";
 
 const UID_MAX: u32 = u32::MAX - 1;
 
-static INIT_BINARY: &[u8] = include_bytes!(env!("KRUN_INIT_BINARY_PATH"));
-
 type Inode = u64;
 type Handle = u64;
 
@@ -517,6 +515,7 @@ pub struct Config {
     /// Table of exported FDs to share with other subsystems. Not supported for macos.
     pub export_table: Option<ExportTable>,
     pub allow_root_dir_delete: bool,
+    pub init_payload: Option<&'static [u8]>,
 }
 
 impl Default for Config {
@@ -532,6 +531,7 @@ impl Default for Config {
             export_fsid: 0,
             export_table: None,
             allow_root_dir_delete: false,
+            init_payload: None,
         }
     }
 }
@@ -580,7 +580,11 @@ impl PassthroughFs {
         Ok(PassthroughFs {
             inodes: RwLock::new(MultikeyBTreeMap::new()),
             next_inode: AtomicU64::new(fuse::ROOT_ID + 2),
-            init_inode: fuse::ROOT_ID + 1,
+            init_inode: if cfg.init_payload.is_some() {
+                fuse::ROOT_ID + 1
+            } else {
+                0
+            },
 
             handles: RwLock::new(BTreeMap::new()),
             next_handle: AtomicU64::new(1),
@@ -592,6 +596,12 @@ impl PassthroughFs {
             announce_submounts: AtomicBool::new(false),
             cfg,
         })
+    }
+
+    fn init_payload(&self) -> io::Result<&[u8]> {
+        self.cfg
+            .init_payload
+            .ok_or_else(|| linux_error(io::Error::from_raw_os_error(libc::ENOENT)))
     }
 
     fn inode_to_handle(&self, inode: Inode, supports_fd: bool) -> io::Result<InodeHandle> {
@@ -1205,7 +1215,7 @@ impl FileSystem for PassthroughFs {
 
         if self.init_inode != 0 && name == _init_name {
             let mut st: bindings::stat64 = unsafe { mem::zeroed() };
-            st.st_size = INIT_BINARY.len() as i64;
+            st.st_size = self.init_payload()?.len() as i64;
             st.st_ino = self.init_inode;
             st.st_mode = 0o100_755;
 
@@ -1457,15 +1467,18 @@ impl FileSystem for PassthroughFs {
     ) -> io::Result<usize> {
         debug!("read: {inode:?}");
         if inode == self.init_inode {
+            let init_payload = self.init_payload()?;
             let off: usize = offset
                 .try_into()
                 .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
-            let len = if off + (size as usize) < INIT_BINARY.len() {
-                size as usize
-            } else {
-                INIT_BINARY.len() - off
-            };
-            return w.write(&INIT_BINARY[off..(off + len)]);
+            if off >= init_payload.len() {
+                // Read past EOF should return 0 bytes.
+                return Ok(0);
+            }
+
+            let remaining = init_payload.len() - off;
+            let len = remaining.min(size as usize);
+            return w.write(&init_payload[off..(off + len)]);
         }
 
         let data = self

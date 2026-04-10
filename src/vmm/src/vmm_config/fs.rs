@@ -4,4 +4,5 @@ pub struct FsDeviceConfig {
     pub shared_dir: String,
     pub shm_size: Option<usize>,
     pub allow_root_dir_delete: bool,
+    pub init_payload: Option<&'static [u8]>,
 }

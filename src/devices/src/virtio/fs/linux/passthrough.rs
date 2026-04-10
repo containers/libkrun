@@ -33,8 +33,6 @@ const EMPTY_CSTR: &[u8] = b"\0";
 const PROC_CSTR: &[u8] = b"/proc/self/fd\0";
 const INIT_CSTR: &[u8] = b"init.krun\0";
 
-static INIT_BINARY: &[u8] = include_bytes!(env!("KRUN_INIT_BINARY_PATH"));
-
 type Inode = u64;
 type Handle = u64;
 
@@ -328,6 +326,7 @@ pub struct Config {
     /// Table of exported FDs to share with other subsystems.
     pub export_table: Option<ExportTable>,
     pub allow_root_dir_delete: bool,
+    pub init_payload: Option<&'static [u8]>,
 }
 
 impl Default for Config {
@@ -343,6 +342,7 @@ impl Default for Config {
             export_fsid: 0,
             export_table: None,
             allow_root_dir_delete: false,
+            init_payload: None,
         }
     }
 }
@@ -439,7 +439,11 @@ impl PassthroughFs {
         Ok(PassthroughFs {
             inodes: RwLock::new(MultikeyBTreeMap::new()),
             next_inode: AtomicU64::new(fuse::ROOT_ID + 2),
-            init_inode: fuse::ROOT_ID + 1,
+            init_inode: if cfg.init_payload.is_some() {
+                fuse::ROOT_ID + 1
+            } else {
+                0
+            },
 
             handles: RwLock::new(BTreeMap::new()),
             next_handle: AtomicU64::new(1),
@@ -454,6 +458,12 @@ impl PassthroughFs {
             cap_fowner,
             cfg,
         })
+    }
+
+    fn init_payload(&self) -> io::Result<&[u8]> {
+        self.cfg
+            .init_payload
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))
     }
 
     fn open_inode(&self, inode: Inode, mut flags: i32) -> io::Result<File> {
@@ -996,7 +1006,7 @@ impl FileSystem for PassthroughFs {
 
         if self.init_inode != 0 && name == init_name {
             let mut st: libc::stat64 = unsafe { mem::zeroed() };
-            st.st_size = INIT_BINARY.len() as i64;
+            st.st_size = self.init_payload()?.len() as i64;
             st.st_ino = self.init_inode;
             st.st_mode = 0o100_755;
 
@@ -1235,13 +1245,16 @@ impl FileSystem for PassthroughFs {
     ) -> io::Result<usize> {
         debug!("read: {inode:?}");
         if inode == self.init_inode {
+            let init_payload = self.init_payload()?;
             let off: usize = offset.try_into().map_err(|_| einval())?;
-            let len = if off + (size as usize) < INIT_BINARY.len() {
-                size as usize
-            } else {
-                INIT_BINARY.len() - off
-            };
-            return w.write(&INIT_BINARY[off..(off + len)]);
+            if off >= init_payload.len() {
+                // Read past EOF should return 0 bytes.
+                return Ok(0);
+            }
+
+            let remaining = init_payload.len() - off;
+            let len = remaining.min(size as usize);
+            return w.write(&init_payload[off..(off + len)]);
         }
 
         let data = self
@@ -2088,6 +2101,7 @@ impl FileSystem for PassthroughFs {
         debug!("setupmapping: ino {inode:?} addr={addr:x} len={len}");
 
         if inode == self.init_inode {
+            let init_payload = self.init_payload()?;
             let ret = unsafe {
                 libc::mmap(
                     addr as *mut libc::c_void,
@@ -2102,15 +2116,15 @@ impl FileSystem for PassthroughFs {
                 return Err(io::Error::last_os_error());
             }
 
-            let to_copy = if len as usize > INIT_BINARY.len() {
-                INIT_BINARY.len()
+            let to_copy = if len as usize > init_payload.len() {
+                init_payload.len()
             } else {
                 len as usize
             };
             unsafe {
                 libc::memcpy(
                     addr as *mut libc::c_void,
-                    INIT_BINARY.as_ptr() as *const _,
+                    init_payload.as_ptr() as *const _,
                     to_copy,
                 )
             };
