@@ -1841,7 +1841,25 @@ pub unsafe extern "C" fn krun_check_nested_virt() -> i32 {
         Err(_) => -libc::EINVAL,
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        let paths = [
+            "/sys/module/kvm_intel/parameters/nested",
+            "/sys/module/kvm_amd/parameters/nested",
+        ];
+        if paths.iter().any(|path| {
+            std::fs::read_to_string(path).is_ok_and(|contents| {
+                let val = contents.trim();
+                val == "1" || val.eq_ignore_ascii_case("Y")
+            })
+        }) {
+            1
+        } else {
+            0
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     -libc::EOPNOTSUPP
 }
 
