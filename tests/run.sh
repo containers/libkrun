@@ -23,6 +23,9 @@ if [ -n "${LIBKRUN_LIB_PATH}" ]; then
 fi 
 
 GUEST_TARGET="${ARCH}-unknown-linux-musl"
+if [ "$ARCH" = "loongarch64" ]; then
+	GUEST_TARGET="${ARCH}-unknown-linux-gnu"
+fi
 
 # Run the unit tests first (this tests the testing framework itself not libkrun)
 cargo test -p test_cases --features guest

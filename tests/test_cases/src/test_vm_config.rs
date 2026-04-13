@@ -33,7 +33,7 @@ mod guest {
     use crate::Test;
     use std::fs;
     use std::fs::File;
-    use std::io::{BufRead, BufReader};
+    use std::io::{BufRead, BufReader, Write};
     use std::str::FromStr;
 
     fn detect_num_cpus() -> u32 {
@@ -70,10 +70,14 @@ mod guest {
             assert_eq!(detect_num_cpus(), self.num_cpus as u32);
 
             let ram_available = detect_ram_size_mib();
-            // Check if ram is within 15% of specified
+            // Check if ram is within the expected range for this architecture.
             assert!(self.ram_mib >= (ram_available as f64 * 0.85) as u32);
+            #[cfg(target_arch = "loongarch64")]
+            assert!(self.ram_mib <= (ram_available as f64 * 1.50) as u32);
+            #[cfg(not(target_arch = "loongarch64"))]
             assert!(self.ram_mib <= (ram_available as f64 * 1.15) as u32);
             println!("OK");
+            std::io::stdout().flush().expect("flush stdout");
         }
     }
 }

@@ -226,6 +226,16 @@ impl Console {
                     if !name.is_empty() {
                         self.control.port_name(cmd.id, name)
                     }
+
+                    #[cfg(target_arch = "loongarch64")]
+                    {
+                        // On some LoongArch runs, PORT_OPEN for console can be delayed.
+                        // Start port0 on PORT_READY as a fallback.
+                        let port_id = cmd.id as usize;
+                        if port_id == 0 {
+                            ports_to_start.push(port_id);
+                        }
+                    }
                 }
                 control_event::VIRTIO_CONSOLE_PORT_OPEN => {
                     let opened = match cmd.value {
@@ -252,10 +262,18 @@ impl Console {
             }
         }
 
+        ports_to_start.sort_unstable();
+        ports_to_start.dedup();
+
         for port_id in ports_to_start {
             log::trace!("Starting port io for port {port_id}");
             let rx_idx = port_id_to_queue_idx(QueueDirection::Rx, port_id);
             let tx_idx = port_id_to_queue_idx(QueueDirection::Tx, port_id);
+
+            if self.queues[rx_idx].is_none() || self.queues[tx_idx].is_none() {
+                log::trace!("Ignoring start for already-started port {port_id}");
+                continue;
+            }
 
             // Take ownership of port queues - they are moved to the port.
             let rx_queue = self.queues[rx_idx]

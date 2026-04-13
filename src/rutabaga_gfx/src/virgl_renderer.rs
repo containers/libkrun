@@ -169,7 +169,8 @@ extern "C" fn debug_callback(fmt: *const ::std::os::raw::c_char, ap: stdio::va_l
             target_arch = "x86",
             target_arch = "x86_64",
             target_arch = "aarch64",
-            target_arch = "riscv64"
+            target_arch = "riscv64",
+            target_arch = "loongarch64"
         ))]
         let size = BUF_LEN as ::std::os::raw::c_ulong;
         #[cfg(target_arch = "arm")]

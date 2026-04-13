@@ -46,7 +46,11 @@ pub mod stdio {
 
     pub type va_list = __builtin_va_list;
 }
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+#[cfg(any(
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    target_arch = "loongarch64"
+))]
 pub mod stdio {
     extern "C" {
         pub fn vsnprintf(
