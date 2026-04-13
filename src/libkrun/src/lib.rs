@@ -1828,10 +1828,6 @@ pub unsafe extern "C" fn krun_set_console_output(ctx_id: u32, c_filepath: *const
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_set_nested_virt(ctx_id: u32, enabled: bool) -> i32 {
-    if enabled && !cfg!(target_os = "macos") {
-        return -libc::EINVAL;
-    }
-
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();

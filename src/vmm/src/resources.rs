@@ -200,6 +200,8 @@ impl VmResources {
             vcpu_count: self.vm_config().vcpu_count.unwrap(),
             ht_enabled: self.vm_config().ht_enabled.unwrap(),
             cpu_template: self.vm_config().cpu_template,
+            #[cfg(target_os = "linux")]
+            nested_enabled: self.nested_enabled,
         }
     }
 
@@ -441,6 +443,7 @@ mod tests {
             vcpu_count: vm_resources.vm_config().vcpu_count.unwrap(),
             ht_enabled: vm_resources.vm_config().ht_enabled.unwrap(),
             cpu_template: vm_resources.vm_config().cpu_template,
+            nested_enabled: vm_resources.nested_enabled,
         };
 
         let vcpu_config = vm_resources.vcpu_config();

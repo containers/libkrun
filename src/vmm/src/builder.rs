@@ -2369,6 +2369,7 @@ pub mod tests {
             vcpu_count,
             ht_enabled: false,
             cpu_template: None,
+            nested_enabled: false,
         };
 
         let (guest_memory, _arch_memory_info, _shm_manager, _payload_config) =
@@ -2404,6 +2405,7 @@ pub mod tests {
             vcpu_count,
             ht_enabled: false,
             cpu_template: None,
+            nested_enabled: false,
         };
 
         // Dummy entry_addr, vcpus will not boot.
