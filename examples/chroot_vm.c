@@ -43,6 +43,7 @@ static void print_help(char *const name)
         "              --vhost-user-snd=PATH Use vhost-user sound backend at socket PATH\n"
         "              --vhost-user-vsock=PATH Use vhost-user vsock backend at socket PATH\n"
         "              --vhost-user-can=PATH Use vhost-user CAN backend at socket PATH\n"
+        "              --vhost-user-console=PATH Use vhost-user console backend at socket PATH\n"
         "NET_MODE can be either TSI (default) or PASST\n"
         "\n"
         "NEWROOT:      the root directory of the vm\n"
@@ -72,6 +73,7 @@ static const struct option long_options[] = {
     { "vhost-user-snd", required_argument, NULL, 'S' },
     { "vhost-user-vsock", required_argument, NULL, 'K' },
     { "vhost-user-can", required_argument, NULL, 'A' },
+    { "vhost-user-console", required_argument, NULL, 'O' },
     { NULL, 0, NULL, 0 }
 };
 
@@ -85,6 +87,7 @@ struct cmdline {
     char const *vhost_user_snd_socket;
     char const *vhost_user_vsock_socket;
     char const *vhost_user_can_socket;
+    char const *vhost_user_console_socket;
     char const *new_root;
     char *const *guest_argv;
 };
@@ -115,6 +118,7 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         .vhost_user_snd_socket = NULL,
         .vhost_user_vsock_socket = NULL,
         .vhost_user_can_socket = NULL,
+        .vhost_user_console_socket = NULL,
         .new_root = NULL,
         .guest_argv = NULL,
         .log_target = KRUN_LOG_TARGET_DEFAULT,
@@ -161,6 +165,9 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
             break;
         case 'A':
             cmdline->vhost_user_can_socket = optarg;
+            break;
+        case 'O':
+            cmdline->vhost_user_console_socket = optarg;
             break;
         case '?':
             return false;
@@ -340,6 +347,19 @@ int main(int argc, char *const argv[])
             return -1;
         }
         printf("Using vhost-user CAN backend at %s\n", cmdline.vhost_user_can_socket);
+    }
+
+    // Configure vhost-user console if requested
+    if (cmdline.vhost_user_console_socket != NULL) {
+        if (!check_krun_error(krun_add_vhost_user_device(ctx_id, KRUN_VIRTIO_DEVICE_CONSOLE,
+                                                          cmdline.vhost_user_console_socket, NULL,
+                                                          KRUN_VHOST_USER_CONSOLE_NUM_QUEUES,
+                                                          KRUN_VHOST_USER_CONSOLE_QUEUE_SIZES),
+                              "Error adding vhost-user console device")) {
+            return -1;
+        }
+        printf("Using vhost-user console backend at %s (available as /dev/hvc1 in guest)\n", cmdline.vhost_user_console_socket);
+        printf("Test with: echo 'hello' > /dev/hvc1\n");
     }
 
     // Raise RLIMIT_NOFILE to the maximum allowed to create some room for virtio-fs
