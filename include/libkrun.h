@@ -751,10 +751,19 @@ int32_t krun_set_snd_device(uint32_t ctx_id, bool enable);
  * Vhost-user device types.
  * These correspond to virtio device type IDs for devices.
  */
+#define KRUN_VIRTIO_DEVICE_CONSOLE 3
 #define KRUN_VIRTIO_DEVICE_RNG 4
 #define KRUN_VIRTIO_DEVICE_VSOCK 19
 #define KRUN_VIRTIO_DEVICE_SND 25
 #define KRUN_VIRTIO_DEVICE_CAN 36
+
+/**
+ * Vhost-user console device default queue configuration.
+ * Console device uses 4 queues for multiport support:
+ * receiveq (idx 0), transmitq (idx 1), control receiveq (idx 2), control transmitq (idx 3).
+ */
+#define KRUN_VHOST_USER_CONSOLE_NUM_QUEUES 4
+#define KRUN_VHOST_USER_CONSOLE_QUEUE_SIZES ((uint16_t[]){128, 128, 64, 64})
 
 /**
  * Vhost-user RNG device default queue configuration.
