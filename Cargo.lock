@@ -97,6 +97,7 @@ dependencies = [
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
+ "log",
  "smbios",
  "tdx",
  "utils",
@@ -436,6 +437,7 @@ dependencies = [
  "virtio-bindings",
  "vm-fdt",
  "vm-memory",
+ "vmm-sys-util 0.14.0",
  "zerocopy",
 ]
 

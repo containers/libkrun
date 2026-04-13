@@ -33,10 +33,10 @@ use crate::vmm_config::net::NetBuilder;
 use devices::legacy::Cmos;
 #[cfg(all(target_os = "linux", target_arch = "riscv64"))]
 use devices::legacy::KvmAia;
-#[cfg(all(target_os = "linux", target_arch = "loongarch64"))]
-use devices::legacy::KvmLoongArchIrqChip;
 #[cfg(target_arch = "x86_64")]
 use devices::legacy::KvmIoapic;
+#[cfg(all(target_os = "linux", target_arch = "loongarch64"))]
+use devices::legacy::KvmLoongArchIrqChip;
 use devices::legacy::Serial;
 #[cfg(target_os = "macos")]
 use devices::legacy::VcpuList;
@@ -521,7 +521,11 @@ impl Display for StartMicrovmError {
 pub enum Payload {
     #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
     KernelMmap,
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", target_arch = "loongarch64"))]
+    #[cfg(any(
+        target_arch = "aarch64",
+        target_arch = "riscv64",
+        target_arch = "loongarch64"
+    ))]
     KernelCopy,
     ExternalKernel(ExternalKernel),
     #[cfg(test)]
@@ -544,7 +548,11 @@ fn choose_payload(vm_resources: &VmResources) -> Result<Payload, StartMicrovmErr
         #[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "tee")))]
         return Ok(Payload::KernelMmap);
 
-        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", target_arch = "loongarch64"))]
+        #[cfg(any(
+            target_arch = "aarch64",
+            target_arch = "riscv64",
+            target_arch = "loongarch64"
+        ))]
         return Ok(Payload::KernelCopy);
     } else if let Some(external_kernel) = vm_resources.external_kernel() {
         Ok(Payload::ExternalKernel(external_kernel.clone()))
@@ -983,7 +991,7 @@ pub fn build_microvm(
                 vm_resources.vm_config().vcpu_count.unwrap() as u32,
                 irq_vcpu_fd,
             )
-            .unwrap(),
+            .map_err(StartMicrovmError::CreateKvmIrqChip)?,
         ))));
 
         attach_legacy_devices(
@@ -1203,7 +1211,11 @@ fn load_external_kernel(
         // Raw images are treated as bundled kernels on x86_64
         #[cfg(target_arch = "x86_64")]
         KernelFormat::Raw => unreachable!(),
-        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", target_arch = "loongarch64"))]
+        #[cfg(any(
+            target_arch = "aarch64",
+            target_arch = "riscv64",
+            target_arch = "loongarch64"
+        ))]
         KernelFormat::Raw => {
             let data: Vec<u8> = std::fs::read(external_kernel.path.clone())
                 .map_err(StartMicrovmError::RawOpenKernel)?;
@@ -1235,15 +1247,13 @@ fn load_external_kernel(
                 let mut kernel_data: Vec<u8> = Vec::new();
                 gz.read_to_end(&mut kernel_data)
                     .map_err(StartMicrovmError::PeGzDecoder)?;
-                guest_mem
-                    .write(&kernel_data, kernel_load)
-                    .unwrap();
+                guest_mem.write(&kernel_data, kernel_load).unwrap();
                 kernel_load
             } else {
                 return Err(StartMicrovmError::PeGzInvalid);
             }
         }
-        
+
         #[cfg(target_arch = "loongarch64")]
         KernelFormat::PeGz => {
             const LOONGARCH_IMAGE_HEADER_SIZE: usize = 64;
@@ -1303,8 +1313,8 @@ fn load_external_kernel(
 
             let entry_addr = if kernel_entry >= LOONGARCH_VMLINUX_LOAD_ADDRESS {
                 let entry_offset = kernel_entry
-                .checked_sub(LOONGARCH_VMLINUX_LOAD_ADDRESS)
-                .ok_or(StartMicrovmError::PeGzInvalid)?;
+                    .checked_sub(LOONGARCH_VMLINUX_LOAD_ADDRESS)
+                    .ok_or(StartMicrovmError::PeGzInvalid)?;
                 GuestAddress(
                     image_load_addr
                         .raw_value()
@@ -1323,8 +1333,7 @@ fn load_external_kernel(
 
             debug!(
                 "loongarch pegz image_load_addr=0x{:x}, entry_addr=0x{:x}",
-                image_load_addr.0,
-                entry_addr.0
+                image_load_addr.0, entry_addr.0
             );
 
             guest_mem
@@ -1456,7 +1465,11 @@ fn load_payload(
     StartMicrovmError,
 > {
     match payload {
-        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", target_arch = "loongarch64"))]
+        #[cfg(any(
+            target_arch = "aarch64",
+            target_arch = "riscv64",
+            target_arch = "loongarch64"
+        ))]
         Payload::KernelCopy => {
             let (kernel_entry_addr, kernel_host_addr, kernel_guest_addr, kernel_size) =
                 if let Some(kernel_bundle) = &_vm_resources.kernel_bundle {
@@ -1643,7 +1656,11 @@ pub fn create_guest_memory(
         Payload::Empty => arch::arch_memory_regions(mem_size, None, 0, 0, None),
         Payload::Firmware => arch::arch_memory_regions(mem_size, None, 0, 0, firmware_size),
     };
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64", target_arch = "loongarch64"))]
+    #[cfg(any(
+        target_arch = "aarch64",
+        target_arch = "riscv64",
+        target_arch = "loongarch64"
+    ))]
     let (arch_mem_info, mut arch_mem_regions) = match payload {
         Payload::ExternalKernel(external_kernel) => {
             arch::arch_memory_regions(mem_size, external_kernel.initramfs_size, None)
@@ -1823,7 +1840,11 @@ fn attach_legacy_devices(
 }
 
 #[cfg(all(
-    any(target_arch = "aarch64", target_arch = "riscv64", target_arch = "loongarch64"),
+    any(
+        target_arch = "aarch64",
+        target_arch = "riscv64",
+        target_arch = "loongarch64"
+    ),
     target_os = "linux"
 ))]
 fn attach_legacy_devices(

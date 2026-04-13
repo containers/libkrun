@@ -1,3 +1,3 @@
 pub mod efi;
-pub mod regs;
 pub mod iocsr;
+pub mod regs;

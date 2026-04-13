@@ -1,21 +1,19 @@
+use log::debug;
+use std::sync::atomic::{AtomicU64, Ordering};
 /// LoongArch IOCSR Mailbox and Control Registers
 ///
 /// This module provides emulation for LoongArch IOCSR (I/O Control and Status Register)
 /// mailbox system used for inter-processor communication.
-
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use log::debug;
 
 /// Maximum Number of LoongArch vCpus supported
-const MAX_LOONGARCH_VCPUS:  usize = 16;
+const MAX_LOONGARCH_VCPUS: usize = 16;
 
 /// IOCSR Mailbox addresses (each 8 bytes apart)
 pub const LOONGARCH_IOCSR_MBUF0: u64 = 0x1020;
 pub const LOONGARCH_IOCSR_MBUF1: u64 = 0x1028;
 pub const LOONGARCH_IOCSR_MBUF2: u64 = 0x1030;
 pub const LOONGARCH_IOCSR_MBUF3: u64 = 0x1038;
-
 
 /// IOCSR Mailbox send command register
 pub const LOONGARCH_IOCSR_MBUF_SEND: u64 = 0x1048;
@@ -61,12 +59,14 @@ impl LoongArchIocsrState {
         Self {
             misc_func: AtomicU64::new(0),
             mailboxes: (0..count)
-                .map(|_| [
-                    AtomicU64::new(0),
-                    AtomicU64::new(0),
-                    AtomicU64::new(0),
-                    AtomicU64::new(0),
-                ])
+                .map(|_| {
+                    [
+                        AtomicU64::new(0),
+                        AtomicU64::new(0),
+                        AtomicU64::new(0),
+                        AtomicU64::new(0),
+                    ]
+                })
                 .collect(),
         }
     }
@@ -100,6 +100,7 @@ impl LoongArchIocsrState {
     /// Process a mailbox send command
     ///
     /// This function parses the MBUF_SEND register value and updates the target CPU's mailbox.
+    /// Currently used only for SMP support, which is disabled in single-vCPU mode.
     ///
     /// # Arguments
     /// * `value` - The 64-bit value written to MBUF_SEND register
@@ -113,13 +114,21 @@ impl LoongArchIocsrState {
     pub fn process_mbuf_send(&self, value: u64) -> Result<(), String> {
         // Extract fields from the value
         let target_cpu = ((value >> IOCSR_MBUF_SEND_CPU_SHIFT) & 0x3FFF) as usize;
-        let box_hi = ((value >> 3) & 1) != 0;
-        let box_lo = ((value >> 2) & 1) != 0;
-        let box_num = (box_lo as u32) ^ (box_hi as u32);
+        // Linux encodes mailbox selector as:
+        //   (IOCSR_MBUF_SEND_BOX_{LO,HI}(box) << IOCSR_MBUF_SEND_BOX_SHIFT)
+        // where BOX_LO(box)=(box<<1), BOX_HI(box)=((box<<1)+1).
+        // So the packed field is 3 bits: [box_num(2b), hi_low(1b)].
+        let box_sel = ((value >> IOCSR_MBUF_SEND_BOX_SHIFT) & 0x7) as u32;
+        let box_hi = (box_sel & 0x1) != 0;
+        let box_num = (box_sel >> 1) as usize;
         let data32 = ((value >> IOCSR_MBUF_SEND_BUF_SHIFT) & 0xFFFFFFFF) as u32;
         // Validate target CPU
         if target_cpu >= self.mailboxes.len() {
-            return Err(format!("Invalid target CPU: {} (max: {})", target_cpu, self.mailboxes.len() - 1));
+            return Err(format!(
+                "Invalid target CPU: {} (max: {})",
+                target_cpu,
+                self.mailboxes.len() - 1
+            ));
         }
         // Validate mailbox number
         if box_num >= 4 {
@@ -128,14 +137,14 @@ impl LoongArchIocsrState {
         // Update the target mailbox
         if box_hi {
             // Write high 32 bits
-            let current = self.read_mailbox(target_cpu, box_num as usize);
+            let current = self.read_mailbox(target_cpu, box_num);
             let new_val = (current & 0xFFFFFFFF) | ((data32 as u64) << 32);
-            self.write_mailbox(target_cpu, box_num as usize, new_val);
+            self.write_mailbox(target_cpu, box_num, new_val);
         } else {
             // Write low 32 bits
-            let current = self.read_mailbox(target_cpu, box_num as usize);
+            let current = self.read_mailbox(target_cpu, box_num);
             let new_val = (current & 0xFFFFFFFF00000000) | (data32 as u64);
-            self.write_mailbox(target_cpu, box_num as usize, new_val);
+            self.write_mailbox(target_cpu, box_num, new_val);
         }
         Ok(())
     }
@@ -168,7 +177,8 @@ pub fn process_iocsr_read(
     addr: u64,
     data: &mut [u8],
     iocsr_state: &Arc<LoongArchIocsrState>,
-    cpu_id: u8) -> IocsrReadResult {
+    cpu_id: u8,
+) -> IocsrReadResult {
     match (addr, data.len()) {
         (LOONGARCH_IOCSR_FEATURES, 4) => {
             // Feature flags: EXTIOI, CSRIPI, VM support
@@ -208,7 +218,8 @@ pub fn process_iocsr_write(
     addr: u64,
     data: &[u8],
     iocsr_state: &Arc<LoongArchIocsrState>,
-    cpu_id: u8) -> IocsrWriteResult {
+    cpu_id: u8,
+) -> IocsrWriteResult {
     match (addr, data.len()) {
         (LOONGARCH_IOCSR_MISC_FUNC, 8) => {
             // Miscellaneous function register

@@ -143,8 +143,11 @@ fn create_chosen_node<T: DeviceInfoForFDT + Clone + Debug>(
     // Only set stdout-path if we have a Serial device (not when using Virtio Console).
     // When using Virtio Console (hvc0), kernel uses the console= cmdline parameter instead.
     // When using Serial (ttyS0), we point FDT to the serial device node.
-    let has_serial = dev_info.keys().any(|(device_type, _)| device_type == &DeviceType::Serial);
-    let has_virtio_console = dev_info.keys()
+    let has_serial = dev_info
+        .keys()
+        .any(|(device_type, _)| device_type == &DeviceType::Serial);
+    let has_virtio_console = dev_info
+        .keys()
         .any(|(device_type, _)| matches!(device_type, DeviceType::Virtio(3))); // VIRTIO_ID_CONSOLE = 3
 
     if has_serial && !has_virtio_console {
@@ -157,22 +160,22 @@ fn create_chosen_node<T: DeviceInfoForFDT + Clone + Debug>(
         }
     }
     let stdout_path = if has_serial && !has_virtio_console {
-        dev_info.iter().find_map(|((device_type, _device_id), info)| {
-            if device_type == &DeviceType::Serial {
-                Some(format!("/serial@{:x}", info.addr()))
-            } else {
-                None
-            }
-        })
+        dev_info
+            .iter()
+            .find_map(|((device_type, _device_id), info)| {
+                if device_type == &DeviceType::Serial {
+                    Some(format!("/serial@{:x}", info.addr()))
+                } else {
+                    None
+                }
+            })
     } else {
         None
     };
 
     debug!(
         "loongarch chosen: has_serial={}, has_virtio_console={}, stdout_path={:?}",
-        has_serial,
-        has_virtio_console,
-        stdout_path,
+        has_serial, has_virtio_console, stdout_path,
     );
 
     if let Some(path) = &stdout_path {

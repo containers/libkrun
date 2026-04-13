@@ -15,6 +15,8 @@ use vmm_sys_util::align_upwards;
 pub enum Error {
     /// Failed to compute the initrd address.
     InitrdAddress,
+    /// Failed to setup EFI system table in the FDT.
+    EfiSystemTable(linux::efi::Error),
 }
 
 /// The start of the memory area reserved for MMIO devices.
@@ -57,6 +59,6 @@ pub fn configure_system(
     _smbios_oem_strings: &Option<Vec<String>>,
 ) -> super::Result<()> {
     linux::efi::setup_fdt_system_table(_guest_mem, arch_memory_info)
-        .map_err(|_| Error::InitrdAddress)?;
+        .map_err(Error::EfiSystemTable)?;
     Ok(())
 }

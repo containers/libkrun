@@ -140,10 +140,11 @@ impl InterruptTransport {
             let _irq_sync = self.0.irq_sync.lock().unwrap();
             let old = self.status().fetch_or(status as usize, Ordering::SeqCst);
             if old == 0 {
-                self.intc()
-                    .lock()
-                    .unwrap()
-                    .set_irq_state(self.0.irq_line, Some(&self.0.event), true)?;
+                self.intc().lock().unwrap().set_irq_state(
+                    self.0.irq_line,
+                    Some(&self.0.event),
+                    true,
+                )?;
             }
             return Ok(());
         }
@@ -511,12 +512,12 @@ impl BusDevice for MmioTransport {
                                     .fetch_and(!(v as usize), Ordering::SeqCst);
                                 let new = old & !(v as usize);
                                 if old != 0 && new == 0 {
-                                    if let Err(e) = self
-                                        .interrupt
-                                        .intc()
-                                        .lock()
-                                        .unwrap()
-                                        .set_irq_state(self.interrupt.0.irq_line, Some(&self.interrupt.0.event), false)
+                                    if let Err(e) =
+                                        self.interrupt.intc().lock().unwrap().set_irq_state(
+                                            self.interrupt.0.irq_line,
+                                            Some(&self.interrupt.0.event),
+                                            false,
+                                        )
                                     {
                                         warn!(target: &self.interrupt.0.log_target, "Failed to deassert irq: {e:?}");
                                     }

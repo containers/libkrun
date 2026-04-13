@@ -15,6 +15,8 @@ const CSR_CPUID_REG_ID: u64 =
 // Keep bits [25:0] only for now. Do not expose MSGINT (bit 26) by default
 // on microVM profile because host KVM support is inconsistent.
 const CPUCFG1_KVM_MASK: u64 = (1u64 << 26) - 1;
+const CPUCFG1_PABITS_MASK: u64 = 0xff << 4;
+const CPUCFG1_GUEST_PABITS: u64 = 39; // encodes 40-bit PA
 
 const CPUCFG2_FP: u64 = 1 << 0;
 const CPUCFG2_FPSP: u64 = 1 << 1;
@@ -27,11 +29,12 @@ const CPUCFG2_LLFTPREV: u64 = 0x7 << 15;
 const CPUCFG2_LSPW: u64 = 1 << 21;
 const CPUCFG2_LAM: u64 = 1 << 22;
 
-const CPUCFG3_KVM_CONSERVATIVE_MASK: u64 = 0x0000_fcff;
+const CPUCFG3_SFB: u64 = 1 << 1;
+const CPUCFG3_KVM_CONSERVATIVE_MASK: u64 = 0x0000_fcff & !CPUCFG3_SFB;
 const CPUCFG4_KVM_MASK: u64 = 0xffff_ffff;
 const CPUCFG5_KVM_MASK: u64 = 0xffff_ffff;
 
-const CPUCFG16_CACHE_CONFIG: u64 = 0xF;  // L1I, L1D, L2, L3 present
+const CPUCFG16_CACHE_CONFIG: u64 = 0xF; // L1I, L1D, L2, L3 present
 const CPUCFG17_L1I_MASK: u64 = ((5u64) << 24) | ((8u64) << 16) | ((4u64 - 1) << 0);
 const CPUCFG18_L1D_MASK: u64 = ((5u64) << 24) | ((8u64) << 16) | ((4u64 - 1) << 0);
 const CPUCFG19_L2_MASK: u64 = ((6u64) << 24) | ((9u64) << 16) | ((8u64 - 1) << 0);
@@ -94,11 +97,7 @@ pub fn setup_regs(
 
     debug!(
         "loongarch setup_regs: cpu_id={}, pc=0x{:x}, a0={}, a1=0x{:x}, a2=0x{:x}",
-        cpu_id,
-        regs.pc,
-        regs.gpr[4],
-        regs.gpr[5],
-        regs.gpr[6],
+        cpu_id, regs.pc, regs.gpr[4], regs.gpr[5], regs.gpr[6],
     );
     let mut cpucfg0 = [0_u8; 8];
     if vcpu.get_one_reg(CPUCFG0_REG_ID, &mut cpucfg0).is_ok() {
@@ -131,7 +130,11 @@ fn read_host_cpucfg(index: u64) -> u64 {
 fn filter_cpucfg_for_kvm(index: u64, host_value: u64) -> u64 {
     match index {
         0 => host_value & 0xffff_ffff,
-        1 => host_value & CPUCFG1_KVM_MASK,
+        1 => {
+            let mut v = host_value & CPUCFG1_KVM_MASK;
+            v = (v & !CPUCFG1_PABITS_MASK) | ((CPUCFG1_GUEST_PABITS & 0xff) << 4);
+            v
+        }
         2 => filter_cpucfg2_conservative(host_value),
         3 => filter_cpucfg3_conservative(host_value),
         4 => host_value & CPUCFG4_KVM_MASK,

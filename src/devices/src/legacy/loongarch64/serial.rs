@@ -159,7 +159,11 @@ impl Serial {
         if let Some(intc) = &self.intc {
             intc.lock()
                 .unwrap()
-                .set_irq_state(self.irq_line, Some(&self.interrupt_evt), self.interrupt_active())
+                .set_irq_state(
+                    self.irq_line,
+                    Some(&self.interrupt_evt),
+                    self.interrupt_active(),
+                )
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{e:?}")))?;
             return Ok(());
         }

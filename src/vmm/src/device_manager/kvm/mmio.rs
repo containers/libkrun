@@ -97,7 +97,11 @@ pub struct MMIODeviceManager {
 impl MMIODeviceManager {
     /// Create a new DeviceManager handling mmio devices (virtio net, block).
     pub fn new(mmio_base: &mut u64, irq_interval: (u32, u32)) -> MMIODeviceManager {
-        if cfg!(any(target_arch = "aarch64", target_arch = "riscv64", target_arch = "loongarch64")) {
+        if cfg!(any(
+            target_arch = "aarch64",
+            target_arch = "riscv64",
+            target_arch = "loongarch64"
+        )) {
             *mmio_base += MMIO_LEN;
         }
         MMIODeviceManager {
@@ -447,8 +451,11 @@ mod tests {
         let page_size = test_page_size();
         let start_addr1 = GuestAddress(TEST_GUEST_MEM_BASE);
         let start_addr2 = GuestAddress(TEST_GUEST_MEM_BASE + page_size);
-        let guest_mem =
-            GuestMemoryMmap::from_ranges(&[(start_addr1, page_size as usize), (start_addr2, page_size as usize)]).unwrap();
+        let guest_mem = GuestMemoryMmap::from_ranges(&[
+            (start_addr1, page_size as usize),
+            (start_addr2, page_size as usize),
+        ])
+        .unwrap();
         let vm = builder::setup_vm(&guest_mem, false).unwrap();
         let mut device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
@@ -470,8 +477,11 @@ mod tests {
         let page_size = test_page_size();
         let start_addr1 = GuestAddress(TEST_GUEST_MEM_BASE);
         let start_addr2 = GuestAddress(TEST_GUEST_MEM_BASE + page_size);
-        let guest_mem =
-            GuestMemoryMmap::from_ranges(&[(start_addr1, page_size as usize), (start_addr2, page_size as usize)]).unwrap();
+        let guest_mem = GuestMemoryMmap::from_ranges(&[
+            (start_addr1, page_size as usize),
+            (start_addr2, page_size as usize),
+        ])
+        .unwrap();
         let vm = builder::setup_vm(&guest_mem, false).unwrap();
         let mut device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
@@ -575,8 +585,11 @@ mod tests {
         let page_size = test_page_size();
         let start_addr1 = GuestAddress(TEST_GUEST_MEM_BASE);
         let start_addr2 = GuestAddress(TEST_GUEST_MEM_BASE + page_size);
-        let guest_mem =
-            GuestMemoryMmap::from_ranges(&[(start_addr1, page_size as usize), (start_addr2, page_size as usize)]).unwrap();
+        let guest_mem = GuestMemoryMmap::from_ranges(&[
+            (start_addr1, page_size as usize),
+            (start_addr2, page_size as usize),
+        ])
+        .unwrap();
         let vm = builder::setup_vm(&guest_mem, false).unwrap();
         let mut device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));

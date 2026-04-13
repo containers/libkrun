@@ -5,10 +5,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
+#[cfg(target_arch = "loongarch64")]
+use arch::loongarch64::linux::iocsr::{
+    process_iocsr_read, process_iocsr_write, LoongArchIocsrState,
+};
 #[cfg(target_arch = "aarch64")]
 use arch::ArchMemoryInfo;
-#[cfg(target_arch = "loongarch64")]
-use arch::loongarch64::linux::iocsr::{LoongArchIocsrState, process_iocsr_read, process_iocsr_write};
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use libc::{c_int, c_void, siginfo_t};
 use std::cell::Cell;
@@ -19,9 +21,9 @@ use std::io;
 use std::ops::Range;
 
 #[cfg(target_arch = "loongarch64")]
-use std::sync::Arc;
-#[cfg(target_arch = "loongarch64")]
 use std::os::fd::{AsRawFd, FromRawFd};
+#[cfg(target_arch = "loongarch64")]
+use std::sync::Arc;
 
 use std::os::unix::io::RawFd;
 
@@ -51,6 +53,8 @@ use crate::resources::TeeConfig;
 use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 #[cfg(target_arch = "x86_64")]
 use cpuid::{c3, filter_cpuid, t2, VmSpec};
+#[cfg(not(feature = "tee"))]
+use kvm_bindings::kvm_userspace_memory_region;
 #[cfg(target_arch = "x86_64")]
 use kvm_bindings::{
     kvm_clock_data, kvm_debugregs, kvm_irqchip, kvm_lapic_state, kvm_mp_state, kvm_pit_state2,
@@ -58,18 +62,13 @@ use kvm_bindings::{
     KVM_CLOCK_TSC_STABLE, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
     KVM_MAX_CPUID_ENTRIES,
 };
-use kvm_bindings::{
-    kvm_userspace_memory_region, KVM_API_VERSION, KVM_SYSTEM_EVENT_RESET,
-    KVM_SYSTEM_EVENT_SHUTDOWN,
-};
 #[cfg(all(feature = "tee", target_arch = "x86_64"))]
-use kvm_bindings::{
-    kvm_create_guest_memfd, kvm_userspace_memory_region2, KVM_MEM_GUEST_MEMFD,
-};
+use kvm_bindings::{kvm_create_guest_memfd, kvm_userspace_memory_region2, KVM_MEM_GUEST_MEMFD};
 #[cfg(feature = "tee")]
 use kvm_bindings::{kvm_enable_cap, KVM_CAP_EXIT_HYPERCALL, KVM_MEMORY_EXIT_FLAG_PRIVATE};
 #[cfg(all(feature = "tee", target_arch = "x86_64"))]
 use kvm_bindings::{kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE};
+use kvm_bindings::{KVM_API_VERSION, KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN};
 use kvm_ioctls::{Cap::*, *};
 use utils::eventfd::EventFd;
 use utils::signal::{register_signal_handler, sigrtmin, Killable};
@@ -1176,7 +1175,12 @@ impl Vcpu {
     }
 
     #[cfg(target_arch = "loongarch64")]
-    pub fn new_loongarch64(id: u8, vm_fd: &VmFd, exit_evt: EventFd, iocsr_state: Arc<LoongArchIocsrState>) -> Result<Self> {
+    pub fn new_loongarch64(
+        id: u8,
+        vm_fd: &VmFd,
+        exit_evt: EventFd,
+        iocsr_state: Arc<LoongArchIocsrState>,
+    ) -> Result<Self> {
         let kvm_vcpu = vm_fd.create_vcpu(id as u64).map_err(Error::VcpuFd)?;
         let (event_sender, event_receiver) = unbounded();
         let (response_sender, response_receiver) = unbounded();
@@ -1348,10 +1352,9 @@ impl Vcpu {
             true,
             efi_system_table_addr.raw_value(),
         )
-            .map_err(Error::REGSConfiguration)?;
+        .map_err(Error::REGSConfiguration)?;
         Ok(())
     }
-
 
     /// Moves the vcpu to its own thread and constructs a VcpuHandle.
     /// The handle can be used to control the remote vcpu.
@@ -1519,53 +1522,22 @@ impl Vcpu {
         match self.fd.run() {
             Ok(run) => {
                 let emulation = match run {
-                #[cfg(feature = "tee")]
-                VcpuExit::Hypercall(hypercall) => {
-                    if hypercall.nr != 12
-                    /* KVM_HC_MAP_GPA_RANGE */
-                    {
-                        return Err(Error::VcpuUnsupportedHypercall);
-                    }
+                    #[cfg(feature = "tee")]
+                    VcpuExit::Hypercall(hypercall) => {
+                        if hypercall.nr != 12
+                        /* KVM_HC_MAP_GPA_RANGE */
+                        {
+                            return Err(Error::VcpuUnsupportedHypercall);
+                        }
 
-                    let gpa = hypercall.args[0];
-                    let size = hypercall.args[1] * 0x1000; /* TARGET_PAGE_SIZE */
-                    let attributes = hypercall.args[2];
+                        let gpa = hypercall.args[0];
+                        let size = hypercall.args[1] * 0x1000; /* TARGET_PAGE_SIZE */
+                        let attributes = hypercall.args[2];
 
-                    let private = !matches!(attributes, 0);
+                        let private = !matches!(attributes, 0);
 
-                    let mem_properties = MemoryProperties { gpa, size, private };
-
-                    let (response_sender, response_receiver) = unbounded();
-                    self.pm_sender
-                        .send(WorkerMessage::ConvertMemory(
-                            response_sender.clone(),
-                            mem_properties,
-                        ))
-                        .unwrap();
-                    if !response_receiver.recv().unwrap() {
-                        error!("Unable to convert memory with properties: gpa: 0x{gpa:x} size: 0x{size:x} to_private: {private}");
-                        return Err(Error::VcpuUnhandledKvmExit);
-                    }
-                    Ok(VcpuEmulation::Handled)
-                }
-                #[cfg(target_arch = "x86_64")]
-                VcpuExit::IoIn(addr, data) => {
-                    self.io_bus.read(0, u64::from(addr), data);
-                    Ok(VcpuEmulation::Handled)
-                }
-                #[cfg(target_arch = "x86_64")]
-                VcpuExit::IoOut(addr, data) => {
-                    self.io_bus.write(0, u64::from(addr), data);
-                    Ok(VcpuEmulation::Handled)
-                }
-                #[cfg(feature = "tee")]
-                VcpuExit::MemoryFault { gpa, size, flags } => {
-                    if flags & !kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64 != 0 {
-                        println!("KVM_EXIT_MEMORY_FAULT: Unknown flag {flags}");
-                        Err(Error::VcpuUnhandledKvmExit)
-                    } else {
-                        let private = (flags & (KVM_MEMORY_EXIT_FLAG_PRIVATE as u64)) != 0;
                         let mem_properties = MemoryProperties { gpa, size, private };
+
                         let (response_sender, response_receiver) = unbounded();
                         self.pm_sender
                             .send(WorkerMessage::ConvertMemory(
@@ -1579,78 +1551,117 @@ impl Vcpu {
                         }
                         Ok(VcpuEmulation::Handled)
                     }
-                }
-                VcpuExit::MmioRead(addr, data) => {
-                    if let Some(ref mmio_bus) = self.mmio_bus {
-                        mmio_bus.read(0, addr, data);
+                    #[cfg(target_arch = "x86_64")]
+                    VcpuExit::IoIn(addr, data) => {
+                        self.io_bus.read(0, u64::from(addr), data);
+                        Ok(VcpuEmulation::Handled)
                     }
-                    Ok(VcpuEmulation::Handled)
-                }
-                VcpuExit::MmioWrite(addr, data) => {
-                    if let Some(ref mmio_bus) = self.mmio_bus {
-                        mmio_bus.write(0, addr, data);
+                    #[cfg(target_arch = "x86_64")]
+                    VcpuExit::IoOut(addr, data) => {
+                        self.io_bus.write(0, u64::from(addr), data);
+                        Ok(VcpuEmulation::Handled)
                     }
-                    Ok(VcpuEmulation::Handled)
-                }
-                #[cfg(target_arch = "loongarch64")]
-                VcpuExit::IocsrRead(addr, data) => {
-                    match process_iocsr_read(addr, data, &self.iocsr_state, self.id) {
-                        arch::loongarch64::linux::iocsr::IocsrReadResult::Value(value) => {
-                            debug!("LoongArch IOCSR read: addr=0x{addr:x}, len={}, value=0x{value:x}", data.len());
+                    #[cfg(feature = "tee")]
+                    VcpuExit::MemoryFault { gpa, size, flags } => {
+                        if flags & !kvm_bindings::KVM_MEMORY_EXIT_FLAG_PRIVATE as u64 != 0 {
+                            println!("KVM_EXIT_MEMORY_FAULT: Unknown flag {flags}");
+                            Err(Error::VcpuUnhandledKvmExit)
+                        } else {
+                            let private = (flags & (KVM_MEMORY_EXIT_FLAG_PRIVATE as u64)) != 0;
+                            let mem_properties = MemoryProperties { gpa, size, private };
+                            let (response_sender, response_receiver) = unbounded();
+                            self.pm_sender
+                                .send(WorkerMessage::ConvertMemory(
+                                    response_sender.clone(),
+                                    mem_properties,
+                                ))
+                                .unwrap();
+                            if !response_receiver.recv().unwrap() {
+                                error!("Unable to convert memory with properties: gpa: 0x{gpa:x} size: 0x{size:x} to_private: {private}");
+                                return Err(Error::VcpuUnhandledKvmExit);
+                            }
                             Ok(VcpuEmulation::Handled)
                         }
-                        arch::loongarch64::linux::iocsr::IocsrReadResult::Unhandled => {
-                            error!("Unhandled LoongArch IOCSR read: addr=0x{addr:x}, len={}", data.len());
-                            Err(Error::VcpuUnhandledKvmExit)
+                    }
+                    VcpuExit::MmioRead(addr, data) => {
+                        if let Some(ref mmio_bus) = self.mmio_bus {
+                            mmio_bus.read(0, addr, data);
+                        }
+                        Ok(VcpuEmulation::Handled)
+                    }
+                    VcpuExit::MmioWrite(addr, data) => {
+                        if let Some(ref mmio_bus) = self.mmio_bus {
+                            mmio_bus.write(0, addr, data);
+                        }
+                        Ok(VcpuEmulation::Handled)
+                    }
+                    #[cfg(target_arch = "loongarch64")]
+                    VcpuExit::IocsrRead(addr, data) => {
+                        match process_iocsr_read(addr, data, &self.iocsr_state, self.id) {
+                            arch::loongarch64::linux::iocsr::IocsrReadResult::Value(value) => {
+                                debug!("LoongArch IOCSR read: addr=0x{addr:x}, len={}, value=0x{value:x}", data.len());
+                                Ok(VcpuEmulation::Handled)
+                            }
+                            arch::loongarch64::linux::iocsr::IocsrReadResult::Unhandled => {
+                                error!(
+                                    "Unhandled LoongArch IOCSR read: addr=0x{addr:x}, len={}",
+                                    data.len()
+                                );
+                                Err(Error::VcpuUnhandledKvmExit)
+                            }
                         }
                     }
-                }
-                #[cfg(target_arch = "loongarch64")]
-                VcpuExit::IocsrWrite(addr, data) => {
-                    match process_iocsr_write(addr, data, &self.iocsr_state, self.id) {
-                        arch::loongarch64::linux::iocsr::IocsrWriteResult::Handled => {
-                            let value = u64::from_le_bytes(data.try_into().unwrap());
-                            debug!("LoongArch IOCSR write: addr=0x{addr:x}, value=0x{value:x}");
-                            Ok(VcpuEmulation::Handled)
-                        }
-                        arch::loongarch64::linux::iocsr::IocsrWriteResult::Unhandled => {
-                            error!("Unhandled LoongArch IOCSR write: addr=0x{addr:x}, len={}", data.len());
-                            Err(Error::VcpuUnhandledKvmExit)
+                    #[cfg(target_arch = "loongarch64")]
+                    VcpuExit::IocsrWrite(addr, data) => {
+                        match process_iocsr_write(addr, data, &self.iocsr_state, self.id) {
+                            arch::loongarch64::linux::iocsr::IocsrWriteResult::Handled => {
+                                let value = u64::from_le_bytes(data.try_into().unwrap());
+                                debug!("LoongArch IOCSR write: addr=0x{addr:x}, value=0x{value:x}");
+                                Ok(VcpuEmulation::Handled)
+                            }
+                            arch::loongarch64::linux::iocsr::IocsrWriteResult::Unhandled => {
+                                error!(
+                                    "Unhandled LoongArch IOCSR write: addr=0x{addr:x}, len={}",
+                                    data.len()
+                                );
+                                Err(Error::VcpuUnhandledKvmExit)
+                            }
                         }
                     }
-                }
-                VcpuExit::Hlt => {
-                    info!("Received KVM_EXIT_HLT signal");
-                    Ok(VcpuEmulation::Stopped)
-                }
-                VcpuExit::Shutdown => {
-                    info!("Received KVM_EXIT_SHUTDOWN signal");
-                    Ok(VcpuEmulation::Stopped)
-                }
-                // Documentation specifies that below kvm exits are considered
-                // errors.
-                VcpuExit::FailEntry(reason, vcpu) => {
-                    error!("Received KVM_EXIT_FAIL_ENTRY signal: reason={reason}, vcpu={vcpu}");
-                    Err(Error::VcpuUnhandledKvmExit)
-                }
-                VcpuExit::InternalError => {
-                    error!("Received KVM_EXIT_INTERNAL_ERROR signal");
-                    Err(Error::VcpuUnhandledKvmExit)
-                }
-                VcpuExit::SystemEvent(event, _reason) => {
-                    match event {
-                        KVM_SYSTEM_EVENT_SHUTDOWN => info!("Received KVM_SYSTEM_EVENT_SHUTDOWN"),
-                        KVM_SYSTEM_EVENT_RESET => info!("Received KVM_SYSTEM_EVENT_RESET"),
-                        _ => error!("Received an unexpected System Event: {event}"),
+                    VcpuExit::Hlt => {
+                        info!("Received KVM_EXIT_HLT signal");
+                        Ok(VcpuEmulation::Stopped)
                     }
-                    Ok(VcpuEmulation::Stopped)
-                }
-                r => {
-                    // TODO: Are we sure we want to finish running a vcpu upon
-                    // receiving a vm exit that is not necessarily an error?
-                    error!("Unexpected exit reason on vcpu run: {r:?}");
-                    Err(Error::VcpuUnhandledKvmExit)
-                }
+                    VcpuExit::Shutdown => {
+                        info!("Received KVM_EXIT_SHUTDOWN signal");
+                        Ok(VcpuEmulation::Stopped)
+                    }
+                    // Documentation specifies that below kvm exits are considered
+                    // errors.
+                    VcpuExit::FailEntry(reason, vcpu) => {
+                        error!("Received KVM_EXIT_FAIL_ENTRY signal: reason={reason}, vcpu={vcpu}");
+                        Err(Error::VcpuUnhandledKvmExit)
+                    }
+                    VcpuExit::InternalError => {
+                        error!("Received KVM_EXIT_INTERNAL_ERROR signal");
+                        Err(Error::VcpuUnhandledKvmExit)
+                    }
+                    VcpuExit::SystemEvent(event, _reason) => {
+                        match event {
+                            KVM_SYSTEM_EVENT_SHUTDOWN => {
+                                info!("Received KVM_SYSTEM_EVENT_SHUTDOWN")
+                            }
+                            KVM_SYSTEM_EVENT_RESET => info!("Received KVM_SYSTEM_EVENT_RESET"),
+                            _ => error!("Received an unexpected System Event: {event}"),
+                        }
+                        Ok(VcpuEmulation::Stopped)
+                    }
+                    r => {
+                        // TODO: Are we sure we want to finish running a vcpu upon
+                        // receiving a vm exit that is not necessarily an error?
+                        error!("Unexpected exit reason on vcpu run: {r:?}");
+                        Err(Error::VcpuUnhandledKvmExit)
+                    }
                 };
                 emulation
             }
@@ -1939,7 +1950,8 @@ mod tests {
     // Auxiliary function being used throughout the tests.
     fn setup_vcpu(mem_size: usize) -> (Vm, Vcpu, GuestMemoryMmap) {
         let kvm = KvmContext::new().unwrap();
-        let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(TEST_GUEST_MEM_BASE), mem_size)]).unwrap();
+        let gm =
+            GuestMemoryMmap::from_ranges(&[(GuestAddress(TEST_GUEST_MEM_BASE), mem_size)]).unwrap();
         let mut vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
         #[cfg(target_arch = "x86_64")]
         let _kvmioapic = KvmIoapic::new(&vm.fd()).unwrap();
@@ -2003,7 +2015,11 @@ mod tests {
 
         let page_size = test_page_size();
         // Create valid memory region and test that the initialization is successful.
-        let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(TEST_GUEST_MEM_BASE), page_size as usize)]).unwrap();
+        let gm = GuestMemoryMmap::from_ranges(&[(
+            GuestAddress(TEST_GUEST_MEM_BASE),
+            page_size as usize,
+        )])
+        .unwrap();
         assert!(vm.memory_init(&gm, kvm_context.max_memslots()).is_ok());
 
         // Set the maximum number of memory slots to 1 in KvmContext to check the error
@@ -2011,7 +2027,10 @@ mod tests {
         kvm_context.max_memslots = 1;
         let gm = GuestMemoryMmap::from_ranges(&[
             (GuestAddress(TEST_GUEST_MEM_BASE), page_size as usize),
-            (GuestAddress(TEST_GUEST_MEM_BASE + page_size + 1), (2 * page_size) as usize),
+            (
+                GuestAddress(TEST_GUEST_MEM_BASE + page_size + 1),
+                (2 * page_size) as usize,
+            ),
         ])
         .unwrap();
         assert!(vm.memory_init(&gm, kvm_context.max_memslots()).is_err());
@@ -2029,19 +2048,34 @@ mod tests {
         };
 
         assert!(vcpu
-            .configure_x86_64(&vm_mem, GuestAddress(TEST_GUEST_MEM_BASE), &vcpu_config, true)
+            .configure_x86_64(
+                &vm_mem,
+                GuestAddress(TEST_GUEST_MEM_BASE),
+                &vcpu_config,
+                true
+            )
             .is_ok());
 
         // Test configure while using the T2 template.
         vcpu_config.cpu_template = Some(CpuFeaturesTemplate::T2);
         assert!(vcpu
-            .configure_x86_64(&vm_mem, GuestAddress(TEST_GUEST_MEM_BASE), &vcpu_config, true)
+            .configure_x86_64(
+                &vm_mem,
+                GuestAddress(TEST_GUEST_MEM_BASE),
+                &vcpu_config,
+                true
+            )
             .is_ok());
 
         // Test configure while using the C3 template.
         vcpu_config.cpu_template = Some(CpuFeaturesTemplate::C3);
         assert!(vcpu
-            .configure_x86_64(&vm_mem, GuestAddress(TEST_GUEST_MEM_BASE), &vcpu_config, true)
+            .configure_x86_64(
+                &vm_mem,
+                GuestAddress(TEST_GUEST_MEM_BASE),
+                &vcpu_config,
+                true
+            )
             .is_ok());
     }
 
@@ -2064,7 +2098,11 @@ mod tests {
         .unwrap();
 
         assert!(vcpu
-            .configure_aarch64(vm.fd(), &arch_memory_info, GuestAddress(TEST_GUEST_MEM_BASE))
+            .configure_aarch64(
+                vm.fd(),
+                &arch_memory_info,
+                GuestAddress(TEST_GUEST_MEM_BASE)
+            )
             .is_ok());
 
         // Try it for when vcpu id is NOT 0.
@@ -2076,7 +2114,11 @@ mod tests {
         .unwrap();
 
         assert!(vcpu
-            .configure_aarch64(vm.fd(), &arch_memory_info, GuestAddress(TEST_GUEST_MEM_BASE))
+            .configure_aarch64(
+                vm.fd(),
+                &arch_memory_info,
+                GuestAddress(TEST_GUEST_MEM_BASE)
+            )
             .is_ok());
     }
 
@@ -2103,15 +2145,14 @@ mod tests {
         )
         .unwrap();
 
-        assert!(
-            vcpu.configure_loongarch64(
+        assert!(vcpu
+            .configure_loongarch64(
                 vm.fd(),
                 GuestAddress(arch::RESET_VECTOR),
                 cmdline_addr,
                 efi_system_table_addr
             )
-            .is_ok()
-        );
+            .is_ok());
     }
 
     #[test]

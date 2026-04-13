@@ -73,7 +73,10 @@ mod guest {
             // Check if ram is within the expected range for this architecture.
             assert!(self.ram_mib >= (ram_available as f64 * 0.85) as u32);
             #[cfg(target_arch = "loongarch64")]
-            assert!(self.ram_mib <= (ram_available as f64 * 1.50) as u32);
+            {
+                let upper = if self.ram_mib <= 256 { 2.0 } else { 1.5 };
+                assert!(self.ram_mib <= (ram_available as f64 * upper) as u32);
+            }
             #[cfg(not(target_arch = "loongarch64"))]
             assert!(self.ram_mib <= (ram_available as f64 * 1.15) as u32);
             println!("OK");

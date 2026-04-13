@@ -5,8 +5,8 @@ use std::ffi::CString;
 use std::fs::{self, create_dir, create_dir_all};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::ptr::null;
 use std::process::Command;
+use std::ptr::null;
 
 use crate::{krun_call, TestSetup};
 use krun_sys::*;
@@ -35,10 +35,7 @@ fn guest_agent_runtime_deps(guest_agent: &Path) -> anyhow::Result<Vec<PathBuf>> 
         {
             return Ok(Vec::new());
         }
-        anyhow::bail!(
-            "ldd guest-agent failed: {}",
-            stderr
-        );
+        anyhow::bail!("ldd guest-agent failed: {}", stderr);
     }
 
     let stdout = String::from_utf8(output.stdout).context("ldd output is not utf8")?;
