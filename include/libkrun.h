@@ -954,9 +954,6 @@ int32_t krun_setgid(uint32_t ctx_id, gid_t gid);
  *  "ctx_id"  - the configuration context ID.
  *  "enabled" - true to enable Nested Virtualization in the microVM.
  *
- * Notes:
- *  This feature is only supported on macOS.
- *
  * Returns:
  *  Zero on success or a negative error number on failure. Success doesn't imply that
  *  Nested Virtualization is supported on the system, only that it's going to be requested
