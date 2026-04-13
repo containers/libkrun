@@ -399,6 +399,7 @@ mod tests {
             prolog: None,
             krun_env: None,
             epilog: None,
+            init_policy: Default::default(),
         }
     }
 
