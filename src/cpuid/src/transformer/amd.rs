@@ -51,12 +51,18 @@ pub fn update_largest_extended_fn_entry(
 
 pub fn update_extended_feature_info_entry(
     entry: &mut kvm_cpuid_entry2,
-    _vm_spec: &VmSpec,
+    vm_spec: &VmSpec,
 ) -> Result<(), Error> {
     use crate::cpu_leaf::leaf_0x80000001::*;
 
     // set the Topology Extension bit since we use the Extended Cache Topology leaf
     entry.ecx.write_bit(ecx::TOPOEXT_INDEX, true);
+
+    // Advertise SVM only when nested virtualization is enabled AND the host supports it.
+    entry.ecx.write_bit(
+        ecx::SVM_BITINDEX,
+        vm_spec.nested_enabled() && entry.ecx.read_bit(ecx::SVM_BITINDEX),
+    );
 
     Ok(())
 }
@@ -159,7 +165,7 @@ mod tests {
         use crate::cpu_leaf::leaf_0x7::index0::*;
 
         // Check that if index == 0 the entry is processed
-        let vm_spec = VmSpec::new(0, 1, false).expect("Error creating vm_spec");
+        let vm_spec = VmSpec::new(0, 1, false, false).expect("Error creating vm_spec");
         let mut entry = kvm_cpuid_entry2 {
             function: leaf_0x7::LEAF_NUM,
             index: 0,
@@ -184,7 +190,7 @@ mod tests {
     fn test_update_largest_extended_fn_entry() {
         use crate::cpu_leaf::leaf_0x80000000::*;
 
-        let vm_spec = VmSpec::new(0, 1, false).expect("Error creating vm_spec");
+        let vm_spec = VmSpec::new(0, 1, false, false).expect("Error creating vm_spec");
         let mut entry = kvm_cpuid_entry2 {
             function: LEAF_NUM,
             index: 0,
@@ -210,7 +216,7 @@ mod tests {
     fn test_update_extended_feature_info_entry() {
         use crate::cpu_leaf::leaf_0x80000001::*;
 
-        let vm_spec = VmSpec::new(0, 1, false).expect("Error creating vm_spec");
+        let vm_spec = VmSpec::new(0, 1, false, false).expect("Error creating vm_spec");
         let mut entry = kvm_cpuid_entry2 {
             function: LEAF_NUM,
             index: 0,
@@ -230,7 +236,7 @@ mod tests {
     fn check_update_amd_features_entry(cpu_count: u8, ht_enabled: bool) {
         use crate::cpu_leaf::leaf_0x80000008::*;
 
-        let vm_spec = VmSpec::new(0, cpu_count, ht_enabled).expect("Error creating vm_spec");
+        let vm_spec = VmSpec::new(0, cpu_count, ht_enabled, false).expect("Error creating vm_spec");
         let mut entry = kvm_cpuid_entry2 {
             function: LEAF_NUM,
             index: 0,
@@ -263,7 +269,8 @@ mod tests {
     ) {
         use crate::cpu_leaf::leaf_0x8000001e::*;
 
-        let vm_spec = VmSpec::new(cpu_id, cpu_count, ht_enabled).expect("Error creating vm_spec");
+        let vm_spec =
+            VmSpec::new(cpu_id, cpu_count, ht_enabled, false).expect("Error creating vm_spec");
         let mut entry = kvm_cpuid_entry2 {
             function: LEAF_NUM,
             index: 0,
@@ -306,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_update_extended_cache_topology_entry() {
-        let vm_spec = VmSpec::new(0, 1, false).expect("Error creating vm_spec");
+        let vm_spec = VmSpec::new(0, 1, false, false).expect("Error creating vm_spec");
         let mut entry = kvm_cpuid_entry2 {
             function: leaf_0x8000001d::LEAF_NUM,
             index: 0,

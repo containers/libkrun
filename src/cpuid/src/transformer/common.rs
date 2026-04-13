@@ -151,7 +151,7 @@ mod tests {
     fn check_update_feature_info_entry(cpu_count: u8, expected_htt: bool) {
         use crate::cpu_leaf::leaf_0x1::*;
 
-        let vm_spec = VmSpec::new(0, cpu_count, false).expect("Error creating vm_spec");
+        let vm_spec = VmSpec::new(0, cpu_count, false, false).expect("Error creating vm_spec");
         let mut entry = kvm_cpuid_entry2 {
             function: 0x0,
             index: 0,
@@ -176,7 +176,7 @@ mod tests {
     ) {
         use crate::cpu_leaf::leaf_cache_parameters::*;
 
-        let vm_spec = VmSpec::new(0, cpu_count, ht_enabled).expect("Error creating vm_spec");
+        let vm_spec = VmSpec::new(0, cpu_count, ht_enabled, false).expect("Error creating vm_spec");
         let mut entry = kvm_cpuid_entry2 {
             function: 0x0,
             index: 0,

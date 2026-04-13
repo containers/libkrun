@@ -21,6 +21,8 @@ pub struct VmSpec {
     cpu_count: u8,
     /// Specifies whether hyper-threading is enabled.
     ht_enabled: bool,
+    /// Specifies whether nested virtualization is enabled.
+    nested_enabled: bool,
     /// The desired brand string for the guest.
     brand_string: BrandString,
 }
@@ -28,7 +30,12 @@ pub struct VmSpec {
 impl VmSpec {
     /// Creates a new instance of VmSpec with the specified parameters
     /// The brand string is deduced from the vendor_id
-    pub fn new(cpu_id: u8, cpu_count: u8, ht_enabled: bool) -> Result<VmSpec, Error> {
+    pub fn new(
+        cpu_id: u8,
+        cpu_count: u8,
+        ht_enabled: bool,
+        nested_enabled: bool,
+    ) -> Result<VmSpec, Error> {
         let cpu_vendor_id = get_vendor_id().map_err(Error::InternalError)?;
 
         Ok(VmSpec {
@@ -36,6 +43,7 @@ impl VmSpec {
             cpu_id,
             cpu_count,
             ht_enabled,
+            nested_enabled,
             brand_string: BrandString::from_vendor_id(&cpu_vendor_id),
         })
     }
@@ -43,6 +51,11 @@ impl VmSpec {
     /// Returns an immutable reference to cpu_vendor_id
     pub fn cpu_vendor_id(&self) -> &[u8; 12] {
         &self.cpu_vendor_id
+    }
+
+    /// Returns whether nested virtualization is enabled
+    pub fn nested_enabled(&self) -> bool {
+        self.nested_enabled
     }
 }
 
@@ -117,7 +130,7 @@ mod tests {
         let num_entries = 5;
 
         let mut cpuid = CpuId::new(num_entries).unwrap();
-        let vm_spec = VmSpec::new(0, 1, false);
+        let vm_spec = VmSpec::new(0, 1, false, false);
         cpuid.as_mut_slice()[0].function = PROCESSED_FN;
         assert!(MockCpuidTransformer {}
             .process_cpuid(&mut cpuid, &vm_spec.unwrap())
