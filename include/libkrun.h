@@ -98,7 +98,16 @@ int32_t krun_free_ctx(uint32_t ctx_id);
 int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus, uint32_t ram_mib);
 
 /**
+ * The virtiofs tag used for the root filesystem. Can be used with krun_add_virtiofs*
+ * for more control over root filesystem parameters (e.g. read-only, DAX window size).
+ */
+#define KRUN_FS_ROOT_TAG "/dev/root"
+
+/**
  * Sets the path to be use as root for the microVM. Not available in libkrun-SEV.
+ *
+ * For more control over the root filesystem (e.g. read-only, DAX window size),
+ * use krun_add_virtiofs3() with KRUN_FS_ROOT_TAG instead.
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
