@@ -20,6 +20,8 @@ AWS_NITRO_INIT_SRC = \
 
 AWS_NITRO_INIT_LD_FLAGS = -larchive -lnsm
 
+INIT_SRC = init/init.c
+
 ifeq ($(SEV),1)
     VARIANT = -sev
     FEATURE_FLAGS := --features amd-sev
@@ -148,7 +150,7 @@ endif
 ifeq ($(BUILD_BSD_INIT),1)
 INIT_BINARY_BSD = init/init-freebsd
 $(INIT_BINARY_BSD): $(INIT_SRC) $(SYSROOT_BSD_TARGET)
-	$(CC_BSD) -std=c23 -O2 -static -Wall $(INIT_DEFS) -lutil -o $@ $(INIT_SRC) $(INIT_DEFS)
+	$(CC_BSD) -std=c23 -O2 -static -Wall -lutil -o $@ $(INIT_SRC)
 endif
 
 # Sysroot preparation rules for cross-compilation on macOS
@@ -189,10 +191,12 @@ $(FREEBSD_ROOTFS_DIR)/.sysroot_ready: $(FREEBSD_BASE_TXZ)
 	@cd $(FREEBSD_ROOTFS_DIR) && tar xJf base.txz 2>/dev/null || true
 	@touch $@
 
+BSD_ARCH=$(subst x86_64,amd64,$(subst aarch64,arm64,$(ARCH)))
+
 $(FREEBSD_BASE_TXZ):
-	@echo "Downloading FreeBSD $(FREEBSD_VERSION) base for $(ARCH)..."
+	@echo "Downloading FreeBSD $(FREEBSD_VERSION) base for $(BSD_ARCH)..."
 	@mkdir -p $(FREEBSD_ROOTFS_DIR)
-	@curl -fL -o $@ https://download.freebsd.org/releases/$(ARCH)/$(FREEBSD_VERSION)/base.txz
+	@curl -fL -o $@ https://download.freebsd.org/releases/$(BSD_ARCH)/$(FREEBSD_VERSION)/base.txz
 
 clean-sysroot:
 	rm -rf $(ROOTFS_DIR)
