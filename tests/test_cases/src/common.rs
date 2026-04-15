@@ -5,7 +5,7 @@ use std::ffi::CString;
 use std::fs;
 use std::fs::create_dir;
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr::null;
 
 use crate::{krun_call, TestSetup};
@@ -20,6 +20,17 @@ fn copy_guest_agent(dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Creates the root filesystem directory and copies the guest agent into it.
+/// Returns the path to the root directory. Use this when you need to configure the root
+/// filesystem yourself (e.g. via `krun_add_virtiofs3` for read-only mounts) rather than
+/// using the default `setup_fs_and_enter`.
+pub fn setup_rootfs(test_setup: &TestSetup) -> anyhow::Result<PathBuf> {
+    let root_dir = test_setup.tmp_dir.join("root");
+    create_dir(&root_dir).context("Failed to create root directory")?;
+    copy_guest_agent(&root_dir)?;
+    Ok(root_dir)
+}
+
 /// Common part of most test. This setups an empty root filesystem, copies the guest agent there
 /// and runs the guest agent in the VM.
 /// Note that some tests might want to use a different root file system (perhaps a qcow image),
@@ -28,11 +39,9 @@ fn copy_guest_agent(dir: &Path) -> anyhow::Result<()> {
 ///
 /// The returned object is used for deleting the temporary files.
 pub fn setup_fs_and_enter(ctx: u32, test_setup: TestSetup) -> anyhow::Result<()> {
-    let root_dir = test_setup.tmp_dir.join("root");
-    create_dir(&root_dir).context("Failed to create root directory")?;
+    let root_dir = setup_rootfs(&test_setup)?;
 
     let path_str = CString::new(root_dir.as_os_str().as_bytes()).context("CString::new")?;
-    copy_guest_agent(&root_dir)?;
     unsafe {
         krun_call!(krun_set_root(ctx, path_str.as_ptr()))?;
         krun_call!(krun_set_workdir(ctx, c"/".as_ptr()))?;
