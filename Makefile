@@ -120,7 +120,7 @@ $(AWS_NITRO_INIT_BINARY): $(AWS_NITRO_INIT_SRC)
 	$(CC) -O2 -static -s -Wall $(AWS_NITRO_INIT_LD_FLAGS) -o $@ $(AWS_NITRO_INIT_SRC) $(AWS_NITRO_INIT_LD_FLAGS)
 
 ifeq ($(OS),Darwin)
-# If SYSROOT_BSD is not set and we're on macOS, generate sysroot automatically
+# macOS -> FreeBSD cross-compilation
 ifeq ($(SYSROOT_BSD),)
     SYSROOT_BSD = $(FREEBSD_ROOTFS_DIR)
     SYSROOT_BSD_TARGET = $(FREEBSD_ROOTFS_DIR)/.sysroot_ready
@@ -129,6 +129,16 @@ else
 endif
     # Cross-compile on macOS with the LLVM linker (brew install lld)
     CC_BSD=$(CLANG) -target $(ARCH)-unknown-freebsd -fuse-ld=lld -stdlib=libc++ -Wl,-strip-debug --sysroot $(SYSROOT_BSD)
+else ifeq ($(OS),Linux)
+# Linux -> FreeBSD cross-compilation
+ifeq ($(SYSROOT_BSD),)
+    SYSROOT_BSD = $(FREEBSD_ROOTFS_DIR)
+    SYSROOT_BSD_TARGET = $(FREEBSD_ROOTFS_DIR)/.sysroot_ready
+else
+    SYSROOT_BSD_TARGET =
+endif
+    # Cross-compile on Linux with clang
+    CC_BSD=$(CLANG) -target $(ARCH)-unknown-freebsd -fuse-ld=lld -Wl,-strip-debug --sysroot $(SYSROOT_BSD)
 else
     # Build on FreeBSD host
     CC_BSD=$(CC)
