@@ -415,8 +415,10 @@ mod tests {
             external_kernel: None,
             fs: Default::default(),
             vsock: Default::default(),
+            #[cfg(feature = "blk")]
+            block: Default::default(),
             #[cfg(feature = "net")]
-            net_builder: Default::default(),
+            net: Default::default(),
             gpu_virgl_flags: None,
             gpu_shm_size: None,
             #[cfg(feature = "gpu")]
@@ -446,6 +448,7 @@ mod tests {
             vcpu_count: vm_resources.vm_config().vcpu_count.unwrap(),
             ht_enabled: vm_resources.vm_config().ht_enabled.unwrap(),
             cpu_template: vm_resources.vm_config().cpu_template,
+            #[cfg(target_os = "linux")]
             nested_enabled: vm_resources.nested_enabled,
         };
 
