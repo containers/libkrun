@@ -9,4 +9,8 @@ fn main() {
         println!("cargo:rustc-env=KRUN_EDK2_BINARY_PATH={edk2_binary_path}");
         println!("cargo:rerun-if-env-changed=KRUN_EDK2_BINARY_PATH");
     }
+
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rustc-link-lib=framework=Hypervisor");
+    }
 }

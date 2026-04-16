@@ -10,6 +10,4 @@ fn main() {
         std::env::var("CARGO_PKG_VERSION_MAJOR").unwrap(), std::env::var("CARGO_PKG_VERSION_MAJOR").unwrap(),
         std::env::var("CARGO_PKG_VERSION_MAJOR").unwrap(), std::env::var("CARGO_PKG_VERSION_MINOR").unwrap()
     );
-    #[cfg(target_os = "macos")]
-    println!("cargo:rustc-link-lib=framework=Hypervisor");
 }
