@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::result;
-#[cfg(not(test))]
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -601,253 +600,96 @@ enum VcpuEmulation {
 #[cfg(test)]
 mod tests {
     #[cfg(target_arch = "x86_64")]
-    use crossbeam_channel::{unbounded, RecvTimeoutError};
-    use std::fs::File;
-    #[cfg(target_arch = "x86_64")]
-    use std::os::unix::io::AsRawFd;
-    use std::sync::{Arc, Barrier};
+    use crossbeam_channel::RecvTimeoutError;
+    use std::sync::Arc;
     #[cfg(target_arch = "x86_64")]
     use std::time::Duration;
 
-    use super::super::devices;
     use super::*;
-
-    use utils::signal::validate_signal_num;
-
-    // In tests we need to close any pending Vcpu threads on test completion.
-    impl Drop for VcpuHandle {
-        fn drop(&mut self) {
-            // Make sure the Vcpu is out of KVM_RUN.
-            self.send_event(VcpuEvent::Pause).unwrap();
-            // Close the original channel so that the Vcpu thread errors and goes to exit state.
-            let (event_sender, _event_receiver) = unbounded();
-            self.event_sender = event_sender;
-            // Wait for the Vcpu thread to finish execution
-            self.vcpu_thread.take().unwrap().join().unwrap();
-        }
-    }
+    use arch::aarch64::layout::DRAM_MEM_START_EFI;
+    use devices::legacy::VcpuList;
+    use vm_memory::{GuestAddress, GuestMemoryMmap};
 
     // Auxiliary function being used throughout the tests.
-    fn setup_vcpu(mem_size: usize) -> (Vm, Vcpu, GuestMemoryMmap) {
-        let kvm = KvmContext::new().unwrap();
+    // Does NOT create a real HVF VM — Vcpu::new_aarch64 and most vcpu methods
+    // work without one, keeping tests free from the one-VM-per-process limit.
+    fn setup_vcpu(mem_size: usize) -> (Vcpu, GuestMemoryMmap) {
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), mem_size)]).unwrap();
-        let mut vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
-        assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
-
         let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
-
-        let vcpu;
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        {
-            vm.setup_irqchip().unwrap();
-            vcpu = Vcpu::new_x86_64(
-                1,
-                vm.fd(),
-                vm.supported_cpuid().clone(),
-                vm.supported_msrs().clone(),
-                devices::Bus::new(),
-                exit_evt,
-            )
-            .unwrap();
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
-            vcpu = Vcpu::new_aarch64(1, vm.fd(), exit_evt).unwrap();
-            vm.setup_irqchip(1).expect("Cannot setup irqchip");
-        }
-
-        (vm, vcpu, gm)
+        let vcpu_list = Arc::new(VcpuList::new(1));
+        let vcpu = Vcpu::new_aarch64(1, GuestAddress(0), None, exit_evt, vcpu_list, false).unwrap();
+        (vcpu, gm)
     }
 
     #[test]
     fn test_set_mmio_bus() {
-        let (_, mut vcpu, _) = setup_vcpu(0x1000);
+        let (mut vcpu, _) = setup_vcpu(0x1000);
         assert!(vcpu.mmio_bus.is_none());
         vcpu.set_mmio_bus(devices::Bus::new());
         assert!(vcpu.mmio_bus.is_some());
     }
 
     #[test]
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    fn test_get_supported_cpuid() {
-        let kvm = KvmContext::new().unwrap();
-        let vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
-        let cpuid = kvm
-            .kvm
-            .get_supported_cpuid(KVM_MAX_CPUID_ENTRIES)
-            .expect("Cannot get supported cpuid");
-        assert_eq!(vm.supported_cpuid().as_slice(), cpuid.as_slice());
-    }
-
-    #[test]
     fn test_vm_memory_init() {
-        let mut kvm_context = KvmContext::new().unwrap();
-        let mut vm = Vm::new(kvm_context.fd()).expect("Cannot create new vm");
+        let mut vm = Vm::new(false).expect("Cannot create new vm");
 
-        // Create valid memory region and test that the initialization is successful.
-        let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x1000)]).unwrap();
-        assert!(vm.memory_init(&gm, kvm_context.max_memslots()).is_ok());
-
-        // Set the maximum number of memory slots to 1 in KvmContext to check the error
-        // path of memory_init. Create 2 non-overlapping memory slots.
-        kvm_context.max_memslots = 1;
-        let gm = GuestMemoryMmap::from_ranges(&[
-            (GuestAddress(0x0), 0x1000),
-            (GuestAddress(0x1001), 0x2000),
-        ])
+        // Use a realistic guest physical address; hv_vm_map rejects GPA 0.
+        let gm = GuestMemoryMmap::from_ranges(&[(
+            GuestAddress(DRAM_MEM_START_EFI),
+            0x20_0000, // 2 MB
+        )])
         .unwrap();
-        assert!(vm.memory_init(&gm, kvm_context.max_memslots()).is_err());
+        assert!(
+            vm.memory_init(&gm).is_ok(),
+            "memory_init failed: {:?}",
+            vm.memory_init(&gm).unwrap_err()
+        );
     }
 
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn test_setup_irqchip() {
-        let kvm_context = KvmContext::new().unwrap();
-        let vm = Vm::new(kvm_context.fd()).expect("Cannot create new vm");
-
-        vm.setup_irqchip().expect("Cannot setup irqchip");
-        // Trying to setup two irqchips will result in EEXIST error. At the moment
-        // there is no good way of testing the actual error because io::Error does not implement
-        // PartialEq.
-        assert!(vm.setup_irqchip().is_err());
-
-        let _vcpu = Vcpu::new_x86_64(
-            1,
-            vm.fd(),
-            vm.supported_cpuid().clone(),
-            vm.supported_msrs().clone(),
-            devices::Bus::new(),
-            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-        )
-        .unwrap();
-        // Trying to setup irqchip after KVM_VCPU_CREATE was called will result in error.
-        assert!(vm.setup_irqchip().is_err());
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    #[test]
-    fn test_setup_irqchip() {
-        let kvm = KvmContext::new().unwrap();
-
-        let mut vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
-        let vcpu_count = 1;
-        let _vcpu = Vcpu::new_aarch64(
-            1,
-            vm.fd(),
-            EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
-        )
-        .unwrap();
-
-        vm.setup_irqchip(vcpu_count).expect("Cannot setup irqchip");
-        // Trying to setup two irqchips will result in EEXIST error.
-        assert!(vm.setup_irqchip(vcpu_count).is_err());
-    }
-
-    #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_configure_vcpu() {
-        let (_vm, mut vcpu, vm_mem) = setup_vcpu(0x10000);
-
-        let mut vcpu_config = VcpuConfig {
-            vcpu_count: 1,
-            ht_enabled: false,
-            cpu_template: None,
-        };
-
-        assert!(vcpu
-            .configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config)
-            .is_ok());
-
-        // Test configure while using the T2 template.
-        vcpu_config.cpu_template = Some(CpuFeaturesTemplate::T2);
-        assert!(vcpu
-            .configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config)
-            .is_ok());
-
-        // Test configure while using the C3 template.
-        vcpu_config.cpu_template = Some(CpuFeaturesTemplate::C3);
-        assert!(vcpu
-            .configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config)
-            .is_ok());
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    #[test]
-    fn test_configure_vcpu() {
-        let kvm = KvmContext::new().unwrap();
-        let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
-        let mut vm = Vm::new(kvm.fd()).expect("new vm failed");
-        assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
+        // configure_aarch64 only sets fdt_addr — no HVF VM needed.
+        let mem_info = arch::ArchMemoryInfo::default();
 
         // Try it for when vcpu id is 0.
+        let vcpu_list = Arc::new(VcpuList::new(1));
         let mut vcpu = Vcpu::new_aarch64(
             0,
-            vm.fd(),
+            GuestAddress(0),
+            None,
             EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+            vcpu_list,
+            false,
         )
         .unwrap();
-
-        assert!(vcpu
-            .configure_aarch64(vm.fd(), &gm, GuestAddress(0))
-            .is_ok());
+        assert!(vcpu.configure_aarch64(&mem_info).is_ok());
 
         // Try it for when vcpu id is NOT 0.
+        let vcpu_list = Arc::new(VcpuList::new(2));
         let mut vcpu = Vcpu::new_aarch64(
             1,
-            vm.fd(),
+            GuestAddress(0),
+            None,
             EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
+            vcpu_list,
+            false,
         )
         .unwrap();
-
-        assert!(vcpu
-            .configure_aarch64(vm.fd(), &gm, GuestAddress(0))
-            .is_ok());
-    }
-
-    #[test]
-    fn test_kvm_context() {
-        use std::os::unix::fs::MetadataExt;
-        use std::os::unix::io::{AsRawFd, FromRawFd};
-
-        let c = KvmContext::new().unwrap();
-
-        assert!(c.max_memslots >= 32);
-
-        let kvm = Kvm::new().unwrap();
-        let f = unsafe { File::from_raw_fd(kvm.as_raw_fd()) };
-        let m1 = f.metadata().unwrap();
-        let m2 = File::open("/dev/kvm").unwrap().metadata().unwrap();
-
-        assert_eq!(m1.dev(), m2.dev());
-        assert_eq!(m1.ino(), m2.ino());
+        assert!(vcpu.configure_aarch64(&mem_info).is_ok());
     }
 
     #[test]
     fn test_vcpu_tls() {
-        let (_, mut vcpu, _) = setup_vcpu(0x1000);
+        let (mut vcpu, _) = setup_vcpu(0x1000);
 
-        // Running on the TLS vcpu should fail before we actually initialize it.
-        unsafe {
-            assert!(Vcpu::run_on_thread_local(|_| ()).is_err());
-        }
+        // Reset should fail before TLS is initialized.
+        assert!(vcpu.reset_thread_local_data().is_err());
 
         // Initialize vcpu TLS.
         vcpu.init_thread_local_data().unwrap();
 
-        // Validate TLS vcpu is the local vcpu by changing the `id` then validating against
-        // the one in TLS.
-        vcpu.id = 12;
-        unsafe {
-            assert!(Vcpu::run_on_thread_local(|v| assert_eq!(v.id, 12)).is_ok());
-        }
-
         // Reset vcpu TLS.
         assert!(vcpu.reset_thread_local_data().is_ok());
-
-        // Running on the TLS vcpu after TLS reset should fail.
-        unsafe {
-            assert!(Vcpu::run_on_thread_local(|_| ()).is_err());
-        }
 
         // Second reset should return error.
         assert!(vcpu.reset_thread_local_data().is_err());
@@ -855,52 +697,11 @@ mod tests {
 
     #[test]
     fn test_invalid_tls() {
-        let (_, mut vcpu, _) = setup_vcpu(0x1000);
+        let (mut vcpu, _) = setup_vcpu(0x1000);
         // Initialize vcpu TLS.
         vcpu.init_thread_local_data().unwrap();
         // Trying to initialize non-empty TLS should error.
         vcpu.init_thread_local_data().unwrap_err();
-    }
-
-    #[test]
-    fn test_vcpu_kick() {
-        Vcpu::register_kick_signal_handler();
-        let (vm, mut vcpu, _mem) = setup_vcpu(0x1000);
-
-        let kvm_run =
-            KvmRunWrapper::mmap_from_fd(&vcpu.fd, vm.fd.run_size()).expect("cannot mmap kvm-run");
-        let success = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let vcpu_success = success.clone();
-        let barrier = Arc::new(Barrier::new(2));
-        let vcpu_barrier = barrier.clone();
-        // Start Vcpu thread which will be kicked with a signal.
-        let handle = std::thread::Builder::new()
-            .name("test_vcpu_kick".to_string())
-            .spawn(move || {
-                vcpu.init_thread_local_data().unwrap();
-                // Notify TLS was populated.
-                vcpu_barrier.wait();
-                // Loop for max 1 second to check if the signal handler has run.
-                for _ in 0..10 {
-                    if kvm_run.as_mut_ref().immediate_exit == 1 {
-                        // Signal handler has run and set immediate_exit to 1.
-                        vcpu_success.store(true, Ordering::Release);
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-            })
-            .expect("cannot start thread");
-
-        // Wait for the vcpu to initialize its TLS.
-        barrier.wait();
-        // Kick the Vcpu using the custom signal.
-        handle
-            .kill(sigrtmin() + VCPU_RTSIG_OFFSET)
-            .expect("failed to signal thread");
-        handle.join().expect("failed to join thread");
-        // Verify that the Vcpu saw its kvm immediate-exit as set.
-        assert!(success.load(Ordering::Acquire));
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -930,58 +731,5 @@ mod tests {
                 .recv_timeout(Duration::from_millis(100)),
             Err(RecvTimeoutError::Timeout)
         );
-    }
-
-    #[test]
-    fn test_vcpu_rtsig_offset() {
-        assert!(validate_signal_num(sigrtmin() + VCPU_RTSIG_OFFSET).is_ok());
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn test_vm_save_restore_state() {
-        let kvm_fd = Kvm::new().unwrap();
-        let vm = Vm::new(&kvm_fd).expect("new vm failed");
-        // Irqchips, clock and pitstate are not configured so trying to save state should fail.
-        assert!(vm.save_state().is_err());
-
-        let (vm, _, _mem) = setup_vcpu(0x1000);
-        let vm_state = vm.save_state().unwrap();
-        assert_eq!(
-            vm_state.pitstate.flags | KVM_PIT_SPEAKER_DUMMY,
-            KVM_PIT_SPEAKER_DUMMY
-        );
-        assert_eq!(vm_state.clock.flags & KVM_CLOCK_TSC_STABLE, 0);
-        assert_eq!(vm_state.pic_master.chip_id, KVM_IRQCHIP_PIC_MASTER);
-        assert_eq!(vm_state.pic_slave.chip_id, KVM_IRQCHIP_PIC_SLAVE);
-        assert_eq!(vm_state.ioapic.chip_id, KVM_IRQCHIP_IOAPIC);
-
-        let (vm, _, _mem) = setup_vcpu(0x1000);
-        assert!(vm.restore_state(&vm_state).is_ok());
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn test_vcpu_save_restore_state() {
-        let (_vm, vcpu, _mem) = setup_vcpu(0x1000);
-        let state = vcpu.save_state();
-        assert!(state.is_ok());
-        assert!(vcpu.restore_state(state.unwrap()).is_ok());
-
-        unsafe { libc::close(vcpu.fd.as_raw_fd()) };
-        let state = VcpuState {
-            cpuid: CpuId::new(1),
-            msrs: Msrs::new(1),
-            debug_regs: Default::default(),
-            lapic: Default::default(),
-            mp_state: Default::default(),
-            regs: Default::default(),
-            sregs: Default::default(),
-            vcpu_events: Default::default(),
-            xcrs: Default::default(),
-            xsave: Default::default(),
-        };
-        // Setting default state should always fail.
-        assert!(vcpu.restore_state(state).is_err());
     }
 }
