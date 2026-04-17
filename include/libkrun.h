@@ -753,6 +753,7 @@ int32_t krun_set_snd_device(uint32_t ctx_id, bool enable);
  */
 #define KRUN_VIRTIO_DEVICE_CONSOLE 3
 #define KRUN_VIRTIO_DEVICE_RNG 4
+#define KRUN_VIRTIO_DEVICE_INPUT 18
 #define KRUN_VIRTIO_DEVICE_VSOCK 19
 #define KRUN_VIRTIO_DEVICE_SND 25
 #define KRUN_VIRTIO_DEVICE_CAN 36
@@ -771,6 +772,13 @@ int32_t krun_set_snd_device(uint32_t ctx_id, bool enable);
  */
 #define KRUN_VHOST_USER_RNG_NUM_QUEUES 1
 #define KRUN_VHOST_USER_RNG_QUEUE_SIZES ((uint16_t[]){256})
+
+/**
+ * Vhost-user input device default queue configuration.
+ * Input device uses 2 queues: eventq (idx 0), statusq (idx 1).
+ */
+#define KRUN_VHOST_USER_INPUT_NUM_QUEUES 2
+#define KRUN_VHOST_USER_INPUT_QUEUE_SIZES ((uint16_t[]){1024, 1024})
 
 /**
  * Vhost-user sound device default queue configuration.
