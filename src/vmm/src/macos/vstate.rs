@@ -639,11 +639,7 @@ mod tests {
             0x20_0000, // 2 MB
         )])
         .unwrap();
-        assert!(
-            vm.memory_init(&gm).is_ok(),
-            "memory_init failed: {:?}",
-            vm.memory_init(&gm).unwrap_err()
-        );
+        vm.memory_init(&gm).expect("memory_init failed");
     }
 
     #[test]
