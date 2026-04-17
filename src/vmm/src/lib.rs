@@ -98,6 +98,7 @@ pub enum Error {
     /// Polly error wrapper.
     EventManager(event_manager::Error),
     /// I8042 Error.
+    #[cfg(target_arch = "x86_64")]
     I8042Error(devices::legacy::I8042DeviceError),
     /// Cannot access kernel file.
     KernelFile(io::Error),
@@ -146,6 +147,7 @@ impl Display for Error {
             CreateLegacyDevice(e) => write!(f, "Error creating legacy device: {e:?}"),
             EventFd(e) => write!(f, "Event fd error: {e}"),
             EventManager(e) => write!(f, "Event manager error: {e:?}"),
+            #[cfg(target_arch = "x86_64")]
             I8042Error(e) => write!(f, "I8042 error: {e}"),
             KernelFile(e) => write!(f, "Cannot access kernel file: {e}"),
             KvmContext(e) => write!(f, "Failed to validate KVM support: {e:?}"),

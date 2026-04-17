@@ -11,6 +11,7 @@ pub mod gic;
 mod gicv3;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod hvfgicv3;
+#[cfg(target_arch = "x86_64")]
 mod i8042;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod ioapic;
@@ -52,8 +53,8 @@ pub use self::gicv3::GicV3;
 pub use self::gpio::Gpio;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub use self::hvfgicv3::HvfGicV3;
-pub use self::i8042::Error as I8042DeviceError;
-pub use self::i8042::I8042Device;
+#[cfg(target_arch = "x86_64")]
+pub use self::i8042::{Error as I8042DeviceError, I8042Device};
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub use self::ioapic::IoApic;
 #[cfg(any(test, feature = "test_utils"))]
