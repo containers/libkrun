@@ -35,7 +35,7 @@ static int mod_load(const char *path)
     }
 
     ret = finit_module(fd, "", 0);
-    if (ret < 0) {
+    if (ret < 0 && errno != EEXIST) {
         close(fd);
         fprintf(stderr, "init module %s (errno %d)\n", path, errno);
         return -errno;
