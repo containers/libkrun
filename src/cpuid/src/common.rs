@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(target_arch = "x86")]
-use std::arch::x86::{CpuidResult, __cpuid_count, __get_cpuid_max};
+use std::arch::x86::{__cpuid_count, __get_cpuid_max, CpuidResult};
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{CpuidResult, __cpuid_count, __get_cpuid_max};
+use std::arch::x86_64::{__cpuid_count, __get_cpuid_max, CpuidResult};
 
 use crate::cpu_leaf::*;
 
