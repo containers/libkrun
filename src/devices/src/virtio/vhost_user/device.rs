@@ -400,13 +400,33 @@ impl VirtioDevice for VhostUserDevice {
         data.fill(0);
     }
 
-    fn write_config(&mut self, offset: u64, _data: &[u8]) {
-        // For now, configuration space writes are not supported
-        // This can be extended using VHOST_USER_SET_CONFIG
-        debug!(
-            "{}: config write at offset {} (not yet implemented)",
-            self.device_name, offset
-        );
+    fn write_config(&mut self, offset: u64, data: &[u8]) {
+        if !self.has_protocol_features {
+            debug!(
+                "{}: config write at offset {} skipped (no protocol features)",
+                self.device_name, offset
+            );
+            return;
+        }
+
+        if let Ok(mut frontend) = self.frontend.lock() {
+            match frontend.set_config(offset as u32, VhostUserConfigFlags::empty(), data) {
+                Ok(_) => {
+                    debug!(
+                        "{}: wrote {} bytes to config at offset {}",
+                        self.device_name,
+                        data.len(),
+                        offset
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "{}: failed to write config at offset {}: {:?}",
+                        self.device_name, offset, e
+                    );
+                }
+            }
+        }
     }
 
     fn activate(
