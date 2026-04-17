@@ -150,7 +150,7 @@ endif
 ifeq ($(BUILD_BSD_INIT),1)
 INIT_BINARY_BSD = init/init-freebsd
 $(INIT_BINARY_BSD): $(INIT_SRC) $(SYSROOT_BSD_TARGET)
-	$(CC_BSD) -std=c23 -O2 -static -Wall -lutil -o $@ $(INIT_SRC)
+	$(CC_BSD) -std=c23 -O2 -static -Wall -o $@ $(INIT_SRC) -lutil
 endif
 
 # Sysroot preparation rules for cross-compilation on macOS
