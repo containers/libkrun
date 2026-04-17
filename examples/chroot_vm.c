@@ -40,6 +40,7 @@ static void print_help(char *const name)
         "              --net=NET_MODE        Set network mode\n"
         "              --passt-socket=PATH   Instead of starting passt, connect to passt socket at PATH\n"
         "              --vhost-user-rng=PATH Use vhost-user RNG backend at socket PATH\n"
+        "              --vhost-user-input=PATH Use vhost-user input backend at socket PATH\n"
         "              --vhost-user-snd=PATH Use vhost-user sound backend at socket PATH\n"
         "              --vhost-user-vsock=PATH Use vhost-user vsock backend at socket PATH\n"
         "              --vhost-user-can=PATH Use vhost-user CAN backend at socket PATH\n"
@@ -70,6 +71,7 @@ static const struct option long_options[] = {
     { "net_mode", required_argument, NULL, 'N' },
     { "passt-socket", required_argument, NULL, 'P' },
     { "vhost-user-rng", required_argument, NULL, 'V' },
+    { "vhost-user-input", required_argument, NULL, 'I' },
     { "vhost-user-snd", required_argument, NULL, 'S' },
     { "vhost-user-vsock", required_argument, NULL, 'K' },
     { "vhost-user-can", required_argument, NULL, 'A' },
@@ -84,6 +86,7 @@ struct cmdline {
     enum net_mode net_mode;
     char const *passt_socket_path;
     char const *vhost_user_rng_socket;
+    char const *vhost_user_input_socket;
     char const *vhost_user_snd_socket;
     char const *vhost_user_vsock_socket;
     char const *vhost_user_can_socket;
@@ -115,6 +118,7 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         .net_mode = NET_MODE_TSI,
         .passt_socket_path = NULL,
         .vhost_user_rng_socket = NULL,
+        .vhost_user_input_socket = NULL,
         .vhost_user_snd_socket = NULL,
         .vhost_user_vsock_socket = NULL,
         .vhost_user_can_socket = NULL,
@@ -156,6 +160,9 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
             break;
         case 'V':
             cmdline->vhost_user_rng_socket = optarg;
+            break;
+        case 'I':
+            cmdline->vhost_user_input_socket = optarg;
             break;
         case 'S':
             cmdline->vhost_user_snd_socket = optarg;
@@ -305,6 +312,18 @@ int main(int argc, char *const argv[])
             return -1;
         }
         printf("Using vhost-user RNG backend at %s (custom queue size: 512)\n", cmdline.vhost_user_rng_socket);
+    }
+
+    // Configure vhost-user input if requested
+    if (cmdline.vhost_user_input_socket != NULL) {
+        if (!check_krun_error(krun_add_vhost_user_device(ctx_id, KRUN_VIRTIO_DEVICE_INPUT,
+                                                          cmdline.vhost_user_input_socket, NULL,
+                                                          KRUN_VHOST_USER_INPUT_NUM_QUEUES,
+                                                          KRUN_VHOST_USER_INPUT_QUEUE_SIZES),
+                              "Error adding vhost-user input device")) {
+            return -1;
+        }
+        printf("Using vhost-user input backend at %s\n", cmdline.vhost_user_input_socket);
     }
 
     // Configure vhost-user sound if requested
