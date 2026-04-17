@@ -586,7 +586,7 @@ impl SndWorker {
                 {
                     self.streams.write().unwrap()[stream_id as usize]
                         .buffers
-                        .extend(std::mem::take(&mut buffers).into_iter());
+                        .extend(std::mem::take(&mut buffers));
                     state = IoState::Done;
                 }
                 IoState::Ready if descriptor.len as usize != size_of::<VirtioSoundPcmXfer>() => {
