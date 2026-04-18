@@ -1,3 +1,5 @@
+#![cfg(any(feature = "host", target_os = "linux"))]
+
 use macros::{guest, host};
 use std::io::{ErrorKind, Read};
 use std::os::unix::net::UnixStream;

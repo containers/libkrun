@@ -1,3 +1,5 @@
+#![cfg(any(feature = "host", target_os = "linux"))]
+
 use macros::{guest, host};
 
 pub struct TestVirtioFsMisc;
