@@ -30,6 +30,17 @@ pub enum TestOutcome {
     Report(Box<dyn ReportImpl>),
 }
 
+mod test_freebsd_boot;
+use test_freebsd_boot::TestFreeBsdBoot;
+
+mod test_freebsd_gvproxy_tcp_guest_connect;
+use test_freebsd_gvproxy_tcp_guest_connect::TestFreeBsdGvproxyTcpGuestConnect;
+
+mod test_freebsd_gvproxy_tcp_guest_listen;
+use test_freebsd_gvproxy_tcp_guest_listen::TestFreeBsdGvproxyTcpGuestListen;
+
+pub mod freebsd_guest;
+
 pub enum ShouldRun {
     Yes,
     No(&'static str),
@@ -98,6 +109,15 @@ pub fn test_cases() -> Vec<TestCase> {
             "perf-net-vmnet-helper-rx",
             Box::new(TestNetPerf::new_vmnet_helper_rx()),
         ),
+        TestCase::new("freebsd-boot", Box::new(TestFreeBsdBoot)),
+        TestCase::new(
+            "freebsd-gvproxy-tcp-guest-connect",
+            Box::new(TestFreeBsdGvproxyTcpGuestConnect::new()),
+        ),
+        TestCase::new(
+            "freebsd-gvproxy-tcp-guest-listen",
+            Box::new(TestFreeBsdGvproxyTcpGuestListen::new()),
+        ),
     ]
 }
 
@@ -149,11 +169,17 @@ compile_error!("Cannot enable both guest and host in the same binary!");
 mod common;
 
 #[cfg(feature = "host")]
+pub mod common_freebsd;
+
+#[cfg(feature = "host")]
 mod krun;
 
 #[cfg(feature = "host")]
 pub mod rootfs;
 mod tcp_tester;
+
+#[cfg(feature = "guest")]
+pub mod freebsd_network;
 
 #[host]
 #[derive(Clone, Debug)]

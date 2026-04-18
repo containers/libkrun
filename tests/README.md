@@ -44,3 +44,46 @@ make test
 
 ## Adding tests
 To add a test you need to add a new rust module in the `test_cases` directory, implement the  required host and guest side methods (see existing tests) and register the test in the `test_cases/src/lib.rs` to be ran.
+
+## FreeBSD guest tests
+
+FreeBSD guest tests run on Linux (amd64, arm64) and macOS (arm64) hosts. They require two external assets that are not bundled in the repository.
+
+### Prerequisites
+
+1. Install required tools:
+   - **macOS**: `bsdtar` is built-in (`/usr/bin/bsdtar`)
+   - **Linux**: `sudo apt-get install libarchive-tools` (provides `bsdtar`)
+   - **Linux/macOS amd64**: add the Rust cross-compilation target:
+     ```bash
+     rustup target add x86_64-unknown-freebsd
+     ```
+   - **Linux/macOS arm64**: `aarch64-unknown-freebsd` has no prebuilt stdlib in rustup,
+     so a nightly toolchain is used with `-Z build-std` to build it from source:
+     ```bash
+     rustup toolchain install nightly-2026-01-25
+     ```
+
+2. Build the FreeBSD sysroot and `init-freebsd` (from the libkrun root directory):
+   ```bash
+   make BUILD_BSD_INIT=1
+   ```
+   This downloads `freebsd-sysroot/base.txz`, extracts it to `freebsd-sysroot/`, and compiles `init/init-freebsd`.
+
+3. The FreeBSD kernel is downloaded and cached automatically by `run.sh` (from
+   `download.freebsd.org`). To use a locally-provided kernel instead, set
+   `KRUN_TEST_FREEBSD_KERNEL_PATH` before running:
+   ```bash
+   export KRUN_TEST_FREEBSD_KERNEL_PATH="/path/to/boot/kernel/kernel"      # amd64
+   export KRUN_TEST_FREEBSD_KERNEL_PATH="/path/to/boot/kernel/kernel.bin"  # arm64
+   ```
+
+### Running FreeBSD tests
+
+With the sysroot/init assets built, `run.sh` (or `make test`) will automatically:
+- Download and cache `target/freebsd-kernel/boot/kernel/kernel[.bin]` if not already present
+- Cross-compile the `guest-agent` for FreeBSD
+- Build `target/freebsd-test-rootfs.iso` from `init-freebsd` + the FreeBSD `guest-agent`
+- Set `KRUN_TEST_FREEBSD_KERNEL_PATH` and `KRUN_TEST_FREEBSD_ISO_PATH` for the runner
+
+FreeBSD tests are **skipped** (not failed) when the kernel or ISO are unavailable, so the test suite still passes without FreeBSD assets.
