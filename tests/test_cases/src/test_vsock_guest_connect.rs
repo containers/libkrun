@@ -1,16 +1,20 @@
-use macros::{guest, host};
+#[cfg(target_os = "linux")]
+use macros::guest;
+use macros::host;
 use std::io::{ErrorKind, Read};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 pub struct TestVsockGuestConnect;
 
+#[allow(dead_code)]
 fn stream_expect_msg(stream: &mut UnixStream, expected: &[u8]) {
     let mut buf = vec![0; expected.len()];
     stream.read_exact(&mut buf[..]).unwrap();
     assert_eq!(&buf[..], expected);
 }
 
+#[allow(dead_code)]
 fn stream_expect_wouldblock(stream: &mut UnixStream) {
     stream.set_nonblocking(true).unwrap();
     let err = stream.read(&mut [0u8; 1]).unwrap_err();
@@ -18,6 +22,7 @@ fn stream_expect_wouldblock(stream: &mut UnixStream) {
     assert_eq!(err.kind(), ErrorKind::WouldBlock);
 }
 
+#[allow(dead_code)]
 fn stream_set_timeouts(stream: &mut UnixStream) {
     stream
         .set_read_timeout(Some(Duration::from_secs(3)))
@@ -27,6 +32,7 @@ fn stream_set_timeouts(stream: &mut UnixStream) {
         .unwrap();
 }
 
+#[allow(dead_code)]
 const VSOCK_PORT: u32 = 1234;
 
 #[host]
@@ -78,6 +84,8 @@ mod host {
     }
 }
 
+// Vsock is only available on Linux guests.
+#[cfg(target_os = "linux")]
 #[guest]
 mod guest {
     use super::*;
@@ -111,3 +119,7 @@ mod guest {
         }
     }
 }
+
+// Stub impl so the guest-agent binary compiles on non-Linux targets (vsock test won't be dispatched there).
+#[cfg(all(feature = "guest", not(target_os = "linux")))]
+impl crate::Test for TestVsockGuestConnect {}
