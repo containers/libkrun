@@ -1141,6 +1141,7 @@ fn load_external_kernel(
     arch_mem_info: &ArchMemoryInfo,
     external_kernel: &ExternalKernel,
 ) -> std::result::Result<(GuestAddress, Option<InitrdConfig>, Option<String>, bool), StartMicrovmError> {
+    #[allow(unused_mut)]
     let mut pvh = false;
     let entry_addr = match external_kernel.format {
         // Raw images are treated as bundled kernels on x86_64

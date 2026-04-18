@@ -88,9 +88,13 @@ fn run_single_test(
         .context("Failed to start subprocess for test")?;
 
     let test_name = test_case.name.to_string();
+    let test_setup = TestSetup {
+        test_case: test_name.clone(),
+        tmp_dir: test_dir.clone(),
+    };
     let result = catch_unwind(|| {
         let test = get_test(&test_name).unwrap();
-        test.check(child);
+        test.check(child, test_setup);
     });
 
     let outcome = if result.is_ok() {
