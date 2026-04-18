@@ -1,3 +1,5 @@
+#![cfg(any(feature = "host", target_os = "linux"))]
+
 // NOTE: This is a smoke test that asserts basic mutation operations fail on a read-only
 // virtiofs root. It is not exhaustive.For a security sensitive test it would also be better
 // to bypass the guest kernel and execute the virtiofs commands directly.

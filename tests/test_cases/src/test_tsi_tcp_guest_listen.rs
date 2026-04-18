@@ -25,13 +25,11 @@ mod host {
     use std::ffi::CString;
     use std::ptr::null;
     use std::thread;
-    use std::time::Duration;
 
     impl Test for TestTsiTcpGuestListen {
         fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()> {
             unsafe {
                 thread::spawn(move || {
-                    thread::sleep(Duration::from_secs(1));
                     self.tcp_tester.run_client();
                 });
 
