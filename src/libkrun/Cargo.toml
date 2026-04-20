@@ -3,8 +3,10 @@ name = "libkrun"
 version = "1.17.3"
 authors = ["The libkrun Authors"]
 edition = "2021"
+description = "A dynamic library providing Virtualization-based process isolation capabilities"
 build = "build.rs"
 license = "Apache-2.0"
+repository = "https://github.com/containers/libkrun"
 
 [features]
 tee = ["vmm/tee", "devices/tee"]
