@@ -2,6 +2,7 @@
 name = "krun-kernel"
 version = "0.1.0-1.17.3"
 edition = "2021"
+license = "Apache-2.0"
 
 [dependencies]
 vm-memory = { version = "0.17", features = ["backend-mmap"] }

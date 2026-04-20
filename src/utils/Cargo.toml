@@ -3,6 +3,7 @@ name = "krun-utils"
 version = "0.1.0-1.17.3"
 authors = ["The libkrun Authors"]
 edition = "2021"
+license = "Apache-2.0"
 
 [dependencies]
 bitflags = "1.2.0"
