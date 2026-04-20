@@ -1,7 +1,7 @@
 [package]
 name = "krun-rutabaga-gfx-ffi"
 version = "0.1.0-1.17.3"
-authors = ["The ChromiumOS Authors + Android Open Source Project"]
+authors = ["The libkrun Authors"]
 edition = "2021"
 description = "Handling virtio-gpu protocols with C API"
 license-file = "LICENSE"
