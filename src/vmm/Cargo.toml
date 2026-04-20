@@ -4,6 +4,7 @@ version = "0.1.0-1.17.3"
 authors = ["The libkrun Authors"]
 edition = "2021"
 build = "build.rs"
+description = "Virtual machine monitor for libkrun"
 license = "Apache-2.0"
 repository = "https://github.com/containers/libkrun"
 
