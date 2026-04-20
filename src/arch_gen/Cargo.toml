@@ -1,6 +1,6 @@
 [package]
 name = "krun-arch-gen"
-version = "0.1.0"
+version = "0.1.0-1.17.3"
 authors = ["Amazon Firecracker team <firecracker-devel@amazon.com>"]
 edition = "2021"
 

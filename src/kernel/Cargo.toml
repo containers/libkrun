@@ -1,9 +1,9 @@
 [package]
 name = "krun-kernel"
-version = "0.1.0"
+version = "0.1.0-1.17.3"
 edition = "2021"
 
 [dependencies]
 vm-memory = { version = "0.17", features = ["backend-mmap"] }
 
-utils = { package = "krun-utils", path = "../utils" }
+utils = { package = "krun-utils", version = "=0.1.0-1.17.3", path = "../utils" }
