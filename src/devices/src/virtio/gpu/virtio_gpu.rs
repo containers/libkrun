@@ -20,6 +20,8 @@ use krun_display::{
 use libc::c_void;
 #[cfg(target_os = "macos")]
 use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_APPLE;
+#[cfg(all(feature = "virgl_resource_map2", target_os = "linux"))]
+use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_DMABUF;
 #[cfg(all(not(feature = "virgl_resource_map2"), target_os = "linux"))]
 use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_OPAQUE_FD;
 #[cfg(all(feature = "virgl_resource_map2", target_os = "linux"))]
@@ -837,7 +839,20 @@ impl VirtioGpu {
         let addr = shm_region.host_addr + offset;
 
         if let Ok(export) = self.rutabaga.export_blob(resource_id) {
-            if export.handle_type == RUTABAGA_MEM_HANDLE_TYPE_SHM {
+            // SHM and DMABUF are both regular host fds whose pages can be exposed
+            // to the guest by mmap'ing them directly into the virtio shm region.
+            // For SHM (memfd) this has always worked. For DMABUF it had been
+            // delegated to virgl_renderer_resource_map2, which only handles
+            // virglrenderer-allocated GPU memory and silently no-ops for external
+            // dma-bufs — leaving the guest blob backed by zero pages. That broke
+            // muvm camera capture, where the v4l2 source exports kernel buffers
+            // via VIDIOC_EXPBUF as dma-bufs, the muvm bridge forwards the fd
+            // across SCM_RIGHTS, libkrun classifies it as DMABUF, and the guest's
+            // CREATE_BLOB allocates a host-backed-by-nothing blob. Mapping the
+            // dma-buf fd directly here gives the guest real, live pages.
+            if export.handle_type == RUTABAGA_MEM_HANDLE_TYPE_SHM
+                || export.handle_type == RUTABAGA_MEM_HANDLE_TYPE_DMABUF
+            {
                 let ret = unsafe {
                     libc::mmap(
                         addr as *mut libc::c_void,
@@ -849,7 +864,10 @@ impl VirtioGpu {
                     )
                 };
                 if ret == libc::MAP_FAILED {
-                    error!("failed to mmap resource in shm region");
+                    error!(
+                        "failed to mmap resource in shm region (handle_type={:#x})",
+                        export.handle_type
+                    );
                     return Err(ErrUnspec);
                 }
             } else {
