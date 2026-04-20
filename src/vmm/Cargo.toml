@@ -1,5 +1,5 @@
 [package]
-name = "vmm"
+name = "krun-vmm"
 version = "0.1.0"
 authors = ["Amazon Firecracker team <firecracker-devel@amazon.com>"]
 edition = "2021"
@@ -26,15 +26,15 @@ log = "0.4.0"
 nix = { version = "0.30.1", features = ["fs", "term"] }
 vm-memory = { version = "0.17.0", features = ["backend-mmap"] }
 vmm-sys-util = "0.14"
-krun_display = { path = "../krun_display", optional = true, features = ["bindgen_clang_runtime"] }
-krun_input = { path = "../krun_input", optional = true, features = ["bindgen_clang_runtime"] }
+krun_display = { package = "krun-display", path = "../krun_display", optional = true, features = ["bindgen_clang_runtime"] }
+krun_input = { package = "krun-input", path = "../krun_input", optional = true, features = ["bindgen_clang_runtime"] }
 
-arch = { path = "../arch" }
-arch_gen = { path = "../arch_gen" }
-devices = { path = "../devices" }
-kernel = { path = "../kernel" }
-utils = { path = "../utils" }
-polly = { path = "../polly" }
+arch = { package = "krun-arch", path = "../arch" }
+arch_gen = { package = "krun-arch-gen", path = "../arch_gen" }
+devices = { package = "krun-devices", path = "../devices" }
+kernel = { package = "krun-kernel", path = "../kernel" }
+utils = { package = "krun-utils", path = "../utils" }
+polly = { package = "krun-polly", path = "../polly" }
 
 # Dependencies for amd-sev
 kbs-types = { version = "0.13.0", optional = true }
@@ -46,7 +46,7 @@ bitflags = { version = "2.10.0", optional = true }
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 bzip2 = "0.5"
-cpuid = { path = "../cpuid" }
+cpuid = { package = "krun-cpuid", path = "../cpuid" }
 zstd = "0.13"
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -55,7 +55,7 @@ kvm-bindings = { version = "0.12", features = ["fam-wrappers"] }
 kvm-ioctls = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-hvf = { path = "../hvf" }
+hvf = { package = "krun-hvf", path = "../hvf" }
 
 [dev-dependencies]
-devices = { path = "../devices", features = ["test_utils"] }
+devices = { package = "krun-devices", path = "../devices", features = ["test_utils"] }

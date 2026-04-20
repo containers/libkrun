@@ -1,5 +1,21 @@
 [workspace]
-members = ["src/libkrun", "src/krun_input"]
+members = [
+    "src/libkrun",
+    "src/krun_input",
+    "src/krun_display",
+    "src/utils",
+    "src/arch_gen",
+    "src/cpuid",
+    "src/smbios",
+    "src/polly",
+    "src/kernel",
+    "src/arch",
+    "src/hvf",
+    "src/devices",
+    "src/vmm",
+    "src/aws_nitro",
+    "src/rutabaga_gfx",
+]
 exclude = ["examples/gtk_display"]
 resolver = "2"
 

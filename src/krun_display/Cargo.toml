@@ -1,5 +1,5 @@
 [package]
-name = "krun_display"
+name = "krun-display"
 description = "Rust bindings for implemeting display backends in Rust for libkrun"
 version = "0.1.0"
 edition = "2024"

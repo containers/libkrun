@@ -1,5 +1,5 @@
 [package]
-name = "rutabaga_gfx"
+name = "krun-rutabaga-gfx"
 version = "0.1.2"
 authors = ["The ChromiumOS Authors + Android Open Source Project"]
 edition = "2021"

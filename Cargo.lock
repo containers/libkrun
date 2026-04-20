@@ -90,25 +90,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
-name = "arch"
-version = "0.1.0"
-dependencies = [
- "arch_gen",
- "kvm-bindings",
- "kvm-ioctls",
- "libc",
- "smbios",
- "tdx",
- "utils",
- "vm-memory",
- "vmm-sys-util 0.14.0",
-]
-
-[[package]]
-name = "arch_gen"
-version = "0.1.0"
-
-[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -124,20 +105,6 @@ name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
-
-[[package]]
-name = "aws-nitro"
-version = "0.1.0"
-dependencies = [
- "devices",
- "libc",
- "log",
- "nitro-enclaves 0.6.1",
- "nix 0.30.1",
- "signal-hook",
- "tar",
- "vsock",
-]
 
 [[package]]
 name = "base64"
@@ -366,15 +333,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cpuid"
-version = "0.1.0"
-dependencies = [
- "kvm-bindings",
- "kvm-ioctls",
- "vmm-sys-util 0.14.0",
-]
-
-[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -406,37 +364,6 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
-]
-
-[[package]]
-name = "devices"
-version = "0.1.0"
-dependencies = [
- "arch",
- "bitflags 1.3.2",
- "caps",
- "crossbeam-channel",
- "hvf",
- "imago",
- "krun_display",
- "krun_input",
- "kvm-bindings",
- "kvm-ioctls",
- "libc",
- "libloading",
- "log",
- "lru",
- "nix 0.30.1",
- "pipewire",
- "polly",
- "rand",
- "rutabaga_gfx",
- "thiserror 2.0.18",
- "utils",
- "virtio-bindings",
- "vm-fdt",
- "vm-memory",
- "zerocopy",
 ]
 
 [[package]]
@@ -661,16 +588,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "hvf"
-version = "0.1.0"
-dependencies = [
- "arch",
- "crossbeam-channel",
- "libloading",
- "log",
-]
-
-[[package]]
 name = "imago"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -796,15 +713,80 @@ dependencies = [
 ]
 
 [[package]]
-name = "kernel"
+name = "krun-arch"
 version = "0.1.0"
 dependencies = [
- "utils",
+ "krun-arch-gen",
+ "krun-smbios",
+ "krun-utils",
+ "kvm-bindings",
+ "kvm-ioctls",
+ "libc",
+ "tdx",
  "vm-memory",
+ "vmm-sys-util 0.14.0",
 ]
 
 [[package]]
-name = "krun_display"
+name = "krun-arch-gen"
+version = "0.1.0"
+
+[[package]]
+name = "krun-aws-nitro"
+version = "0.1.0"
+dependencies = [
+ "krun-devices",
+ "libc",
+ "log",
+ "nitro-enclaves 0.6.1",
+ "nix 0.30.1",
+ "signal-hook",
+ "tar",
+ "vsock",
+]
+
+[[package]]
+name = "krun-cpuid"
+version = "0.1.0"
+dependencies = [
+ "kvm-bindings",
+ "kvm-ioctls",
+ "vmm-sys-util 0.14.0",
+]
+
+[[package]]
+name = "krun-devices"
+version = "0.1.0"
+dependencies = [
+ "bitflags 1.3.2",
+ "caps",
+ "crossbeam-channel",
+ "imago",
+ "krun-arch",
+ "krun-display",
+ "krun-hvf",
+ "krun-input",
+ "krun-polly",
+ "krun-rutabaga-gfx",
+ "krun-utils",
+ "kvm-bindings",
+ "kvm-ioctls",
+ "libc",
+ "libloading",
+ "log",
+ "lru",
+ "nix 0.30.1",
+ "pipewire",
+ "rand",
+ "thiserror 2.0.18",
+ "virtio-bindings",
+ "vm-fdt",
+ "vm-memory",
+ "zerocopy",
+]
+
+[[package]]
+name = "krun-display"
 version = "0.1.0"
 dependencies = [
  "bindgen 0.72.1",
@@ -815,7 +797,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "krun_input"
+name = "krun-hvf"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "krun-arch",
+ "libloading",
+ "log",
+]
+
+[[package]]
+name = "krun-input"
 version = "0.1.0"
 dependencies = [
  "bindgen 0.72.1",
@@ -824,6 +816,94 @@ dependencies = [
  "log",
  "static_assertions",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "krun-kernel"
+version = "0.1.0"
+dependencies = [
+ "krun-utils",
+ "vm-memory",
+]
+
+[[package]]
+name = "krun-polly"
+version = "0.0.1"
+dependencies = [
+ "krun-utils",
+ "libc",
+]
+
+[[package]]
+name = "krun-rutabaga-gfx"
+version = "0.1.2"
+dependencies = [
+ "anyhow",
+ "cfg-if",
+ "libc",
+ "log",
+ "nix 0.30.1",
+ "pkg-config",
+ "remain",
+ "thiserror 1.0.69",
+ "vmm-sys-util 0.14.0",
+ "winapi",
+ "zerocopy",
+]
+
+[[package]]
+name = "krun-smbios"
+version = "0.1.0"
+dependencies = [
+ "vm-memory",
+]
+
+[[package]]
+name = "krun-utils"
+version = "0.1.0"
+dependencies = [
+ "bitflags 1.3.2",
+ "crossbeam-channel",
+ "kvm-bindings",
+ "libc",
+ "log",
+ "nix 0.30.1",
+ "vmm-sys-util 0.14.0",
+]
+
+[[package]]
+name = "krun-vmm"
+version = "0.1.0"
+dependencies = [
+ "bitfield",
+ "bitflags 2.11.0",
+ "bzip2",
+ "crossbeam-channel",
+ "flate2",
+ "iocuddle",
+ "kbs-types",
+ "krun-arch",
+ "krun-arch-gen",
+ "krun-cpuid",
+ "krun-devices",
+ "krun-display",
+ "krun-hvf",
+ "krun-input",
+ "krun-kernel",
+ "krun-polly",
+ "krun-utils",
+ "kvm-bindings",
+ "kvm-ioctls",
+ "libc",
+ "linux-loader",
+ "log",
+ "nix 0.30.1",
+ "serde",
+ "serde_json",
+ "tdx",
+ "vm-memory",
+ "vmm-sys-util 0.14.0",
+ "zstd",
 ]
 
 [[package]]
@@ -869,13 +949,16 @@ checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
 name = "libkrun"
 version = "1.17.3"
 dependencies = [
- "aws-nitro",
  "crossbeam-channel",
- "devices",
  "env_logger",
- "hvf",
- "krun_display",
- "krun_input",
+ "krun-aws-nitro",
+ "krun-devices",
+ "krun-display",
+ "krun-hvf",
+ "krun-input",
+ "krun-polly",
+ "krun-utils",
+ "krun-vmm",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
@@ -883,11 +966,8 @@ dependencies = [
  "log",
  "nitro-enclaves 0.5.0",
  "once_cell",
- "polly",
  "rand",
- "utils",
  "vm-memory",
- "vmm",
 ]
 
 [[package]]
@@ -1170,14 +1250,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
-name = "polly"
-version = "0.0.1"
-dependencies = [
- "libc",
- "utils",
-]
-
-[[package]]
 name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1344,23 +1416,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
-name = "rutabaga_gfx"
-version = "0.1.2"
-dependencies = [
- "anyhow",
- "cfg-if",
- "libc",
- "log",
- "nix 0.30.1",
- "pkg-config",
- "remain",
- "thiserror 1.0.69",
- "vmm-sys-util 0.14.0",
- "winapi",
- "zerocopy",
-]
-
-[[package]]
 name = "semver"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1481,13 +1536,6 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
-
-[[package]]
-name = "smbios"
-version = "0.1.0"
-dependencies = [
- "vm-memory",
-]
 
 [[package]]
 name = "static_assertions"
@@ -1723,19 +1771,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
-name = "utils"
-version = "0.1.0"
-dependencies = [
- "bitflags 1.3.2",
- "crossbeam-channel",
- "kvm-bindings",
- "libc",
- "log",
- "nix 0.30.1",
- "vmm-sys-util 0.14.0",
-]
-
-[[package]]
 name = "uuid"
 version = "1.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1784,41 +1819,6 @@ dependencies = [
  "libc",
  "thiserror 2.0.18",
  "winapi",
-]
-
-[[package]]
-name = "vmm"
-version = "0.1.0"
-dependencies = [
- "arch",
- "arch_gen",
- "bitfield",
- "bitflags 2.11.0",
- "bzip2",
- "cpuid",
- "crossbeam-channel",
- "devices",
- "flate2",
- "hvf",
- "iocuddle",
- "kbs-types",
- "kernel",
- "krun_display",
- "krun_input",
- "kvm-bindings",
- "kvm-ioctls",
- "libc",
- "linux-loader",
- "log",
- "nix 0.30.1",
- "polly",
- "serde",
- "serde_json",
- "tdx",
- "utils",
- "vm-memory",
- "vmm-sys-util 0.14.0",
- "zstd",
 ]
 
 [[package]]
