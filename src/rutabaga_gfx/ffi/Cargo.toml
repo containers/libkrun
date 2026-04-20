@@ -5,6 +5,7 @@ authors = ["The libkrun Authors"]
 edition = "2021"
 description = "Handling virtio-gpu protocols with C API"
 license-file = "LICENSE"
+repository = "https://github.com/containers/libkrun"
 
 [lib]
 name = "rutabaga_gfx_ffi"
