@@ -3,6 +3,7 @@ name = "krun-hvf"
 version = "0.1.0-1.17.3"
 authors = ["The libkrun Authors"]
 edition = "2021"
+description = "Apple Hypervisor.framework backend for libkrun"
 license = "Apache-2.0"
 repository = "https://github.com/containers/libkrun"
 
