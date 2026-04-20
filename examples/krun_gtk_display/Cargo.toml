@@ -5,10 +5,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-utils = { path = "../../src/utils" } # Our version of rust vmm-sys-util
+utils = { path = "../../src/utils", package = "krun-utils" } # Our version of rust vmm-sys-util
 gtk = { version = "0.10", package = "gtk4", features = ["v4_16"] }
-krun_display = { path = "../../src/krun_display" }
-krun_input = { path = "../../src/krun_input" }
+krun_display = { path = "../../src/krun_display", package = "krun-display" }
+krun_input = { path = "../../src/krun_input", package = "krun-input" }
 anyhow = "1.0.98"
 log = "0.4.27"
 libc = "0.2.174"

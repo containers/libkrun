@@ -1,5 +1,5 @@
 [package]
-name = "krun_input"
+name = "krun-input"
 description = "Rust bindings for implementing input backends in Rust for libkrun"
 version = "0.1.0"
 edition = "2024"

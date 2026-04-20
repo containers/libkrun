@@ -39,7 +39,7 @@ mod brand_string;
 ///
 /// # Example
 /// ```
-/// use cpuid::{filter_cpuid, VmSpec};
+/// use krun_cpuid::{filter_cpuid, VmSpec};
 /// use kvm_bindings::{CpuId, KVM_MAX_CPUID_ENTRIES};
 /// use kvm_ioctls::Kvm;
 ///

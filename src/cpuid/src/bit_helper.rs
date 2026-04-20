@@ -9,7 +9,7 @@
 ///
 /// ```
 /// #[macro_use]
-/// use cpuid::bit_helper::*;
+/// use krun_cpuid::bit_helper::*;
 ///
 /// let range = BitRange {
 ///     msb_index: 7,
@@ -43,7 +43,7 @@ pub trait BitRangeExt<T> {
     ///
     /// ```
     /// #[macro_use]
-    /// use cpuid::bit_helper::*;
+    /// use krun_cpuid::bit_helper::*;
     ///
     /// let range = BitRange {
     ///     msb_index: 7,
@@ -103,7 +103,7 @@ pub trait BitHelper {
     ///
     /// ```
     /// #[macro_use]
-    /// use cpuid::bit_helper::*;
+    /// use krun_cpuid::bit_helper::*;
     ///
     /// let val: u32 = 0b000010001000;
     /// let range = BitRange {
@@ -125,7 +125,7 @@ pub trait BitHelper {
     ///
     /// ```
     /// #[macro_use]
-    /// use cpuid::bit_helper::*;
+    /// use krun_cpuid::bit_helper::*;
     ///
     /// let mut val: u32 = 0;
     /// let range = BitRange {
