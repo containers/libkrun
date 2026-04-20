@@ -1,6 +1,6 @@
 [package]
 name = "krun-devices"
-version = "0.1.0"
+version = "0.1.0-1.17.3"
 authors = ["The Chromium OS Authors"]
 edition = "2021"
 build = "build.rs"
@@ -32,21 +32,21 @@ thiserror = { version = "2.0", optional = true }
 virtio-bindings = "0.2.0"
 vm-memory = { version = "0.17", features = ["backend-mmap"] }
 zerocopy = { version = "0.8.26", optional = true, features = ["derive"] }
-krun_display = { package = "krun-display", path = "../krun_display", optional = true, features = ["bindgen_clang_runtime"] }
-krun_input = { package = "krun-input", path = "../krun_input", features = ["bindgen_clang_runtime"], optional = true }
+krun_display = { package = "krun-display", version = "0.1.0", path = "../krun_display", optional = true, features = ["bindgen_clang_runtime"] }
+krun_input = { package = "krun-input", version = "0.1.0", path = "../krun_input", features = ["bindgen_clang_runtime"], optional = true }
 
-arch = { package = "krun-arch", path = "../arch" }
-utils = { package = "krun-utils", path = "../utils" }
-polly = { package = "krun-polly", path = "../polly" }
-rutabaga_gfx = { package = "krun-rutabaga-gfx", path = "../rutabaga_gfx", features = ["virgl_renderer", "virgl_renderer_next"], optional = true }
+arch = { package = "krun-arch", version = "=0.1.0-1.17.3", path = "../arch" }
+utils = { package = "krun-utils", version = "=0.1.0-1.17.3", path = "../utils" }
+polly = { package = "krun-polly", version = "=0.1.0-1.17.3", path = "../polly" }
+rutabaga_gfx = { package = "krun-rutabaga-gfx", version = "=0.1.0-1.17.3", path = "../rutabaga_gfx", features = ["virgl_renderer", "virgl_renderer_next"], optional = true }
 imago = { version = "0.2.2", features = ["sync-wrappers", "vm-memory"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-hvf = { package = "krun-hvf", path = "../hvf" }
+hvf = { package = "krun-hvf", version = "=0.1.0-1.17.3", path = "../hvf" }
 lru = ">=0.9"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rutabaga_gfx = { package = "krun-rutabaga-gfx", path = "../rutabaga_gfx", features = ["x"], optional = true }
+rutabaga_gfx = { package = "krun-rutabaga-gfx", version = "=0.1.0-1.17.3", path = "../rutabaga_gfx", features = ["x"], optional = true }
 caps = "0.5.5"
 kvm-bindings = { version = "0.12", features = ["fam-wrappers"] }
 kvm-ioctls = "0.22"

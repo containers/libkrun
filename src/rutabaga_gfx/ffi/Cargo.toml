@@ -1,6 +1,6 @@
 [package]
 name = "krun-rutabaga-gfx-ffi"
-version = "0.1.2"
+version = "0.1.0-1.17.3"
 authors = ["The ChromiumOS Authors + Android Open Source Project"]
 edition = "2021"
 description = "Handling virtio-gpu protocols with C API"
@@ -11,7 +11,7 @@ name = "rutabaga_gfx_ffi"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-rutabaga_gfx = { package = "krun-rutabaga-gfx", path = "../", version = "0.1.2"}
+rutabaga_gfx = { package = "krun-rutabaga-gfx", path = "../", version = "=0.1.0-1.17.3"}
 libc = "0.2.93"
 log = "0.4"
 once_cell = "1.7"
