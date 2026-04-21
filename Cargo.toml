@@ -1,8 +1,8 @@
 [workspace]
 members = [
     "src/libkrun",
-    "src/krun_input",
-    "src/krun_display",
+    "src/input",
+    "src/display",
     "src/utils",
     "src/arch_gen",
     "src/cpuid",

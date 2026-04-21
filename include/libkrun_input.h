@@ -1,1 +1,1 @@
-../src/krun_input/libkrun_input.h
+../src/input/libkrun_input.h
