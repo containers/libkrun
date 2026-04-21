@@ -59,14 +59,14 @@ FreeBSD guest tests run on Linux (amd64, arm64) and macOS (arm64) hosts. They re
      rustup target add x86_64-unknown-freebsd
      ```
    - **Linux/macOS arm64**: `aarch64-unknown-freebsd` has no prebuilt stdlib in rustup,
-     so a nightly toolchain is used with `-Z build-std` to build it from source:
+     so a nightly toolchain with rust-src component is needed:
      ```bash
-     rustup toolchain install nightly-2026-01-25
+     rustup +nightly-2026-01-25 component add rust-src
      ```
 
 2. Build the FreeBSD sysroot and `init-freebsd` (from the libkrun root directory):
    ```bash
-   make BUILD_BSD_INIT=1
+   make BUILD_BSD_INIT=1 -- init/init-freebsd
    ```
    This downloads `freebsd-sysroot/base.txz`, extracts it to `freebsd-sysroot/`, and compiles `init/init-freebsd`.
 
