@@ -11,6 +11,11 @@ jobs:
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
       
+      - name: Install cross-compilation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lld
+      
       - name: Add musl target
         run: rustup target add x86_64-unknown-linux-musl
       
@@ -105,6 +110,11 @@ jobs:
       
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
+      
+      - name: Install cross-compilation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
       
       - name: Add musl target
         run: rustup target add aarch64-unknown-linux-musl
