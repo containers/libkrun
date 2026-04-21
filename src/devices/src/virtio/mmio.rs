@@ -83,6 +83,8 @@ pub struct MmioTransport {
 struct InterruptTransportInner {
     log_target: String,
     status: AtomicUsize,
+    #[cfg(target_arch = "loongarch64")]
+    irq_sync: Mutex<()>,
     event: EventFd,
     intc: IrqChip,
     irq_line: Option<u32>,
@@ -96,6 +98,8 @@ impl InterruptTransport {
         Ok(Self(Arc::new(InterruptTransportInner {
             log_target,
             status: AtomicUsize::new(0),
+            #[cfg(target_arch = "loongarch64")]
+            irq_sync: Mutex::new(()),
             event: EventFd::new(0).map_err(CreateMmioTransportError::CreateInterruptEventFd)?,
             intc,
             irq_line: None,
@@ -119,7 +123,7 @@ impl InterruptTransport {
     }
 
     fn set_irq_line(&mut self, irq_line: u32) {
-        debug!(target: &self.0.log_target, "set_irq_line: {irq_line}");
+        // debug!(target: &self.0.log_target, "set_irq_line: {irq_line}");
         match Arc::get_mut(&mut self.0) {
             None => {
                 error!("Cannot change irq_line of activated device");
@@ -131,21 +135,38 @@ impl InterruptTransport {
     }
 
     fn try_signal(&self, status: u32) -> Result<(), crate::Error> {
-        self.status().fetch_or(status as usize, Ordering::SeqCst);
-        self.intc()
-            .lock()
-            .unwrap()
-            .set_irq(self.0.irq_line, Some(&self.0.event))?;
-        Ok(())
+        #[cfg(target_arch = "loongarch64")]
+        {
+            let _irq_sync = self.0.irq_sync.lock().unwrap();
+            let old = self.status().fetch_or(status as usize, Ordering::SeqCst);
+            if old == 0 {
+                self.intc().lock().unwrap().set_irq_state(
+                    self.0.irq_line,
+                    Some(&self.0.event),
+                    true,
+                )?;
+            }
+            return Ok(());
+        }
+
+        #[cfg(not(target_arch = "loongarch64"))]
+        {
+            self.status().fetch_or(status as usize, Ordering::SeqCst);
+            self.intc()
+                .lock()
+                .unwrap()
+                .set_irq(self.0.irq_line, Some(&self.0.event))?;
+            Ok(())
+        }
     }
 
     pub fn try_signal_used_queue(&self) -> Result<(), crate::Error> {
-        debug!(target: &self.0.log_target, "interrupt: signal_used_queue");
+        // debug!(target: &self.0.log_target, "interrupt: signal_used_queue");
         self.try_signal(VIRTIO_MMIO_INT_VRING)
     }
 
     pub fn try_signal_config_change(&self) -> Result<(), crate::Error> {
-        debug!(target: &self.0.log_target, "interrupt: signal_config_change");
+        // debug!(target: &self.0.log_target, "interrupt: signal_config_change");
         self.try_signal(VIRTIO_MMIO_INT_CONFIG)
     }
 
@@ -396,7 +417,11 @@ impl BusDevice for MmioTransport {
                         .get(self.queue_select as usize)
                         .map_or(0, |c| c.size as u32),
                     0x44 => self.with_queue(0, |q| q.ready as u32),
-                    0x60 => self.interrupt.status().load(Ordering::SeqCst) as u32,
+                    0x60 => {
+                        let s = self.interrupt.status().load(Ordering::SeqCst) as u32;
+                        // debug!(target: &self.interrupt.0.log_target, "read interrupt status: 0x{:x}", s);
+                        s
+                    }
                     0x70 => self.device_status,
                     0xfc => self.config_generation,
                     0xb0..=0xbc => {
@@ -479,7 +504,30 @@ impl BusDevice for MmioTransport {
                         }
                     }
                     0x64 => {
+                        // debug!(target: &self.interrupt.0.log_target, "write interrupt ack: 0x{:x}", v);
                         if self.check_device_status(device_status::DRIVER_OK, 0) {
+                            #[cfg(target_arch = "loongarch64")]
+                            {
+                                let _irq_sync = self.interrupt.0.irq_sync.lock().unwrap();
+                                let old = self
+                                    .interrupt
+                                    .status()
+                                    .fetch_and(!(v as usize), Ordering::SeqCst);
+                                let new = old & !(v as usize);
+                                if old != 0 && new == 0 {
+                                    if let Err(e) =
+                                        self.interrupt.intc().lock().unwrap().set_irq_state(
+                                            self.interrupt.0.irq_line,
+                                            Some(&self.interrupt.0.event),
+                                            false,
+                                        )
+                                    {
+                                        warn!(target: &self.interrupt.0.log_target, "Failed to deassert irq: {e:?}");
+                                    }
+                                }
+                            }
+
+                            #[cfg(not(target_arch = "loongarch64"))]
                             self.interrupt
                                 .status()
                                 .fetch_and(!(v as usize), Ordering::SeqCst);

@@ -17,8 +17,10 @@ pub struct ArchMemoryInfo {
     pub ram_last_addr: u64,
     pub shm_start_addr: u64,
     pub page_size: usize,
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "loongarch64"))]
     pub fdt_addr: u64,
+    #[cfg(target_arch = "loongarch64")]
+    pub efi_system_table_addr: u64,
     pub initrd_addr: u64,
     pub firmware_addr: u64,
 }
@@ -39,6 +41,16 @@ pub mod riscv64;
 
 #[cfg(target_arch = "riscv64")]
 pub use riscv64::{
+    arch_memory_regions, configure_system, layout::CMDLINE_MAX_SIZE, layout::IRQ_BASE,
+    layout::IRQ_MAX, layout::RESET_VECTOR, Error, MMIO_MEM_START,
+};
+
+/// Module for loongarch64 related functionality.
+#[cfg(target_arch = "loongarch64")]
+pub mod loongarch64;
+
+#[cfg(target_arch = "loongarch64")]
+pub use loongarch64::{
     arch_memory_regions, configure_system, layout::CMDLINE_MAX_SIZE, layout::IRQ_BASE,
     layout::IRQ_MAX, layout::RESET_VECTOR, Error, MMIO_MEM_START,
 };

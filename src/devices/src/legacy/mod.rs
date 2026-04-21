@@ -23,6 +23,8 @@ mod kvmgicv2;
 mod kvmgicv3;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod kvmioapic;
+#[cfg(all(target_os = "linux", target_arch = "loongarch64"))]
+mod kvmloongarchirqchip;
 #[cfg(target_arch = "aarch64")]
 mod rtc_pl031;
 #[cfg(target_os = "macos")]
@@ -43,6 +45,10 @@ use aarch64::serial;
 mod riscv64;
 #[cfg(target_arch = "riscv64")]
 use riscv64::serial;
+#[cfg(target_arch = "loongarch64")]
+mod loongarch64;
+#[cfg(target_arch = "loongarch64")]
+use loongarch64::serial;
 
 #[cfg(target_arch = "x86_64")]
 pub use self::cmos::Cmos;
@@ -67,6 +73,8 @@ pub use self::kvmgicv2::KvmGicV2;
 pub use self::kvmgicv3::KvmGicV3;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub use self::kvmioapic::KvmIoapic;
+#[cfg(all(target_os = "linux", target_arch = "loongarch64"))]
+pub use self::kvmloongarchirqchip::KvmLoongArchIrqChip;
 #[cfg(target_arch = "aarch64")]
 pub use self::rtc_pl031::RTC;
 pub use self::serial::Serial;

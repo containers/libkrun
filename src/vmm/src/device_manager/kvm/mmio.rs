@@ -9,9 +9,17 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::{fmt, io};
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+#[cfg(any(
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    target_arch = "loongarch64"
+))]
 use devices::fdt::DeviceInfoForFDT;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+#[cfg(any(
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    target_arch = "loongarch64"
+))]
 use devices::legacy::IrqChip;
 use devices::{BusDevice, DeviceType};
 use kernel::cmdline as kernel_cmdline;
@@ -89,7 +97,11 @@ pub struct MMIODeviceManager {
 impl MMIODeviceManager {
     /// Create a new DeviceManager handling mmio devices (virtio net, block).
     pub fn new(mmio_base: &mut u64, irq_interval: (u32, u32)) -> MMIODeviceManager {
-        if cfg!(any(target_arch = "aarch64", target_arch = "riscv64")) {
+        if cfg!(any(
+            target_arch = "aarch64",
+            target_arch = "riscv64",
+            target_arch = "loongarch64"
+        )) {
             *mmio_base += MMIO_LEN;
         }
         MMIODeviceManager {
@@ -139,6 +151,7 @@ impl MMIODeviceManager {
                 .map_err(Error::RegisterIoEvent)?;
         }
 
+        #[cfg(not(target_arch = "loongarch64"))]
         vm.register_irqfd(mmio_device.interrupt_evt(), self.irq)
             .map_err(Error::RegisterIrqFd)?;
 
@@ -183,11 +196,15 @@ impl MMIODeviceManager {
             .map_err(Error::Cmdline)
     }
 
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+    #[cfg(any(
+        target_arch = "aarch64",
+        target_arch = "riscv64",
+        target_arch = "loongarch64"
+    ))]
     /// Register an early console at some MMIO address.
     pub fn register_mmio_serial(
         &mut self,
-        vm: &VmFd,
+        _vm: &VmFd,
         cmdline: &mut kernel_cmdline::Cmdline,
         intc: IrqChip,
         serial: Arc<Mutex<devices::legacy::Serial>>,
@@ -196,7 +213,8 @@ impl MMIODeviceManager {
             return Err(Error::IrqsExhausted);
         }
 
-        vm.register_irqfd(serial.lock().unwrap().interrupt_evt(), self.irq)
+        #[cfg(not(target_arch = "loongarch64"))]
+        _vm.register_irqfd(serial.lock().unwrap().interrupt_evt(), self.irq)
             .map_err(Error::RegisterIrqFd)?;
 
         {
@@ -216,6 +234,8 @@ impl MMIODeviceManager {
                 &format!("pl011,mmio32,0x{:08x}", self.mmio_base),
                 #[cfg(target_arch = "riscv64")]
                 &format!("uart,mmio,0x{:08x}", self.mmio_base),
+                #[cfg(target_arch = "loongarch64")]
+                &format!("uart8250,mmio,0x{:08x}", self.mmio_base),
             )
             .map_err(Error::Cmdline)?;
 
@@ -268,7 +288,11 @@ impl MMIODeviceManager {
         Ok(())
     }
 
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+    #[cfg(any(
+        target_arch = "aarch64",
+        target_arch = "riscv64",
+        target_arch = "loongarch64"
+    ))]
     /// Gets the information of the devices registered up to some point in time.
     pub fn get_device_info(&self) -> &HashMap<(DeviceType, String), MMIODeviceInfo> {
         &self.id_to_dev_info
@@ -300,7 +324,11 @@ pub struct MMIODeviceInfo {
     _len: u64,
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+#[cfg(any(
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    target_arch = "loongarch64"
+))]
 impl DeviceInfoForFDT for MMIODeviceInfo {
     fn addr(&self) -> u64 {
         self.addr
@@ -329,9 +357,16 @@ mod tests {
     use std::sync::Arc;
     use utils::errno;
     use vm_memory::{GuestAddress, GuestMemoryMmap};
+    #[cfg(target_arch = "loongarch64")]
+    const TEST_GUEST_MEM_BASE: u64 = arch::loongarch64::layout::DRAM_MEM_START;
+    #[cfg(not(target_arch = "loongarch64"))]
+    const TEST_GUEST_MEM_BASE: u64 = 0;
 
     const QUEUE_CONFIG: &[QueueConfig] = &[QueueConfig::new(64)];
 
+    fn test_page_size() -> u64 {
+        unsafe { libc::sysconf(libc::_SC_PAGESIZE) as u64 }
+    }
     impl MMIODeviceManager {
         fn register_virtio_device(
             &mut self,
@@ -413,10 +448,14 @@ mod tests {
 
     #[test]
     fn test_register_virtio_device() {
-        let start_addr1 = GuestAddress(0x0);
-        let start_addr2 = GuestAddress(0x1000);
-        let guest_mem =
-            GuestMemoryMmap::from_ranges(&[(start_addr1, 0x1000), (start_addr2, 0x1000)]).unwrap();
+        let page_size = test_page_size();
+        let start_addr1 = GuestAddress(TEST_GUEST_MEM_BASE);
+        let start_addr2 = GuestAddress(TEST_GUEST_MEM_BASE + page_size);
+        let guest_mem = GuestMemoryMmap::from_ranges(&[
+            (start_addr1, page_size as usize),
+            (start_addr2, page_size as usize),
+        ])
+        .unwrap();
         let vm = builder::setup_vm(&guest_mem, false).unwrap();
         let mut device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
@@ -425,7 +464,7 @@ mod tests {
         #[cfg(target_arch = "aarch64")]
         let _gic = KvmGicV3::new(vm.fd(), 1).unwrap();
 
-        let mut cmdline = kernel_cmdline::Cmdline::new(4096);
+        let mut cmdline = kernel_cmdline::Cmdline::new(page_size as usize);
         let dummy = Arc::new(Mutex::new(DummyDevice::new()));
 
         assert!(device_manager
@@ -435,10 +474,14 @@ mod tests {
 
     #[test]
     fn test_register_too_many_devices() {
-        let start_addr1 = GuestAddress(0x0);
-        let start_addr2 = GuestAddress(0x1000);
-        let guest_mem =
-            GuestMemoryMmap::from_ranges(&[(start_addr1, 0x1000), (start_addr2, 0x1000)]).unwrap();
+        let page_size = test_page_size();
+        let start_addr1 = GuestAddress(TEST_GUEST_MEM_BASE);
+        let start_addr2 = GuestAddress(TEST_GUEST_MEM_BASE + page_size);
+        let guest_mem = GuestMemoryMmap::from_ranges(&[
+            (start_addr1, page_size as usize),
+            (start_addr2, page_size as usize),
+        ])
+        .unwrap();
         let vm = builder::setup_vm(&guest_mem, false).unwrap();
         let mut device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
@@ -447,7 +490,7 @@ mod tests {
         #[cfg(target_arch = "aarch64")]
         let _gic = KvmGicV3::new(vm.fd(), 1).unwrap();
 
-        let mut cmdline = kernel_cmdline::Cmdline::new(4096);
+        let mut cmdline = kernel_cmdline::Cmdline::new(page_size as usize);
 
         for _i in arch::IRQ_BASE..=arch::IRQ_MAX {
             device_manager
@@ -488,9 +531,10 @@ mod tests {
 
     #[test]
     fn test_error_messages() {
+        let page_size = test_page_size();
         let device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
-        let mut cmdline = kernel_cmdline::Cmdline::new(4096);
+        let mut cmdline = kernel_cmdline::Cmdline::new(page_size as usize);
         let e = Error::Cmdline(
             cmdline
                 .insert(
@@ -538,14 +582,18 @@ mod tests {
 
     #[test]
     fn test_device_info() {
-        let start_addr1 = GuestAddress(0x0);
-        let start_addr2 = GuestAddress(0x1000);
-        let guest_mem =
-            GuestMemoryMmap::from_ranges(&[(start_addr1, 0x1000), (start_addr2, 0x1000)]).unwrap();
+        let page_size = test_page_size();
+        let start_addr1 = GuestAddress(TEST_GUEST_MEM_BASE);
+        let start_addr2 = GuestAddress(TEST_GUEST_MEM_BASE + page_size);
+        let guest_mem = GuestMemoryMmap::from_ranges(&[
+            (start_addr1, page_size as usize),
+            (start_addr2, page_size as usize),
+        ])
+        .unwrap();
         let vm = builder::setup_vm(&guest_mem, false).unwrap();
         let mut device_manager =
             MMIODeviceManager::new(&mut 0xd000_0000, (arch::IRQ_BASE, arch::IRQ_MAX));
-        let mut cmdline = kernel_cmdline::Cmdline::new(4096);
+        let mut cmdline = kernel_cmdline::Cmdline::new(page_size as usize);
         let dummy = Arc::new(Mutex::new(DummyDevice::new()));
 
         let type_id = 0;

@@ -46,6 +46,13 @@ pub fn test_cases() -> Vec<TestCase> {
                 ram_mib: 1024,
             }),
         ),
+        TestCase::new(
+            "configure-vm-1cpu-1GiB",
+            Box::new(TestVmConfig {
+                num_cpus: 1,
+                ram_mib: 1024,
+            }),
+        ),
         TestCase::new("vsock-guest-connect", Box::new(TestVsockGuestConnect)),
         TestCase::new(
             "tsi-tcp-guest-connect",
