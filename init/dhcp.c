@@ -11,10 +11,6 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
-#include <linux/if.h>
-#include <linux/if_arp.h>
-#include <linux/netlink.h>
-#include <linux/rtnetlink.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -24,6 +20,22 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <linux/if.h>
+#include <linux/if_arp.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
+#else /* FreeBSD */
+#include <ifaddrs.h>
+#include <net/if_arp.h>
+#include <net/if_dl.h>
+#include <netlink/netlink.h>
+#include <netlink/route/common.h>
+#include <netlink/route/ifaddrs.h>
+#include <netlink/route/interface.h>
+#include <netlink/route/route.h>
+#include <sys/sockio.h>
+#endif
 
 #define DHCP_BUFFER_SIZE 576
 #define DHCP_MSG_OFFER 2
@@ -33,6 +45,9 @@
 static int nl_send(int sock, struct nlmsghdr *nlh)
 {
     struct sockaddr_nl sa = {
+#ifdef __FreeBSD__
+        .nl_len = sizeof(struct sockaddr_nl),
+#endif
         .nl_family = AF_NETLINK,
     };
 
@@ -194,6 +209,7 @@ static int mod_route4(int nl_sock, int iface_index, int cmd, struct in_addr gw)
 static int mod_addr4(int nl_sock, int iface_index, int cmd, struct in_addr addr,
                      unsigned char prefix_len)
 {
+#ifdef __linux__
     char buf[4096];
     struct nlmsghdr *nlh;
     struct nlmsgerr *err;
@@ -241,6 +257,45 @@ static int mod_addr4(int nl_sock, int iface_index, int cmd, struct in_addr addr,
     }
 
     return 0;
+#else /* FreeBSD */
+    char iface_name[IFNAMSIZ];
+    struct ifaliasreq ifra;
+    struct sockaddr_in *sin;
+    int s, ret;
+
+    (void)nl_sock;
+    (void)cmd;
+
+    if (if_indextoname(iface_index, iface_name) == NULL) {
+        perror("if_indextoname failed for mod_addr4");
+        return -1;
+    }
+
+    memset(&ifra, 0, sizeof(ifra));
+    strncpy(ifra.ifra_name, iface_name, IFNAMSIZ - 1);
+
+    sin = (struct sockaddr_in *)&ifra.ifra_addr;
+    sin->sin_len = sizeof(*sin);
+    sin->sin_family = AF_INET;
+    sin->sin_addr = addr;
+
+    sin = (struct sockaddr_in *)&ifra.ifra_mask;
+    sin->sin_len = sizeof(*sin);
+    sin->sin_family = AF_INET;
+    sin->sin_addr.s_addr =
+        prefix_len == 0 ? 0 : htonl(~((1U << (32 - prefix_len)) - 1));
+
+    s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) {
+        perror("socket failed for mod_addr4");
+        return -1;
+    }
+    ret = ioctl(s, SIOCAIFADDR, &ifra);
+    if (ret < 0)
+        perror("SIOCAIFADDR failed");
+    close(s);
+    return ret;
+#endif
 }
 
 /* Count leading ones in a 32-bit value */
@@ -420,6 +475,9 @@ int do_dhcp(const char *iface)
     }
 
     struct sockaddr_nl sa = {
+#ifdef __FreeBSD__
+        .nl_len = sizeof(struct sockaddr_nl),
+#endif
         .nl_family = AF_NETLINK,
         .nl_pid = getpid(),
         .nl_groups = 0,
@@ -444,11 +502,13 @@ int do_dhcp(const char *iface)
         goto cleanup;
     }
 
+#ifdef __linux__
     if (setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, iface,
                    strlen(iface) + 1) < 0) {
         perror("setsockopt SO_BINDTODEVICE failed");
         goto cleanup;
     }
+#endif
 
     /* Bind to port 68 (DHCP client) */
     memset(&bind_addr, 0, sizeof(bind_addr));
@@ -477,6 +537,7 @@ int do_dhcp(const char *iface)
     request.magic = htonl(0x63825363); /* Magic cookie */
 
     /* Populate chaddr with the interface's MAC address */
+#ifdef __linux__
     struct ifreq mac_ifr;
     memset(&mac_ifr, 0, sizeof(mac_ifr));
     strncpy(mac_ifr.ifr_name, iface, IFNAMSIZ);
@@ -486,6 +547,31 @@ int do_dhcp(const char *iface)
         goto cleanup;
     }
     memcpy(request.chaddr, mac_ifr.ifr_hwaddr.sa_data, 6);
+#else /* FreeBSD */
+    {
+        struct ifaddrs *ifap, *ifa;
+        bool mac_found = false;
+
+        if (getifaddrs(&ifap) < 0) {
+            perror("getifaddrs failed");
+            goto cleanup;
+        }
+        for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+            if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_LINK &&
+                strcmp(ifa->ifa_name, iface) == 0) {
+                struct sockaddr_dl *sdl = (struct sockaddr_dl *)ifa->ifa_addr;
+                memcpy(request.chaddr, LLADDR(sdl), 6);
+                mac_found = true;
+                break;
+            }
+        }
+        freeifaddrs(ifap);
+        if (!mac_found) {
+            fprintf(stderr, "could not find MAC address for %s\n", iface);
+            goto cleanup;
+        }
+    }
+#endif
 
     /* Build DHCP options */
     int opt_offset = 0;
