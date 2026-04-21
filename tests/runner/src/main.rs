@@ -203,9 +203,14 @@ fn run_single_test(
     let stdout = fs::read(&stdout_path).unwrap_or_default();
 
     let test_name = test_case.name.to_string();
+    let test_dir_clone = test_dir.clone();
     let outcome = match catch_unwind(|| {
         let test = get_test(&test_name).unwrap();
-        test.check(stdout)
+        let test_setup = TestSetup {
+            test_case: test_name,
+            tmp_dir: test_dir_clone,
+        };
+        test.check(stdout, test_setup)
     }) {
         Ok(outcome) => outcome,
         Err(_) => TestOutcome::Fail("test.check() panicked".to_string()),

@@ -192,7 +192,7 @@ pub trait Test {
     fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()>;
 
     /// Checks the output of the (host) process which started the VM
-    fn check(self: Box<Self>, stdout: Vec<u8>) -> TestOutcome {
+    fn check(self: Box<Self>, stdout: Vec<u8>, _test_setup: TestSetup) -> TestOutcome {
         let output = String::from_utf8(stdout).unwrap();
         if output == "OK\n" {
             TestOutcome::Pass
