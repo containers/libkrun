@@ -1184,8 +1184,8 @@ int main(int argc, char **argv)
     char *krun_home;
     char *krun_term;
     char *krun_init;
-    char *krun_dhcp;
 #if __linux__
+    char *krun_dhcp;
     int fd;
     char *krun_root;
     char *krun_root_fstype;
@@ -1300,6 +1300,7 @@ int main(int argc, char **argv)
         ifr.ifr_flags |= IFF_UP;
         ioctl(sockfd, SIOCSIFFLAGS, &ifr);
 
+#if __linux__
         krun_dhcp = getenv("KRUN_DHCP");
         if (krun_dhcp && strcmp(krun_dhcp, "1") == 0) {
             memset(&ifr, 0, sizeof ifr);
@@ -1315,6 +1316,7 @@ int main(int argc, char **argv)
                 }
             }
         }
+#endif
 
         close(sockfd);
     }
