@@ -84,7 +84,7 @@ mod host {
                 // if we don't wait here, reading mesages
                 // in run_client leads to unexpected EOF
                 // and retrying doesn't help at that point
-                thread::sleep(Duration::from_secs(1));
+                thread::sleep(Duration::from_secs(2));
                 tcp_tester.run_client();
             });
 
