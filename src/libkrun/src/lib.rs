@@ -595,6 +595,7 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
                 allow_root_dir_delete: false,
+                read_only: false,
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -611,29 +612,7 @@ pub unsafe extern "C" fn krun_add_virtiofs(
     c_tag: *const c_char,
     c_path: *const c_char,
 ) -> i32 {
-    let tag = match CStr::from_ptr(c_tag).to_str() {
-        Ok(tag) => tag,
-        Err(_) => return -libc::EINVAL,
-    };
-    let path = match CStr::from_ptr(c_path).to_str() {
-        Ok(path) => path,
-        Err(_) => return -libc::EINVAL,
-    };
-
-    match CTX_MAP.lock().unwrap().entry(ctx_id) {
-        Entry::Occupied(mut ctx_cfg) => {
-            let cfg = ctx_cfg.get_mut();
-            cfg.vmr.add_fs_device(FsDeviceConfig {
-                fs_id: tag.to_string(),
-                shared_dir: path.to_string(),
-                shm_size: None,
-                allow_root_dir_delete: false,
-            });
-        }
-        Entry::Vacant(_) => return -libc::ENOENT,
-    }
-
-    KRUN_SUCCESS
+    krun_add_virtiofs3(ctx_id, c_tag, c_path, 0, false)
 }
 
 #[allow(clippy::missing_safety_doc)]
@@ -645,6 +624,23 @@ pub unsafe extern "C" fn krun_add_virtiofs2(
     c_path: *const c_char,
     shm_size: u64,
 ) -> i32 {
+    krun_add_virtiofs3(ctx_id, c_tag, c_path, shm_size, false)
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(not(feature = "tee"))]
+pub unsafe extern "C" fn krun_add_virtiofs3(
+    ctx_id: u32,
+    c_tag: *const c_char,
+    c_path: *const c_char,
+    shm_size: u64,
+    read_only: bool,
+) -> i32 {
+    if c_tag.is_null() || c_path.is_null() {
+        return -libc::EINVAL;
+    }
+
     let tag = match CStr::from_ptr(c_tag).to_str() {
         Ok(tag) => tag,
         Err(_) => return -libc::EINVAL,
@@ -654,14 +650,24 @@ pub unsafe extern "C" fn krun_add_virtiofs2(
         Err(_) => return -libc::EINVAL,
     };
 
+    let shm = if shm_size > 0 {
+        match shm_size.try_into() {
+            Ok(s) => Some(s),
+            Err(_) => return -libc::EINVAL,
+        }
+    } else {
+        None
+    };
+
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id: tag.to_string(),
                 shared_dir: path.to_string(),
-                shm_size: Some(shm_size.try_into().unwrap()),
+                shm_size: shm,
                 allow_root_dir_delete: false,
+                read_only,
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -892,6 +898,10 @@ pub unsafe extern "C" fn krun_set_data_disk(ctx_id: u32, c_disk_path: *const c_c
  */
 #[cfg(feature = "net")]
 const NET_FLAG_VFKIT: u32 = 1 << 0;
+#[cfg(feature = "net")]
+const NET_FLAG_DHCP_CLIENT: u32 = 1 << 1;
+#[cfg(feature = "net")]
+const NET_FLAG_ALL: u32 = NET_FLAG_VFKIT | NET_FLAG_DHCP_CLIENT;
 
 /* Taken from uapi/linux/virtio_net.h */
 #[cfg(feature = "net")]
@@ -970,10 +980,10 @@ pub unsafe extern "C" fn krun_add_net_unixstream(
         Err(_) => return -libc::EINVAL,
     };
 
-    /* The unixstream backend doesn't support any flags */
-    if flags != 0 {
+    if (flags & !NET_FLAG_DHCP_CLIENT) != 0 {
         return -libc::EINVAL;
     }
+    let enable_dhcp_client: bool = flags & NET_FLAG_DHCP_CLIENT != 0;
 
     if (features & !NET_ALL_FEATURES) != 0 {
         return -libc::EINVAL;
@@ -983,6 +993,9 @@ pub unsafe extern "C" fn krun_add_net_unixstream(
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             create_virtio_net(cfg, backend, mac, features);
+            if enable_dhcp_client {
+                cfg.vmr.dhcp_client = true;
+            }
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -1025,10 +1038,11 @@ pub unsafe extern "C" fn krun_add_net_unixgram(
         return -libc::EINVAL;
     }
 
-    if (flags & !NET_FLAG_VFKIT) != 0 {
+    if (flags & !NET_FLAG_ALL) != 0 {
         return -libc::EINVAL;
     }
     let send_vfkit_magic: bool = flags & NET_FLAG_VFKIT != 0;
+    let enable_dhcp_client: bool = flags & NET_FLAG_DHCP_CLIENT != 0;
 
     let backend = if let Some(path) = path {
         VirtioNetBackend::UnixgramPath(path, send_vfkit_magic)
@@ -1040,6 +1054,9 @@ pub unsafe extern "C" fn krun_add_net_unixgram(
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             create_virtio_net(cfg, backend, mac, features);
+            if enable_dhcp_client {
+                cfg.vmr.dhcp_client = true;
+            }
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -1080,15 +1097,18 @@ pub unsafe extern "C" fn krun_add_net_tap(
         return -libc::EINVAL;
     }
 
-    /* The tap backend doesn't support any flags */
-    if flags != 0 {
+    if (flags & !NET_FLAG_DHCP_CLIENT) != 0 {
         return -libc::EINVAL;
     }
+    let enable_dhcp_client: bool = flags & NET_FLAG_DHCP_CLIENT != 0;
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             create_virtio_net(cfg, VirtioNetBackend::Tap(tap_name), mac, features);
+            if enable_dhcp_client {
+                cfg.vmr.dhcp_client = true;
+            }
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
@@ -1822,10 +1842,6 @@ pub unsafe extern "C" fn krun_set_console_output(ctx_id: u32, c_filepath: *const
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_set_nested_virt(ctx_id: u32, enabled: bool) -> i32 {
-    if enabled && !cfg!(target_os = "macos") {
-        return -libc::EINVAL;
-    }
-
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
@@ -1845,7 +1861,25 @@ pub unsafe extern "C" fn krun_check_nested_virt() -> i32 {
         Err(_) => -libc::EINVAL,
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        let paths = [
+            "/sys/module/kvm_intel/parameters/nested",
+            "/sys/module/kvm_amd/parameters/nested",
+        ];
+        if paths.iter().any(|path| {
+            std::fs::read_to_string(path).is_ok_and(|contents| {
+                let val = contents.trim();
+                val == "1" || val.eq_ignore_ascii_case("Y")
+            })
+        }) {
+            1
+        } else {
+            0
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     -libc::EOPNOTSUPP
 }
 
@@ -2294,6 +2328,7 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
                 allow_root_dir_delete: true,
+                read_only: false,
             });
 
             ctx_cfg.set_block_root(device, fstype, options);

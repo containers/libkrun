@@ -24,7 +24,9 @@ pub(crate) fn process_rx(
 
     let mut input = input.lock().unwrap();
     loop {
-        let head = pop_head_blocking(&mut queue, mem, &interrupt);
+        let Some(head) = pop_head_blocking(&mut queue, mem, &interrupt, &stop) else {
+            return;
+        };
 
         let head_index = head.index;
         let mut bytes_read = 0;
@@ -71,12 +73,16 @@ fn pop_head_blocking<'mem>(
     queue: &mut Queue,
     mem: &'mem GuestMemoryMmap,
     interrupt: &InterruptTransport,
-) -> DescriptorChain<'mem> {
+    stop: &AtomicBool,
+) -> Option<DescriptorChain<'mem>> {
     loop {
         match queue.pop(mem) {
-            Some(descriptor) => break descriptor,
+            Some(descriptor) => break Some(descriptor),
             None => {
                 interrupt.signal_used_queue();
+                if stop.load(Ordering::Acquire) {
+                    break None;
+                }
                 thread::park();
                 log::trace!("rx unparked, queue len {}", queue.len(mem))
             }
@@ -89,6 +95,9 @@ fn read_to_desc(
     input: &mut (dyn PortInput + Send),
     eof: &mut bool,
 ) -> Result<usize, GuestMemoryError> {
+    // TODO: Switch to using `get_slices()` with the next vm-memory
+    //       bump.
+    #[allow(deprecated)]
     desc.mem
         .try_access(desc.len as usize, desc.addr, |_, len, addr, region| {
             let mut target = region.get_slice(addr, len).unwrap();

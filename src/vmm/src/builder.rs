@@ -125,7 +125,7 @@ pub enum StartMicrovmError {
     /// Cannot read firmware contents from file.
     FirmwareRead(io::Error),
     /// Memory regions are overlapping or mmap fails.
-    GuestMemoryMmap(vm_memory::Error),
+    GuestMemoryMmap(String),
     /// The BZIP2 decoder couldn't decompress the kernel.
     ImageBz2Decoder(io::Error),
     /// Cannot find compressed kernel in file.
@@ -943,7 +943,8 @@ pub fn build_microvm(
             &vm,
             &mut mmio_device_manager,
             &mut kernel_cmdline,
-            serial_device,
+            intc.clone(),
+            serial_devices,
         )?;
     }
 
@@ -1058,6 +1059,11 @@ pub fn build_microvm(
 
     #[cfg(feature = "net")]
     attach_net_devices(&mut vmm, &vm_resources.net, intc.clone())?;
+    #[cfg(feature = "net")]
+    if vm_resources.dhcp_client {
+        vmm.kernel_cmdline.insert_str("KRUN_DHCP=1")?;
+    }
+
     #[cfg(feature = "snd")]
     if vm_resources.snd_device {
         attach_snd_device(&mut vmm, intc.clone())?;
@@ -1182,7 +1188,7 @@ fn load_external_kernel(
             let data: Vec<u8> = std::fs::read(external_kernel.path.clone())
                 .map_err(StartMicrovmError::ImageBz2OpenKernel)?;
             if let Some(magic) = data
-                .windows(4)
+                .windows(3)
                 .position(|window| window == [b'B', b'Z', b'h'])
             {
                 debug!("Found BZIP2 header on Image file at: 0x{magic:x}");
@@ -1339,9 +1345,13 @@ fn load_payload(
                 guest_mem
                     .insert_region(Arc::new(
                         GuestRegionMmap::new(kernel_region, GuestAddress(kernel_guest_addr))
-                            .map_err(StartMicrovmError::GuestMemoryMmap)?,
+                            .ok_or_else(|| {
+                                StartMicrovmError::GuestMemoryMmap(
+                                    "Failed to create GuestRegionMmap".to_string(),
+                                )
+                            })?,
                     ))
-                    .map_err(StartMicrovmError::GuestMemoryMmap)?,
+                    .map_err(|e| StartMicrovmError::GuestMemoryMmap(format!("{e:?}")))?,
                 GuestAddress(kernel_entry_addr),
                 None,
                 None,
@@ -1500,7 +1510,7 @@ pub fn create_guest_memory(
     arch_mem_regions.extend(shm_manager.regions());
 
     let guest_mem = GuestMemoryMmap::from_ranges(&arch_mem_regions)
-        .map_err(StartMicrovmError::GuestMemoryMmap)?;
+        .map_err(|e| StartMicrovmError::GuestMemoryMmap(format!("{e:?}")))?;
 
     let (guest_mem, entry_addr, initrd_config, cmdline) =
         load_payload(vm_resources, guest_mem, &arch_mem_info, payload)?;
@@ -1910,6 +1920,7 @@ fn attach_fs_devices(
                 config.shared_dir.clone(),
                 exit_code.clone(),
                 config.allow_root_dir_delete,
+                config.read_only,
             )
             .unwrap(),
         ));
@@ -2382,6 +2393,7 @@ pub mod tests {
             vcpu_count,
             ht_enabled: false,
             cpu_template: None,
+            nested_enabled: false,
         };
 
         let (guest_memory, _arch_memory_info, _shm_manager, _payload_config) =
@@ -2417,6 +2429,7 @@ pub mod tests {
             vcpu_count,
             ht_enabled: false,
             cpu_template: None,
+            nested_enabled: false,
         };
 
         // Dummy entry_addr, vcpus will not boot.

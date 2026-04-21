@@ -98,7 +98,16 @@ int32_t krun_free_ctx(uint32_t ctx_id);
 int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus, uint32_t ram_mib);
 
 /**
+ * The virtiofs tag used for the root filesystem. Can be used with krun_add_virtiofs*
+ * for more control over root filesystem parameters (e.g. read-only, DAX window size).
+ */
+#define KRUN_FS_ROOT_TAG "/dev/root"
+
+/**
  * Sets the path to be use as root for the microVM. Not available in libkrun-SEV.
+ *
+ * For more control over the root filesystem (e.g. read-only, DAX window size),
+ * use krun_add_virtiofs3() with KRUN_FS_ROOT_TAG instead.
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
@@ -323,9 +332,30 @@ int32_t krun_add_virtiofs2(uint32_t ctx_id,
                            const char *c_path,
                            uint64_t shm_size);
 
+/**
+ * Adds an independent virtio-fs device pointing to a host's directory with a tag. This
+ * variant allows specifying the size of the DAX window and a read-only flag.
+ *
+ * Arguments:
+ *  "ctx_id"         - the configuration context ID.
+ *  "c_tag"          - tag to identify the filesystem in the guest.
+ *  "c_path"         - full path to the directory in the host to be exposed to the guest.
+ *  "shm_size"       - size of the DAX SHM window in bytes.
+ *  "read_only"      - if true, the filesystem will be exposed as read-only to the guest.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_add_virtiofs3(uint32_t ctx_id,
+                           const char *c_tag,
+                           const char *c_path,
+                           uint64_t shm_size,
+                           bool read_only);
+
 /* Send the VFKIT magic after establishing the connection,
    as required by gvproxy in vfkit mode. */
-#define NET_FLAG_VFKIT 1 << 0
+#define NET_FLAG_VFKIT (1 << 0)
+#define NET_FLAG_DHCP_CLIENT (1 << 1)
 
 /* TSI (Transparent Socket Impersonation) feature flags for vsock */
 #define KRUN_TSI_HIJACK_INET  (1 << 0)
@@ -954,9 +984,6 @@ int32_t krun_setgid(uint32_t ctx_id, gid_t gid);
  *  "ctx_id"  - the configuration context ID.
  *  "enabled" - true to enable Nested Virtualization in the microVM.
  *
- * Notes:
- *  This feature is only supported on macOS.
- *
  * Returns:
  *  Zero on success or a negative error number on failure. Success doesn't imply that
  *  Nested Virtualization is supported on the system, only that it's going to be requested
@@ -966,9 +993,6 @@ int32_t krun_set_nested_virt(uint32_t ctx_id, bool enabled);
 
 /**
  * Check the system if Nested Virtualization is supported
- *
- * Notes:
- *  This feature is only supported on macOS.
  *
  * Returns:
  *  - 1 : Success and Nested Virtualization is supported
