@@ -1,4 +1,6 @@
-use macros::{guest, host};
+#[cfg(target_os = "linux")]
+use macros::guest;
+use macros::host;
 
 pub struct TestVirtioFsMisc;
 
@@ -66,6 +68,7 @@ mod host {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[guest]
 mod guest {
     use super::*;
@@ -205,3 +208,7 @@ mod guest {
         }
     }
 }
+
+// Stub impl so the guest-agent binary compiles on non-Linux targets.
+#[cfg(all(feature = "guest", not(target_os = "linux")))]
+impl crate::Test for TestVirtioFsMisc {}
