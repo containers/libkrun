@@ -13,7 +13,7 @@ use utils::epoll::{EpollEvent, EventSet};
 use utils::eventfd::EventFd;
 
 use crate::bus::BusDevice;
-use crate::legacy::ReadableFd;
+use crate::legacy::{IrqChip, ReadableFd};
 
 const LOOP_SIZE: usize = 0x40;
 
@@ -61,6 +61,8 @@ pub struct Serial {
     interrupt_enable: u8,
     interrupt_identification: u8,
     interrupt_evt: EventFd,
+    intc: Option<IrqChip>,
+    irq_line: Option<u32>,
     line_control: u8,
     line_status: u8,
     modem_control: u8,
@@ -82,6 +84,8 @@ impl Serial {
             interrupt_enable: 0,
             interrupt_identification: DEFAULT_INTERRUPT_IDENTIFICATION,
             interrupt_evt,
+            intc: None,
+            irq_line: None,
             line_control: DEFAULT_LINE_CONTROL,
             line_status: DEFAULT_LINE_STATUS,
             modem_control: DEFAULT_MODEM_CONTROL,
@@ -116,6 +120,15 @@ impl Serial {
     /// Provides a reference to the interrupt event fd.
     pub fn interrupt_evt(&self) -> &EventFd {
         &self.interrupt_evt
+    }
+
+    pub fn set_intc(&mut self, intc: IrqChip) {
+        self.intc = Some(intc);
+    }
+
+    pub fn set_irq_line(&mut self, irq: u32) {
+        debug!("SET_IRQ_LINE (SERIAL)={irq}");
+        self.irq_line = Some(irq);
     }
 
     fn is_dlab_set(&self) -> bool {
@@ -164,6 +177,14 @@ impl Serial {
     }
 
     fn trigger_interrupt(&mut self) -> io::Result<()> {
+        if let Some(intc) = &self.intc {
+            return intc
+                .lock()
+                .unwrap()
+                .set_irq(self.irq_line, Some(&self.interrupt_evt))
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{e:?}")));
+        }
+
         self.interrupt_evt.write(1)
     }
 

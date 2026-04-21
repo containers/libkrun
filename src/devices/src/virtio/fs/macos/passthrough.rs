@@ -2313,6 +2313,12 @@ impl FileSystem for PassthroughFs {
             return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
         }
 
+        let open_flags = if (flags & fuse::SetupmappingFlags::WRITE.bits()) != 0 {
+            libc::O_RDWR
+        } else {
+            libc::O_RDONLY
+        };
+
         let prot_flags = if (flags & fuse::SetupmappingFlags::WRITE.bits()) != 0 {
             libc::PROT_READ | libc::PROT_WRITE
         } else {
@@ -2327,7 +2333,7 @@ impl FileSystem for PassthroughFs {
 
         debug!("setupmapping: ino {inode:?} guest_addr={guest_addr:x} len={len}");
 
-        let file = self.open_inode(inode, libc::O_RDWR)?;
+        let file = self.open_inode(inode, open_flags)?;
         let fd = file.as_raw_fd();
 
         let host_addr = unsafe {
@@ -2344,10 +2350,7 @@ impl FileSystem for PassthroughFs {
             return Err(linux_error(io::Error::last_os_error()));
         }
 
-        let ret = unsafe { libc::close(fd) };
-        if ret == -1 {
-            return Err(linux_error(io::Error::last_os_error()));
-        }
+        drop(file);
 
         // We've checked that map_sender is something above.
         let sender = map_sender.as_ref().unwrap();

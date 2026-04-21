@@ -3,6 +3,7 @@ use crossbeam_channel::Sender;
 #[cfg(target_os = "macos")]
 use utils::worker_message::WorkerMessage;
 
+use std::io;
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
@@ -16,8 +17,44 @@ use super::super::{FsError, Queue};
 use super::defs::{HPQ_INDEX, REQ_INDEX};
 use super::descriptor_utils::{Reader, Writer};
 use super::passthrough::{self, PassthroughFs};
+use super::read_only::PassthroughFsRo;
 use super::server::Server;
 use crate::virtio::{InterruptTransport, VirtioShmRegion};
+
+enum FsServer {
+    ReadWrite(Server<PassthroughFs>),
+    ReadOnly(Server<PassthroughFsRo>),
+}
+
+impl FsServer {
+    fn handle_message(
+        &self,
+        r: Reader,
+        w: Writer,
+        shm_region: &Option<VirtioShmRegion>,
+        exit_code: &Arc<AtomicI32>,
+        #[cfg(target_os = "macos")] map_sender: &Option<Sender<WorkerMessage>>,
+    ) -> super::Result<usize> {
+        match self {
+            FsServer::ReadWrite(s) => s.handle_message(
+                r,
+                w,
+                shm_region,
+                exit_code,
+                #[cfg(target_os = "macos")]
+                map_sender,
+            ),
+            FsServer::ReadOnly(s) => s.handle_message(
+                r,
+                w,
+                shm_region,
+                exit_code,
+                #[cfg(target_os = "macos")]
+                map_sender,
+            ),
+        }
+    }
+}
 
 pub struct FsWorker {
     queues: Vec<Queue>,
@@ -25,7 +62,7 @@ pub struct FsWorker {
     interrupt: InterruptTransport,
     mem: GuestMemoryMmap,
     shm_region: Option<VirtioShmRegion>,
-    server: Server<PassthroughFs>,
+    server: FsServer,
     stop_fd: EventFd,
     exit_code: Arc<AtomicI32>,
     exit_request: Arc<AtomicBool>,
@@ -43,26 +80,32 @@ impl FsWorker {
         mem: GuestMemoryMmap,
         shm_region: Option<VirtioShmRegion>,
         passthrough_cfg: passthrough::Config,
+        read_only: bool,
         stop_fd: EventFd,
         exit_code: Arc<AtomicI32>,
         exit_request: Arc<AtomicBool>,
         exit_evt: EventFd,
         #[cfg(target_os = "macos")] map_sender: Option<Sender<WorkerMessage>>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, io::Error> {
+        let server = if read_only {
+            FsServer::ReadOnly(Server::new(PassthroughFsRo::new(passthrough_cfg)?))
+        } else {
+            FsServer::ReadWrite(Server::new(PassthroughFs::new(passthrough_cfg)?))
+        };
+        Ok(Self {
             queues,
             queue_evts,
             interrupt,
             mem,
             shm_region,
-            server: Server::new(PassthroughFs::new(passthrough_cfg).unwrap()),
+            server,
             stop_fd,
             exit_code,
             exit_request,
             exit_evt,
             #[cfg(target_os = "macos")]
             map_sender,
-        }
+        })
     }
 
     pub fn run(self) -> thread::JoinHandle<()> {
