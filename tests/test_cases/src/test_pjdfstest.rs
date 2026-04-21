@@ -59,7 +59,7 @@ mod host {
             Ok(())
         }
 
-        fn check(self: Box<Self>, stdout: Vec<u8>) -> TestOutcome {
+        fn check(self: Box<Self>, stdout: Vec<u8>, _test_setup: TestSetup) -> TestOutcome {
             let stdout = String::from_utf8_lossy(&stdout);
 
             if stdout.contains("Result: PASS") {
