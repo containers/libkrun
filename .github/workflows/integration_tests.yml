@@ -11,8 +11,28 @@ jobs:
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
       
+      - name: Install cross-compilation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lld
+      
       - name: Add musl target
         run: rustup target add x86_64-unknown-linux-musl
+      
+      - name: Add FreeBSD x86_64 target
+        run: rustup target add x86_64-unknown-freebsd
+      
+      - name: Install FreeBSD test prerequisites
+        run: sudo apt-get install -y --no-install-recommends libarchive-tools
+      
+      - name: Build FreeBSD sysroot and init
+        run: make BUILD_BSD_INIT=1 -- init/init-freebsd
+      
+      - name: Install gvproxy
+        run: |
+          curl -fL -o /tmp/gvproxy https://github.com/containers/gvisor-tap-vsock/releases/download/v0.8.9/gvproxy-linux-amd64
+          chmod +x /tmp/gvproxy
+          sudo mv /tmp/gvproxy /usr/local/bin/gvproxy
       
       - name: Build and install libkrun to test prefix
         run: make test-prefix NET=1 BLK=1
@@ -80,8 +100,28 @@ jobs:
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
       
+      - name: Install cross-compilation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+      
       - name: Add musl target
         run: rustup target add aarch64-unknown-linux-musl
+      
+      - name: Install nightly toolchain with rust-src for FreeBSD aarch64
+        run: rustup +nightly-2026-01-25 component add rust-src
+      
+      - name: Install FreeBSD test prerequisites
+        run: sudo apt-get install -y --no-install-recommends libarchive-tools
+      
+      - name: Build FreeBSD sysroot and init
+        run: make BUILD_BSD_INIT=1 -- init/init-freebsd
+      
+      - name: Install gvproxy
+        run: |
+          curl -fL -o /tmp/gvproxy https://github.com/containers/gvisor-tap-vsock/releases/download/v0.8.9/gvproxy-linux-arm64
+          chmod +x /tmp/gvproxy
+          sudo mv /tmp/gvproxy /usr/local/bin/gvproxy
       
       - name: Build and install libkrun to test prefix
         run: make test-prefix NET=1 BLK=1
