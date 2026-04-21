@@ -1,1 +1,1 @@
-../src/krun_display/libkrun_display.h
+../src/display/libkrun_display.h
