@@ -1,32 +1,55 @@
-Amazon Firecracker team <firecracker-devel@amazon.com>
+Adam Ford <adam.ford@anodize.com>
 Alyssa Rosenzweig <alyssa@rosenzweig.io>
+Amazon Firecracker team <firecracker-devel@amazon.com>
 Anders F Björklund <anders.f.bjorklund@gmail.com>
 arkkors <arkkors@users.noreply.github.com>
 Asahi Lina <lina@asahilina.net>
 Bingxin Li <bl497@cam.ac.uk>
 Cole Robinson <crobinso@redhat.com>
+Daniel Müller <deso@posteo.net>
 David Gageot <david.gageot@docker.com>
 David Michael <fedora.dm0@gmail.com>
 David Scott <dave@recoil.org>
 Djordje Lukic <djordje.lukic@docker.com>
+Eric Curtin <eric.curtin@docker.com>
+Eric Curtin <ericcurtin17@gmail.com>
 Erik Sjölund <erik.sjolund@gmail.com>
+Fabien Trégan <fabien@tregan.fr>
+Fabio Valentini <decathorpe@gmail.com>
 flouthoc <flouthoc.git@gmail.com>
+Gao Xiang <hsiangkao@linux.alibaba.com>
 Geoffrey Goodman <geoff@goodman.dev>
 German Maglione <gmaglione@redhat.com>
 Giuseppe Scrivano <gscrivan@redhat.com>
+ihexon <14349453+ihexon@users.noreply.github.com>
 Jake Correnti <jakecorrenti+github@proton.me>
+Jakub Hrozek <jakub@stacklok.com>
 Jan Noha <nohajc@gmail.com>
+Juan Antonio Osorio <ozz@stacklok.com>
 Matej Hrica <mhrica@redhat.com>
+Matej Hrica <mtjhrc@gmail.com>
+Mathieu Chassara <mathieu.chassara@gmail.com>
 Matias Ezequiel Vara Larsen <mvaralar@redhat.com>
+McNight <mcnight@mcnight.fr>
+Milan Zamazal <mzamazal@redhat.com>
 Nir Soffer <nirsof@gmail.com>
+Pepper Gray <hello@peppergray.xyz>
+Peter Collingbourne <pcc@google.com>
 Richard W.M. Jones <rjones@redhat.com>
+Roland Rauch <roland@rauch.com>
 Ruoqing He <heruoqing@iscas.ac.cn>
 Sandro Bonazzola <sbonazzo@redhat.com>
 Sasha Finkelstein <fnkl.kernel@gmail.com>
 Sergio Lopez <slp@redhat.com>
+SilverBut <SilverBut@users.noreply.github.com>
 Stefano Garzarella <sgarzare@redhat.com>
 Teoh Han Hui <teohhanhui@gmail.com>
+The Chromium OS Authors
 The ChromiumOS Authors + Android Open Source Project
 Tyler Fanelli <tfanelli@redhat.com>
+Vadzim Dambrouski <pftbest@gmail.com>
+Val Packett <val@invisiblethingslab.com>
+Val Packett <val@packett.cool>
 Wainer dos Santos Moschetta <wainersm@redhat.com>
 Zalan Blenessy <zalan.blenessy@gmail.com>
+Zewei Yang <yangzewei@loongson.cn>
