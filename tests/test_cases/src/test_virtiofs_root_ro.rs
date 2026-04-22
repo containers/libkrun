@@ -2,12 +2,17 @@
 // virtiofs root. It is not exhaustive.For a security sensitive test it would also be better
 // to bypass the guest kernel and execute the virtiofs commands directly.
 
-use macros::{guest, host};
+#[cfg(target_os = "linux")]
+use macros::guest;
+use macros::host;
 
 pub struct TestVirtiofsRootRo;
 
+#[allow(dead_code)]
 const TEST_FILE: &str = "test-file";
+#[allow(dead_code)]
 const TEST_CONTENT: &[u8] = b"original content";
+#[allow(dead_code)]
 const EMPTY_DIR: &str = "empty-dir";
 
 #[host]
@@ -67,6 +72,7 @@ mod host {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[guest]
 mod guest {
     use super::*;
@@ -215,3 +221,7 @@ mod guest {
         }
     }
 }
+
+// Stub impl so the guest-agent binary compiles on non-Linux targets (vsock test won't be dispatched there).
+#[cfg(all(feature = "guest", not(target_os = "linux")))]
+impl crate::Test for TestVirtiofsRootRo {}

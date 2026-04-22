@@ -11,8 +11,47 @@ jobs:
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
       
+      - name: Install cross-compilation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lld
+      
       - name: Add musl target
         run: rustup target add x86_64-unknown-linux-musl
+      
+      - name: Add FreeBSD x86_64 target
+        run: rustup target add x86_64-unknown-freebsd
+      
+      - name: Install FreeBSD test prerequisites
+        run: sudo apt-get install -y --no-install-recommends libarchive-tools
+      
+      - name: Build FreeBSD sysroot and init
+        run: make BUILD_BSD_INIT=1 -- init/init-freebsd
+      
+      - name: Install Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 'stable'
+      
+      - name: Build and cache gvproxy (x86_64)
+        uses: actions/cache@v4
+        id: gvproxy-cache
+        with:
+          path: /tmp/gvproxy-bin/
+          key: gvproxy-x86_64-${{ github.run_number }}
+      
+      - name: Build gvproxy from fork
+        if: steps.gvproxy-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/nohajc/gvisor-tap-vsock /tmp/gvproxy-build
+          cd /tmp/gvproxy-build
+          mkdir -p /tmp/gvproxy-bin
+          make
+          cp bin/gvproxy /tmp/gvproxy-bin/gvproxy-x86_64
+      
+      - name: Install gvproxy to PATH
+        run: |
+          sudo cp /tmp/gvproxy-bin/gvproxy-x86_64 /usr/local/bin/gvproxy
       
       - name: Build and install libkrun to test prefix
         run: make test-prefix
@@ -72,8 +111,47 @@ jobs:
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
       
+      - name: Install cross-compilation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+      
       - name: Add musl target
         run: rustup target add aarch64-unknown-linux-musl
+      
+      - name: Install nightly toolchain with rust-src for FreeBSD aarch64
+        run: rustup +nightly-2026-01-25 component add rust-src
+      
+      - name: Install FreeBSD test prerequisites
+        run: sudo apt-get install -y --no-install-recommends libarchive-tools
+      
+      - name: Build FreeBSD sysroot and init
+        run: make BUILD_BSD_INIT=1 -- init/init-freebsd
+      
+      - name: Install Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 'stable'
+      
+      - name: Build and cache gvproxy (aarch64)
+        uses: actions/cache@v4
+        id: gvproxy-cache
+        with:
+          path: /tmp/gvproxy-bin/
+          key: gvproxy-aarch64-${{ github.run_number }}
+      
+      - name: Build gvproxy from fork
+        if: steps.gvproxy-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/nohajc/gvisor-tap-vsock /tmp/gvproxy-build
+          cd /tmp/gvproxy-build
+          mkdir -p /tmp/gvproxy-bin
+          make
+          cp bin/gvproxy /tmp/gvproxy-bin/gvproxy-aarch64
+      
+      - name: Install gvproxy to PATH
+        run: |
+          sudo cp /tmp/gvproxy-bin/gvproxy-aarch64 /usr/local/bin/gvproxy
       
       - name: Build and install libkrun to test prefix
         run: make test-prefix

@@ -25,7 +25,14 @@ fn get_base(entry: u64) -> u64 {
 }
 
 fn get_limit(entry: u64) -> u32 {
-    ((((entry) & 0x000F_0000_0000_0000) >> 32) | ((entry) & 0x0000_0000_0000_FFFF)) as u32
+    let limit =
+        ((((entry) & 0x000F_0000_0000_0000) >> 32) | ((entry) & 0x0000_0000_0000_FFFF)) as u32;
+
+    if get_g(entry) == 1 {
+        (limit << 12) | 0xFFF
+    } else {
+        limit
+    }
 }
 
 fn get_g(entry: u64) -> u8 {
@@ -109,7 +116,7 @@ mod tests {
         assert_eq!(0xB, seg.type_);
         // base and limit
         assert_eq!(0x10_0000, seg.base);
-        assert_eq!(0xfffff, seg.limit);
+        assert_eq!(0xffffffff, seg.limit);
         assert_eq!(0x0, seg.unusable);
     }
 }

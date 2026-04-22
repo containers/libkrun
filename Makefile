@@ -20,6 +20,8 @@ AWS_NITRO_INIT_SRC = \
 
 AWS_NITRO_INIT_LD_FLAGS = -larchive -lnsm
 
+INIT_SRC = init/init.c init/dhcp.c
+
 ifeq ($(SEV),1)
     VARIANT = -sev
     FEATURE_FLAGS := --features amd-sev
@@ -30,6 +32,19 @@ ifeq ($(TDX),1)
 endif
 ifeq ($(VIRGL_RESOURCE_MAP2),1)
 	FEATURE_FLAGS += --features virgl_resource_map2
+endif
+# Test targets require the block device (BLK) feature for FreeBSD disk tests
+# and the NET feature for gvproxy-based network tests.
+# Enable automatically unless the user explicitly set them to a value.
+ifeq ($(BLK),)
+    ifneq ($(filter test test-prefix,$(MAKECMDGOALS)),)
+        BLK := 1
+    endif
+endif
+ifeq ($(NET),)
+    ifneq ($(filter test test-prefix,$(MAKECMDGOALS)),)
+        NET := 1
+    endif
 endif
 ifeq ($(BLK),1)
     FEATURE_FLAGS += --features blk
@@ -120,7 +135,7 @@ $(AWS_NITRO_INIT_BINARY): $(AWS_NITRO_INIT_SRC)
 	$(CC) -O2 -static -s -Wall $(AWS_NITRO_INIT_LD_FLAGS) -o $@ $(AWS_NITRO_INIT_SRC) $(AWS_NITRO_INIT_LD_FLAGS)
 
 ifeq ($(OS),Darwin)
-# If SYSROOT_BSD is not set and we're on macOS, generate sysroot automatically
+# macOS -> FreeBSD cross-compilation
 ifeq ($(SYSROOT_BSD),)
     SYSROOT_BSD = $(FREEBSD_ROOTFS_DIR)
     SYSROOT_BSD_TARGET = $(FREEBSD_ROOTFS_DIR)/.sysroot_ready
@@ -129,6 +144,16 @@ else
 endif
     # Cross-compile on macOS with the LLVM linker (brew install lld)
     CC_BSD=$(CLANG) -target $(ARCH)-unknown-freebsd -fuse-ld=lld -stdlib=libc++ -Wl,-strip-debug --sysroot $(SYSROOT_BSD)
+else ifeq ($(OS),Linux)
+# Linux -> FreeBSD cross-compilation
+ifeq ($(SYSROOT_BSD),)
+    SYSROOT_BSD = $(FREEBSD_ROOTFS_DIR)
+    SYSROOT_BSD_TARGET = $(FREEBSD_ROOTFS_DIR)/.sysroot_ready
+else
+    SYSROOT_BSD_TARGET =
+endif
+    # Cross-compile on Linux with clang
+    CC_BSD=$(CLANG) -target $(ARCH)-unknown-freebsd -fuse-ld=lld -Wl,-strip-debug --sysroot $(SYSROOT_BSD)
 else
     # Build on FreeBSD host
     CC_BSD=$(CC)
@@ -138,7 +163,7 @@ endif
 ifeq ($(BUILD_BSD_INIT),1)
 INIT_BINARY_BSD = init/init-freebsd
 $(INIT_BINARY_BSD): $(INIT_SRC) $(SYSROOT_BSD_TARGET)
-	$(CC_BSD) -std=c23 -O2 -static -Wall $(INIT_DEFS) -lutil -o $@ $(INIT_SRC) $(INIT_DEFS)
+	$(CC_BSD) -std=c23 -O2 -static -Wall -lutil -o $@ $(INIT_SRC)
 endif
 
 # Sysroot preparation rules for cross-compilation on macOS
@@ -179,10 +204,12 @@ $(FREEBSD_ROOTFS_DIR)/.sysroot_ready: $(FREEBSD_BASE_TXZ)
 	@cd $(FREEBSD_ROOTFS_DIR) && tar xJf base.txz 2>/dev/null || true
 	@touch $@
 
+BSD_ARCH=$(subst x86_64,amd64,$(subst aarch64,arm64,$(ARCH)))
+
 $(FREEBSD_BASE_TXZ):
-	@echo "Downloading FreeBSD $(FREEBSD_VERSION) base for $(ARCH)..."
+	@echo "Downloading FreeBSD $(FREEBSD_VERSION) base for $(BSD_ARCH)..."
 	@mkdir -p $(FREEBSD_ROOTFS_DIR)
-	@curl -fL -o $@ https://download.freebsd.org/releases/$(ARCH)/$(FREEBSD_VERSION)/base.txz
+	@curl -fL -o $@ https://download.freebsd.org/releases/$(BSD_ARCH)/$(FREEBSD_VERSION)/base.txz
 
 clean-sysroot:
 	rm -rf $(ROOTFS_DIR)
