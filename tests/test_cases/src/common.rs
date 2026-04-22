@@ -1,7 +1,7 @@
 //! Common utilities used by multiple test
 
 use anyhow::Context;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::fs;
 use std::fs::create_dir;
 use std::os::unix::ffi::OsStrExt;
@@ -25,30 +25,34 @@ fn copy_guest_agent(dir: &Path) -> anyhow::Result<()> {
 /// filesystem yourself (e.g. via `krun_add_virtiofs3` for read-only mounts) rather than
 /// using the default `setup_fs_and_enter`.
 pub fn setup_rootfs(test_setup: &TestSetup) -> anyhow::Result<PathBuf> {
-    let root_dir = test_setup.tmp_dir.join("root");
-    create_dir(&root_dir).context("Failed to create root directory")?;
+    let root_dir = test_setup.tmp_dir.join("rootfs");
+    if !root_dir.exists() {
+        create_dir(&root_dir).context("Failed to create rootfs directory")?;
+    }
     copy_guest_agent(&root_dir)?;
     Ok(root_dir)
 }
 
-/// Common part of most test. This setups an empty root filesystem, copies the guest agent there
-/// and runs the guest agent in the VM.
-/// Note that some tests might want to use a different root file system (perhaps a qcow image),
-/// in which case the test can implement the equivalent functionality itself, or better if there
-/// are more test doing that, add another utility method in this file.
-///
-/// The returned object is used for deleting the temporary files.
+/// Sets up the root filesystem, copies the guest agent into it, and enters the VM.
 pub fn setup_fs_and_enter(ctx: u32, test_setup: TestSetup) -> anyhow::Result<()> {
+    setup_fs_and_enter_with_env(ctx, test_setup, &[])
+}
+
+pub fn setup_fs_and_enter_with_env(
+    ctx: u32,
+    test_setup: TestSetup,
+    guest_env: &[&CStr],
+) -> anyhow::Result<()> {
     let root_dir = setup_rootfs(&test_setup)?;
 
     let path_str = CString::new(root_dir.as_os_str().as_bytes()).context("CString::new")?;
+    let mut envp: Vec<*const i8> = guest_env.iter().map(|entry| entry.as_ptr()).collect();
+    envp.push(null());
     unsafe {
         krun_call!(krun_set_root(ctx, path_str.as_ptr()))?;
         krun_call!(krun_set_workdir(ctx, c"/".as_ptr()))?;
         let test_case_cstr = CString::new(test_setup.test_case).context("CString::new")?;
         let argv = [test_case_cstr.as_ptr(), null()];
-        //let envp = [c"RUST_BACKTRACE=1".as_ptr(), null()];
-        let envp = [null()];
         krun_call!(krun_set_exec(
             ctx,
             c"/guest-agent".as_ptr(),

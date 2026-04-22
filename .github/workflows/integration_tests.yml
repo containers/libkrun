@@ -15,7 +15,7 @@ jobs:
         run: rustup target add x86_64-unknown-linux-musl
       
       - name: Build and install libkrun to test prefix
-        run: make test-prefix
+        run: make test-prefix NET=1 PJDFSTEST=1
       
       - name: Clippy (test_cases guest)
         run: |
@@ -45,13 +45,20 @@ jobs:
           sudo usermod -a -G kvm $USER
       
       - name: Install additional packages
-        run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools
+        run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools buildah dnsmasq iperf3
+      
+      - name: Install passt from source
+        run: |
+          curl -L https://passt.top/passt/snapshot/passt-2026_01_20.386b5f5.tar.gz | tar xz
+          cd passt-2026_01_20.386b5f5
+          make
+          sudo make install
       
       - name: Install libkrunfw
         run: TAG=`curl -sL https://api.github.com/repos/containers/libkrunfw/releases/latest |jq -r .tag_name` && curl -L -o /tmp/libkrunfw-x86_64.tgz https://github.com/containers/libkrunfw/releases/download/$TAG/libkrunfw-x86_64.tgz && mkdir tmp && tar xf /tmp/libkrunfw-x86_64.tgz -C tmp && sudo mv tmp/lib64/* /lib/x86_64-linux-gnu
       
       - name: Integration tests
-        run: KRUN_ENOMEM_WORKAROUND=1 KRUN_NO_UNSHARE=1 KRUN_TEST_BASE_DIR=/tmp/libkrun-tests make test TEST_FLAGS="--keep-all --github-summary"
+        run: KRUN_ENOMEM_WORKAROUND=1 KRUN_TEST_BASE_DIR=/tmp/libkrun-tests make test NET=1 PJDFSTEST=1 IPERF_DURATION=3 TEST_FLAGS="--keep-all --github-summary"
 
       - name: Upload test logs
         if: always()
@@ -61,6 +68,7 @@ jobs:
           path: |
             /tmp/libkrun-tests/
             !/tmp/libkrun-tests/**/guest-agent
+            !/tmp/libkrun-tests/**/rootfs
           if-no-files-found: ignore
 
   integration-tests-aarch64:
@@ -76,7 +84,7 @@ jobs:
         run: rustup target add aarch64-unknown-linux-musl
       
       - name: Build and install libkrun to test prefix
-        run: make test-prefix
+        run: make test-prefix NET=1 PJDFSTEST=1
       
       - name: Clippy (test_cases guest)
         run: |
@@ -99,7 +107,14 @@ jobs:
           cargo clippy --locked --target aarch64-unknown-linux-musl -p guest-agent -- -D warnings
       
       - name: Install additional packages
-        run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools
+        run: sudo apt-get install -y --no-install-recommends build-essential patchelf pkg-config net-tools dnsmasq iperf3 git uidmap
+      
+      - name: Install passt from source
+        run: |
+          curl -L https://passt.top/passt/snapshot/passt-2026_01_20.386b5f5.tar.gz | tar xz
+          cd passt-2026_01_20.386b5f5
+          make
+          sudo make install
       
       - name: Install libkrunfw
         run: TAG=`curl -sL https://api.github.com/repos/containers/libkrunfw/releases/latest |jq -r .tag_name` && curl -L -o /tmp/libkrunfw-aarch64.tgz https://github.com/containers/libkrunfw/releases/download/$TAG/libkrunfw-aarch64.tgz && mkdir tmp && tar xf /tmp/libkrunfw-aarch64.tgz -C tmp && sudo mv tmp/lib64/* /lib/aarch64-linux-gnu
@@ -108,7 +123,7 @@ jobs:
         run: rm -fr /tmp/libkrun-tests
       
       - name: Integration tests
-        run: KRUN_ENOMEM_WORKAROUND=1 KRUN_NO_UNSHARE=1 KRUN_TEST_BASE_DIR=/tmp/libkrun-tests make test TEST_FLAGS="--keep-all --github-summary"
+        run: KRUN_ENOMEM_WORKAROUND=1 KRUN_NO_UNSHARE=1 KRUN_TEST_BASE_DIR=/tmp/libkrun-tests make test NET=1 PJDFSTEST=1 IPERF_DURATION=3 TEST_FLAGS="--keep-all --github-summary"
 
       - name: Upload test logs
         if: always()
@@ -118,4 +133,5 @@ jobs:
           path: |
             /tmp/libkrun-tests/
             !/tmp/libkrun-tests/**/guest-agent
+            !/tmp/libkrun-tests/**/rootfs
           if-no-files-found: ignore

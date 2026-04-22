@@ -26,8 +26,8 @@ fn set_timeouts(stream: &mut TcpStream) {
         .unwrap();
 }
 
-fn connect(port: u16) -> TcpStream {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
+fn connect(server_ip: Ipv4Addr, port: u16) -> TcpStream {
+    let addr = SocketAddr::new(IpAddr::V4(server_ip), port);
     let mut tries = 0;
     loop {
         match TcpStream::connect(addr) {
@@ -45,12 +45,13 @@ fn connect(port: u16) -> TcpStream {
 
 #[derive(Debug, Copy, Clone)]
 pub struct TcpTester {
+    server_ip: Ipv4Addr,
     port: u16,
 }
 
 impl TcpTester {
-    pub const fn new(port: u16) -> Self {
-        Self { port }
+    pub const fn new(server_ip: Ipv4Addr, port: u16) -> Self {
+        Self { server_ip, port }
     }
 
     pub fn create_server_socket(&self) -> TcpListener {
@@ -70,7 +71,7 @@ impl TcpTester {
     }
 
     pub fn run_client(&self) {
-        let mut stream = connect(self.port);
+        let mut stream = connect(self.server_ip, self.port);
         set_timeouts(&mut stream);
         expect_msg(&mut stream, b"ping!");
         expect_wouldblock(&mut stream);

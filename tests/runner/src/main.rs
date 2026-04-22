@@ -8,14 +8,7 @@ use std::panic::catch_unwind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tempdir::TempDir;
-use test_cases::{test_cases, ShouldRun, Test, TestCase, TestSetup};
-
-#[derive(Clone)]
-enum TestOutcome {
-    Pass,
-    Fail,
-    Skip(&'static str),
-}
+use test_cases::{test_cases, Report, ShouldRun, Test, TestCase, TestOutcome, TestSetup};
 
 struct TestResult {
     name: String,
@@ -45,6 +38,48 @@ fn start_vm(test_setup: TestSetup) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Kill background processes registered for cleanup via
+/// [`TestSetup::register_cleanup_pid`]. Sends SIGTERM first, waits up to 5s
+/// for graceful exit, then SIGKILL any survivors.
+fn kill_cleanup_pids(test_dir: &Path) {
+    use nix::sys::signal::{kill, Signal};
+    use nix::unistd::Pid;
+    use std::io::BufRead;
+
+    let Ok(file) = File::open(test_dir.join("cleanup.pids")) else {
+        return;
+    };
+
+    let mut pids = Vec::new();
+    for line in std::io::BufReader::new(file).lines() {
+        let Ok(line) = line else { continue };
+        if let Ok(raw) = line.trim().parse::<i32>() {
+            pids.push(Pid::from_raw(raw));
+        }
+    }
+
+    for &pid in &pids {
+        let _ = kill(pid, Signal::SIGTERM);
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        pids.retain(|&pid| kill(pid, None).is_ok());
+        if pids.is_empty() || std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    for &pid in &pids {
+        eprintln!(
+            "WARNING: cleanup process {} did not exit after SIGTERM, sending SIGKILL",
+            pid
+        );
+        let _ = kill(pid, Signal::SIGKILL);
+    }
+}
+
 fn run_single_test(
     test_case: &TestCase,
     base_dir: &Path,
@@ -72,37 +107,145 @@ fn run_single_test(
     let test_dir = base_dir.join(test_case.name);
     fs::create_dir(&test_dir).context("Failed to create test directory")?;
 
+    // Prepare rootfs: build from container image if needed, otherwise create empty dir
+    let rootfs_dir = test_dir.join("rootfs");
+    if let Some(containerfile) = test_case.rootfs_image() {
+        use test_cases::rootfs;
+        if let Err(e) = rootfs::prepare_rootfs(containerfile, &rootfs_dir) {
+            eprintln!("SKIP ({e})");
+            return Ok(TestResult {
+                name: test_case.name.to_string(),
+                outcome: TestOutcome::Skip("rootfs image build failed"),
+                log_path: None,
+            });
+        }
+    } else {
+        fs::create_dir(&rootfs_dir).context("Failed to create rootfs directory")?;
+    }
+
     let log_path = test_dir.join("log.txt");
     let log_file = File::create(&log_path).context("Failed to create log file")?;
+    let stdout_path = test_dir.join("stdout.txt");
+    let stdout_file = File::create(&stdout_path).context("Failed to create stdout file")?;
 
-    let child = Command::new(&executable)
-        .arg("start-vm")
-        .arg("--test-case")
-        .arg(test_case.name)
-        .arg("--tmp-dir")
-        .arg(&test_dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(log_file)
-        .spawn()
-        .context("Failed to start subprocess for test")?;
+    // Use `buildah unshare` for full subuid/subgid mapping + `unshare --net`
+    // for network namespace isolation.
+    // Fall back to running directly (with a warning) if buildah or unshare isn't available.
+    let has_cmd = |cmd: &str| {
+        Command::new(cmd)
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
+    let use_buildah_unshare = cfg!(target_os = "linux")
+        && std::env::var_os("KRUN_NO_UNSHARE").is_none()
+        && has_cmd("buildah")
+        && has_cmd("unshare");
+
+    let child = if use_buildah_unshare {
+        let exe = executable.display();
+        let name = test_case.name;
+        let dir = test_dir.display();
+        Command::new("buildah")
+            .args(["unshare", "--", "unshare", "--net", "--", "sh", "-c"])
+            .arg(format!(
+                "echo '=== namespace debug ===' >&2; id >&2; cat /proc/self/uid_map >&2; cat /proc/self/gid_map >&2; ip link >&2; ip addr add 127.0.0.1/8 dev lo && ip link set lo up; echo '=== lo setup exit: '$?' ===' >&2; ip addr >&2; echo '=== end debug ===' >&2; exec {exe} start-vm --test-case {name} --tmp-dir {dir}"
+            ))
+            .stdin(Stdio::piped())
+            .stdout(stdout_file)
+            .stderr(log_file)
+            .spawn()
+            .context("Failed to start subprocess for test")?
+    } else {
+        if cfg!(target_os = "linux") {
+            eprintln!("WARNING: buildah not available, running without namespace isolation.");
+            eprintln!("Tests may fail if the required network ports are already in use.");
+        }
+        Command::new(&executable)
+            .arg("start-vm")
+            .arg("--test-case")
+            .arg(test_case.name)
+            .arg("--tmp-dir")
+            .arg(&test_dir)
+            .stdin(Stdio::piped())
+            .stdout(stdout_file)
+            .stderr(log_file)
+            .spawn()
+            .context("Failed to start subprocess for test")?
+    };
+
+    // Enforce a per-test timeout. If the child doesn't exit within the
+    // deadline, kill it so we don't hang the entire suite.
+    let timeout = std::time::Duration::from_secs(test_case.timeout_secs());
+    let mut child = child;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if child.try_wait().unwrap_or(None).is_some() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            eprintln!("TIMEOUT ({}s)", timeout.as_secs());
+            let _ = child.kill();
+            let _ = child.wait();
+            kill_cleanup_pids(&test_dir);
+            return Ok(TestResult {
+                name: test_case.name.to_string(),
+                outcome: TestOutcome::Timeout,
+                log_path: Some(log_path),
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    let stdout = fs::read(&stdout_path).unwrap_or_default();
 
     let test_name = test_case.name.to_string();
-    let result = catch_unwind(|| {
+    let test_dir_clone = test_dir.clone();
+    let outcome = match catch_unwind(|| {
         let test = get_test(&test_name).unwrap();
-        test.check(child);
-    });
-
-    let outcome = if result.is_ok() {
-        eprintln!("OK");
-        if !keep_all {
-            let _ = fs::remove_dir_all(&test_dir);
-        }
-        TestOutcome::Pass
-    } else {
-        eprintln!("FAIL");
-        TestOutcome::Fail
+        let test_setup = TestSetup {
+            test_case: test_name,
+            tmp_dir: test_dir_clone,
+        };
+        test.check(stdout, test_setup)
+    }) {
+        Ok(outcome) => outcome,
+        Err(_) => TestOutcome::Fail("test.check() panicked".to_string()),
     };
+
+    // Kill any background processes registered for cleanup (e.g. gvproxy).
+    // Runs after check() regardless of outcome, so leaked processes are
+    // cleaned up even if the test crashed.
+    kill_cleanup_pids(&test_dir);
+
+    match &outcome {
+        TestOutcome::Pass => {
+            eprintln!("OK");
+            if !keep_all {
+                let _ = fs::remove_dir_all(&test_dir);
+            }
+        }
+        TestOutcome::Fail(reason) => {
+            eprintln!("FAIL:");
+            eprintln!("{reason}");
+        }
+        TestOutcome::Skip(reason) => {
+            eprintln!("SKIP ({})", reason);
+        }
+        TestOutcome::Timeout => {
+            eprintln!("TIMEOUT");
+        }
+        TestOutcome::Report(report) => {
+            eprintln!("REPORT");
+            eprintln!("{:2}", report.text());
+            if !keep_all {
+                let _ = fs::remove_dir_all(&test_dir);
+            }
+        }
+    }
 
     Ok(TestResult {
         name: test_case.name.to_string(),
@@ -116,6 +259,7 @@ fn write_github_summary(
     num_pass: usize,
     num_fail: usize,
     num_skip: usize,
+    num_report: usize,
 ) -> anyhow::Result<()> {
     let summary_path = env::var("GITHUB_STEP_SUMMARY")
         .context("GITHUB_STEP_SUMMARY environment variable not set")?;
@@ -128,22 +272,31 @@ fn write_github_summary(
 
     let num_ran = num_pass + num_fail;
     let status = if num_fail == 0 { "✅" } else { "❌" };
-    let skip_msg = if num_skip > 0 {
-        format!(" ({num_skip} skipped)")
-    } else {
+    let mut extra = Vec::new();
+    if num_skip > 0 {
+        extra.push(format!("{num_skip} skipped"));
+    }
+    if num_report > 0 {
+        extra.push(format!("{num_report} reports"));
+    }
+    let extra_msg = if extra.is_empty() {
         String::new()
+    } else {
+        format!(" ({})", extra.join(", "))
     };
 
     writeln!(
         file,
-        "## {status} Integration Tests - {num_pass}/{num_ran} passed{skip_msg}\n"
+        "## {status} Integration Tests - {num_pass}/{num_ran} passed{extra_msg}\n"
     )?;
 
     for result in results {
         let (icon, status_text) = match &result.outcome {
             TestOutcome::Pass => ("✅", String::new()),
-            TestOutcome::Fail => ("❌", String::new()),
+            TestOutcome::Fail(_) => ("❌", String::new()),
             TestOutcome::Skip(reason) => ("⏭️", format!(" - {}", reason)),
+            TestOutcome::Timeout => ("⏳", String::from(" - Timeout")),
+            TestOutcome::Report(_) => ("📊", String::new()),
         };
 
         writeln!(file, "<details>")?;
@@ -153,7 +306,13 @@ fn write_github_summary(
             result.name, status_text
         )?;
 
-        if let Some(log_path) = &result.log_path {
+        if let TestOutcome::Fail(reason) = &result.outcome {
+            writeln!(file, "**Error:**\n```\n{reason}\n```\n---\n")?;
+        }
+
+        if let TestOutcome::Report(report) = &result.outcome {
+            writeln!(file, "{}", report.gh_markdown())?;
+        } else if let Some(log_path) = &result.log_path {
             let log_content = fs::read_to_string(log_path).unwrap_or_default();
             writeln!(file, "```")?;
             // Limit log size to avoid huge summaries (2 MiB limit)
@@ -221,34 +380,45 @@ fn run_tests(
         .count();
     let num_fail = results
         .iter()
-        .filter(|r| matches!(r.outcome, TestOutcome::Fail))
+        .filter(|r| matches!(r.outcome, TestOutcome::Fail(_)))
         .count();
     let num_skip = results
         .iter()
         .filter(|r| matches!(r.outcome, TestOutcome::Skip(_)))
         .count();
+    let num_report = results
+        .iter()
+        .filter(|r| matches!(r.outcome, TestOutcome::Report(_)))
+        .count();
     let num_ran = num_pass + num_fail;
 
     // Write GitHub Actions summary if requested
     if github_summary {
-        write_github_summary(&results, num_pass, num_fail, num_skip)?;
+        write_github_summary(&results, num_pass, num_fail, num_skip, num_report)?;
     }
 
-    let skip_msg = if num_skip > 0 {
-        format!(" ({num_skip} skipped)")
-    } else {
+    let mut extra = Vec::new();
+    if num_skip > 0 {
+        extra.push(format!("{num_skip} skipped"));
+    }
+    if num_report > 0 {
+        extra.push(format!("{num_report} reports"));
+    }
+    let extra_msg = if extra.is_empty() {
         String::new()
+    } else {
+        format!(" ({})", extra.join(", "))
     };
 
     if num_fail > 0 {
         eprintln!("(See test artifacts at: {})", base_dir.display());
-        println!("\nFAIL - {num_pass}/{num_ran} passed{skip_msg}");
+        println!("\nFAIL - {num_pass}/{num_ran} passed{extra_msg}");
         anyhow::bail!("")
     } else {
         if keep_all {
             eprintln!("(See test artifacts at: {})", base_dir.display());
         }
-        eprintln!("\nOK - {num_pass}/{num_ran} passed{skip_msg}");
+        eprintln!("\nOK - {num_pass}/{num_ran} passed{extra_msg}");
     }
 
     Ok(())
