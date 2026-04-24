@@ -39,10 +39,6 @@ endif
 ifeq ($(NET),1)
     FEATURE_FLAGS += --features net
 endif
-ifeq ($(EFI),1)
-    VARIANT = -efi
-    FEATURE_FLAGS := --features efi # EFI Implies blk and net
-endif
 ifeq ($(GPU),1)
     FEATURE_FLAGS += --features gpu
 endif
@@ -215,9 +211,6 @@ ifeq ($(TDX),1)
 	mv target/release/libkrun.so target/release/$(KRUN_BASE_$(OS))
 endif
 ifeq ($(OS),Darwin)
-ifeq ($(EFI),1)
-	install_name_tool -id $(PREFIX)/$(LIBDIR_$(OS))/$(KRUN_SONAME_$(OS)) target/release/libkrun.dylib
-endif
 	mv target/release/libkrun.dylib target/release/$(KRUN_BASE_$(OS))
 endif
 	cp target/release/$(KRUN_BASE_$(OS)) $(LIBRARY_RELEASE_$(OS))

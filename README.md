@@ -38,7 +38,6 @@ This project provides the following variants of the library:
 - **libkrun**: Generic variant compatible with all Virtualization-capable systems.
 - **libkrun-sev**: Variant including support for AMD SEV (SEV, SEV-ES and SEV-SNP) memory encryption and remote attestation. Requires an SEV-capable CPU.
 - **libkrun-tdx**: Variant including support for Intel TDX memory encryption. Requires a TDX-capable CPU.
-- **libkrun-efi**: Variant that bundles OVMF/EDK2 for booting a distribution-provided kernel (only available on macOS).
 
 Each variant generates a dynamic library with a different name (and ```soname```), so both can be installed at the same time in the same system.
 
@@ -105,7 +104,7 @@ When TSI is enabled, the VMM acts as a proxy for AF_INET, AF_INET6 and AF_UNIX s
 
 ## Building and installing
 
-### Linux (generic variant)
+### Linux
 
 #### Requirements
 
@@ -182,27 +181,7 @@ sudo make TDX=1 install
 
 The TDX flavor of libkrun only supports guests with 1 vCPU and memory less than or equal to 3072mib.
 
-### macOS (EFI variant)
-
-#### Requirements
-
-* A working [Rust](https://www.rust-lang.org/) toolchain
-* A host running macOS 14 or newer
-
-#### Compiling
-
-```
-make EFI=1
-```
-
-#### Installing
-
-```
-sudo make EFI=1 install
-
-```
-
-### macOS (generic variant)
+### macOS
 
 #### Requirements
 

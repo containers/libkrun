@@ -1,1 +1,0 @@
-KRUN_EFI.silent.fd was built from commit 13e8adac8a83141b51375c799996946082e1eb43 of the https://github.com/slp/edk2 repository.
