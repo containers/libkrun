@@ -1888,7 +1888,6 @@ const KRUN_FEATURE_BLK: u64 = 1;
 const KRUN_FEATURE_GPU: u64 = 2;
 const KRUN_FEATURE_SND: u64 = 3;
 const KRUN_FEATURE_INPUT: u64 = 4;
-const KRUN_FEATURE_EFI: u64 = 5;
 const KRUN_FEATURE_TEE: u64 = 6;
 const KRUN_FEATURE_AMD_SEV: u64 = 7;
 const KRUN_FEATURE_INTEL_TDX: u64 = 8;
@@ -1903,7 +1902,6 @@ pub extern "C" fn krun_has_feature(feature: u64) -> c_int {
         KRUN_FEATURE_GPU => cfg!(feature = "gpu"),
         KRUN_FEATURE_SND => cfg!(feature = "snd"),
         KRUN_FEATURE_INPUT => cfg!(feature = "input"),
-        KRUN_FEATURE_EFI => cfg!(feature = "efi"),
         KRUN_FEATURE_TEE => cfg!(feature = "tee"),
         KRUN_FEATURE_AMD_SEV => cfg!(feature = "amd-sev"),
         KRUN_FEATURE_INTEL_TDX => cfg!(feature = "tdx"),
@@ -2589,7 +2587,6 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     if ctx_cfg.vmr.external_kernel.is_none()
         && ctx_cfg.vmr.kernel_bundle.is_none()
         && ctx_cfg.vmr.firmware_config.is_none()
-        && cfg!(not(feature = "efi"))
     {
         if let Some(ref krunfw) = ctx_cfg.krunfw {
             if let Err(err) = unsafe { load_krunfw_payload(krunfw, &mut ctx_cfg.vmr) } {

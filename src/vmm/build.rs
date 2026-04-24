@@ -1,15 +1,4 @@
 fn main() {
-    if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64") {
-        let edk2_binary_path = std::env::var("KRUN_EDK2_BINARY_PATH").unwrap_or_else(|_| {
-            format!(
-                "{}/../../edk2/KRUN_EFI.silent.fd",
-                std::env::var("CARGO_MANIFEST_DIR").unwrap()
-            )
-        });
-        println!("cargo:rustc-env=KRUN_EDK2_BINARY_PATH={edk2_binary_path}");
-        println!("cargo:rerun-if-env-changed=KRUN_EDK2_BINARY_PATH");
-    }
-
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         println!("cargo:rustc-link-lib=framework=Hypervisor");
     }

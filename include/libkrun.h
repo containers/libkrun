@@ -919,7 +919,7 @@ int32_t krun_add_vsock(uint32_t ctx_id, uint32_t tsi_features);
 
 /**
  * Returns the eventfd file descriptor to signal the guest to shut down orderly. This must be
- * called before starting the microVM with "krun_start_event". Only available in libkrun-efi.
+ * called before starting the microVM with "krun_start_event".
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
@@ -1007,7 +1007,6 @@ int32_t krun_check_nested_virt(void);
 #define KRUN_FEATURE_GPU 2
 #define KRUN_FEATURE_SND 3
 #define KRUN_FEATURE_INPUT 4
-#define KRUN_FEATURE_EFI 5
 #define KRUN_FEATURE_TEE 6
 #define KRUN_FEATURE_AMD_SEV 7
 #define KRUN_FEATURE_INTEL_TDX 8

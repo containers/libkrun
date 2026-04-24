@@ -14,7 +14,6 @@ amd-sev = ["blk", "bitfield", "bitflags", "iocuddle", "tee", "kbs-types", "serde
 tdx = ["blk", "tee", "kbs-types", "serde", "serde_json", "dep:tdx", "devices/tdx", "arch/tdx", "cpuid/tdx"]
 net = ["devices/net"]
 blk = ["devices/blk"]
-efi = ["blk", "net", "devices/efi", "arch/efi"]
 gpu = ["devices/gpu", "krun_display"]
 snd = ["devices/snd"]
 input = ["devices/input", "krun_input"]
