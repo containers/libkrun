@@ -520,19 +520,22 @@ static int mount_filesystems()
     }
 
     if (mount("proc", "/proc", "proc",
-              MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
+              MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0 &&
+        errno != EBUSY) {
         perror("mount(/proc)");
         return -1;
     }
 
     if (mount("sysfs", "/sys", "sysfs",
-              MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
+              MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0 &&
+        errno != EBUSY) {
         perror("mount(/sys)");
         return -1;
     }
 
     if (mount("cgroup2", "/sys/fs/cgroup", "cgroup2",
-              MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
+              MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0 &&
+        errno != EBUSY) {
         perror("mount(/sys/fs/cgroup)");
         return -1;
     }
@@ -545,13 +548,15 @@ static int mount_filesystems()
     }
 
     if (mount("devpts", "/dev/pts", "devpts",
-              MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0) {
+              MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0 &&
+        errno != EBUSY) {
         perror("mount(/dev/pts)");
         return -1;
     }
 
     if (mount("tmpfs", "/dev/shm", "tmpfs", MS_NOEXEC | MS_NOSUID | MS_RELATIME,
-              NULL) < 0) {
+              NULL) < 0 &&
+        errno != EBUSY) {
         perror("mount(/dev/shm)");
         return -1;
     }
