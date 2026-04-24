@@ -29,7 +29,9 @@
 #include <sys/wait.h>
 
 #if __linux__
+#include <linux/reboot.h>
 #include <linux/vm_sockets.h>
+#include <sys/reboot.h>
 #endif
 
 #include "dhcp.h"
@@ -1439,6 +1441,11 @@ int main(int argc, char **argv)
         } else if (WIFSIGNALED(status)) {
             set_exit_code(WTERMSIG(status) + 128);
         }
+
+        sync();
+#if __linux__
+        reboot(LINUX_REBOOT_CMD_RESTART);
+#endif
     }
 
     return 0;
