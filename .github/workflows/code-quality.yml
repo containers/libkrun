@@ -56,8 +56,8 @@ jobs:
       - name: Create a fake init
         run: touch init/init
       
-      - name: Clippy (efi+gpu)
-        run: cargo clippy --locked --features efi,gpu -- -D warnings
+      - name: Clippy (gpu)
+        run: cargo clippy --locked --features gpu -- -D warnings
         env:
           KRUN_INIT_BINARY_PATH: ${{ github.workspace }}/init/init
 

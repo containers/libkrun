@@ -88,7 +88,7 @@ use nix::unistd::isatty;
 use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
 use utils::worker_message::WorkerMessage;
-#[cfg(all(target_arch = "x86_64", not(feature = "efi"), not(feature = "tee")))]
+#[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
 use vm_memory::mmap::MmapRegion;
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 use vm_memory::Address;
@@ -98,10 +98,6 @@ use vm_memory::GuestMemory;
 #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
 use vm_memory::GuestRegionMmap;
 use vm_memory::{GuestAddress, GuestMemoryMmap};
-
-#[cfg(target_arch = "aarch64")]
-#[allow(dead_code)]
-static EDK2_BINARY: &[u8] = include_bytes!(env!("KRUN_EDK2_BINARY_PATH"));
 
 /// Errors associated with starting the instance.
 #[derive(Debug)]
@@ -546,7 +542,7 @@ fn choose_payload(vm_resources: &VmResources) -> Result<Payload, StartMicrovmErr
         return Ok(Payload::KernelCopy);
     } else if let Some(external_kernel) = vm_resources.external_kernel() {
         Ok(Payload::ExternalKernel(external_kernel.clone()))
-    } else if cfg!(feature = "efi") || vm_resources.firmware_config.is_some() {
+    } else if vm_resources.firmware_config.is_some() {
         Ok(Payload::Firmware)
     } else {
         Err(StartMicrovmError::MissingKernelConfig)
@@ -729,9 +725,7 @@ pub fn build_microvm(
     let mut serial_devices = Vec::new();
 
     // Create the legacy serial device if we're booting from a firmware
-    if (cfg!(feature = "efi") || vm_resources.firmware_config.is_some())
-        && !vm_resources.disable_implicit_console
-    {
+    if vm_resources.firmware_config.is_some() && !vm_resources.disable_implicit_console {
         serial_devices.push(setup_serial_device(
             event_manager,
             None,
@@ -1438,7 +1432,6 @@ pub fn create_guest_memory(
 > {
     let mem_size = mem_size << 20;
 
-    #[cfg(not(feature = "efi"))]
     let (firmware_data, firmware_size) = if let Some(firmware) = &vm_resources.firmware_config {
         let data = std::fs::read(firmware.path.clone()).map_err(StartMicrovmError::FirmwareRead)?;
         let len = data.len();
@@ -1446,8 +1439,6 @@ pub fn create_guest_memory(
     } else {
         (None, None)
     };
-    #[cfg(feature = "efi")]
-    let (firmware_data, firmware_size) = (Some(EDK2_BINARY), Some(EDK2_BINARY.len()));
 
     #[cfg(target_arch = "x86_64")]
     let (arch_mem_info, mut arch_mem_regions) = match payload {

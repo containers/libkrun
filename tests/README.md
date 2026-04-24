@@ -15,7 +15,7 @@ You can also run `./run.sh` inside the `test` directory. When using the `./run.s
    rustup target add aarch64-unknown-linux-musl
    ```
 
-2. Install libkrunfw (required for non-EFI builds). Either via homebrew:
+2. Install libkrunfw - either via homebrew:
    ```bash
    brew install libkrunfw
    ```
