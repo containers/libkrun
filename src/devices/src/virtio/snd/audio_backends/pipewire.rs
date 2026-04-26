@@ -11,8 +11,8 @@ use std::{
 
 use log::debug;
 use pw::{
-    context::Context, core::Core, properties::properties, spa, sys::PW_ID_CORE,
-    thread_loop::ThreadLoop,
+    context::ContextRc, core::CoreRc, properties::properties, spa, sys::PW_ID_CORE,
+    thread_loop::ThreadLoopRc,
 };
 use spa::{
     param::{
@@ -74,27 +74,25 @@ unsafe impl Sync for PwBackend {}
 #[allow(clippy::non_send_fields_in_send_ty)]
 pub struct PwBackend {
     pub stream_params: Arc<RwLock<Vec<Stream>>>,
-    thread_loop: ThreadLoop,
-    pub core: Core,
+    thread_loop: ThreadLoopRc,
+    pub core: CoreRc,
     #[allow(dead_code)]
-    context: Context,
-    pub stream_hash: RwLock<HashMap<u32, pw::stream::Stream>>,
+    context: ContextRc,
+    pub stream_hash: RwLock<HashMap<u32, pw::stream::StreamRc>>,
     pub stream_listener: RwLock<HashMap<u32, pw::stream::StreamListener<i32>>>,
 }
 
 impl PwBackend {
     pub fn new(stream_params: Arc<RwLock<Vec<Stream>>>) -> Self {
-        pw::init();
-
         // SAFETY: safe as the thread loop cannot access objects associated
         // with the loop while the lock is held
-        let thread_loop = unsafe { ThreadLoop::new(Some("Pipewire thread loop"), None).unwrap() };
+        let thread_loop = unsafe { ThreadLoopRc::new(Some("Pipewire thread loop"), None).unwrap() };
 
         let lock_guard = thread_loop.lock();
 
-        let context = Context::new(&thread_loop).expect("failed to create context");
+        let context = ContextRc::new(&thread_loop, None).expect("failed to create context");
         thread_loop.start();
-        let core = context.connect(None).expect("Failed to connect to core");
+        let core = context.connect_rc(None).expect("Failed to connect to core");
 
         // Create new reference for the variable so that it can be moved into the
         // closure.
@@ -341,7 +339,7 @@ impl AudioBackend for PwBackend {
                 *pw::keys::MEDIA_CATEGORY => media_category,
             };
 
-            let stream = pw::stream::Stream::new(&self.core, stream_name, props)
+            let stream = pw::stream::StreamRc::new(self.core.clone(), stream_name, props)
                 .expect("could not create new stream");
 
             let streams = self.stream_params.clone();
