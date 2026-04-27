@@ -247,14 +247,14 @@ impl TsiStreamProxy {
                 if let Some(port) = port_map.get(&sin.port()) {
                     SocketAddrV4::new(sin.ip(), *port).into()
                 } else {
-                    req.addr
+                    return -libc::EPERM;
                 }
             } else if let Some(sin6) = req.addr.as_sockaddr_in6() {
                 debug!("sockaddr is ipv6");
                 if let Some(port) = port_map.get(&sin6.port()) {
                     SocketAddrV6::new(sin6.ip(), *port, sin6.flowinfo(), sin6.flowinfo()).into()
                 } else {
-                    req.addr
+                    return -libc::EPERM;
                 }
             } else if req.addr.as_unix_addr().is_some() {
                 debug!("sockaddr is unix");
