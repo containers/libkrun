@@ -114,7 +114,7 @@ impl FsWorker {
         let virtq_req_ev_fd = self.queue_evts[REQ_INDEX].as_raw_fd();
         let stop_ev_fd = self.stop_fd.as_raw_fd();
 
-        let epoll = Epoll::new().unwrap();
+        let mut epoll = Epoll::new().unwrap();
 
         let _ = epoll.ctl(
             ControlOperation::Add,
@@ -132,8 +132,8 @@ impl FsWorker {
             &EpollEvent::new(EventSet::IN, stop_ev_fd as u64),
         );
 
+        let mut epoll_events = vec![EpollEvent::new(EventSet::empty(), 0); 32];
         loop {
-            let mut epoll_events = vec![EpollEvent::new(EventSet::empty(), 0); 32];
             match epoll.wait(epoll_events.len(), -1, epoll_events.as_mut_slice()) {
                 Ok(ev_cnt) => {
                     for event in &epoll_events[0..ev_cnt] {
