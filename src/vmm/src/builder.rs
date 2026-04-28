@@ -203,8 +203,6 @@ pub enum StartMicrovmError {
     RegisterNetDevice(device_manager::mmio::Error),
     /// Cannot initialize a MMIO Rng device or add a device to the MMIO Bus.
     RegisterRngDevice(device_manager::mmio::Error),
-    /// Cannot initialize a MMIO Snd device or add a device to the MMIO Bus.
-    RegisterSndDevice(device_manager::mmio::Error),
     /// Cannot initialize a MMIO Vsock Device or add a device to the MMIO Bus.
     RegisterVsockDevice(device_manager::mmio::Error),
     /// Cannot attest the VM in the Secure Virtualization context.
@@ -447,14 +445,6 @@ impl Display for StartMicrovmError {
                 write!(
                     f,
                     "Cannot initialize a MMIO Rng Device or add a device to the MMIO Bus. {err_msg}"
-                )
-            }
-            RegisterSndDevice(ref err) => {
-                let mut err_msg = format!("{err}");
-                err_msg = err_msg.replace('\"', "");
-                write!(
-                    f,
-                    "Cannot initialize a MMIO Snd Device or add a device to the MMIO Bus. {err_msg}"
                 )
             }
             RegisterVsockDevice(ref err) => {
@@ -1056,11 +1046,6 @@ pub fn build_microvm(
     #[cfg(feature = "net")]
     if vm_resources.dhcp_client {
         vmm.kernel_cmdline.insert_str("KRUN_DHCP=1")?;
-    }
-
-    #[cfg(feature = "snd")]
-    if vm_resources.snd_device {
-        attach_snd_device(&mut vmm, intc.clone())?;
     }
 
     if let Some(s) = &vm_resources.kernel_cmdline.epilog {
@@ -2317,19 +2302,6 @@ fn attach_input_devices(
         let id = format!("input{}", index);
         attach_mmio_device(vmm, id, intc.clone(), input_device).map_err(RegisterInputDevice)?;
     }
-
-    Ok(())
-}
-
-#[cfg(feature = "snd")]
-fn attach_snd_device(vmm: &mut Vmm, intc: IrqChip) -> std::result::Result<(), StartMicrovmError> {
-    use self::StartMicrovmError::*;
-
-    let snd = Arc::new(Mutex::new(devices::virtio::Snd::new().unwrap()));
-    let id = String::from(snd.lock().unwrap().id());
-
-    // The device mutex mustn't be locked here otherwise it will deadlock.
-    attach_mmio_device(vmm, id, intc, snd).map_err(RegisterSndDevice)?;
 
     Ok(())
 }

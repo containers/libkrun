@@ -160,7 +160,6 @@ struct ContextConfig {
     shutdown_efd: Option<EventFd>,
     gpu_virgl_flags: Option<u32>,
     gpu_shm_size: Option<usize>,
-    enable_snd: bool,
     console_output: Option<PathBuf>,
     vmm_uid: Option<libc::uid_t>,
     vmm_gid: Option<libc::gid_t>,
@@ -1784,20 +1783,6 @@ pub extern "C" fn krun_display_set_dpi(_ctx_id: u32, _display_id: u32, _dpi: u32
     -libc::ENOTSUP
 }
 
-#[allow(clippy::missing_safety_doc)]
-#[no_mangle]
-pub unsafe extern "C" fn krun_set_snd_device(ctx_id: u32, enable: bool) -> i32 {
-    match CTX_MAP.lock().unwrap().entry(ctx_id) {
-        Entry::Occupied(mut ctx_cfg) => {
-            let cfg = ctx_cfg.get_mut();
-            cfg.enable_snd = enable;
-        }
-        Entry::Vacant(_) => return -libc::ENOENT,
-    }
-
-    KRUN_SUCCESS
-}
-
 #[allow(unused_assignments)]
 #[no_mangle]
 pub extern "C" fn krun_get_shutdown_eventfd(ctx_id: u32) -> i32 {
@@ -1886,7 +1871,6 @@ pub unsafe extern "C" fn krun_check_nested_virt() -> i32 {
 const KRUN_FEATURE_NET: u64 = 0;
 const KRUN_FEATURE_BLK: u64 = 1;
 const KRUN_FEATURE_GPU: u64 = 2;
-const KRUN_FEATURE_SND: u64 = 3;
 const KRUN_FEATURE_INPUT: u64 = 4;
 const KRUN_FEATURE_TEE: u64 = 6;
 const KRUN_FEATURE_AMD_SEV: u64 = 7;
@@ -1900,7 +1884,6 @@ pub extern "C" fn krun_has_feature(feature: u64) -> c_int {
         KRUN_FEATURE_NET => cfg!(feature = "net"),
         KRUN_FEATURE_BLK => cfg!(feature = "blk"),
         KRUN_FEATURE_GPU => cfg!(feature = "gpu"),
-        KRUN_FEATURE_SND => cfg!(feature = "snd"),
         KRUN_FEATURE_INPUT => cfg!(feature = "input"),
         KRUN_FEATURE_TEE => cfg!(feature = "tee"),
         KRUN_FEATURE_AMD_SEV => cfg!(feature = "amd-sev"),
@@ -2704,9 +2687,6 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     if let Some(shm_size) = ctx_cfg.gpu_shm_size {
         ctx_cfg.vmr.set_gpu_shm_size(shm_size);
     }
-
-    #[cfg(feature = "snd")]
-    ctx_cfg.vmr.set_snd_device(ctx_cfg.enable_snd);
 
     if let Some(console_output) = ctx_cfg.console_output {
         ctx_cfg.vmr.set_console_output(console_output);
