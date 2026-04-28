@@ -20,6 +20,8 @@ use krun_display::{
 use libc::c_void;
 #[cfg(target_os = "macos")]
 use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_APPLE;
+#[cfg(all(feature = "virgl_resource_map2", target_os = "linux"))]
+use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_DMABUF;
 #[cfg(all(not(feature = "virgl_resource_map2"), target_os = "linux"))]
 use rutabaga_gfx::RUTABAGA_MEM_HANDLE_TYPE_OPAQUE_FD;
 #[cfg(all(feature = "virgl_resource_map2", target_os = "linux"))]
@@ -31,8 +33,9 @@ use rutabaga_gfx::{
 };
 #[cfg(target_os = "linux")]
 use rutabaga_gfx::{
-    RUTABAGA_CHANNEL_TYPE_PW, RUTABAGA_CHANNEL_TYPE_X11, RUTABAGA_MAP_ACCESS_MASK,
-    RUTABAGA_MAP_ACCESS_READ, RUTABAGA_MAP_ACCESS_RW, RUTABAGA_MAP_ACCESS_WRITE,
+    RutabagaDescriptor, RutabagaFromRawDescriptor, RUTABAGA_CHANNEL_TYPE_PW,
+    RUTABAGA_CHANNEL_TYPE_X11, RUTABAGA_MAP_ACCESS_MASK, RUTABAGA_MAP_ACCESS_READ,
+    RUTABAGA_MAP_ACCESS_RW, RUTABAGA_MAP_ACCESS_WRITE,
 };
 #[cfg(target_os = "macos")]
 use utils::worker_message::WorkerMessage;
@@ -213,6 +216,86 @@ impl VirtioGpu {
         })
     }
 
+    /// Start `virgl_render_server` as a subprocess and return a socket descriptor
+    /// that virglrenderer will use to send GPU commands to it.
+    ///
+    /// Venus (Vulkan-over-virtio) requires a running render server: during
+    /// `virgl_renderer_init`, the Venus init path calls the `get_server_fd`
+    /// callback to obtain a connected socket.  If that returns -1 the Venus
+    /// capset never initialises and every guest Vulkan call fails.
+    ///
+    /// We create a `SOCK_SEQPACKET` socketpair, hand one end to the server
+    /// subprocess and return the other end as a `RutabagaDescriptor`; rutabaga
+    /// stores it in the callback cookie so `get_server_fd` can return it.
+    #[cfg(target_os = "linux")]
+    fn start_render_server() -> Option<RutabagaDescriptor> {
+        use std::os::unix::process::CommandExt;
+
+        let server_path = env::var("VIRGL_RENDER_SERVER_PATH")
+            .unwrap_or_else(|_| "/usr/lib/virglrenderer/virgl_render_server".to_string());
+
+        if !std::path::Path::new(&server_path).exists() {
+            warn!(
+                "virgl_render_server not found at {server_path}: \
+                 Venus Vulkan will be unavailable in the guest"
+            );
+            return None;
+        }
+
+        // socketpair without SOCK_CLOEXEC — both fds are inheritable by default.
+        // We set CLOEXEC on client_fd ourselves so the subprocess doesn't get it;
+        // server_fd stays inheritable so the server subprocess can use it.
+        let mut fds = [0i32; 2];
+        let ret =
+            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_SEQPACKET, 0, fds.as_mut_ptr()) };
+        if ret != 0 {
+            warn!(
+                "socketpair for virgl_render_server failed: {}",
+                std::io::Error::last_os_error()
+            );
+            return None;
+        }
+        let [client_fd, server_fd] = fds;
+
+        // Client fd: mark CLOEXEC so the subprocess doesn't inherit it.
+        unsafe { libc::fcntl(client_fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+        // server_fd: intentionally no CLOEXEC — the subprocess needs it.
+
+        let server_fd_str = server_fd.to_string();
+        let spawn_result = unsafe {
+            std::process::Command::new(&server_path)
+                .arg("--socket-fd")
+                .arg(&server_fd_str)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .pre_exec(move || {
+                    // In the child after fork, before exec: explicitly clear
+                    // CLOEXEC on server_fd in case the Rust stdlib set it.
+                    libc::fcntl(server_fd, libc::F_SETFD, 0);
+                    Ok(())
+                })
+                .spawn()
+        };
+
+        // Close server_fd in the parent — the child has its own copy.
+        unsafe { libc::close(server_fd) };
+
+        match spawn_result {
+            Ok(_child) => {
+                // The server runs as an orphaned subprocess; dropping `_child`
+                // here does NOT kill it.  It will be reparented to PID 1 when
+                // this process exits and will be reaped there.
+                Some(unsafe { RutabagaDescriptor::from_raw_descriptor(client_fd) })
+            }
+            Err(e) => {
+                warn!("failed to start virgl_render_server: {e}");
+                unsafe { libc::close(client_fd) };
+                None
+            }
+        }
+    }
+
     pub fn create_rutabaga(
         mem: GuestMemoryMmap,
         queue_ctl: Arc<Mutex<VirtQueue>>,
@@ -276,7 +359,21 @@ impl VirtioGpu {
 
         let fence =
             Self::create_fence_handler(mem, queue_ctl.clone(), fence_state.clone(), interrupt);
-        builder.clone().build(fence.clone(), None).ok()
+
+        // Venus (Vulkan-over-virtio) requires a render server subprocess.
+        // Start it now so that virglrenderer's `get_server_fd` callback can
+        // return a valid socket fd during `virgl_renderer_init`.
+        #[cfg(target_os = "linux")]
+        let render_server_fd = if virgl_flags & (1 << 6) != 0 {
+            // VIRGLRENDERER_VENUS bit is set — start the server.
+            Self::start_render_server()
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "linux"))]
+        let render_server_fd: Option<rutabaga_gfx::RutabagaDescriptor> = None;
+
+        builder.clone().build(fence.clone(), render_server_fd).ok()
     }
 
     pub fn create_fallback_rutabaga(
@@ -837,7 +934,20 @@ impl VirtioGpu {
         let addr = shm_region.host_addr + offset;
 
         if let Ok(export) = self.rutabaga.export_blob(resource_id) {
-            if export.handle_type == RUTABAGA_MEM_HANDLE_TYPE_SHM {
+            // SHM and DMABUF are both regular host fds whose pages can be exposed
+            // to the guest by mmap'ing them directly into the virtio shm region.
+            // For SHM (memfd) this has always worked. For DMABUF it had been
+            // delegated to virgl_renderer_resource_map2, which only handles
+            // virglrenderer-allocated GPU memory and silently no-ops for external
+            // dma-bufs — leaving the guest blob backed by zero pages. That broke
+            // muvm camera capture, where the v4l2 source exports kernel buffers
+            // via VIDIOC_EXPBUF as dma-bufs, the muvm bridge forwards the fd
+            // across SCM_RIGHTS, libkrun classifies it as DMABUF, and the guest's
+            // CREATE_BLOB allocates a host-backed-by-nothing blob. Mapping the
+            // dma-buf fd directly here gives the guest real, live pages.
+            if export.handle_type == RUTABAGA_MEM_HANDLE_TYPE_SHM
+                || export.handle_type == RUTABAGA_MEM_HANDLE_TYPE_DMABUF
+            {
                 let ret = unsafe {
                     libc::mmap(
                         addr as *mut libc::c_void,
@@ -849,7 +959,10 @@ impl VirtioGpu {
                     )
                 };
                 if ret == libc::MAP_FAILED {
-                    error!("failed to mmap resource in shm region");
+                    error!(
+                        "failed to mmap resource in shm region (handle_type={:#x})",
+                        export.handle_type
+                    );
                     return Err(ErrUnspec);
                 }
             } else {

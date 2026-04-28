@@ -24,8 +24,11 @@ fi
 
 GUEST_TARGET="${ARCH}-unknown-linux-musl"
 
-# Run the unit tests first (this tests the testing framework itself not libkrun)
-cargo test -p test_cases --features guest
+# Run the unit tests first (this tests the testing framework itself not libkrun).
+# Guest code may use Linux-only libc calls that won't compile with other toolchains.
+if [ "$OS" = "Linux" ]; then
+	cargo test -p test_cases --features guest
+fi
 
 # On macOS, we need to cross-compile for Linux musl
 if [ "$OS" = "Darwin" ]; then

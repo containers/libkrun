@@ -13,6 +13,9 @@ use test_tsi_tcp_guest_listen::TestTsiTcpGuestListen;
 mod test_multiport_console;
 use test_multiport_console::TestMultiportConsole;
 
+mod test_virtiofs_root_ro;
+use test_virtiofs_root_ro::TestVirtiofsRootRo;
+
 pub enum ShouldRun {
     Yes,
     No(&'static str),
@@ -56,6 +59,7 @@ pub fn test_cases() -> Vec<TestCase> {
             Box::new(TestTsiTcpGuestListen::new()),
         ),
         TestCase::new("multiport-console", Box::new(TestMultiportConsole)),
+        TestCase::new("virtiofs-root-ro", Box::new(TestVirtiofsRootRo)),
     ]
 }
 
