@@ -842,7 +842,104 @@ char **concat_entrypoint_argv(char **entrypoint, char **config_argv)
     return argv;
 }
 
-static int config_parse_file(char ***argv, char **workdir,
+static unsigned int config_parse_skip(jsmntok_t *token)
+{
+    unsigned int n = 1;
+
+    for (int i = 0; i < token->size; i++) {
+        n += config_parse_skip(&token[n]);
+    }
+
+    return n;
+}
+
+static bool is_mount_point(const char *path)
+{
+    /*
+     * Beware that Podman arranges tmpfs auto-mounts. This means stat/lstat
+     * cannot be used to check the mount status as it would cause mounting the
+     * host tmpfs. Let's look at /proc/mounts instead.
+     */
+    FILE *mounts;
+    char line[1024];
+    char mount_point[512];
+    bool found = false;
+
+    mounts = fopen("/proc/mounts", "r");
+    if (!mounts) {
+        perror("fopen(/proc/mounts)");
+        return false;
+    }
+
+    while (fgets(line, sizeof(line), mounts)) {
+        /*
+         * This doesn't handle escape sequences for spaces and tabs in paths.
+         * Not an issue currently as we don't mount any such paths, but could be
+         * improved in future.
+         */
+        if (sscanf(line, "%*s %511s %*s %*s %*d %*d", mount_point) == 1) {
+            if (strcmp(mount_point, path) == 0) {
+                found = true;
+                break;
+            }
+        }
+    }
+
+    fclose(mounts);
+    return found;
+}
+
+static char *config_parse_mounts(char *data, jsmntok_t *token)
+{
+    jsmntok_t *tmount, *tdestination, *ttype, *tsource;
+    unsigned int i, j;
+    unsigned int t = 0;
+
+    if (token[t++].type != JSMN_ARRAY) {
+        printf("Mounts not an array\n");
+        return NULL;
+    }
+
+    for (i = 0; i < token->size; i++) {
+        tmount = &token[t++];
+        if (tmount->type != JSMN_OBJECT) {
+            printf("Unexpected mounts contents\n");
+            return NULL;
+        }
+
+        tdestination = ttype = tsource = NULL;
+        for (j = 0; j < tmount->size; j++) {
+            if (jsoneq(data, &token[t], "destination") == 0) {
+                tdestination = &token[t + 1];
+                t += 2;
+            } else if (jsoneq(data, &token[t], "type") == 0) {
+                ttype = &token[t + 1];
+                t += 2;
+            } else if (jsoneq(data, &token[t], "source") == 0) {
+                tsource = &token[t + 1];
+                t += 2;
+            } else {
+                t += config_parse_skip(&token[t]);
+            }
+        }
+
+        if (tdestination && ttype && tsource &&
+            jsoneq(data, ttype, "tmpfs") == 0 &&
+            jsoneq(data, tsource, "tmpfs") == 0) {
+            char *path = config_parse_string(data, tdestination);
+            if (path) {
+                if (!is_mount_point(path)) {
+                    return path;
+                }
+                free(path);
+            }
+        }
+    }
+
+    return NULL;
+}
+
+static int config_parse_file(char ***argv, char **workdir, char **tmpfs,
                              const char *config_file)
 {
     jsmn_parser parser;
@@ -852,7 +949,8 @@ static int config_parse_file(char ***argv, char **workdir,
     off_t data_len;
     char **config_argv;
     char **entrypoint;
-    int parsed_env, parsed_workdir, parsed_args, parsed_entrypoint;
+    int parsed_env, parsed_workdir, parsed_args, parsed_entrypoint,
+        parsed_tmpfs;
     int num_tokens;
     int ret = -1;
     int fd;
@@ -900,10 +998,12 @@ static int config_parse_file(char ***argv, char **workdir,
 
     config_argv = NULL;
     entrypoint = NULL;
-    parsed_env = parsed_workdir = parsed_args = parsed_entrypoint = 0;
+    parsed_env = parsed_workdir = parsed_args = parsed_entrypoint =
+        parsed_tmpfs = 0;
 
-    for (i = 1; i < num_tokens && (!parsed_env || !parsed_args ||
-                                   !parsed_workdir || !parsed_entrypoint);
+    for (i = 1;
+         i < num_tokens && (!parsed_env || !parsed_args || !parsed_workdir ||
+                            !parsed_entrypoint || !parsed_tmpfs);
          i++) {
         if (!parsed_env && jsoneq(data, &tokens[i], "Env") == 0 &&
             (i + 1) < num_tokens && tokens[i + 1].type == JSMN_ARRAY) {
@@ -939,6 +1039,12 @@ static int config_parse_file(char ***argv, char **workdir,
             (i + 1) < num_tokens) {
             entrypoint = config_parse_args(data, &tokens[i + 1]);
             parsed_entrypoint = 1;
+        }
+
+        if (!parsed_tmpfs && jsoneq(data, &tokens[i], "mounts") == 0 &&
+            (i + 1) < num_tokens &&
+            (*tmpfs = config_parse_mounts(data, &tokens[i + 1]))) {
+            parsed_tmpfs = 1;
         }
     }
 
@@ -1200,6 +1306,7 @@ int main(int argc, char **argv)
 #endif
     char *env_init_pid1;
     char *config_workdir, *env_workdir;
+    char *config_tmpfs;
     char *rlimits;
     char **config_argv, **exec_argv;
     const char *config_file;
@@ -1330,6 +1437,7 @@ int main(int argc, char **argv)
 
     config_argv = NULL;
     config_workdir = NULL;
+    config_tmpfs = NULL;
 
     config_file = getenv("KRUN_CONFIG");
 
@@ -1343,13 +1451,25 @@ int main(int argc, char **argv)
         config_file = CONFIG_FILE_PATH;
     }
 
-    config_parse_file(&config_argv, &config_workdir, config_file);
+    config_parse_file(&config_argv, &config_workdir, &config_tmpfs,
+                      config_file);
 
 #if __FreeBSD__
     if (config_file_mounted) {
         unmount_config_iso();
     }
 #endif
+
+    if (config_tmpfs) {
+        /* TODO: Honour mount flags from the config file. Most notably,
+         * tmpcopyup is set by Podman by default, requesting copying the files
+         * present in the original directory, e.g. from the image. */
+        if (mount("tmpfs", config_tmpfs, "tmpfs",
+                  MS_NOEXEC | MS_NOSUID | MS_NODEV | MS_RELATIME, NULL) < 0) {
+            perror("mount for tmpfs");
+            exit(-1);
+        }
+    }
 
     krun_home = getenv("KRUN_HOME");
     if (krun_home) {
