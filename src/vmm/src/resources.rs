@@ -186,9 +186,6 @@ pub struct VmResources {
         krun_input::InputConfigBackend<'static>,
         krun_input::InputEventProviderBackend<'static>,
     )>,
-    #[cfg(feature = "snd")]
-    /// Enable the virtio-snd device.
-    pub snd_device: bool,
     #[cfg(feature = "vhost-user")]
     /// Vhost-user device configurations
     pub vhost_user_devices: Vec<VhostUserDeviceConfig>,
@@ -361,11 +358,6 @@ impl VmResources {
         self.gpu_shm_size = Some(shm_size);
     }
 
-    #[cfg(feature = "snd")]
-    pub fn set_snd_device(&mut self, enabled: bool) {
-        self.snd_device = enabled;
-    }
-
     pub fn set_console_output(&mut self, console_output: PathBuf) {
         self.console_output = Some(console_output);
     }
@@ -446,8 +438,6 @@ mod tests {
             displays: Vec::new(),
             #[cfg(feature = "input")]
             input_backends: Vec::new(),
-            #[cfg(feature = "snd")]
-            snd_device: false,
             #[cfg(feature = "vhost-user")]
             vhost_user_devices: Vec::new(),
             console_output: None,

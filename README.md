@@ -53,7 +53,7 @@ Each variant generates a dynamic library with a different name (and ```soname```
 * virtio-vsock (for TSI and socket redirection)
 * virtio-balloon (only free-page reporting)
 * virtio-rng
-* virtio-snd
+
 
 ## Networking
 
@@ -119,7 +119,7 @@ When TSI is enabled, the VMM acts as a proxy for AF_INET, AF_INET6 and AF_UNIX s
 * **VIRGL_RESOURCE_MAP2=1**: Uses virgl_resource_map2 function. Requires a virglrenderer-devel patched with [1374](https://gitlab.freedesktop.org/virgl/virglrenderer/-/merge_requests/1374)
 * **BLK=1**: Enables virtio-block.
 * **NET=1**: Enables virtio-net.
-* **SND=1**: Enables virtio-snd.
+
 
 #### Compiling
 

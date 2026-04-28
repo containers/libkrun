@@ -37,6 +37,5 @@ runs:
           libvirglrenderer-dev \
           libepoxy-dev \
           libdrm-dev \
-          libpipewire-0.3-dev \
           clang-format \
           libclang-dev
