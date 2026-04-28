@@ -15,7 +15,6 @@ tdx = ["blk", "tee", "kbs-types", "serde", "serde_json", "dep:tdx", "devices/tdx
 net = ["devices/net"]
 blk = ["devices/blk"]
 gpu = ["devices/gpu", "krun_display"]
-snd = ["devices/snd"]
 input = ["devices/input", "krun_input"]
 aws-nitro = []
 

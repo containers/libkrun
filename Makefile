@@ -42,9 +42,6 @@ endif
 ifeq ($(GPU),1)
     FEATURE_FLAGS += --features gpu
 endif
-ifeq ($(SND),1)
-    FEATURE_FLAGS += --features snd
-endif
 ifeq ($(INPUT),1)
     FEATURE_FLAGS += --features input
 endif

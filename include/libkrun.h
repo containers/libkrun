@@ -736,18 +736,6 @@ int krun_add_input_device(uint32_t ctx_id, const void *config_backend, size_t co
 int krun_add_input_device_fd(uint32_t ctx_id, int input_fd);
 
 /**
- * Enables or disables a virtio-snd device.
- *
- * Arguments:
- *  "ctx_id" - the configuration context ID.
- *  "enable" - boolean indicating whether virtio-snd should be enabled or disabled.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_snd_device(uint32_t ctx_id, bool enable);
-
-/**
  * Configures a map of rlimits to be set in the guest before starting the isolated binary.
  *
  * Arguments:
@@ -1005,7 +993,6 @@ int32_t krun_check_nested_virt(void);
 #define KRUN_FEATURE_NET 0
 #define KRUN_FEATURE_BLK 1
 #define KRUN_FEATURE_GPU 2
-#define KRUN_FEATURE_SND 3
 #define KRUN_FEATURE_INPUT 4
 #define KRUN_FEATURE_TEE 6
 #define KRUN_FEATURE_AMD_SEV 7
