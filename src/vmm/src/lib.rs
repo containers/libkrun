@@ -274,6 +274,7 @@ impl Vmm {
         _intc: &IrqChip,
         initrd: &Option<InitrdConfig>,
         _smbios_oem_strings: &Option<Vec<String>>,
+        _pvh: bool,
     ) -> Result<()> {
         #[cfg(target_arch = "x86_64")]
         {
@@ -290,6 +291,7 @@ impl Vmm {
                 cmdline_len,
                 initrd,
                 vcpus.len() as u8,
+                _pvh,
             )
             .map_err(Error::ConfigureSystem)?;
         }
