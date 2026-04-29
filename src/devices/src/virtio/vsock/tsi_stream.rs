@@ -613,9 +613,7 @@ impl Proxy for TsiStreamProxy {
             -libc::EINVAL
         };
 
-        if ret > 0
-            && (self.tx_cnt - self.last_tx_cnt_sent).0 as usize >= (defs::CONN_TX_BUF_SIZE / 2)
-        {
+        if ret > 0 && (self.tx_cnt - self.last_tx_cnt_sent).0 >= self.peer_buf_alloc / 2 {
             debug!(
                 "sending credit update: id={}, tx_cnt={}, last_tx_cnt={}",
                 self.id, self.tx_cnt, self.last_tx_cnt_sent
