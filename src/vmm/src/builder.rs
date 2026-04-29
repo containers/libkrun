@@ -1155,7 +1155,10 @@ fn load_external_kernel(
     guest_mem: &GuestMemoryMmap,
     arch_mem_info: &ArchMemoryInfo,
     external_kernel: &ExternalKernel,
-) -> std::result::Result<(GuestAddress, Option<InitrdConfig>, Option<String>, bool), StartMicrovmError> {
+) -> std::result::Result<
+    (GuestAddress, Option<InitrdConfig>, Option<String>, bool),
+    StartMicrovmError,
+> {
     #[allow(unused_mut)]
     let mut pvh = false;
     let entry_addr = match external_kernel.format {
@@ -1302,7 +1305,20 @@ fn load_external_kernel(
         None
     };
 
-    Ok((entry_addr, initrd_config, external_kernel.cmdline.clone(), pvh))
+    Ok((
+        entry_addr,
+        initrd_config,
+        external_kernel.cmdline.clone(),
+        pvh,
+    ))
+}
+
+struct LoadedPayload {
+    guest_mem: GuestMemoryMmap,
+    entry_addr: GuestAddress,
+    initrd_config: Option<InitrdConfig>,
+    kernel_cmdline: Option<String>,
+    pvh: bool,
 }
 
 fn load_payload(
@@ -1310,16 +1326,7 @@ fn load_payload(
     guest_mem: GuestMemoryMmap,
     _arch_mem_info: &ArchMemoryInfo,
     payload: &Payload,
-) -> std::result::Result<
-    (
-        GuestMemoryMmap,
-        GuestAddress,
-        Option<InitrdConfig>,
-        Option<String>,
-        bool,
-    ),
-    StartMicrovmError,
-> {
+) -> std::result::Result<LoadedPayload, StartMicrovmError> {
     match payload {
         #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
         Payload::KernelCopy => {
@@ -1346,7 +1353,13 @@ fn load_payload(
             guest_mem
                 .write(kernel_data, GuestAddress(kernel_guest_addr))
                 .unwrap();
-            Ok((guest_mem, GuestAddress(kernel_entry_addr), None, None, false))
+            Ok(LoadedPayload {
+                guest_mem,
+                entry_addr: GuestAddress(kernel_entry_addr),
+                initrd_config: None,
+                kernel_cmdline: None,
+                pvh: false,
+            })
         }
         #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
         Payload::KernelMmap => {
@@ -1434,8 +1447,8 @@ fn load_payload(
                 }
             };
 
-            Ok((
-                guest_mem
+            Ok(LoadedPayload {
+                guest_mem: guest_mem
                     .insert_region(Arc::new(
                         GuestRegionMmap::new(kernel_region, GuestAddress(kernel_guest_addr))
                             .ok_or_else(|| {
@@ -1445,19 +1458,31 @@ fn load_payload(
                             })?,
                     ))
                     .map_err(|e| StartMicrovmError::GuestMemoryMmap(format!("{e:?}")))?,
-                GuestAddress(kernel_entry_addr),
-                None,
-                None,
-                false,
-            ))
+                entry_addr: GuestAddress(kernel_entry_addr),
+                initrd_config: None,
+                kernel_cmdline: None,
+                pvh: false,
+            })
         }
         Payload::ExternalKernel(external_kernel) => {
             let (entry_addr, initrd_config, cmdline, pvh) =
                 load_external_kernel(&guest_mem, _arch_mem_info, external_kernel)?;
-            Ok((guest_mem, entry_addr, initrd_config, cmdline, pvh))
+            Ok(LoadedPayload {
+                guest_mem,
+                entry_addr,
+                initrd_config,
+                kernel_cmdline: cmdline,
+                pvh,
+            })
         }
         #[cfg(test)]
-        Payload::Empty => Ok((guest_mem, GuestAddress(0), None, None, false)),
+        Payload::Empty => Ok(LoadedPayload {
+            guest_mem,
+            entry_addr: GuestAddress(0),
+            initrd_config: None,
+            kernel_cmdline: None,
+            pvh: false,
+        }),
         #[cfg(feature = "tee")]
         Payload::Tee => {
             let (kernel_host_addr, kernel_guest_addr, kernel_size) =
@@ -1505,15 +1530,21 @@ fn load_payload(
                 size: initrd_data.len(),
             };
 
-            Ok((
+            Ok(LoadedPayload {
                 guest_mem,
-                GuestAddress(arch::RESET_VECTOR),
-                Some(initrd_config),
-                None,
-                false,
-            ))
+                entry_addr: GuestAddress(arch::RESET_VECTOR),
+                initrd_config: Some(initrd_config),
+                kernel_cmdline: None,
+                pvh: false,
+            })
         }
-        Payload::Firmware => Ok((guest_mem, GuestAddress(arch::RESET_VECTOR), None, None, false)),
+        Payload::Firmware => Ok(LoadedPayload {
+            guest_mem,
+            entry_addr: GuestAddress(arch::RESET_VECTOR),
+            initrd_config: None,
+            kernel_cmdline: None,
+            pvh: false,
+        }),
     }
 }
 
@@ -1666,8 +1697,13 @@ pub fn create_guest_memory(
             .map_err(|e| StartMicrovmError::GuestMemoryMmap(format!("{e:?}")))?
     };
 
-    let (guest_mem, entry_addr, initrd_config, cmdline, pvh) =
-        load_payload(vm_resources, guest_mem, &arch_mem_info, payload)?;
+    let LoadedPayload {
+        guest_mem,
+        entry_addr,
+        initrd_config,
+        kernel_cmdline: cmdline,
+        pvh,
+    } = load_payload(vm_resources, guest_mem, &arch_mem_info, payload)?;
 
     // Only write firmware if data exists AND this isn't an ExternalKernel payload
     // (ExternalKernel does direct kernel boot and doesn't use EFI firmware)

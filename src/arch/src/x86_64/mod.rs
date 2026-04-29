@@ -21,7 +21,9 @@ use crate::x86_64::layout::{EBDA_START, FIRST_ADDR_PAST_32BITS, MMIO_MEM_START};
 #[cfg(feature = "tee")]
 use crate::x86_64::layout::{FIRMWARE_SIZE, FIRMWARE_START};
 use crate::{ArchMemoryInfo, InitrdConfig};
-use arch_gen::x86::bootparam::{boot_params, E820_RAM, E820_RESERVED};
+#[cfg(not(feature = "tee"))]
+use arch_gen::x86::bootparam::E820_RESERVED;
+use arch_gen::x86::bootparam::{boot_params, E820_RAM};
 use vm_memory::Bytes;
 use vm_memory::{Address, ByteValued, GuestAddress, GuestMemoryMmap};
 use vmm_sys_util::align_upwards;
@@ -358,12 +360,7 @@ fn configure_pvh(
 }
 
 #[cfg(not(feature = "tee"))]
-fn add_memmap_entry(
-    memmap: &mut Vec<hvm_memmap_table_entry>,
-    addr: u64,
-    size: u64,
-    mem_type: u32,
-) {
+fn add_memmap_entry(memmap: &mut Vec<hvm_memmap_table_entry>, addr: u64, size: u64, mem_type: u32) {
     memmap.push(hvm_memmap_table_entry {
         addr,
         size,
@@ -536,21 +533,48 @@ mod tests {
         let (arch_mem_info, arch_mem_regions) =
             arch_memory_regions(mem_size, Some(KERNEL_LOAD_ADDR), KERNEL_SIZE, 0, None);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
-        configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus, false).unwrap();
+        configure_system(
+            &gm,
+            &arch_mem_info,
+            GuestAddress(0),
+            0,
+            &None,
+            no_vcpus,
+            false,
+        )
+        .unwrap();
 
         // Now assigning some memory that is equal to the start of the 32bit memory hole.
         let mem_size = 3328 << 20;
         let (arch_mem_info, arch_mem_regions) =
             arch_memory_regions(mem_size, Some(KERNEL_LOAD_ADDR), KERNEL_SIZE, 0, None);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
-        configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus, false).unwrap();
+        configure_system(
+            &gm,
+            &arch_mem_info,
+            GuestAddress(0),
+            0,
+            &None,
+            no_vcpus,
+            false,
+        )
+        .unwrap();
 
         // Now assigning some memory that falls after the 32bit memory hole.
         let mem_size = 3330 << 20;
         let (arch_mem_info, arch_mem_regions) =
             arch_memory_regions(mem_size, Some(KERNEL_LOAD_ADDR), KERNEL_SIZE, 0, None);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
-        configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus, false).unwrap();
+        configure_system(
+            &gm,
+            &arch_mem_info,
+            GuestAddress(0),
+            0,
+            &None,
+            no_vcpus,
+            false,
+        )
+        .unwrap();
     }
 
     #[test]
