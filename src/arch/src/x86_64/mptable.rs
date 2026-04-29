@@ -44,7 +44,7 @@ unsafe impl ByteValued for MpcLintsrcWrapper {}
 unsafe impl ByteValued for MpfIntelWrapper {}
 
 // MPTABLE, describing VCPUS.
-const MPTABLE_START: u64 = 0x9fc00;
+pub const MPTABLE_START: u64 = 0x9fc00;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Error {

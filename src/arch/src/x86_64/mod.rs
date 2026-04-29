@@ -21,10 +21,17 @@ use crate::x86_64::layout::{EBDA_START, FIRST_ADDR_PAST_32BITS, MMIO_MEM_START};
 #[cfg(feature = "tee")]
 use crate::x86_64::layout::{FIRMWARE_SIZE, FIRMWARE_START};
 use crate::{ArchMemoryInfo, InitrdConfig};
-use arch_gen::x86::bootparam::{boot_params, E820_RAM};
+use arch_gen::x86::bootparam::{boot_params, E820_RAM, E820_RESERVED};
 use vm_memory::Bytes;
 use vm_memory::{Address, ByteValued, GuestAddress, GuestMemoryMmap};
 use vmm_sys_util::align_upwards;
+
+#[cfg(not(feature = "tee"))]
+use linux_loader::configurator::{pvh::PvhBootConfigurator, BootConfigurator, BootParams};
+#[cfg(not(feature = "tee"))]
+use linux_loader::loader::elf::start_info::{
+    hvm_memmap_table_entry, hvm_modlist_entry, hvm_start_info,
+};
 
 // This is a workaround to the Rust enforcement specifying that any implementation of a foreign
 // trait (in this case `ByteValued`) where:
@@ -45,6 +52,9 @@ pub enum Error {
     /// Error writing MP table to memory.
     #[cfg(not(feature = "tee"))]
     MpTableSetup(mptable::Error),
+    /// Error writing hvm_start_info to guest memory.
+    #[cfg(not(feature = "tee"))]
+    StartInfoSetup,
     /// Error writing the zero page of guest memory.
     ZeroPageSetup,
     /// Failed to compute initrd address.
@@ -245,6 +255,7 @@ pub fn arch_memory_regions(
 /// * `cmdline_size` - Size of the kernel command line in bytes including the null terminator.
 /// * `initrd` - Information about where the ramdisk image was loaded in the `guest_mem`.
 /// * `num_cpus` - Number of virtual CPUs the guest will have.
+/// * `pvh` - Whether to use the PVH boot protocol.
 #[allow(unused_variables)]
 pub fn configure_system(
     guest_mem: &GuestMemoryMmap,
@@ -253,6 +264,121 @@ pub fn configure_system(
     cmdline_size: usize,
     initrd: &Option<InitrdConfig>,
     num_cpus: u8,
+    pvh: bool,
+) -> super::Result<()> {
+    // Note that this puts the mptable at the last 1k of Linux's 640k base RAM
+    #[cfg(not(feature = "tee"))]
+    mptable::setup_mptable(guest_mem, num_cpus).map_err(Error::MpTableSetup)?;
+
+    if pvh {
+        #[cfg(not(feature = "tee"))]
+        configure_pvh(guest_mem, arch_memory_info, cmdline_addr, initrd)?;
+    } else {
+        configure_64bit_boot(
+            guest_mem,
+            arch_memory_info,
+            cmdline_addr,
+            cmdline_size,
+            initrd,
+            num_cpus,
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "tee"))]
+fn configure_pvh(
+    guest_mem: &GuestMemoryMmap,
+    arch_memory_info: &ArchMemoryInfo,
+    cmdline_addr: GuestAddress,
+    initrd: &Option<InitrdConfig>,
+) -> Result<(), Error> {
+    const XEN_HVM_START_MAGIC_VALUE: u32 = 0x336e_c578;
+    let first_addr_past_32bits = GuestAddress(FIRST_ADDR_PAST_32BITS);
+    let end_32bit_gap_start = GuestAddress(MMIO_MEM_START);
+    let himem_start = GuestAddress(layout::HIMEM_START);
+    let mut modules: Vec<hvm_modlist_entry> = Vec::new();
+    if let Some(initrd_config) = initrd {
+        modules.push(hvm_modlist_entry {
+            paddr: initrd_config.address.raw_value(),
+            size: initrd_config.size as u64,
+            ..Default::default()
+        });
+    }
+    let mut memmap: Vec<hvm_memmap_table_entry> = Vec::new();
+    add_memmap_entry(&mut memmap, 0, mptable::MPTABLE_START, E820_RAM);
+    add_memmap_entry(
+        &mut memmap,
+        mptable::MPTABLE_START,
+        layout::RSDP_ADDR - mptable::MPTABLE_START,
+        E820_RESERVED,
+    );
+    let last_addr = GuestAddress(arch_memory_info.ram_last_addr);
+    if last_addr < end_32bit_gap_start {
+        add_memmap_entry(
+            &mut memmap,
+            himem_start.raw_value(),
+            last_addr.unchecked_offset_from(himem_start) + 1,
+            E820_RAM,
+        );
+    } else {
+        add_memmap_entry(
+            &mut memmap,
+            himem_start.raw_value(),
+            end_32bit_gap_start.unchecked_offset_from(himem_start),
+            E820_RAM,
+        );
+        if last_addr > first_addr_past_32bits {
+            add_memmap_entry(
+                &mut memmap,
+                first_addr_past_32bits.raw_value(),
+                last_addr.unchecked_offset_from(first_addr_past_32bits) + 1,
+                E820_RAM,
+            );
+        }
+    }
+    let mut start_info = hvm_start_info {
+        magic: XEN_HVM_START_MAGIC_VALUE,
+        version: 1,
+        cmdline_paddr: cmdline_addr.raw_value(),
+        memmap_paddr: layout::MEMMAP_START,
+        memmap_entries: memmap.len() as u32,
+        nr_modules: modules.len() as u32,
+        ..Default::default()
+    };
+    if !modules.is_empty() {
+        start_info.modlist_paddr = layout::MODLIST_START;
+    }
+    let mut boot_params =
+        BootParams::new::<hvm_start_info>(&start_info, GuestAddress(layout::PVH_INFO_START));
+    boot_params.set_sections::<hvm_memmap_table_entry>(&memmap, GuestAddress(layout::MEMMAP_START));
+    boot_params.set_modules::<hvm_modlist_entry>(&modules, GuestAddress(layout::MODLIST_START));
+    PvhBootConfigurator::write_bootparams(&boot_params, guest_mem)
+        .map_err(|_| Error::StartInfoSetup)
+}
+
+#[cfg(not(feature = "tee"))]
+fn add_memmap_entry(
+    memmap: &mut Vec<hvm_memmap_table_entry>,
+    addr: u64,
+    size: u64,
+    mem_type: u32,
+) {
+    memmap.push(hvm_memmap_table_entry {
+        addr,
+        size,
+        type_: mem_type,
+        reserved: 0,
+    });
+}
+
+fn configure_64bit_boot(
+    guest_mem: &GuestMemoryMmap,
+    arch_memory_info: &ArchMemoryInfo,
+    cmdline_addr: GuestAddress,
+    cmdline_size: usize,
+    initrd: &Option<InitrdConfig>,
+    #[allow(unused_variables)] num_cpus: u8,
 ) -> super::Result<()> {
     const KERNEL_BOOT_FLAG_MAGIC: u16 = 0xaa55;
     const KERNEL_HDR_MAGIC: u32 = 0x5372_6448;
@@ -262,10 +388,6 @@ pub fn configure_system(
     let end_32bit_gap_start = GuestAddress(MMIO_MEM_START);
 
     let himem_start = GuestAddress(layout::HIMEM_START);
-
-    // Note that this puts the mptable at the last 1k of Linux's 640k base RAM
-    #[cfg(not(feature = "tee"))]
-    mptable::setup_mptable(guest_mem, num_cpus).map_err(Error::MpTableSetup)?;
 
     let mut params: BootParamsWrapper = BootParamsWrapper(boot_params::default());
 
@@ -401,7 +523,7 @@ mod tests {
         let no_vcpus = 4;
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x10000)]).unwrap();
         let info = ArchMemoryInfo::default();
-        let config_err = configure_system(&gm, &info, GuestAddress(0), 0, &None, 1);
+        let config_err = configure_system(&gm, &info, GuestAddress(0), 0, &None, 1, false);
         assert!(config_err.is_err());
         #[cfg(not(feature = "tee"))]
         assert_eq!(
@@ -414,21 +536,21 @@ mod tests {
         let (arch_mem_info, arch_mem_regions) =
             arch_memory_regions(mem_size, Some(KERNEL_LOAD_ADDR), KERNEL_SIZE, 0, None);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
-        configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus).unwrap();
+        configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus, false).unwrap();
 
         // Now assigning some memory that is equal to the start of the 32bit memory hole.
         let mem_size = 3328 << 20;
         let (arch_mem_info, arch_mem_regions) =
             arch_memory_regions(mem_size, Some(KERNEL_LOAD_ADDR), KERNEL_SIZE, 0, None);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
-        configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus).unwrap();
+        configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus, false).unwrap();
 
         // Now assigning some memory that falls after the 32bit memory hole.
         let mem_size = 3330 << 20;
         let (arch_mem_info, arch_mem_regions) =
             arch_memory_regions(mem_size, Some(KERNEL_LOAD_ADDR), KERNEL_SIZE, 0, None);
         let gm = GuestMemoryMmap::from_ranges(&arch_mem_regions).unwrap();
-        configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus).unwrap();
+        configure_system(&gm, &arch_mem_info, GuestAddress(0), 0, &None, no_vcpus, false).unwrap();
     }
 
     #[test]

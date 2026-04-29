@@ -834,6 +834,7 @@ pub fn build_microvm(
             &pio_device_manager.io_bus,
             &exit_evt,
             kernel_boot,
+            payload_config.pvh,
             #[cfg(feature = "tee")]
             _sender,
         )
@@ -1098,6 +1099,7 @@ pub fn build_microvm(
         &intc,
         &payload_config.initrd_config,
         &vm_resources.smbios_oem_strings,
+        payload_config.pvh,
     )
     .map_err(StartMicrovmError::Internal)?;
 
@@ -1153,7 +1155,9 @@ fn load_external_kernel(
     guest_mem: &GuestMemoryMmap,
     arch_mem_info: &ArchMemoryInfo,
     external_kernel: &ExternalKernel,
-) -> std::result::Result<(GuestAddress, Option<InitrdConfig>, Option<String>), StartMicrovmError> {
+) -> std::result::Result<(GuestAddress, Option<InitrdConfig>, Option<String>, bool), StartMicrovmError> {
+    #[allow(unused_mut)]
+    let mut pvh = false;
     let entry_addr = match external_kernel.format {
         // Raw images are treated as bundled kernels on x86_64
         #[cfg(target_arch = "x86_64")]
@@ -1174,7 +1178,13 @@ fn load_external_kernel(
                 .map_err(StartMicrovmError::ElfOpenKernel)?;
             let load_result = loader::Elf::load(guest_mem, None, &mut file, None)
                 .map_err(StartMicrovmError::ElfLoadKernel)?;
-            load_result.kernel_load
+            match load_result.pvh_boot_cap {
+                loader::PvhBootCapability::PvhEntryPresent(guest_address) => {
+                    pvh = true;
+                    guest_address
+                }
+                _ => load_result.kernel_load,
+            }
         }
         #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
         KernelFormat::PeGz => {
@@ -1292,7 +1302,7 @@ fn load_external_kernel(
         None
     };
 
-    Ok((entry_addr, initrd_config, external_kernel.cmdline.clone()))
+    Ok((entry_addr, initrd_config, external_kernel.cmdline.clone(), pvh))
 }
 
 fn load_payload(
@@ -1306,6 +1316,7 @@ fn load_payload(
         GuestAddress,
         Option<InitrdConfig>,
         Option<String>,
+        bool,
     ),
     StartMicrovmError,
 > {
@@ -1335,7 +1346,7 @@ fn load_payload(
             guest_mem
                 .write(kernel_data, GuestAddress(kernel_guest_addr))
                 .unwrap();
-            Ok((guest_mem, GuestAddress(kernel_entry_addr), None, None))
+            Ok((guest_mem, GuestAddress(kernel_entry_addr), None, None, false))
         }
         #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
         Payload::KernelMmap => {
@@ -1437,15 +1448,16 @@ fn load_payload(
                 GuestAddress(kernel_entry_addr),
                 None,
                 None,
+                false,
             ))
         }
         Payload::ExternalKernel(external_kernel) => {
-            let (entry_addr, initrd_config, cmdline) =
+            let (entry_addr, initrd_config, cmdline, pvh) =
                 load_external_kernel(&guest_mem, _arch_mem_info, external_kernel)?;
-            Ok((guest_mem, entry_addr, initrd_config, cmdline))
+            Ok((guest_mem, entry_addr, initrd_config, cmdline, pvh))
         }
         #[cfg(test)]
-        Payload::Empty => Ok((guest_mem, GuestAddress(0), None, None)),
+        Payload::Empty => Ok((guest_mem, GuestAddress(0), None, None, false)),
         #[cfg(feature = "tee")]
         Payload::Tee => {
             let (kernel_host_addr, kernel_guest_addr, kernel_size) =
@@ -1498,9 +1510,10 @@ fn load_payload(
                 GuestAddress(arch::RESET_VECTOR),
                 Some(initrd_config),
                 None,
+                false,
             ))
         }
-        Payload::Firmware => Ok((guest_mem, GuestAddress(arch::RESET_VECTOR), None, None)),
+        Payload::Firmware => Ok((guest_mem, GuestAddress(arch::RESET_VECTOR), None, None, false)),
     }
 }
 
@@ -1508,6 +1521,7 @@ pub struct PayloadConfig {
     entry_addr: GuestAddress,
     initrd_config: Option<InitrdConfig>,
     kernel_cmdline: Option<String>,
+    pvh: bool,
 }
 
 pub fn create_guest_memory(
@@ -1652,7 +1666,7 @@ pub fn create_guest_memory(
             .map_err(|e| StartMicrovmError::GuestMemoryMmap(format!("{e:?}")))?
     };
 
-    let (guest_mem, entry_addr, initrd_config, cmdline) =
+    let (guest_mem, entry_addr, initrd_config, cmdline, pvh) =
         load_payload(vm_resources, guest_mem, &arch_mem_info, payload)?;
 
     // Only write firmware if data exists AND this isn't an ExternalKernel payload
@@ -1669,6 +1683,7 @@ pub fn create_guest_memory(
         entry_addr,
         initrd_config,
         kernel_cmdline: cmdline.clone(),
+        pvh,
     };
 
     Ok((guest_mem, arch_mem_info, shm_manager, payload_config))
@@ -1875,6 +1890,7 @@ fn create_vcpus_x86_64(
     io_bus: &devices::Bus,
     exit_evt: &EventFd,
     kernel_boot: bool,
+    pvh: bool,
     #[cfg(feature = "tee")] pm_sender: Sender<WorkerMessage>,
 ) -> super::Result<Vec<Vcpu>> {
     let mut vcpus = Vec::with_capacity(vcpu_config.vcpu_count as usize);
@@ -1891,7 +1907,7 @@ fn create_vcpus_x86_64(
         )
         .map_err(Error::Vcpu)?;
 
-        vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config, kernel_boot)
+        vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config, kernel_boot, pvh)
             .map_err(Error::Vcpu)?;
 
         vcpus.push(vcpu);
@@ -2556,6 +2572,7 @@ pub mod tests {
             &bus,
             &EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap(),
             true,
+            false,
         )
         .unwrap();
         assert_eq!(vcpu_vec.len(), vcpu_count as usize);
