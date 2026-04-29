@@ -66,7 +66,10 @@ mod host {
             if output_str == "OK\n" {
                 TestOutcome::Pass
             } else {
-                TestOutcome::Fail(format!("expected exactly {:?}, got {:?}", "OK\n", output_str))
+                TestOutcome::Fail(format!(
+                    "expected exactly {:?}, got {:?}",
+                    "OK\n", output_str
+                ))
             }
         }
     }

@@ -155,7 +155,11 @@ fn write_idt_value(val: u64, guest_mem: &GuestMemoryMmap) -> Result<()> {
         .map_err(|_| Error::WriteIDT)
 }
 
-fn configure_segments_and_sregs(mem: &GuestMemoryMmap, sregs: &mut kvm_sregs, pvh: bool) -> Result<()> {
+fn configure_segments_and_sregs(
+    mem: &GuestMemoryMmap,
+    sregs: &mut kvm_sregs,
+    pvh: bool,
+) -> Result<()> {
     let gdt_table: [u64; BOOT_GDT_MAX] = if pvh {
         [
             gdt_entry(0, 0, 0),                // NULL
