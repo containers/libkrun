@@ -365,7 +365,7 @@ RUN dnf install -y iperf3 && dnf clean all
             Ok(())
         }
 
-        fn check(self: Box<Self>, stdout: Vec<u8>) -> TestOutcome {
+        fn check(self: Box<Self>, stdout: Vec<u8>, _test_setup: TestSetup) -> TestOutcome {
             if let Some(cleanup) = self.cleanup {
                 cleanup();
             }

@@ -22,6 +22,12 @@ use test_multiport_console::TestMultiportConsole;
 mod test_virtiofs_root_ro;
 use test_virtiofs_root_ro::TestVirtiofsRootRo;
 
+mod test_pjdfstest;
+use test_pjdfstest::TestPjdfstest;
+
+mod test_virtiofs_misc;
+use test_virtiofs_misc::TestVirtioFsMisc;
+
 pub enum TestOutcome {
     Pass,
     Fail(String),
@@ -78,6 +84,8 @@ pub fn test_cases() -> Vec<TestCase> {
         TestCase::new("net-vmnet-helper", Box::new(TestNet::new_vmnet_helper())),
         TestCase::new("multiport-console", Box::new(TestMultiportConsole)),
         TestCase::new("virtiofs-root-ro", Box::new(TestVirtiofsRootRo)),
+        TestCase::new("virtiofs-misc", Box::new(TestVirtioFsMisc)),
+        TestCase::new("pjdfstest", Box::new(TestPjdfstest)),
         TestCase::new("perf-net-passt-tx", Box::new(TestNetPerf::new_passt_tx())),
         TestCase::new("perf-net-passt-rx", Box::new(TestNetPerf::new_passt_rx())),
         TestCase::new("perf-net-tap-tx", Box::new(TestNetPerf::new_tap_tx())),
@@ -188,7 +196,7 @@ pub trait Test {
     fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()>;
 
     /// Checks the output of the (host) process which started the VM
-    fn check(self: Box<Self>, stdout: Vec<u8>) -> TestOutcome {
+    fn check(self: Box<Self>, stdout: Vec<u8>, _test_setup: TestSetup) -> TestOutcome {
         let output = String::from_utf8(stdout).unwrap();
         if output == "OK\n" {
             TestOutcome::Pass
