@@ -38,7 +38,14 @@ static void print_help(char *const name)
         "              --log=PATH            Write libkrun log to file or named pipe at PATH\n"
         "              --color-log=PATH      Write libkrun log to file or named pipe at PATH, use color\n"
         "              --net=NET_MODE        Set network mode\n"
-        "              --passt-socket=PATH   Instead of starting passt, connect to passt socket at PATH"
+        "              --passt-socket=PATH   Instead of starting passt, connect to passt socket at PATH\n"
+        "              --vhost-user-rng=PATH Use vhost-user RNG backend at socket PATH\n"
+        "              --vhost-user-rtc=PATH Use vhost-user RTC backend at socket PATH\n"
+        "              --vhost-user-input=PATH Use vhost-user input backend at socket PATH\n"
+        "              --vhost-user-snd=PATH Use vhost-user sound backend at socket PATH\n"
+        "              --vhost-user-vsock=PATH Use vhost-user vsock backend at socket PATH\n"
+        "              --vhost-user-can=PATH Use vhost-user CAN backend at socket PATH\n"
+        "              --vhost-user-console=PATH Use vhost-user console backend at socket PATH\n"
         "NET_MODE can be either TSI (default) or PASST\n"
         "\n"
         "NEWROOT:      the root directory of the vm\n"
@@ -48,12 +55,29 @@ static void print_help(char *const name)
     );
 }
 
+static bool check_krun_error(int err, const char *msg)
+{
+    if (err) {
+        errno = -err;
+        perror(msg);
+        return false;
+    }
+    return true;
+}
+
 static const struct option long_options[] = {
     { "help", no_argument, NULL, 'h' },
     { "log", required_argument, NULL, 'L' },
     { "color-log", required_argument, NULL, 'C' },
     { "net_mode", required_argument, NULL, 'N' },
     { "passt-socket", required_argument, NULL, 'P' },
+    { "vhost-user-rng", required_argument, NULL, 'V' },
+    { "vhost-user-rtc", required_argument, NULL, 'R' },
+    { "vhost-user-input", required_argument, NULL, 'I' },
+    { "vhost-user-snd", required_argument, NULL, 'S' },
+    { "vhost-user-vsock", required_argument, NULL, 'K' },
+    { "vhost-user-can", required_argument, NULL, 'A' },
+    { "vhost-user-console", required_argument, NULL, 'O' },
     { NULL, 0, NULL, 0 }
 };
 
@@ -63,6 +87,13 @@ struct cmdline {
     uint32_t log_style;
     enum net_mode net_mode;
     char const *passt_socket_path;
+    char const *vhost_user_rng_socket;
+    char const *vhost_user_rtc_socket;
+    char const *vhost_user_input_socket;
+    char const *vhost_user_snd_socket;
+    char const *vhost_user_vsock_socket;
+    char const *vhost_user_can_socket;
+    char const *vhost_user_console_socket;
     char const *new_root;
     char *const *guest_argv;
 };
@@ -89,6 +120,13 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         .show_help = false,
         .net_mode = NET_MODE_TSI,
         .passt_socket_path = NULL,
+        .vhost_user_rng_socket = NULL,
+        .vhost_user_rtc_socket = NULL,
+        .vhost_user_input_socket = NULL,
+        .vhost_user_snd_socket = NULL,
+        .vhost_user_vsock_socket = NULL,
+        .vhost_user_can_socket = NULL,
+        .vhost_user_console_socket = NULL,
         .new_root = NULL,
         .guest_argv = NULL,
         .log_target = KRUN_LOG_TARGET_DEFAULT,
@@ -123,6 +161,27 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
             break;
         case 'P':
             cmdline->passt_socket_path = optarg;
+            break;
+        case 'V':
+            cmdline->vhost_user_rng_socket = optarg;
+            break;
+        case 'R':
+            cmdline->vhost_user_rtc_socket = optarg;
+            break;
+        case 'I':
+            cmdline->vhost_user_input_socket = optarg;
+            break;
+        case 'S':
+            cmdline->vhost_user_snd_socket = optarg;
+            break;
+        case 'K':
+            cmdline->vhost_user_vsock_socket = optarg;
+            break;
+        case 'A':
+            cmdline->vhost_user_can_socket = optarg;
+            break;
+        case 'O':
+            cmdline->vhost_user_console_socket = optarg;
             break;
         case '?':
             return false;
@@ -249,6 +308,98 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
+    // Configure vhost-user RNG if requested
+    if (cmdline.vhost_user_rng_socket != NULL) {
+        // Test sentinel-terminated array: auto-detect queue count, use custom size
+        uint16_t custom_sizes[] = {512, 0};  // 0 = sentinel terminator
+
+        if (!check_krun_error(krun_add_vhost_user_device(ctx_id, KRUN_VIRTIO_DEVICE_RNG,
+                                                          cmdline.vhost_user_rng_socket, NULL, 0, custom_sizes),
+                              "Error adding vhost-user RNG device")) {
+            return -1;
+        }
+        printf("Using vhost-user RNG backend at %s (custom queue size: 512)\n", cmdline.vhost_user_rng_socket);
+    }
+
+    // Configure vhost-user RTC if requested
+    if (cmdline.vhost_user_rtc_socket != NULL) {
+        if (!check_krun_error(krun_add_vhost_user_device(ctx_id, KRUN_VIRTIO_DEVICE_RTC,
+                                                          cmdline.vhost_user_rtc_socket, NULL,
+                                                          KRUN_VHOST_USER_RTC_NUM_QUEUES,
+                                                          KRUN_VHOST_USER_RTC_QUEUE_SIZES),
+                              "Error adding vhost-user RTC device")) {
+            return -1;
+        }
+        printf("Using vhost-user RTC backend at %s (available as /dev/ptp* and /dev/rtc* in guest)\n", cmdline.vhost_user_rtc_socket);
+    }
+
+    // Configure vhost-user input if requested
+    if (cmdline.vhost_user_input_socket != NULL) {
+        if (!check_krun_error(krun_add_vhost_user_device(ctx_id, KRUN_VIRTIO_DEVICE_INPUT,
+                                                          cmdline.vhost_user_input_socket, NULL,
+                                                          KRUN_VHOST_USER_INPUT_NUM_QUEUES,
+                                                          KRUN_VHOST_USER_INPUT_QUEUE_SIZES),
+                              "Error adding vhost-user input device")) {
+            return -1;
+        }
+        printf("Using vhost-user input backend at %s\n", cmdline.vhost_user_input_socket);
+    }
+
+    // Configure vhost-user sound if requested
+    if (cmdline.vhost_user_snd_socket != NULL) {
+        if (!check_krun_error(krun_add_vhost_user_device(ctx_id, KRUN_VIRTIO_DEVICE_SND,
+                                                          cmdline.vhost_user_snd_socket, NULL,
+                                                          KRUN_VHOST_USER_SND_NUM_QUEUES,
+                                                          KRUN_VHOST_USER_SND_QUEUE_SIZES),
+                              "Error adding vhost-user sound device")) {
+            return -1;
+        }
+        printf("Using vhost-user sound backend at %s\n", cmdline.vhost_user_snd_socket);
+    }
+
+    // Configure vhost-user vsock if requested
+    if (cmdline.vhost_user_vsock_socket != NULL) {
+        // Disable the implicit vsock device to avoid conflict
+        if (!check_krun_error(krun_disable_implicit_vsock(ctx_id),
+                              "Error disabling implicit vsock")) {
+            return -1;
+        }
+
+        if (!check_krun_error(krun_add_vhost_user_device(ctx_id, KRUN_VIRTIO_DEVICE_VSOCK,
+                                                          cmdline.vhost_user_vsock_socket, NULL,
+                                                          KRUN_VHOST_USER_VSOCK_NUM_QUEUES,
+                                                          KRUN_VHOST_USER_VSOCK_QUEUE_SIZES),
+                              "Error adding vhost-user vsock device")) {
+            return -1;
+        }
+        printf("Using vhost-user vsock backend at %s\n", cmdline.vhost_user_vsock_socket);
+    }
+
+    // Configure vhost-user CAN if requested
+    if (cmdline.vhost_user_can_socket != NULL) {
+        if (!check_krun_error(krun_add_vhost_user_device(ctx_id, KRUN_VIRTIO_DEVICE_CAN,
+                                                          cmdline.vhost_user_can_socket, NULL,
+                                                          KRUN_VHOST_USER_CAN_NUM_QUEUES,
+                                                          KRUN_VHOST_USER_CAN_QUEUE_SIZES),
+                              "Error adding vhost-user CAN device")) {
+            return -1;
+        }
+        printf("Using vhost-user CAN backend at %s\n", cmdline.vhost_user_can_socket);
+    }
+
+    // Configure vhost-user console if requested
+    if (cmdline.vhost_user_console_socket != NULL) {
+        if (!check_krun_error(krun_add_vhost_user_device(ctx_id, KRUN_VIRTIO_DEVICE_CONSOLE,
+                                                          cmdline.vhost_user_console_socket, NULL,
+                                                          KRUN_VHOST_USER_CONSOLE_NUM_QUEUES,
+                                                          KRUN_VHOST_USER_CONSOLE_QUEUE_SIZES),
+                              "Error adding vhost-user console device")) {
+            return -1;
+        }
+        printf("Using vhost-user console backend at %s (available as /dev/hvc1 in guest)\n", cmdline.vhost_user_console_socket);
+        printf("Test with: echo 'hello' > /dev/hvc1\n");
+    }
+
     // Raise RLIMIT_NOFILE to the maximum allowed to create some room for virtio-fs
     getrlimit(RLIMIT_NOFILE, &rlim);
     rlim.rlim_cur = rlim.rlim_max;
@@ -269,7 +420,8 @@ int main(int argc, char *const argv[])
     }
 
     // Map port 18000 in the host to 8000 in the guest (if networking uses TSI)
-    if (cmdline.net_mode == NET_MODE_TSI) {
+    // Skip port mapping when using vhost-user-vsock (TSI requires built-in vsock)
+    if (cmdline.net_mode == NET_MODE_TSI && cmdline.vhost_user_vsock_socket == NULL) {
         if (err = krun_set_port_map(ctx_id, &port_map[0])) {
             errno = -err;
             perror("Error configuring port map");
