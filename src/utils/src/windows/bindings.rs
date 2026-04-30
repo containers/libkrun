@@ -9,7 +9,7 @@ use std::io;
 
 use windows_sys::Win32::Foundation::HANDLE;
 
-#[allow(non_camel_case_types)]
+#[allow(non_camel_case_types, clippy::upper_case_acronyms)]
 pub type NTSTATUS = i32;
 
 #[link(name = "ntdll")]

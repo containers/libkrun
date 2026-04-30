@@ -228,7 +228,7 @@ impl Epoll {
     pub fn new() -> io::Result<Self> {
         let handle =
             unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, std::ptr::null_mut(), 0, 0) };
-        if handle == std::ptr::null_mut() {
+        if handle.is_null() {
             return Err(io::Error::last_os_error());
         }
         Ok(Epoll {

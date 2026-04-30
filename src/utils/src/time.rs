@@ -3,6 +3,27 @@
 
 use std::fmt;
 
+#[cfg(target_os = "windows")]
+use std::mem::MaybeUninit;
+#[cfg(target_os = "windows")]
+use std::sync::OnceLock;
+#[cfg(target_os = "windows")]
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Threading::{
+    GetCurrentProcess, GetCurrentThread, GetProcessTimes, GetThreadTimes,
+};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::{
+    Foundation::HANDLE, System::SystemInformation::GetSystemTimePreciseAsFileTime,
+};
+
 /// Constant to convert seconds to nanoseconds.
 pub const NANOS_PER_SECOND: u64 = 1_000_000_000;
 
@@ -18,6 +39,7 @@ pub enum ClockType {
     ThreadCpu,
 }
 
+#[cfg(unix)]
 impl From<ClockType> for libc::clockid_t {
     fn from(ctype: ClockType) -> libc::clockid_t {
         match ctype {
@@ -47,6 +69,7 @@ pub struct LocalTime {
     nsec: i64,
 }
 
+#[cfg(unix)]
 impl LocalTime {
     /// Returns the [LocalTime](struct.LocalTime.html) structure for the calling moment.
     pub fn now() -> LocalTime {
@@ -85,6 +108,46 @@ impl LocalTime {
             mon: tm.tm_mon,
             year: tm.tm_year,
             nsec: timespec.tv_nsec,
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl LocalTime {
+    pub fn now() -> LocalTime {
+        unsafe {
+            // Get high-precision UTC time (FILETIME)
+            let mut ft_utc = MaybeUninit::<FILETIME>::uninit();
+            GetSystemTimePreciseAsFileTime(ft_utc.as_mut_ptr());
+            let ft_utc = ft_utc.assume_init();
+
+            // Convert directly to UTC SYSTEMTIME
+            let mut st_utc = MaybeUninit::<SYSTEMTIME>::uninit();
+            FileTimeToSystemTime(&ft_utc, st_utc.as_mut_ptr());
+            let st_utc = st_utc.assume_init();
+
+            // Convert UTC SYSTEMTIME to Local SYSTEMTIME (handles DST perfectly)
+            let mut st_local = MaybeUninit::<SYSTEMTIME>::uninit();
+            SystemTimeToTzSpecificLocalTime(
+                std::ptr::null(), // Uses the active system time zone
+                &st_utc,
+                st_local.as_mut_ptr(),
+            );
+            let st_local = st_local.assume_init();
+
+            // Extract nanoseconds from the original FILETIME (100ns ticks)
+            let ticks = ((ft_utc.dwHighDateTime as u64) << 32) | (ft_utc.dwLowDateTime as u64);
+            let nsec = (ticks % 10_000_000) * 100;
+
+            LocalTime {
+                sec: st_local.wSecond as i32,
+                min: st_local.wMinute as i32,
+                hour: st_local.wHour as i32,
+                mday: st_local.wDay as i32,
+                mon: (st_local.wMonth as i32) - 1,
+                year: (st_local.wYear as i32) - 1900,
+                nsec: nsec as i64,
+            }
         }
     }
 }
@@ -143,6 +206,7 @@ pub fn timestamp_cycles() -> u64 {
 /// # Arguments
 ///
 /// * `clock_type` - Identifier of the Linux Kernel clock on which to act.
+#[cfg(unix)]
 pub fn get_time(clock_type: ClockType) -> u64 {
     let mut time_struct = libc::timespec {
         tv_sec: 0,
@@ -151,6 +215,66 @@ pub fn get_time(clock_type: ClockType) -> u64 {
     // Safe because the parameters are valid.
     unsafe { libc::clock_gettime(clock_type.into(), &mut time_struct) };
     seconds_to_nanoseconds(time_struct.tv_sec).unwrap() as u64 + (time_struct.tv_nsec as u64)
+}
+
+/// Returns a timestamp in nanoseconds based on the provided clock type.
+#[cfg(target_os = "windows")]
+pub fn get_time(clock_type: ClockType) -> u64 {
+    match clock_type {
+        ClockType::Monotonic => {
+            static FREQ: OnceLock<i64> = OnceLock::new();
+            let freq = *FREQ.get_or_init(|| {
+                let mut f = 0;
+                unsafe { QueryPerformanceFrequency(&mut f) };
+                f
+            });
+
+            let mut counter: i64 = 0;
+            unsafe { QueryPerformanceCounter(&mut counter) };
+            ((counter as u128 * NANOS_PER_SECOND as u128) / freq as u128) as u64
+        }
+        ClockType::Real => SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64,
+        ClockType::ProcessCpu => unsafe { get_handle_cpu_time(GetCurrentProcess(), true) },
+        ClockType::ThreadCpu => unsafe { get_handle_cpu_time(GetCurrentThread(), false) },
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn get_handle_cpu_time(handle: HANDLE, is_process: bool) -> u64 {
+    let mut creation = MaybeUninit::<FILETIME>::uninit();
+    let mut exit = MaybeUninit::<FILETIME>::uninit();
+    let mut kernel = MaybeUninit::<FILETIME>::uninit();
+    let mut user = MaybeUninit::<FILETIME>::uninit();
+
+    if is_process {
+        let _ = GetProcessTimes(
+            handle,
+            creation.as_mut_ptr(),
+            exit.as_mut_ptr(),
+            kernel.as_mut_ptr(),
+            user.as_mut_ptr(),
+        );
+    } else {
+        let _ = GetThreadTimes(
+            handle,
+            creation.as_mut_ptr(),
+            exit.as_mut_ptr(),
+            kernel.as_mut_ptr(),
+            user.as_mut_ptr(),
+        );
+    }
+
+    let (kernel, user) = (kernel.assume_init(), user.assume_init());
+    filetime_to_nanos(&kernel) + filetime_to_nanos(&user)
+}
+
+#[cfg(target_os = "windows")]
+fn filetime_to_nanos(ft: &FILETIME) -> u64 {
+    let ticks = ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64);
+    ticks * 100 // FILETIME ticks are 100ns intervals
 }
 
 /// Converts a timestamp in seconds to an equivalent one in nanoseconds.
