@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::num::Wrapping;
 use std::os::fd::OwnedFd;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::{
     bind, connect, getpeername, recv, send, sendto, socket, AddressFamily, MsgFlags, SockFlag,
-    SockType, SockaddrIn, SockaddrLike, SockaddrStorage,
+    SockType, SockaddrIn, SockaddrIn6, SockaddrLike, SockaddrStorage,
 };
 
 #[cfg(target_os = "macos")]
@@ -32,6 +32,7 @@ pub struct TsiDgramProxy {
     local_port: u32,
     peer_port: u32,
     fd: OwnedFd,
+    family: AddressFamily,
     pub status: ProxyStatus,
     sendto_addr: Option<SockaddrStorage>,
     listening: bool,
@@ -99,6 +100,7 @@ impl TsiDgramProxy {
             local_port: 0,
             peer_port,
             fd,
+            family,
             status: ProxyStatus::Idle,
             sendto_addr: None,
             listening: false,
@@ -339,7 +341,15 @@ impl Proxy for TsiDgramProxy {
 
         self.sendto_addr = Some(req.addr);
         if !self.listening {
-            match bind(self.fd.as_raw_fd(), &SockaddrIn::new(0, 0, 0, 0, 0)) {
+            let bind_result = if self.family == AddressFamily::Inet6 {
+                bind(
+                    self.fd.as_raw_fd(),
+                    &SockaddrIn6::from(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
+                )
+            } else {
+                bind(self.fd.as_raw_fd(), &SockaddrIn::new(0, 0, 0, 0, 0))
+            };
+            match bind_result {
                 Ok(_) => {
                     self.listening = true;
                     update.polling = Some((self.id, self.fd.as_raw_fd(), EventSet::IN));
