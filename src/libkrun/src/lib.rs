@@ -1303,6 +1303,45 @@ pub unsafe extern "C" fn krun_set_workdir(ctx_id: u32, c_workdir_path: *const c_
     KRUN_SUCCESS
 }
 
+/// Soft cap on the size of the env section inherited from the host process when
+/// the caller passes `envp = NULL` to `krun_set_exec`/`krun_set_env`. Linux
+/// genreally accepts only the first 2048 bytes so setting this value to 1024 leaves
+/// room for default options (KRUN_INIT, KRUN_RLIMITS, etc.).
+const MAX_INHERITED_ENV_BYTES: usize = 1024;
+
+/// Best-effort inheritance of the host process's environment for the guest's
+/// kernel cmdline. Vars whose key or value contain anything outside printable
+/// ASCII (excluding space) are dropped, since the Linux kernel cmdline parser
+/// tokenizes at whitespace and `Cmdline::valid_str` rejects non-printable
+/// chars. Each var is also dropped individually if appending it would push
+/// the total over `MAX_INHERITED_ENV_BYTES`, so a single oversized var (e.g.
+/// LS_COLORS) doesn't take out smaller vars iterated after it.
+fn inherit_host_env() -> String {
+    serialize_env(env::vars())
+}
+
+fn serialize_env<I: IntoIterator<Item = (String, String)>>(vars: I) -> String {
+    let mut buf = String::new();
+    for (k, v) in vars {
+        if k.is_empty()
+            || k.contains('=')
+            || !k.chars().all(|c| c.is_ascii_graphic())
+        {
+            continue;
+        }
+        if !v.chars().all(|c| c.is_ascii_graphic()) {
+            continue;
+        }
+
+        let entry = format!(" {k}={v}");
+        if buf.len() + entry.len() > MAX_INHERITED_ENV_BYTES {
+            continue;
+        }
+        buf.push_str(&entry);
+    }
+    buf
+}
+
 unsafe fn collapse_str_array(array: &[*const c_char]) -> Result<String, std::str::Utf8Error> {
     let mut strvec = Vec::new();
 
@@ -1318,7 +1357,6 @@ unsafe fn collapse_str_array(array: &[*const c_char]) -> Result<String, std::str
     Ok(strvec.join(" "))
 }
 
-#[allow(clippy::format_collect)]
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_set_exec(
@@ -1358,9 +1396,7 @@ pub unsafe extern "C" fn krun_set_exec(
             }
         }
     } else {
-        env::vars()
-            .map(|(key, value)| format!(" {key}=\"{value}\""))
-            .collect()
+        inherit_host_env()
     };
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
@@ -1376,7 +1412,6 @@ pub unsafe extern "C" fn krun_set_exec(
     KRUN_SUCCESS
 }
 
-#[allow(clippy::format_collect)]
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_set_env(ctx_id: u32, c_envp: *const *const c_char) -> i32 {
@@ -1390,9 +1425,7 @@ pub unsafe extern "C" fn krun_set_env(ctx_id: u32, c_envp: *const *const c_char)
             }
         }
     } else {
-        env::vars()
-            .map(|(key, value)| format!(" {key}=\"{value}\""))
-            .collect()
+        inherit_host_env()
     };
 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
@@ -2784,5 +2817,94 @@ fn krun_start_enter_nitro(ctx_id: u32) -> i32 {
 
             -libc::EINVAL
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vars(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn serialize_env_passes_clean_vars() {
+        let out = serialize_env(vars(&[("HOME", "/root"), ("PATH", "/usr/bin")]));
+        assert_eq!(out, " HOME=/root PATH=/usr/bin");
+    }
+
+    #[test]
+    fn serialize_env_drops_value_with_space() {
+        let out = serialize_env(vars(&[("OLDPWD", "/some path"), ("HOME", "/root")]));
+        assert_eq!(out, " HOME=/root");
+    }
+
+    #[test]
+    fn serialize_env_drops_key_with_space() {
+        let out = serialize_env(vars(&[("BAD KEY", "v"), ("HOME", "/root")]));
+        assert_eq!(out, " HOME=/root");
+    }
+
+    #[test]
+    fn serialize_env_drops_key_containing_equals() {
+        let out = serialize_env(vars(&[("K=Y", "v"), ("HOME", "/root")]));
+        assert_eq!(out, " HOME=/root");
+    }
+
+    #[test]
+    fn serialize_env_drops_non_ascii() {
+        let out = serialize_env(vars(&[("LANG", "en_US.üTF8"), ("HOME", "/root")]));
+        assert_eq!(out, " HOME=/root");
+    }
+
+    #[test]
+    fn serialize_env_drops_control_chars() {
+        let out = serialize_env(vars(&[("X", "a\tb"), ("HOME", "/root")]));
+        assert_eq!(out, " HOME=/root");
+    }
+
+    #[test]
+    fn serialize_env_truncates_at_pair_boundary() {
+        // Build enough fixed-shape entries to exceed MAX_INHERITED_ENV_BYTES.
+        // Each entry is " K{i:08}=" (10 chars) + 100-char value = 110 bytes.
+        const KEY_WIDTH: usize = 8;
+        const VAL_WIDTH: usize = 100;
+        let entry_bytes = 1 + 1 + KEY_WIDTH + 1 + VAL_WIDTH;
+        let n = MAX_INHERITED_ENV_BYTES / entry_bytes + 2;
+        let value = "v".repeat(VAL_WIDTH);
+        let pairs: Vec<(String, String)> = (0..n)
+            .map(|i| (format!("K{i:0width$}", width = KEY_WIDTH), value.clone()))
+            .collect();
+        let out = serialize_env(pairs);
+        assert!(out.len() <= MAX_INHERITED_ENV_BYTES);
+        assert!(
+            out.len() > MAX_INHERITED_ENV_BYTES - entry_bytes,
+            "expected near-full buffer, got {} of {}",
+            out.len(),
+            MAX_INHERITED_ENV_BYTES
+        );
+        // Every entry must be a complete KEY=VALUE pair — no half-written keys
+        // or values from a mid-pair truncation.
+        for entry in out.split(' ').filter(|s| !s.is_empty()) {
+            let mut parts = entry.splitn(2, '=');
+            let k = parts.next().unwrap();
+            let v = parts.next().expect("entry must contain '='");
+            assert_eq!(k.len(), 1 + KEY_WIDTH, "key truncated: {k:?}");
+            assert_eq!(v.len(), VAL_WIDTH, "value truncated: {v:?}");
+        }
+    }
+
+    #[test]
+    fn serialize_env_skips_oversize_but_keeps_smaller_following_vars() {
+        // An oversize var must be dropped individually — not stop processing
+        // — so smaller vars that come after it still land in the output.
+        let oversize_value = "v".repeat(MAX_INHERITED_ENV_BYTES + 1);
+        let pairs = vec![
+            ("BIG".to_string(), oversize_value),
+            ("HOME".to_string(), "/root".to_string()),
+        ];
+        let out = serialize_env(pairs);
+        assert_eq!(out, " HOME=/root");
     }
 }
