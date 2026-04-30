@@ -4,8 +4,12 @@
 use std::collections::HashMap;
 use std::fmt::Formatter;
 use std::io;
-use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
+
+#[cfg(unix)]
+use std::os::unix::io::{AsRawFd, RawFd};
+#[cfg(target_os = "windows")]
+use utils::windows::{AsRawFd, RawFd};
 
 use utils::epoll::{self, Epoll, EpollEvent};
 
@@ -33,11 +37,13 @@ impl std::fmt::Debug for Error {
             Poll(err) => write!(f, "Error during epoll call: {err}"),
             AlreadyExists(pollable) => write!(
                 f,
-                "A handler for the specified pollable {pollable} already exists."
+                "A handler for the specified pollable {:?} already exists.",
+                pollable
             ),
             NotFound(pollable) => write!(
                 f,
-                "A handler for the specified pollable {pollable} was not found."
+                "A handler for the specified pollable {:?} was not found.",
+                pollable
             ),
         }
     }
@@ -110,7 +116,7 @@ impl EventManager {
         let interest_list = subscriber.lock().unwrap().interest_list();
 
         for event in interest_list {
-            self.register(event.data() as i32, event, subscriber.clone())?
+            self.register(event.data() as Pollable, event, subscriber.clone())?
         }
 
         Ok(())
@@ -202,6 +208,7 @@ impl EventManager {
             &mut self.ready_events[..],
         ) {
             Ok(event_count) => event_count,
+            #[cfg(unix)]
             Err(e) if e.raw_os_error() == Some(libc::EINTR) => 0,
             Err(e) => return Err(Error::Poll(e)),
         };
@@ -254,9 +261,19 @@ mod tests {
 
     impl DummySubscriber {
         fn new() -> Self {
+            let event_fd_1 = EventFd::new(0).unwrap();
+            let event_fd_2 = EventFd::new(0).unwrap();
+            // On Windows the IOCP only delivers a packet when the underlying
+            // Event object is signaled.  Linux eventfds are always writable
+            // (EPOLLOUT fires instantly) so this isn't needed there.
+            #[cfg(target_os = "windows")]
+            {
+                event_fd_1.write(1).unwrap();
+                event_fd_2.write(1).unwrap();
+            }
             DummySubscriber {
-                event_fd_1: EventFd::new(0).unwrap(),
-                event_fd_2: EventFd::new(0).unwrap(),
+                event_fd_1,
+                event_fd_2,
                 processed_ev1_in: false,
                 processed_ev2_in: false,
                 register_ev2: false,
@@ -339,7 +356,7 @@ mod tests {
 
     impl Subscriber for DummySubscriber {
         fn process(&mut self, event: &EpollEvent, event_manager: &mut EventManager) {
-            let source = event.data() as i32;
+            let source = event.data() as Pollable;
             let event_set = EventSet::from_bits(event.events()).unwrap();
 
             // We only know how to treat EPOLLOUT and EPOLLIN.
@@ -521,6 +538,11 @@ mod tests {
 
         let dummy_fd = dummy_subscriber.lock().unwrap().event_fd_1.as_raw_fd();
         assert!(event_manager.subscriber(dummy_fd).is_ok());
-        assert!(event_manager.subscriber(-1).is_err());
+
+        #[cfg(unix)]
+        let bad_fd: Pollable = -1;
+        #[cfg(windows)]
+        let bad_fd: Pollable = std::ptr::null_mut();
+        assert!(event_manager.subscriber(bad_fd).is_err());
     }
 }
