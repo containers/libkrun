@@ -1,7 +1,7 @@
 //! Common utilities used by multiple test
 
 use anyhow::Context;
-use std::ffi::CString;
+use std::ffi::{c_char, CString};
 use std::fs;
 use std::fs::create_dir;
 use std::os::unix::ffi::OsStrExt;
@@ -35,6 +35,17 @@ pub fn setup_rootfs(test_setup: &TestSetup) -> anyhow::Result<PathBuf> {
 
 /// Sets up the root filesystem, copies the guest agent into it, and enters the VM.
 pub fn setup_fs_and_enter(ctx: u32, test_setup: TestSetup) -> anyhow::Result<()> {
+    let envp = [null()];
+    setup_fs_and_enter_with_envp(ctx, test_setup, envp.as_ptr())
+}
+
+/// Like `setup_fs_and_enter`, but takes a raw envp pointer so tests can
+/// exercise NULL / non-standard envp values against `krun_set_exec`.
+pub fn setup_fs_and_enter_with_envp(
+    ctx: u32,
+    test_setup: TestSetup,
+    envp: *const *const c_char,
+) -> anyhow::Result<()> {
     let root_dir = setup_rootfs(&test_setup)?;
 
     let path_str = CString::new(root_dir.as_os_str().as_bytes()).context("CString::new")?;
@@ -43,13 +54,11 @@ pub fn setup_fs_and_enter(ctx: u32, test_setup: TestSetup) -> anyhow::Result<()>
         krun_call!(krun_set_workdir(ctx, c"/".as_ptr()))?;
         let test_case_cstr = CString::new(test_setup.test_case).context("CString::new")?;
         let argv = [test_case_cstr.as_ptr(), null()];
-        //let envp = [c"RUST_BACKTRACE=1".as_ptr(), null()];
-        let envp = [null()];
         krun_call!(krun_set_exec(
             ctx,
             c"/guest-agent".as_ptr(),
             argv.as_ptr(),
-            envp.as_ptr(),
+            envp,
         ))?;
         krun_call!(krun_start_enter(ctx))?;
     }

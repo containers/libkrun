@@ -794,8 +794,10 @@ int32_t krun_set_workdir(uint32_t ctx_id,
  *  "exec_path" - the path to the executable, relative to the root configured with "krun_set_root".
  *  "argv"      - an array of string pointers to be passed as arguments.
  *  "envp"      - an array of string pointers to be injected as environment variables into the
- *                context of the executable. If NULL, it will auto-generate an array collecting the
- *                the variables currently present in the environment.
+ *                context of the executable. If NULL, it inherits the host process's
+ *                environment on a best-effort basis, where variables whose key or value contains
+ *                whitespace, control characters, or non-ASCII bytes are skipped, and the
+ *                inherited set is truncated to fit the kernel command line.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
@@ -849,8 +851,10 @@ int32_t krun_set_kernel(uint32_t ctx_id,
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
  *  "envp"      - an array of string pointers to be injected as environment variables into the
- *                context of the executable. If NULL, it will auto-generate an array collecting the
- *                the variables currently present in the environment.
+ *                context of the executable. If NULL, it inherits the host process's
+ *                environment on a best-effort basis, where variables whose key or value contains
+ *                whitespace, control characters, or non-ASCII bytes are skipped, and the
+ *                inherited set is truncated to fit the kernel command line.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
