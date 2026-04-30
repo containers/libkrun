@@ -1,6 +1,7 @@
 // Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(unix)]
 pub use vmm_sys_util::{errno, tempdir, tempfile, terminal};
 #[cfg(target_os = "linux")]
 pub use vmm_sys_util::{eventfd, ioctl};

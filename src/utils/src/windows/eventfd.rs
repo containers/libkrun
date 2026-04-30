@@ -69,10 +69,8 @@ impl EventFd {
         *counter = counter.saturating_add(v);
 
         // Only signal the event if it was not already signaled.
-        if was_zero {
-            if unsafe { SetEvent(self.inner.event) } == 0 {
-                return Err(io::Error::last_os_error());
-            }
+        if was_zero && unsafe { SetEvent(self.inner.event) } == 0 {
+            return Err(io::Error::last_os_error());
         }
         Ok(())
     }
