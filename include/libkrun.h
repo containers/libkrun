@@ -1249,7 +1249,7 @@ int32_t krun_set_root_disk_remount(uint32_t ctx_id, const char *device, const ch
  */
 int32_t krun_start_enter(uint32_t ctx_id);
 
-/* AGX (M5-04): vCPU pause/resume + guest memory introspection.
+/* AGX: vCPU pause/resume + guest memory introspection.
  *
  * These APIs are AGX additions to the libkrun fork. They must be
  * called AFTER krun_start_enter has built the microVM (i.e., from
@@ -1284,7 +1284,7 @@ int32_t krun_get_guest_memory_range(uint32_t ctx_id,
                                     uint64_t *base_out,
                                     uint64_t *size_out);
 
-/* AGX (M5-04b): serialize vCPU + VM state to `<c_filepath>`.
+/* AGX: serialize vCPU + VM state to `<c_filepath>`.
  * Linux x86_64 only (returns -ENOSYS elsewhere for v1).
  *
  * The file format is a hand-rolled binary:
@@ -1309,6 +1309,45 @@ int32_t krun_get_guest_memory_range(uint32_t ctx_id,
  * -EINVAL if c_filepath is NULL, -EIO on serialization or write
  * failure, -ENOSYS on non-x86_64 / non-Linux. */
 int32_t krun_snapshot(uint32_t ctx_id, const char *c_filepath);
+
+/* AGX: dump full guest RAM to c_filepath. Caller MUST have paused
+ * via krun_pause first.
+ *
+ * Output: bytes of each guest-memory region concatenated in
+ * start-address order. The restore path reads it back in this same
+ * layout.
+ *
+ * Returns 0 on success, -ENOENT if ctx_id has no running Vmm,
+ * -EINVAL if c_filepath is NULL, -EIO on write failure,
+ * -ENOSYS on non-x86_64 / non-Linux. */
+int32_t krun_snapshot_memory(uint32_t ctx_id, const char *c_filepath);
+
+/* AGX: configure ctx_id to restore from a snapshot when
+ * krun_start_enter is next called.
+ *
+ * Both `c_vm_state_path` (the krun_snapshot artifact) and
+ * `c_memory_path` (the krun_snapshot_memory artifact) must exist.
+ * The next call to `krun_start_enter(ctx_id)` will:
+ *
+ *   1. Allocate guest memory the same way a kernel-less boot would
+ *   2. Splat memory_path into the host-virtual mapping for that
+ *      memory
+ *   3. Skip kernel/cmdline/system-config setup
+ *   4. Create vCPUs and apply the saved KVM state via KVM_SET_*
+ *   5. Apply the saved VmState (PIT/CLOCK/IRQCHIP)
+ *   6. Start vCPUs from the restored RIP
+ *
+ * Devices (virtio-blk/net/vsock/console) come up FRESH — no
+ * device-state save/restore is implemented yet, so the guest will
+ * see a hardware reset of those devices. Whether the guest tolerates
+ * this depends on the kernel inside it.
+ *
+ * Returns 0 on success, -ENOENT if ctx_id doesn't exist or either
+ * path is missing, -EINVAL on null/non-utf8 input, -ENOSYS on
+ * non-x86_64 / non-Linux. */
+int32_t krun_resume_from(uint32_t ctx_id,
+                         const char *c_vm_state_path,
+                         const char *c_memory_path);
 
 #ifdef __cplusplus
 }

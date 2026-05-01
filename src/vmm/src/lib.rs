@@ -15,6 +15,8 @@ extern crate log;
 
 /// Handles setup and initialization a `Vmm` object.
 pub mod builder;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub mod snapshot;
 pub(crate) mod device_manager;
 /// Resource store for configured microVM resources.
 pub mod resources;
@@ -27,7 +29,7 @@ pub mod vmm_config;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-// AGX (M5-04b): re-export vstate so the libkrun crate can
+// AGX: re-export vstate so the libkrun crate can
 // reach VcpuState / VmState / VcpuEvent for snapshot save.
 #[cfg(target_os = "linux")]
 pub use crate::linux::vstate;
@@ -272,10 +274,10 @@ impl Vmm {
         Ok(())
     }
 
-    /// AGX (M5-04b): collect vCPU state from each vCPU thread.
-    /// Caller MUST have paused first (via `pause_vcpus`); this
-    /// function panics if called on a running vCPU because the
-    /// state ioctls require quiescence. Returns one `VcpuState`
+    /// AGX: collect vCPU state from each vCPU thread. Caller
+    /// MUST have paused first (via `pause_vcpus`); this function
+    /// fails if called on a running vCPU because the state
+    /// ioctls require quiescence. Returns one `VcpuState`
     /// per vCPU in vCPU-id order.
     ///
     /// Cross-arch: x86_64-only for v1. aarch64 needs a separate
@@ -298,7 +300,26 @@ impl Vmm {
         Ok(out)
     }
 
-    /// AGX (M5-04): pause every vCPU thread by sending
+    /// AGX: returns a mutable reference to the inner
+    /// `GuestMemoryMmap`. Used by the restore path to write
+    /// the snapshotted memory bytes into the freshly-allocated
+    /// guest memory before the vCPU threads start.
+    pub fn guest_memory_mut(&mut self) -> &mut GuestMemoryMmap {
+        &mut self.guest_memory
+    }
+
+    /// AGX: apply a previously-collected `VmState`
+    /// (PIT/CLOCK/IRQCHIP) to the underlying KVM vm. Used by
+    /// the restore path right after the vm is created and the
+    /// in-kernel irqchip exists. Caller should not yet have
+    /// started any vCPUs — the irqchip restore writes into
+    /// per-VM state that vCPU SET ioctls also touch.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    pub fn restore_vm_state(&self, state: &crate::vstate::VmState) -> Result<()> {
+        self.vm.restore_state(state).map_err(Error::Vcpu)
+    }
+
+    /// AGX: pause every vCPU thread by sending
     /// `VcpuEvent::Pause` and waiting for the corresponding
     /// `VcpuResponse::Paused` ack. The vCPU's state machine
     /// transitions to `paused` and blocks on the event channel

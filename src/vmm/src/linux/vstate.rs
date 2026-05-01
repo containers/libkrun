@@ -1302,13 +1302,23 @@ impl Vcpu {
         ))
     }
 
-    /// AGX (M5-04b): public wrapper for the snapshot-write
-    /// path. The underlying save_state was already implemented
-    /// (just unused by upstream libkrun); we make it accessible
+    /// AGX: public wrapper for the snapshot-write path. The
+    /// underlying save_state was already implemented (just
+    /// unused by upstream libkrun); we make it accessible
     /// from the libkrun crate via this thin wrapper.
     #[cfg(target_arch = "x86_64")]
     pub fn snapshot_save_state(&self) -> Result<VcpuState> {
         self.save_state()
+    }
+
+    /// AGX: public wrapper for the snapshot-restore path.
+    /// Mirror of `snapshot_save_state`. Caller guarantees the
+    /// vCPU is freshly created (KVM_CREATE_VCPU but no other
+    /// configuration applied yet) — the SET_* ioctls assume a
+    /// blank-slate vCPU.
+    #[cfg(target_arch = "x86_64")]
+    pub fn snapshot_restore_state(&self, state: VcpuState) -> Result<()> {
+        self.restore_state(state)
     }
 
     #[allow(unused)]
@@ -1626,7 +1636,7 @@ impl Vcpu {
                     .send(VcpuResponse::Resumed)
                     .expect("failed to send resume status");
             }
-            // AGX (M5-04b): SaveState while running is a caller
+            // AGX: SaveState while running is a caller
             // bug — only valid in `paused`. Drop the sender so
             // the caller's recv fails clearly.
             #[cfg(target_arch = "x86_64")]
@@ -1655,7 +1665,7 @@ impl Vcpu {
                 // Move to 'running' state.
                 StateMachine::next(Self::running)
             }
-            // AGX (M5-04b): Paused ---- SaveState(tx) ----> Paused
+            // AGX: Paused ---- SaveState(tx) ----> Paused
             // The vcpu is the only thread allowed to call the
             // KVM_GET_* ioctls on its own fd, so the snapshot
             // request comes here, gets serviced, and stays
@@ -1746,7 +1756,7 @@ pub struct VcpuState {
 #[derive(Debug)]
 /// List of events that the Vcpu can receive.
 pub enum VcpuEvent {
-    /// AGX (M5-04b): save vCPU state to the embedded sender.
+    /// AGX: save vCPU state to the embedded sender.
     /// Only valid in `paused` state — calling while the vcpu is
     /// running is undefined (the state ioctls require quiescence).
     #[cfg(target_arch = "x86_64")]

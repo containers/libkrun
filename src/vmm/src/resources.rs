@@ -191,6 +191,21 @@ pub struct VmResources {
     pub virtio_consoles: Vec<VirtioConsoleConfigMode>,
     /// Enable the embedded dhcp client in init.c
     pub dhcp_client: bool,
+    /// AGX: when set, build_microvm follows the restore path
+    /// instead of the boot path — guest memory is loaded from
+    /// `memory_path`, vCPU + VM state from `vm_state_path`,
+    /// and the kernel/cmdline/system-config stages are skipped.
+    /// See `vmm::builder::build_microvm` for the branching.
+    pub restore_from: Option<RestoreContext>,
+}
+
+/// AGX: paths to a snapshot's `vm-state.bin` and
+/// `memory.bin`. Set on `VmResources::restore_from` to put
+/// `build_microvm` into restore mode.
+#[derive(Clone, Default)]
+pub struct RestoreContext {
+    pub vm_state_path: PathBuf,
+    pub memory_path: PathBuf,
 }
 
 impl VmResources {

@@ -562,16 +562,51 @@ pub fn build_microvm(
     _shutdown_efd: Option<EventFd>,
     _sender: Sender<WorkerMessage>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
-    let payload = choose_payload(vm_resources)?;
+    // AGX restore mode (`vm_resources.restore_from` set):
+    // synthesize an empty payload, allocate guest memory the
+    // same way a kernel-less boot would, and load the
+    // snapshotted memory bytes in. Kernel/cmdline/system-config
+    // stages are gated on `is_restore` below.
+    let is_restore = vm_resources.restore_from.is_some();
 
-    let (guest_memory, arch_memory_info, mut _shm_manager, payload_config) = create_guest_memory(
-        vm_resources
+    let (guest_memory, arch_memory_info, mut _shm_manager, payload_config) = if is_restore {
+        let mem_mib = vm_resources
             .vm_config()
             .mem_size_mib
-            .ok_or(StartMicrovmError::MissingMemSizeConfig)?,
-        vm_resources,
-        &payload,
-    )?;
+            .ok_or(StartMicrovmError::MissingMemSizeConfig)?;
+        let mem_size = mem_mib << 20;
+        // Use arch_memory_info as a placeholder — it shapes
+        // pio_device_manager's CMOS RAM-size register, but the
+        // restore path skips the boot config that depends on
+        // the precise number, so this can be approximate.
+        let (arch_mem_info, _) = arch::arch_memory_regions(mem_size, None, 0, 0, None);
+        let memory_path = &vm_resources.restore_from.as_ref().unwrap().memory_path;
+        let (regions_layout, body_offset) = read_memory_layout(memory_path)?;
+        let guest_mem = GuestMemoryMmap::from_ranges(&regions_layout)
+            .map_err(|e| StartMicrovmError::GuestMemoryMmap(format!("{e:?}")))?;
+        load_snapshotted_memory(&guest_mem, memory_path, body_offset)?;
+        let shm_manager = ShmManager::new(&arch_mem_info);
+        (
+            guest_mem,
+            arch_mem_info,
+            shm_manager,
+            PayloadConfig {
+                entry_addr: GuestAddress(0),
+                initrd_config: None,
+                kernel_cmdline: None,
+            },
+        )
+    } else {
+        let payload = choose_payload(vm_resources)?;
+        create_guest_memory(
+            vm_resources
+                .vm_config()
+                .mem_size_mib
+                .ok_or(StartMicrovmError::MissingMemSizeConfig)?,
+            vm_resources,
+            &payload,
+        )?
+    };
 
     let vcpu_config = vm_resources.vcpu_config();
 
@@ -820,7 +855,11 @@ pub fn build_microvm(
             Some(intc.clone()),
         )?;
 
-        let kernel_boot = vm_resources.firmware_config.is_none() && !cfg!(feature = "tee");
+        // AGX restore: skip the kernel-boot register/MSR setup
+        // — those values are about to be overwritten by
+        // snapshot_restore_state below.
+        let kernel_boot =
+            !is_restore && vm_resources.firmware_config.is_none() && !cfg!(feature = "tee");
 
         vcpus = create_vcpus_x86_64(
             &vm,
@@ -1069,16 +1108,22 @@ pub fn build_microvm(
 
     // Write the kernel command line to guest memory. This is x86_64 specific, since on
     // aarch64 the command line will be specified through the FDT.
+    // AGX restore: cmdline + system config are already in the
+    // snapshotted memory; skip both stages to avoid clobbering it.
     #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
-    load_cmdline(&vmm)?;
+    if !is_restore {
+        load_cmdline(&vmm)?;
+    }
 
-    vmm.configure_system(
-        vcpus.as_slice(),
-        &intc,
-        &payload_config.initrd_config,
-        &vm_resources.smbios_oem_strings,
-    )
-    .map_err(StartMicrovmError::Internal)?;
+    if !is_restore {
+        vmm.configure_system(
+            vcpus.as_slice(),
+            &intc,
+            &payload_config.initrd_config,
+            &vm_resources.smbios_oem_strings,
+        )
+        .map_err(StartMicrovmError::Internal)?;
+    }
 
     #[cfg(feature = "tee")]
     {
@@ -1112,6 +1157,27 @@ pub fn build_microvm(
         }
 
         println!("Starting TEE/microVM.");
+    }
+
+    // AGX restore: apply VcpuState[] + VmState before the
+    // vCPU threads start. Each vCPU receives its KVM_SET_*
+    // ioctls from snapshot_restore_state, and the VM's
+    // PIT/CLOCK/IRQCHIP get re-loaded.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    if is_restore {
+        let restore = vm_resources.restore_from.as_ref().unwrap();
+        let (vcpu_states, vm_state) = read_vmstate_artifact(&restore.vm_state_path)?;
+        if vcpu_states.len() != vcpus.len() {
+            return Err(StartMicrovmError::Internal(Error::Vcpu(
+                crate::vstate::Error::VcpuCountNotInitialized,
+            )));
+        }
+        for (vcpu, state) in vcpus.iter().zip(vcpu_states.into_iter()) {
+            vcpu.snapshot_restore_state(state)
+                .map_err(|e| StartMicrovmError::Internal(Error::Vcpu(e)))?;
+        }
+        vmm.restore_vm_state(&vm_state)
+            .map_err(StartMicrovmError::Internal)?;
     }
 
     vmm.start_vcpus(vcpus)
@@ -1417,9 +1483,142 @@ fn load_payload(
 }
 
 pub struct PayloadConfig {
-    entry_addr: GuestAddress,
-    initrd_config: Option<InitrdConfig>,
-    kernel_cmdline: Option<String>,
+    pub entry_addr: GuestAddress,
+    pub initrd_config: Option<InitrdConfig>,
+    pub kernel_cmdline: Option<String>,
+}
+
+/// AGX restore helper: deserialize the vCPU + VM state binary
+/// at `vm_state_path`, returning the recovered tuple. Wraps
+/// `vmm::snapshot::read_artifact` and converts errors into
+/// `StartMicrovmError::Internal` so the caller can `?` it.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn read_vmstate_artifact(
+    vm_state_path: &std::path::Path,
+) -> std::result::Result<
+    (Vec<crate::vstate::VcpuState>, crate::vstate::VmState),
+    StartMicrovmError,
+> {
+    crate::snapshot::read_artifact(vm_state_path)
+        .map_err(|e| StartMicrovmError::GuestMemoryMmap(format!("vm-state: {e}")))
+}
+
+/// AGX restore helper: read the layout header from `memory_path`.
+/// Returns `(regions, body_offset)` where `regions` is the
+/// list of `(GuestAddress, length)` pairs and `body_offset`
+/// is where the raw region bytes begin. Format is documented
+/// at the writer site (`krun_snapshot_memory`).
+fn read_memory_layout(
+    memory_path: &std::path::Path,
+) -> std::result::Result<(Vec<(GuestAddress, usize)>, u64), StartMicrovmError> {
+    use std::io::Read;
+    let mut file = File::open(memory_path).map_err(|e| {
+        StartMicrovmError::GuestMemoryMmap(format!(
+            "open {}: {e}",
+            memory_path.display()
+        ))
+    })?;
+    let mut magic = [0u8; 8];
+    file.read_exact(&mut magic).map_err(|e| {
+        StartMicrovmError::GuestMemoryMmap(format!("read magic: {e}"))
+    })?;
+    if &magic != b"AGXMEM01" {
+        return Err(StartMicrovmError::GuestMemoryMmap(format!(
+            "memory.bin: bad magic {:?}",
+            magic
+        )));
+    }
+    let mut count_buf = [0u8; 4];
+    file.read_exact(&mut count_buf).map_err(|e| {
+        StartMicrovmError::GuestMemoryMmap(format!("read region count: {e}"))
+    })?;
+    let region_count = u32::from_le_bytes(count_buf) as usize;
+    if region_count == 0 || region_count > 64 {
+        return Err(StartMicrovmError::GuestMemoryMmap(format!(
+            "implausible region count {region_count}"
+        )));
+    }
+    let mut regions = Vec::with_capacity(region_count);
+    let mut total_len: u64 = 0;
+    for _ in 0..region_count {
+        let mut entry = [0u8; 16];
+        file.read_exact(&mut entry).map_err(|e| {
+            StartMicrovmError::GuestMemoryMmap(format!("read region entry: {e}"))
+        })?;
+        let gpa = u64::from_le_bytes(entry[0..8].try_into().unwrap());
+        let len = u64::from_le_bytes(entry[8..16].try_into().unwrap());
+        regions.push((GuestAddress(gpa), len as usize));
+        total_len += len;
+    }
+    let body_offset: u64 = 8 + 4 + (region_count as u64) * 16;
+    let file_len = file
+        .metadata()
+        .map_err(|e| StartMicrovmError::GuestMemoryMmap(format!("stat: {e}")))?
+        .len();
+    if file_len != body_offset + total_len {
+        return Err(StartMicrovmError::GuestMemoryMmap(format!(
+            "memory.bin: file size {file_len} != header({body_offset}) + body({total_len})"
+        )));
+    }
+    Ok((regions, body_offset))
+}
+
+/// AGX restore helper: read raw guest-RAM bytes from
+/// `memory_path` (skipping the layout header at `body_offset`)
+/// and splat them into `guest_mem`'s host-virtual mappings.
+/// Caller is responsible for having already constructed
+/// `guest_mem` from the layout returned by
+/// [`read_memory_layout`] so the regions match.
+fn load_snapshotted_memory(
+    guest_mem: &GuestMemoryMmap,
+    memory_path: &std::path::Path,
+    body_offset: u64,
+) -> std::result::Result<(), StartMicrovmError> {
+    use vm_memory::{GuestMemory, GuestMemoryRegion};
+    let mut file = File::open(memory_path).map_err(|e| {
+        StartMicrovmError::GuestMemoryMmap(format!(
+            "open {}: {e}",
+            memory_path.display()
+        ))
+    })?;
+    use std::io::Seek;
+    file.seek(std::io::SeekFrom::Start(body_offset)).map_err(|e| {
+        StartMicrovmError::GuestMemoryMmap(format!("seek to body: {e}"))
+    })?;
+    // Stream regions out in order. iter() yields regions in
+    // start-address order so concatenated reads from the file
+    // match the layout that krun_snapshot_memory wrote.
+    //
+    // We use the host-virtual base of each region to splat the
+    // bytes in directly — that mirrors how krun_snapshot_memory
+    // dumped them (raw read via host VA). This avoids any
+    // dependency on which `read_from`-style helper the
+    // installed `vm-memory` version exposes.
+    use std::io::Read;
+    for region in guest_mem.iter() {
+        let region_len = region.len() as usize;
+        let host_addr = region
+            .get_host_address(vm_memory::MemoryRegionAddress(0))
+            .map_err(|e| {
+                StartMicrovmError::GuestMemoryMmap(format!(
+                    "get_host_address at {:#x}: {e:?}",
+                    region.start_addr().raw_value()
+                ))
+            })?;
+        // SAFETY: host_addr..host_addr+region_len is the host
+        // virtual mapping that backs this guest region; no
+        // vCPU is running yet (build_microvm hasn't called
+        // start_vcpus) so nothing else writes here.
+        let dst: &mut [u8] =
+            unsafe { std::slice::from_raw_parts_mut(host_addr, region_len) };
+        file.read_exact(dst).map_err(|e| {
+            StartMicrovmError::GuestMemoryMmap(format!(
+                "read_exact at {:#x} len {region_len}: {e}",
+                region.start_addr().raw_value()
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 pub fn create_guest_memory(
