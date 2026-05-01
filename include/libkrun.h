@@ -1349,6 +1349,18 @@ int32_t krun_resume_from(uint32_t ctx_id,
                          const char *c_vm_state_path,
                          const char *c_memory_path);
 
+/* AGX: install a CIDR-based egress policy on the context's TSI
+ * layer. policy_json matches agx_net::EgressPolicy. The policy
+ * applies to every TCP/UDP outbound connect from the guest;
+ * non-matching connects are denied.
+ *
+ * STUB FOR NOW — returns -ENOSYS. The libkrun-fork TSI patch
+ * is documented in agx's docs/egress-policy.md. Until the patch
+ * lands the AGX session ships without sandbox-egress enforcement;
+ * the MITM proxy is the only honest egress for AGX-managed
+ * traffic by convention. */
+int32_t krun_set_egress_policy(uint32_t ctx_id, const char *policy_json);
+
 #ifdef __cplusplus
 }
 #endif

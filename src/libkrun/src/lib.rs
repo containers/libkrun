@@ -2763,6 +2763,32 @@ pub extern "C" fn krun_resume_from(
     -libc::ENOSYS
 }
 
+/// AGX: install a CIDR-based egress policy on the
+/// context's TSI layer.
+///
+/// **Stub for now** — returns -ENOSYS until the TSI patch
+/// lands. The AGX-side wrapper (`agx_vmm::VmConfig::set_egress_policy`)
+/// is wired so we can drop in the implementation as a
+/// single follow-up commit.
+///
+/// Patch shape (see `docs/egress-policy.md`):
+///
+///   1. Add `egress_policy: Option<EgressPolicy>` to
+///      `vmm::resources::VmResources`.
+///   2. Parse `policy_json` into the same shape inside
+///      this function and store it in the ctx's `vmr`.
+///   3. In `vmm::devices::vsock::muxer` (or the TSI
+///      socket bridge) consult the policy on every
+///      outbound connect; deny → return ECONNREFUSED to
+///      the guest.
+#[no_mangle]
+pub extern "C" fn krun_set_egress_policy(
+    _ctx_id: u32,
+    _policy_json: *const c_char,
+) -> i32 {
+    -libc::ENOSYS
+}
+
 // AGX: krun_get_guest_memory_range — exposes the
 // host-virtual base + length of the libkrun guest's RAM
 // region. The streamer uses this to find the bytes to read in
