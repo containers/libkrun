@@ -2838,6 +2838,60 @@ pub extern "C" fn krun_get_guest_memory_range(
     KRUN_SUCCESS
 }
 
+// AGX: krun_get_guest_memory_layout — expose the guest's region
+// layout as (gpa_start, length, host_addr) triples. Used by live
+// migration to read per-region from /proc/<pid>/mem at the
+// correct host-virtual address (regions are NOT guaranteed
+// contiguous in host VA), and to assemble the AGXMEM01
+// layout-header on the destination.
+//
+// `regions_out` is a u64 buffer of capacity `*count_inout * 3`
+// (3 u64s per region: gpa, len, host_addr). `count_inout` is
+// in: max regions; out: actual count.  Returns -ENOSPC if
+// too small.
+#[no_mangle]
+pub extern "C" fn krun_get_guest_memory_layout(
+    ctx_id: u32,
+    regions_out: *mut u64,
+    count_inout: *mut u32,
+) -> i32 {
+    if regions_out.is_null() || count_inout.is_null() {
+        return -libc::EINVAL;
+    }
+    let vmm = match RUNNING_VMMS.lock().unwrap().get(&ctx_id) {
+        Some(v) => v.clone(),
+        None => return -libc::ENOENT,
+    };
+    let g = vmm.lock().unwrap();
+    let mem = g.guest_memory();
+    use vm_memory::{Address, GuestMemory, GuestMemoryRegion};
+    let regions: Vec<(u64, u64, u64)> = mem
+        .iter()
+        .map(|r| {
+            let host_addr = r
+                .get_host_address(vm_memory::MemoryRegionAddress(0))
+                .map(|p| p as u64)
+                .unwrap_or(0);
+            (r.start_addr().raw_value(), r.len(), host_addr)
+        })
+        .collect();
+    let cap = unsafe { *count_inout } as usize;
+    if regions.len() > cap {
+        return -libc::ENOSPC;
+    }
+    for (i, (gpa, len, host_addr)) in regions.iter().enumerate() {
+        unsafe {
+            *regions_out.add(i * 3) = *gpa;
+            *regions_out.add(i * 3 + 1) = *len;
+            *regions_out.add(i * 3 + 2) = *host_addr;
+        }
+    }
+    unsafe {
+        *count_inout = regions.len() as u32;
+    }
+    KRUN_SUCCESS
+}
+
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_add_serial_console_default(
