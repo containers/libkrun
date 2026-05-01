@@ -150,6 +150,12 @@ struct ContextConfig {
     /// `krun_set_egress_policy`. Wired into `VsockDeviceConfig`
     /// at device-creation time.
     egress_policy: Option<std::sync::Arc<devices::virtio::EgressPolicy>>,
+    /// AGX: when set, libkrun auto-registers userfaultfd-WP
+    /// (async) on every guest memory region right after the
+    /// VMM enters RUNNING_VMMS. Required by the
+    /// `PAGEMAP_SCAN`-with-`PM_SCAN_WP_MATCHING` dirty
+    /// tracking path in `agx-snapshot`.
+    uffd_wp_enabled: bool,
     #[cfg(feature = "blk")]
     block_cfgs: Vec<BlockDeviceConfig>,
     #[cfg(feature = "blk")]
@@ -448,6 +454,23 @@ static CTX_IDS: AtomicI32 = AtomicI32::new(0);
 /// guest exits, dropping the global with the rest of the
 /// process).
 static RUNNING_VMMS: Lazy<Mutex<HashMap<u32, std::sync::Arc<std::sync::Mutex<vmm::Vmm>>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// AGX: per-ctx userfaultfd-WP file descriptor. Created on
+/// `krun_register_uffd_wp(ctx_id)` and kept alive for the
+/// lifetime of the ctx so the kernel keeps the
+/// `userfaultfd_wp_async` flag set on registered VMAs (which
+/// `PAGEMAP_SCAN`'s `PM_SCAN_WP_MATCHING` requires; see
+/// `fs/proc/task_mmu.c::pagemap_scan_test_walk`).
+///
+/// The fd is opened by the libkrun process (this binary) and
+/// registered against the guest-memory VMAs in this process's
+/// mm. The agx-snapshot streamer running in the parent
+/// (agx-controller) issues `PAGEMAP_SCAN` against
+/// `/proc/<libkrun-pid>/pagemap` — the kernel checks the VMA's
+/// uffd-context, finds it has `WP_ASYNC`, and allows the scan +
+/// per-range wrprotect.
+static UFFD_WP_FDS: Lazy<Mutex<HashMap<u32, std::os::fd::OwnedFd>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn log_level_to_filter_str(level: u32) -> &'static str {
@@ -2908,6 +2931,211 @@ pub extern "C" fn krun_get_guest_memory_layout(
     KRUN_SUCCESS
 }
 
+/// AGX: enable uffd-wp auto-registration at start_enter
+/// time. Must be called BEFORE `krun_start_enter(ctx_id)`.
+/// Once enabled, libkrun will open a userfaultfd and register
+/// every guest memory region with `UFFDIO_REGISTER_MODE_WP`
+/// right after the VMM is built. This is what the
+/// PAGEMAP_SCAN-based streamer needs (no per-VM call from
+/// outside required).
+#[no_mangle]
+pub extern "C" fn krun_set_uffd_wp_enabled(ctx_id: u32, enabled: bool) -> i32 {
+    with_cfg(ctx_id, |cfg| {
+        cfg.uffd_wp_enabled = enabled;
+        KRUN_SUCCESS
+    })
+}
+
+/// AGX: register userfaultfd-WP (async mode) on every guest
+/// memory region in this ctx's running VMM.
+///
+/// Required by the modern `PAGEMAP_SCAN` dirty-tracking
+/// primitive: with `PM_SCAN_WP_MATCHING` set, the kernel
+/// (`fs/proc/task_mmu.c::pagemap_scan_test_walk`) requires the
+/// VMA's userfaultfd context to be `wp_async`, otherwise the
+/// scan silently skips the VMA. Without this registration,
+/// AGX's per-region atomic find-dirty-and-rearm doesn't work.
+///
+/// What this does, on the calling (libkrun) process:
+///   1. `userfaultfd(O_CLOEXEC | O_NONBLOCK)`
+///   2. `UFFDIO_API` with `UFFD_FEATURE_WP_ASYNC |
+///      UFFD_FEATURE_WP_UNPOPULATED` enabled.
+///   3. For each guest memory region: `UFFDIO_REGISTER` with
+///      `UFFDIO_REGISTER_MODE_WP`.
+///   4. Stores the fd in `UFFD_WP_FDS[ctx_id]` so it stays
+///      alive — closing the fd unregisters the VMAs.
+///
+/// Idempotent: calling twice is a no-op (returns success).
+///
+/// Returns 0 on success, -ENOENT if the VMM isn't running yet,
+/// -errno if a syscall fails.
+#[no_mangle]
+pub extern "C" fn krun_register_uffd_wp(ctx_id: u32) -> i32 {
+    // Idempotent: if already registered, succeed.
+    if UFFD_WP_FDS.lock().unwrap().contains_key(&ctx_id) {
+        return KRUN_SUCCESS;
+    }
+
+    let vmm = match RUNNING_VMMS.lock().unwrap().get(&ctx_id) {
+        Some(v) => v.clone(),
+        None => return -libc::ENOENT,
+    };
+
+    // Snapshot the (host_addr, len) of each region while we
+    // hold the VMM lock; release before doing syscalls.
+    let regions: Vec<(u64, u64)> = {
+        let g = vmm.lock().unwrap();
+        let mem = g.guest_memory();
+        use vm_memory::{GuestMemory, GuestMemoryRegion};
+        mem.iter()
+            .map(|r| {
+                let host_addr = r
+                    .get_host_address(vm_memory::MemoryRegionAddress(0))
+                    .map(|p| p as u64)
+                    .unwrap_or(0);
+                (host_addr, r.len())
+            })
+            .filter(|(h, _)| *h != 0)
+            .collect()
+    };
+
+    match register_uffd_wp_for_regions(&regions) {
+        Ok(fd) => {
+            UFFD_WP_FDS.lock().unwrap().insert(ctx_id, fd);
+            KRUN_SUCCESS
+        }
+        Err(errno) => -errno,
+    }
+}
+
+fn register_uffd_wp_for_regions(
+    regions: &[(u64, u64)],
+) -> Result<std::os::fd::OwnedFd, i32> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+
+    // <linux/userfaultfd.h>
+    const O_CLOEXEC: libc::c_int = libc::O_CLOEXEC;
+    const O_NONBLOCK: libc::c_int = libc::O_NONBLOCK;
+    const UFFD_API: u64 = 0xAA;
+    const UFFDIO_API: libc::c_ulong = 0xc018_aa3f;
+    const UFFDIO_REGISTER: libc::c_ulong = 0xc020_aa00;
+    const UFFDIO_WRITEPROTECT: libc::c_ulong = 0xc018_aa06;
+    const UFFDIO_REGISTER_MODE_WP: u64 = 1 << 1;
+    const UFFDIO_WRITEPROTECT_MODE_WP: u64 = 1 << 0;
+    // <uapi/linux/userfaultfd.h>:
+    //   UFFD_FEATURE_WP_UNPOPULATED = (1 << 13)
+    //   UFFD_FEATURE_WP_ASYNC       = (1 << 15)
+    const UFFD_FEATURE_WP_ASYNC: u64 = 1 << 15;
+    const UFFD_FEATURE_WP_UNPOPULATED: u64 = 1 << 13;
+
+    #[repr(C)]
+    struct UffdioApi {
+        api: u64,
+        features: u64,
+        ioctls: u64,
+    }
+    #[repr(C)]
+    struct UffdioRange {
+        start: u64,
+        len: u64,
+    }
+    #[repr(C)]
+    struct UffdioRegister {
+        range: UffdioRange,
+        mode: u64,
+        ioctls: u64,
+    }
+    #[repr(C)]
+    struct UffdioWriteprotect {
+        range: UffdioRange,
+        mode: u64,
+    }
+
+    // 1. Open userfaultfd.
+    let raw_fd = unsafe {
+        libc::syscall(
+            libc::SYS_userfaultfd,
+            (O_CLOEXEC | O_NONBLOCK) as libc::c_long,
+        )
+    };
+    if raw_fd < 0 {
+        return Err(unsafe { *libc::__errno_location() });
+    }
+    let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(raw_fd as i32) };
+
+    // 2. UFFDIO_API. WP_UNPOPULATED auto-wrprotects pages that
+    // get faulted in lazily after registration; we still need
+    // an explicit UFFDIO_WRITEPROTECT to baseline already-
+    // populated pages (the typical case for libkrun's
+    // pre-faulted guest memory).
+    let mut api = UffdioApi {
+        api: UFFD_API,
+        features: UFFD_FEATURE_WP_ASYNC | UFFD_FEATURE_WP_UNPOPULATED,
+        ioctls: 0,
+    };
+    let rc = unsafe { libc::ioctl(fd.as_raw_fd(), UFFDIO_API, &mut api as *mut _) };
+    if rc < 0 {
+        let e = unsafe { *libc::__errno_location() };
+        warn!("krun_register_uffd_wp: UFFDIO_API failed: errno={e}");
+        return Err(e);
+    }
+    if (api.features & UFFD_FEATURE_WP_ASYNC) == 0 {
+        warn!(
+            "krun_register_uffd_wp: kernel doesn't support UFFD_FEATURE_WP_ASYNC \
+             (kernel < 6.7?). features={:#x}",
+            api.features
+        );
+        return Err(libc::ENOTSUP);
+    }
+
+    // 3. UFFDIO_REGISTER + UFFDIO_WRITEPROTECT per region.
+    for (host_addr, len) in regions {
+        let mut reg = UffdioRegister {
+            range: UffdioRange {
+                start: *host_addr,
+                len: *len,
+            },
+            mode: UFFDIO_REGISTER_MODE_WP,
+            ioctls: 0,
+        };
+        let rc = unsafe { libc::ioctl(fd.as_raw_fd(), UFFDIO_REGISTER, &mut reg as *mut _) };
+        if rc < 0 {
+            let e = unsafe { *libc::__errno_location() };
+            warn!(
+                "krun_register_uffd_wp: UFFDIO_REGISTER failed for \
+                 host_addr={host_addr:#x} len={len:#x}: errno={e}"
+            );
+            return Err(e);
+        }
+        // Baseline: wrprotect every populated page in the
+        // region. Without this, the first PAGEMAP_SCAN +
+        // PM_SCAN_WP_MATCHING returns nothing because no
+        // page is wrprotected (only unpopulated ones are,
+        // via WP_UNPOPULATED).
+        let mut wp = UffdioWriteprotect {
+            range: UffdioRange {
+                start: *host_addr,
+                len: *len,
+            },
+            mode: UFFDIO_WRITEPROTECT_MODE_WP,
+        };
+        let rc = unsafe { libc::ioctl(fd.as_raw_fd(), UFFDIO_WRITEPROTECT, &mut wp as *mut _) };
+        if rc < 0 {
+            let e = unsafe { *libc::__errno_location() };
+            warn!(
+                "krun_register_uffd_wp: UFFDIO_WRITEPROTECT failed for \
+                 host_addr={host_addr:#x} len={len:#x}: errno={e}"
+            );
+            return Err(e);
+        }
+    }
+    info!(
+        "krun_register_uffd_wp: registered+wrprotected {} region(s) for uffd-wp ASYNC",
+        regions.len()
+    );
+    Ok(fd)
+}
+
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_add_serial_console_default(
@@ -3142,6 +3370,18 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     // AGX: register the running Vmm so cross-thread
     // krun_pause / krun_resume can find it.
     RUNNING_VMMS.lock().unwrap().insert(ctx_id, _vmm.clone());
+
+    // AGX: if uffd-wp was enabled before start_enter, register
+    // it now (we have the VMM and know which guest memory
+    // regions need uffd-wp). The streamer side relies on this
+    // for PM_SCAN_WP_MATCHING to work.
+    if ctx_cfg.uffd_wp_enabled {
+        let rc = krun_register_uffd_wp(ctx_id);
+        if rc != KRUN_SUCCESS {
+            error!("uffd-wp auto-registration failed: rc={rc}");
+            return rc;
+        }
+    }
 
     #[cfg(target_os = "macos")]
     if ctx_cfg.gpu_virgl_flags.is_some() {
