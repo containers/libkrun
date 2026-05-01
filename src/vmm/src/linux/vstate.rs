@@ -828,7 +828,6 @@ impl Vm {
         &self.fd
     }
 
-    #[allow(unused)]
     #[cfg(target_arch = "x86_64")]
     /// Saves and returns the Kvm Vm state.
     pub fn save_state(&self) -> Result<VmState> {
@@ -892,15 +891,14 @@ impl Vm {
     }
 }
 
-#[allow(unused)]
 #[cfg(target_arch = "x86_64")]
 /// Structure holding VM kvm state.
 pub struct VmState {
-    pitstate: kvm_pit_state2,
-    clock: kvm_clock_data,
-    pic_master: kvm_irqchip,
-    pic_slave: kvm_irqchip,
-    ioapic: kvm_irqchip,
+    pub pitstate: kvm_pit_state2,
+    pub clock: kvm_clock_data,
+    pub pic_master: kvm_irqchip,
+    pub pic_slave: kvm_irqchip,
+    pub ioapic: kvm_irqchip,
 }
 
 /// Encapsulates configuration parameters for the guest vCPUS.
@@ -1304,6 +1302,15 @@ impl Vcpu {
         ))
     }
 
+    /// AGX (M5-04b): public wrapper for the snapshot-write
+    /// path. The underlying save_state was already implemented
+    /// (just unused by upstream libkrun); we make it accessible
+    /// from the libkrun crate via this thin wrapper.
+    #[cfg(target_arch = "x86_64")]
+    pub fn snapshot_save_state(&self) -> Result<VcpuState> {
+        self.save_state()
+    }
+
     #[allow(unused)]
     #[cfg(target_arch = "x86_64")]
     fn save_state(&self) -> Result<VcpuState> {
@@ -1619,6 +1626,11 @@ impl Vcpu {
                     .send(VcpuResponse::Resumed)
                     .expect("failed to send resume status");
             }
+            // AGX (M5-04b): SaveState while running is a caller
+            // bug — only valid in `paused`. Drop the sender so
+            // the caller's recv fails clearly.
+            #[cfg(target_arch = "x86_64")]
+            Ok(VcpuEvent::SaveState(_tx)) => (),
             // Unhandled exit of the other end.
             Err(TryRecvError::Disconnected) => {
                 // Move to 'exited' state.
@@ -1642,6 +1654,19 @@ impl Vcpu {
                     .expect("failed to send resume status");
                 // Move to 'running' state.
                 StateMachine::next(Self::running)
+            }
+            // AGX (M5-04b): Paused ---- SaveState(tx) ----> Paused
+            // The vcpu is the only thread allowed to call the
+            // KVM_GET_* ioctls on its own fd, so the snapshot
+            // request comes here, gets serviced, and stays
+            // paused (caller will Resume separately).
+            #[cfg(target_arch = "x86_64")]
+            Ok(VcpuEvent::SaveState(tx)) => {
+                if let Ok(state) = self.snapshot_save_state() {
+                    let _ = tx.send(state);
+                }
+                // Drop tx on error → recv side gets Err.
+                StateMachine::next(Self::paused)
             }
             // All other events have no effect on current 'paused' state.
             Ok(_) => StateMachine::next(Self::paused),
@@ -1704,16 +1729,16 @@ impl Drop for Vcpu {
 #[cfg(target_arch = "x86_64")]
 /// Structure holding VCPU kvm state.
 pub struct VcpuState {
-    cpuid: CpuId,
-    msrs: Msrs,
-    debug_regs: kvm_debugregs,
-    lapic: kvm_lapic_state,
-    mp_state: kvm_mp_state,
-    regs: kvm_regs,
-    sregs: kvm_sregs,
-    vcpu_events: kvm_vcpu_events,
-    xcrs: kvm_xcrs,
-    xsave: kvm_xsave,
+    pub cpuid: CpuId,
+    pub msrs: Msrs,
+    pub debug_regs: kvm_debugregs,
+    pub lapic: kvm_lapic_state,
+    pub mp_state: kvm_mp_state,
+    pub regs: kvm_regs,
+    pub sregs: kvm_sregs,
+    pub vcpu_events: kvm_vcpu_events,
+    pub xcrs: kvm_xcrs,
+    pub xsave: kvm_xsave,
 }
 
 // Allow currently unused Pause and Exit events. These will be used by the vmm later on.
@@ -1721,6 +1746,11 @@ pub struct VcpuState {
 #[derive(Debug)]
 /// List of events that the Vcpu can receive.
 pub enum VcpuEvent {
+    /// AGX (M5-04b): save vCPU state to the embedded sender.
+    /// Only valid in `paused` state — calling while the vcpu is
+    /// running is undefined (the state ioctls require quiescence).
+    #[cfg(target_arch = "x86_64")]
+    SaveState(std::sync::mpsc::Sender<VcpuState>),
     /// Pause the Vcpu.
     Pause,
     /// Event that should resume the Vcpu.

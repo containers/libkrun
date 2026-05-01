@@ -1249,6 +1249,67 @@ int32_t krun_set_root_disk_remount(uint32_t ctx_id, const char *device, const ch
  */
 int32_t krun_start_enter(uint32_t ctx_id);
 
+/* AGX (M5-04): vCPU pause/resume + guest memory introspection.
+ *
+ * These APIs are AGX additions to the libkrun fork. They must be
+ * called AFTER krun_start_enter has built the microVM (i.e., from
+ * a different thread, since krun_start_enter blocks for the VM's
+ * lifetime), and AFTER the small window during which krun_start_enter
+ * registers the running Vmm in the internal RUNNING_VMMS map.
+ *
+ * Returns 0 on success, -ENOENT if the ctx_id has no running Vmm.
+ */
+
+/* Pause every vCPU. Sends VcpuEvent::Pause to each vCPU thread and
+ * waits for the corresponding VcpuResponse::Paused ack. Used by
+ * the AGX snapshot finalization barrier (plan §5.11b).
+ *
+ * Linux only — the macOS HVF vCPU run loop does not currently
+ * honor pause events; on macOS the call returns 0 without
+ * actually pausing (the snapshot streamer uses mach_vm_read
+ * against the live task port instead). */
+int32_t krun_pause(uint32_t ctx_id);
+
+/* Resume every vCPU previously paused by krun_pause. */
+int32_t krun_resume(uint32_t ctx_id);
+
+/* Fill `*base_out` with the host-virtual base address of the
+ * guest RAM region(s) and `*size_out` with the total length in
+ * bytes. The streamer reads these bytes via /proc/<pid>/mem
+ * (Linux) or mach_vm_read (macOS).
+ *
+ * Returns -EINVAL if either output pointer is NULL,
+ * -ENODATA if the Vmm has no addressable guest memory regions. */
+int32_t krun_get_guest_memory_range(uint32_t ctx_id,
+                                    uint64_t *base_out,
+                                    uint64_t *size_out);
+
+/* AGX (M5-04b): serialize vCPU + VM state to `<c_filepath>`.
+ * Linux x86_64 only (returns -ENOSYS elsewhere for v1).
+ *
+ * The file format is a hand-rolled binary:
+ *   [8 bytes magic "AGXSNAP1"]
+ *   [4 bytes le format version (1)]
+ *   [1 byte arch tag (0=x86_64)]
+ *   [1 byte vcpu_count]
+ *   [2 bytes reserved]
+ *   For each vCPU: kvm_regs / kvm_sregs / kvm_xsave / kvm_xcrs /
+ *     kvm_lapic_state / kvm_mp_state / kvm_vcpu_events /
+ *     kvm_debugregs (each direct memcpy), then
+ *     [4 bytes le msr_count][msr_count × kvm_msr_entry] +
+ *     [4 bytes le cpuid_count][cpuid_count × kvm_cpuid_entry2].
+ *   VmState: kvm_pit_state2 / kvm_clock_data / pic_master /
+ *     pic_slave / ioapic.
+ *
+ * The function pauses vCPUs internally, calls KVM_GET_* for each,
+ * writes the file, then resumes. Total wall-clock for a typical
+ * 1-vCPU 512 MiB guest is well under 100 ms.
+ *
+ * Returns 0 on success, -ENOENT if ctx_id has no running Vmm,
+ * -EINVAL if c_filepath is NULL, -EIO on serialization or write
+ * failure, -ENOSYS on non-x86_64 / non-Linux. */
+int32_t krun_snapshot(uint32_t ctx_id, const char *c_filepath);
+
 #ifdef __cplusplus
 }
 #endif

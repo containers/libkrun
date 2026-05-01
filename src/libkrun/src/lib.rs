@@ -430,6 +430,22 @@ fn with_cfg(ctx_id: u32, f: impl FnOnce(&mut ContextConfig) -> i32) -> i32 {
 static CTX_MAP: Lazy<Mutex<HashMap<u32, ContextConfig>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static CTX_IDS: AtomicI32 = AtomicI32::new(0);
 
+/// AGX (M5-04): map from ctx_id → running `Vmm` for ctx ids
+/// that have entered `krun_start_enter` and got past
+/// `build_microvm`. This is what `krun_pause` / `krun_resume`
+/// look up to call the corresponding `Vmm::pause_vcpus()` /
+/// `Vmm::resume_vcpus()` from another thread.
+///
+/// Ownership: `krun_start_enter` inserts here right after
+/// `build_microvm` succeeds and removes when the event_manager
+/// loop exits (which currently never happens — the loop runs
+/// forever — so the entry effectively lives for the process
+/// lifetime, which is correct: libkrun calls `exit()` when the
+/// guest exits, dropping the global with the rest of the
+/// process).
+static RUNNING_VMMS: Lazy<Mutex<HashMap<u32, std::sync::Arc<std::sync::Mutex<vmm::Vmm>>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
 fn log_level_to_filter_str(level: u32) -> &'static str {
     match level {
         0 => "off",
@@ -2517,6 +2533,230 @@ pub unsafe extern "C" fn krun_add_console_port_inout(
     }
 }
 
+// AGX (M5-04): krun_pause / krun_resume — cross-thread (and
+// cross-process via a control-socket shim) vCPU pause+resume.
+// Required by the snapshot finalization barrier (plan §5.11b).
+#[no_mangle]
+pub extern "C" fn krun_pause(ctx_id: u32) -> i32 {
+    let vmm = match RUNNING_VMMS.lock().unwrap().get(&ctx_id) {
+        Some(v) => v.clone(),
+        None => return -libc::ENOENT,
+    };
+    let mut g = vmm.lock().unwrap();
+    match g.pause_vcpus() {
+        Ok(()) => KRUN_SUCCESS,
+        Err(_) => -libc::EIO,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn krun_resume(ctx_id: u32) -> i32 {
+    let vmm = match RUNNING_VMMS.lock().unwrap().get(&ctx_id) {
+        Some(v) => v.clone(),
+        None => return -libc::ENOENT,
+    };
+    let mut g = vmm.lock().unwrap();
+    match g.resume_vcpus() {
+        Ok(()) => KRUN_SUCCESS,
+        Err(_) => -libc::EIO,
+    }
+}
+
+// AGX (M5-04b): krun_snapshot — serialize vCPU + VM state to
+// a binary file at `<path>`. The file format is a hand-rolled
+// binary (matches `crates/agx-snapshot/src/krun_state.rs` shape
+// on the AGX side):
+//
+//   [8 bytes magic "AGXSNAP1"]
+//   [4 bytes le format version (1)]
+//   [1 byte arch tag (0=x86_64)]
+//   [1 byte vcpu_count]
+//   [2 bytes reserved]
+//   For each vCPU (in id order):
+//     direct memcpy of repr(C) structs:
+//       kvm_regs / kvm_sregs / kvm_xsave / kvm_xcrs
+//       kvm_lapic_state / kvm_mp_state / kvm_vcpu_events / kvm_debugregs
+//     [4 bytes le msr_count][msr_count × kvm_msr_entry bytes]
+//     [4 bytes le cpuid_count][cpuid_count × kvm_cpuid_entry2 bytes]
+//   VmState block:
+//     kvm_pit_state2 / kvm_clock_data / pic_master / pic_slave / ioapic
+//
+// All multi-byte ints in the kvm_* structs are native-endian
+// (host arch). The wrapping AGX header is little-endian.
+//
+// macOS / aarch64: returns -ENOSYS. Cross-arch + HVF state save
+// lands in M6+ when those backends need it.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[no_mangle]
+pub extern "C" fn krun_snapshot(ctx_id: u32, c_filepath: *const c_char) -> i32 {
+    if c_filepath.is_null() {
+        return -libc::EINVAL;
+    }
+    let path = match unsafe { CStr::from_ptr(c_filepath) }.to_str() {
+        Ok(p) => PathBuf::from(p),
+        Err(_) => return -libc::EINVAL,
+    };
+
+    let vmm = match RUNNING_VMMS.lock().unwrap().get(&ctx_id) {
+        Some(v) => v.clone(),
+        None => return -libc::ENOENT,
+    };
+
+    // Caller MUST have paused via krun_pause first. The KVM
+    // state ioctls require quiescent vCPUs; collect_vcpu_states
+    // sends VcpuEvent::SaveState which the vCPU only handles
+    // in `paused`. If the caller forgot to pause, the SaveState
+    // event is dropped on the floor in `running` and our recv
+    // times out → EIO.
+    let result: std::io::Result<()> = (|| {
+        let g = vmm.lock().unwrap();
+        let vcpu_states = g.collect_vcpu_states().map_err(|e| {
+            std::io::Error::other(format!("collect_vcpu_states: {e:?}"))
+        })?;
+        let vm_state = g
+            .kvm_vm()
+            .save_state()
+            .map_err(|e| std::io::Error::other(format!("vm save_state: {e:?}")))?;
+        drop(g);
+        let bytes = serialize_full_state(&vcpu_states, &vm_state);
+        std::fs::write(&path, bytes)
+    })();
+
+    match result {
+        Ok(()) => KRUN_SUCCESS,
+        Err(e) => {
+            eprintln!("krun_snapshot: {e}");
+            -libc::EIO
+        }
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+#[no_mangle]
+pub extern "C" fn krun_snapshot(_ctx_id: u32, _c_filepath: *const c_char) -> i32 {
+    -libc::ENOSYS
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const AGX_SNAP_MAGIC: &[u8; 8] = b"AGXSNAP1";
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const AGX_SNAP_FORMAT_VERSION: u32 = 1;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const AGX_SNAP_ARCH_X86_64: u8 = 0;
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn serialize_full_state(
+    vcpu_states: &[vmm::vstate::VcpuState],
+    vm_state: &vmm::vstate::VmState,
+) -> Vec<u8> {
+    use std::mem::size_of;
+    let mut out: Vec<u8> = Vec::with_capacity(8 + 4 + 4 + 1024);
+    out.extend_from_slice(AGX_SNAP_MAGIC);
+    out.extend_from_slice(&AGX_SNAP_FORMAT_VERSION.to_le_bytes());
+    out.push(AGX_SNAP_ARCH_X86_64);
+    out.push(vcpu_states.len() as u8);
+    out.extend_from_slice(&[0u8, 0u8]); // reserved
+
+    for vs in vcpu_states {
+        // Direct memcpy of each repr(C) struct.
+        copy_struct_into(&mut out, &vs.regs);
+        copy_struct_into(&mut out, &vs.sregs);
+        copy_struct_into(&mut out, &vs.xsave);
+        copy_struct_into(&mut out, &vs.xcrs);
+        copy_struct_into(&mut out, &vs.lapic);
+        copy_struct_into(&mut out, &vs.mp_state);
+        copy_struct_into(&mut out, &vs.vcpu_events);
+        copy_struct_into(&mut out, &vs.debug_regs);
+
+        // Msrs: as_slice() returns &[kvm_msr_entry]. Each entry
+        // is repr(C); the slice byte length is count * size.
+        let msr_entries = vs.msrs.as_slice();
+        out.extend_from_slice(&(msr_entries.len() as u32).to_le_bytes());
+        out.extend_from_slice(unsafe {
+            std::slice::from_raw_parts(
+                msr_entries.as_ptr() as *const u8,
+                msr_entries.len() * size_of::<kvm_bindings::kvm_msr_entry>(),
+            )
+        });
+
+        // CpuId: same FAM pattern.
+        let cpuid_entries = vs.cpuid.as_slice();
+        out.extend_from_slice(&(cpuid_entries.len() as u32).to_le_bytes());
+        out.extend_from_slice(unsafe {
+            std::slice::from_raw_parts(
+                cpuid_entries.as_ptr() as *const u8,
+                cpuid_entries.len() * size_of::<kvm_bindings::kvm_cpuid_entry2>(),
+            )
+        });
+    }
+
+    // VmState
+    copy_struct_into(&mut out, &vm_state.pitstate);
+    copy_struct_into(&mut out, &vm_state.clock);
+    copy_struct_into(&mut out, &vm_state.pic_master);
+    copy_struct_into(&mut out, &vm_state.pic_slave);
+    copy_struct_into(&mut out, &vm_state.ioapic);
+
+    out
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn copy_struct_into<T>(out: &mut Vec<u8>, t: &T) {
+    let bytes = unsafe {
+        std::slice::from_raw_parts(t as *const T as *const u8, std::mem::size_of::<T>())
+    };
+    out.extend_from_slice(bytes);
+}
+
+// AGX (M5-04): krun_get_guest_memory_range — exposes the
+// host-virtual base + length of the libkrun guest's RAM
+// region. The streamer uses this to find the bytes to read in
+// /proc/<pid>/mem (Linux) / via mach_vm_read (macOS).
+//
+// The optional `vmm_pid_out` is filled with `getpid()` of the
+// libkrun process — typically `getpid()` on the AGX side,
+// since libkrun runs in a subprocess.
+#[no_mangle]
+pub extern "C" fn krun_get_guest_memory_range(
+    ctx_id: u32,
+    base_out: *mut u64,
+    size_out: *mut u64,
+) -> i32 {
+    if base_out.is_null() || size_out.is_null() {
+        return -libc::EINVAL;
+    }
+    let vmm = match RUNNING_VMMS.lock().unwrap().get(&ctx_id) {
+        Some(v) => v.clone(),
+        None => return -libc::ENOENT,
+    };
+    let g = vmm.lock().unwrap();
+    let mem = g.guest_memory();
+    // Walk the regions; for v1 we expect exactly one region
+    // (libkrun's typical layout). Return the first region's
+    // base + total size across all regions.
+    use vm_memory::{GuestMemory, GuestMemoryRegion};
+    let mut base: u64 = u64::MAX;
+    let mut total: u64 = 0;
+    mem.iter().for_each(|r| {
+        let host_addr = r
+            .get_host_address(vm_memory::MemoryRegionAddress(0))
+            .map(|p| p as u64)
+            .unwrap_or(0);
+        if host_addr != 0 && host_addr < base {
+            base = host_addr;
+        }
+        total += r.len();
+    });
+    if base == u64::MAX {
+        return -libc::ENODATA;
+    }
+    unsafe {
+        *base_out = base;
+        *size_out = total;
+    }
+    KRUN_SUCCESS
+}
+
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn krun_add_serial_console_default(
@@ -2740,6 +2980,10 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             return -libc::EINVAL;
         }
     };
+
+    // AGX (M5-04): register the running Vmm so cross-thread
+    // krun_pause / krun_resume can find it.
+    RUNNING_VMMS.lock().unwrap().insert(ctx_id, _vmm.clone());
 
     #[cfg(target_os = "macos")]
     if ctx_cfg.gpu_virgl_flags.is_some() {

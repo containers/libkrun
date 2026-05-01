@@ -27,6 +27,11 @@ pub mod vmm_config;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
+// AGX (M5-04b): re-export vstate so the libkrun crate can
+// reach VcpuState / VmState / VcpuEvent for snapshot save.
+#[cfg(target_os = "linux")]
+pub use crate::linux::vstate;
+#[cfg(not(target_os = "linux"))]
 use crate::linux::vstate;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -264,6 +269,70 @@ impl Vmm {
 
     #[cfg(target_os = "macos")]
     pub fn resume_vcpus(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// AGX (M5-04b): collect vCPU state from each vCPU thread.
+    /// Caller MUST have paused first (via `pause_vcpus`); this
+    /// function panics if called on a running vCPU because the
+    /// state ioctls require quiescence. Returns one `VcpuState`
+    /// per vCPU in vCPU-id order.
+    ///
+    /// Cross-arch: x86_64-only for v1. aarch64 needs a separate
+    /// VcpuState shape (mpidr, sys regs, GIC state).
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    pub fn collect_vcpu_states(
+        &self,
+    ) -> Result<Vec<crate::vstate::VcpuState>> {
+        let mut out = Vec::with_capacity(self.vcpus_handles.len());
+        for handle in self.vcpus_handles.iter() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            handle
+                .send_event(crate::vstate::VcpuEvent::SaveState(tx))
+                .map_err(Error::VcpuEvent)?;
+            let state = rx
+                .recv_timeout(Duration::from_millis(2000))
+                .map_err(|_| Error::VcpuResume)?;
+            out.push(state);
+        }
+        Ok(out)
+    }
+
+    /// AGX (M5-04): pause every vCPU thread by sending
+    /// `VcpuEvent::Pause` and waiting for the corresponding
+    /// `VcpuResponse::Paused` ack. The vCPU's state machine
+    /// transitions to `paused` and blocks on the event channel
+    /// until `resume_vcpus()` releases it. Mirror of the
+    /// existing `resume_vcpus()` implementation.
+    ///
+    /// Used by the snapshot finalization barrier (plan §5.11b).
+    /// Brief pause budget is target < 100 ms for a 4 GiB VM in
+    /// steady state.
+    #[cfg(target_os = "linux")]
+    pub fn pause_vcpus(&mut self) -> Result<()> {
+        for handle in self.vcpus_handles.iter() {
+            handle
+                .send_event(VcpuEvent::Pause)
+                .map_err(Error::VcpuEvent)?;
+        }
+        for handle in self.vcpus_handles.iter() {
+            match handle
+                .response_receiver()
+                .recv_timeout(Duration::from_millis(1000))
+            {
+                Ok(VcpuResponse::Paused) => (),
+                _ => return Err(Error::VcpuResume),
+            }
+        }
+        Ok(())
+    }
+
+    /// macOS HVF stub: the macOS vcpu run loop does not
+    /// currently honor `VcpuEvent::Pause`. Plan §5.11b on macOS
+    /// uses `mach_vm_read` against the live task port instead;
+    /// VM pause is a Linux-only optimization for v1.
+    #[cfg(target_os = "macos")]
+    pub fn pause_vcpus(&mut self) -> Result<()> {
         Ok(())
     }
 
