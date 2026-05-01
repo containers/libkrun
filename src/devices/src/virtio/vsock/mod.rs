@@ -6,6 +6,7 @@
 // found in the THIRD-PARTY file.
 
 mod device;
+pub mod egress_policy;
 mod event_handler;
 mod muxer;
 mod muxer_rxq;
@@ -23,6 +24,7 @@ mod unix;
 pub use self::defs::uapi::VIRTIO_ID_VSOCK as TYPE_VSOCK;
 pub use self::defs::TsiFlags;
 pub use self::device::Vsock;
+pub use self::egress_policy::{EgressPolicy, EgressRule, EgressVerdict};
 
 use bitflags::bitflags;
 use vm_memory::GuestMemoryError;

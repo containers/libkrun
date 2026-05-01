@@ -56,9 +56,28 @@ impl Vsock {
         unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
         tsi_flags: TsiFlags,
     ) -> super::Result<Vsock> {
+        Self::new_with_egress(cid, host_port_map, unix_ipc_port_map, tsi_flags, None)
+    }
+
+    /// AGX: variant that wires an egress policy through to the
+    /// muxer. The policy is consulted on every TSI outbound
+    /// connect.
+    pub fn new_with_egress(
+        cid: u64,
+        host_port_map: Option<HashMap<u16, u16>>,
+        unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
+        tsi_flags: TsiFlags,
+        egress_policy: Option<std::sync::Arc<super::EgressPolicy>>,
+    ) -> super::Result<Vsock> {
         Ok(Vsock {
             cid,
-            muxer: VsockMuxer::new(cid, host_port_map, unix_ipc_port_map, tsi_flags),
+            muxer: VsockMuxer::new_with_egress(
+                cid,
+                host_port_map,
+                unix_ipc_port_map,
+                tsi_flags,
+                egress_policy,
+            ),
             queue_rx: None,
             queue_tx: None,
             queue_events: Vec::new(),

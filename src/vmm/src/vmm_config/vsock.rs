@@ -6,7 +6,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use devices::virtio::{TsiFlags, Vsock, VsockError};
+use devices::virtio::{EgressPolicy, TsiFlags, Vsock, VsockError};
 
 type MutexVsock = Arc<Mutex<Vsock>>;
 
@@ -42,6 +42,11 @@ pub struct VsockDeviceConfig {
     pub unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
     /// TSI feature flags
     pub tsi_flags: TsiFlags,
+    /// AGX: optional CIDR-based egress policy.
+    /// `Eq`/`PartialEq` are derived but `Arc<EgressPolicy>`
+    /// pointers compare by identity, which is fine here:
+    /// equality on this struct is only used in tests.
+    pub egress_policy: Option<Arc<EgressPolicy>>,
 }
 
 struct VsockWrapper {
@@ -85,11 +90,12 @@ impl VsockBuilder {
 
     /// Creates a Vsock device from a VsockDeviceConfig.
     pub fn create_vsock(cfg: VsockDeviceConfig) -> Result<Vsock> {
-        Vsock::new(
+        Vsock::new_with_egress(
             u64::from(cfg.guest_cid),
             cfg.host_port_map,
             cfg.unix_ipc_port_map,
             cfg.tsi_flags,
+            cfg.egress_policy,
         )
         .map_err(VsockConfigError::CreateVsockDevice)
     }
@@ -128,6 +134,7 @@ pub(crate) mod tests {
             host_port_map: None,
             unix_ipc_port_map: None,
             tsi_flags: TsiFlags::empty(),
+            egress_policy: None,
         }
     }
 

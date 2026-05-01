@@ -146,6 +146,10 @@ struct ContextConfig {
     net_index: u8,
     tsi_port_map: Option<HashMap<u16, u16>>,
     vsock_config: VsockConfig,
+    /// AGX: optional CIDR-based egress policy installed via
+    /// `krun_set_egress_policy`. Wired into `VsockDeviceConfig`
+    /// at device-creation time.
+    egress_policy: Option<std::sync::Arc<devices::virtio::EgressPolicy>>,
     #[cfg(feature = "blk")]
     block_cfgs: Vec<BlockDeviceConfig>,
     #[cfg(feature = "blk")]
@@ -2764,29 +2768,41 @@ pub extern "C" fn krun_resume_from(
 }
 
 /// AGX: install a CIDR-based egress policy on the
-/// context's TSI layer.
+/// context's TSI layer. The policy is consulted on every
+/// guest-initiated TCP connect inside the vsock muxer's
+/// TSI proxy; Deny verdicts return ECONNREFUSED to the
+/// guest without touching the host network. Default when
+/// no rule matches is Deny.
 ///
-/// **Stub for now** — returns -ENOSYS until the TSI patch
-/// lands. The AGX-side wrapper (`agx_vmm::VmConfig::set_egress_policy`)
-/// is wired so we can drop in the implementation as a
-/// single follow-up commit.
+/// `policy_json` must be a valid UTF-8 NUL-terminated
+/// string of the shape parsed by
+/// `devices::virtio::EgressPolicy::from_json`.
 ///
-/// Patch shape (see `docs/egress-policy.md`):
-///
-///   1. Add `egress_policy: Option<EgressPolicy>` to
-///      `vmm::resources::VmResources`.
-///   2. Parse `policy_json` into the same shape inside
-///      this function and store it in the ctx's `vmr`.
-///   3. In `vmm::devices::vsock::muxer` (or the TSI
-///      socket bridge) consult the policy on every
-///      outbound connect; deny → return ECONNREFUSED to
-///      the guest.
+/// Returns 0 on success, -EINVAL on malformed JSON,
+/// -ENOENT if the ctx doesn't exist.
 #[no_mangle]
-pub extern "C" fn krun_set_egress_policy(
-    _ctx_id: u32,
-    _policy_json: *const c_char,
+pub unsafe extern "C" fn krun_set_egress_policy(
+    ctx_id: u32,
+    policy_json: *const c_char,
 ) -> i32 {
-    -libc::ENOSYS
+    if policy_json.is_null() {
+        return -libc::EINVAL;
+    }
+    let json = match CStr::from_ptr(policy_json).to_str() {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+    let policy = match devices::virtio::EgressPolicy::from_json(json) {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("krun_set_egress_policy: invalid JSON: {e}");
+            return -libc::EINVAL;
+        }
+    };
+    with_cfg(ctx_id, |cfg| {
+        cfg.egress_policy = Some(std::sync::Arc::new(policy));
+        KRUN_SUCCESS
+    })
 }
 
 // AGX: krun_get_guest_memory_range — exposes the
@@ -3046,6 +3062,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
                 host_port_map: ctx_cfg.tsi_port_map,
                 unix_ipc_port_map: ctx_cfg.unix_ipc_port_map.clone(),
                 tsi_flags: *tsi_flags,
+                egress_policy: ctx_cfg.egress_policy.clone(),
             };
             ctx_cfg.vmr.set_vsock_device(vsock_device_config).unwrap();
         }
@@ -3072,6 +3089,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
                     host_port_map,
                     unix_ipc_port_map: ctx_cfg.unix_ipc_port_map.clone(),
                     tsi_flags,
+                    egress_policy: ctx_cfg.egress_policy.clone(),
                 };
                 ctx_cfg.vmr.set_vsock_device(vsock_device_config).unwrap();
             }

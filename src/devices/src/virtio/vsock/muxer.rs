@@ -108,6 +108,10 @@ pub struct VsockMuxer {
     reaper_sender: Option<Sender<u64>>,
     unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
     tsi_flags: TsiFlags,
+    /// AGX: optional CIDR-based egress policy. When `Some`, every
+    /// TSI outbound connect consults it; deny → ECONNREFUSED to
+    /// the guest.
+    egress_policy: Option<Arc<super::EgressPolicy>>,
 }
 
 impl VsockMuxer {
@@ -116,6 +120,16 @@ impl VsockMuxer {
         host_port_map: Option<HashMap<u16, u16>>,
         unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
         tsi_flags: TsiFlags,
+    ) -> Self {
+        Self::new_with_egress(cid, host_port_map, unix_ipc_port_map, tsi_flags, None)
+    }
+
+    pub(crate) fn new_with_egress(
+        cid: u64,
+        host_port_map: Option<HashMap<u16, u16>>,
+        unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
+        tsi_flags: TsiFlags,
+        egress_policy: Option<Arc<super::EgressPolicy>>,
     ) -> Self {
         VsockMuxer {
             cid,
@@ -129,6 +143,7 @@ impl VsockMuxer {
             reaper_sender: None,
             unix_ipc_port_map,
             tsi_flags,
+            egress_policy,
         }
     }
 
@@ -306,7 +321,11 @@ impl VsockMuxer {
                         queue.clone(),
                         self.rxq.clone(),
                     ) {
-                        Ok(proxy) => {
+                        Ok(mut proxy) => {
+                            // AGX: thread the egress policy
+                            // through to the proxy so its
+                            // connect path can consult it.
+                            proxy.set_egress_policy(self.egress_policy.clone());
                             self.proxy_map
                                 .write()
                                 .unwrap()

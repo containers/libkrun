@@ -58,6 +58,10 @@ pub struct TsiStreamProxy {
     push_cnt: Wrapping<u32>,
     pending_accepts: u64,
     unixsock_path: Option<PathBuf>,
+    /// AGX: optional CIDR-based egress policy. The connect path
+    /// consults this before issuing the kernel `connect()`;
+    /// deny → ECONNREFUSED to the guest.
+    egress_policy: Option<std::sync::Arc<super::EgressPolicy>>,
 }
 
 impl TsiStreamProxy {
@@ -138,6 +142,7 @@ impl TsiStreamProxy {
             push_cnt: Wrapping(0),
             pending_accepts: 0,
             unixsock_path: None,
+            egress_policy: None,
         })
     }
 
@@ -176,7 +181,18 @@ impl TsiStreamProxy {
             push_cnt: Wrapping(0),
             pending_accepts: 0,
             unixsock_path: None,
+            egress_policy: None,
         }
+    }
+
+    /// AGX: install the egress policy this proxy should consult
+    /// on every outbound connect. None means "no enforcement"
+    /// (back-compat path).
+    pub fn set_egress_policy(
+        &mut self,
+        policy: Option<std::sync::Arc<super::EgressPolicy>>,
+    ) {
+        self.egress_policy = policy;
     }
 
     fn init_data_pkt(&self, pkt: &mut VsockPacket) {
@@ -468,6 +484,27 @@ impl Proxy for TsiStreamProxy {
 
     fn connect(&mut self, _pkt: &VsockPacket, req: TsiConnectReq) -> ProxyUpdate {
         let mut update = ProxyUpdate::default();
+
+        // AGX egress policy check. Consult before issuing the
+        // kernel `connect()`. On Deny, return ECONNREFUSED to
+        // the guest WITHOUT touching the host network.
+        if let Some(policy) = self.egress_policy.as_ref() {
+            let (addr_opt, port_opt) = sockaddr_to_addr_port(&req.addr);
+            if let (Some(addr), Some(port)) = (addr_opt, port_opt) {
+                if matches!(
+                    policy.evaluate(addr, port),
+                    super::EgressVerdict::Deny
+                ) {
+                    debug!(
+                        "AGX egress policy DENIED connect to {addr}:{port} (id={})",
+                        self.id
+                    );
+                    let errno = -libc::ECONNREFUSED;
+                    self.push_connect_rsp(errno);
+                    return update;
+                }
+            }
+        }
 
         let result = match connect(self.fd.as_raw_fd(), &req.addr) {
             Ok(()) => {
@@ -899,5 +936,21 @@ impl Drop for TsiStreamProxy {
         if let Some(path) = &self.unixsock_path {
             _ = fs::remove_file(path);
         }
+    }
+}
+
+/// AGX: extract `(IpAddr, port)` from a `SockaddrStorage` for
+/// the egress-policy connect-time check. Returns `(None, None)`
+/// for non-INET families (e.g. AF_UNIX), which the caller
+/// treats as "skip the policy check".
+fn sockaddr_to_addr_port(
+    sa: &SockaddrStorage,
+) -> (Option<std::net::IpAddr>, Option<u16>) {
+    if let Some(sin) = sa.as_sockaddr_in() {
+        (Some(std::net::IpAddr::V4(sin.ip())), Some(sin.port()))
+    } else if let Some(sin6) = sa.as_sockaddr_in6() {
+        (Some(std::net::IpAddr::V6(sin6.ip())), Some(sin6.port()))
+    } else {
+        (None, None)
     }
 }
