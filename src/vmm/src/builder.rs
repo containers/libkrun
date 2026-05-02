@@ -1180,6 +1180,32 @@ pub fn build_microvm(
             .map_err(StartMicrovmError::Internal)?;
     }
 
+    // AGX post-copy: register uffd-MISSING + MADV_DONTNEED on
+    // the lazy-page subset of guest memory BEFORE vCPUs start.
+    // Triggered by env var `AGX_BOOT_UFFD_MISSING_LAZY`,
+    // formatted `<lazy_path>:<send_sock_path>`. The lazy file
+    // is a binary list of u64-BE absolute file offsets in the
+    // AGXMEM01 body (matching the wire-format LazyPageList
+    // payload). Once registered, the function connects to
+    // `send_sock_path` (a unix socket the dest controller is
+    // listening on) and sends the uffd fd via SCM_RIGHTS so
+    // the controller can read fault events + service them via
+    // UFFDIO_COPY.
+    #[cfg(target_os = "linux")]
+    if is_restore {
+        if let Ok(spec) = std::env::var("AGX_BOOT_UFFD_MISSING_LAZY") {
+            let parts: Vec<&str> = spec.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                register_uffd_missing_lazy(vmm.guest_memory(), parts[0], parts[1])
+                    .map_err(|e| {
+                        StartMicrovmError::GuestMemoryMmap(format!(
+                            "uffd-missing register: {e}"
+                        ))
+                    })?;
+            }
+        }
+    }
+
     vmm.start_vcpus(vcpus)
         .map_err(StartMicrovmError::Internal)?;
 
@@ -1617,6 +1643,234 @@ fn load_snapshotted_memory(
                 region.start_addr().raw_value()
             ))
         })?;
+    }
+    Ok(())
+}
+
+/// AGX post-copy demand-paging support: register
+/// userfaultfd-MISSING on every guest memory region, MADV_DONTNEED
+/// the lazy pages so they fault on next access, then send the
+/// uffd fd to the AGX controller via SCM_RIGHTS over a unix
+/// socket.
+///
+/// Lazy file format: binary u64 BE absolute file offsets in
+/// the AGXMEM01 body, matching the wire-format LazyPageList
+/// payload that the dest controller writes to disk.
+///
+/// Send-sock format: a unix datagram or stream socket the dest
+/// controller is listening on. We connect, then send a single
+/// SCM_RIGHTS message containing the uffd fd. Caller side
+/// receives the fd, dups it into its own fd table, drives the
+/// fault loop from there.
+#[cfg(target_os = "linux")]
+fn register_uffd_missing_lazy(
+    guest_mem: &GuestMemoryMmap,
+    lazy_path: &str,
+    send_sock_path: &str,
+) -> std::io::Result<()> {
+    use std::io::Read as _;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use vm_memory::{GuestMemory, GuestMemoryRegion};
+
+    // <linux/userfaultfd.h>
+    const UFFD_API: u64 = 0xAA;
+    const UFFDIO_API: libc::c_ulong = 0xc018_aa3f;
+    const UFFDIO_REGISTER: libc::c_ulong = 0xc020_aa00;
+    const UFFDIO_REGISTER_MODE_MISSING: u64 = 1 << 0;
+    // /dev/userfaultfd (Linux 6.1+) avoids the
+    // vm.unprivileged_userfaultfd sysctl gate; fall back to
+    // the syscall if the device isn't present.
+    let raw_fd: i32 = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/userfaultfd")
+    {
+        Ok(f) => {
+            use std::os::fd::IntoRawFd;
+            f.into_raw_fd()
+        }
+        Err(_) => {
+            let r = unsafe {
+                libc::syscall(
+                    libc::SYS_userfaultfd,
+                    (libc::O_CLOEXEC | libc::O_NONBLOCK) as libc::c_long,
+                )
+            };
+            if r < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            r as i32
+        }
+    };
+    let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+
+    // UFFDIO_API. Request EXACT_ADDRESS so fault messages
+    // carry the exact faulting va (not page-aligned), useful
+    // for our prefetch heuristics. THREAD_ID lets the
+    // controller see which task faulted (vCPU thread tid).
+    #[repr(C)]
+    struct UffdioApi {
+        api: u64,
+        features: u64,
+        ioctls: u64,
+    }
+    const UFFD_FEATURE_THREAD_ID: u64 = 1 << 8;
+    const UFFD_FEATURE_EXACT_ADDRESS: u64 = 1 << 11;
+    let mut api = UffdioApi {
+        api: UFFD_API,
+        features: UFFD_FEATURE_THREAD_ID | UFFD_FEATURE_EXACT_ADDRESS,
+        ioctls: 0,
+    };
+    let rc = unsafe { libc::ioctl(fd.as_raw_fd(), UFFDIO_API, &mut api as *mut _) };
+    if rc < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    // Register MISSING on every guest memory region.
+    #[repr(C)]
+    struct UffdioRange {
+        start: u64,
+        len: u64,
+    }
+    #[repr(C)]
+    struct UffdioRegister {
+        range: UffdioRange,
+        mode: u64,
+        ioctls: u64,
+    }
+    // Compute (region_idx → file_offset_in_body, host_addr) by
+    // walking guest_mem in the same order krun_snapshot_memory
+    // uses (guest_mem.iter() = start_addr-sorted). Body offset
+    // for region k is sum of lengths of regions 0..k.
+    let mut region_meta: Vec<(u64 /*body_off*/, u64 /*host_addr*/, u64 /*len*/)> =
+        Vec::new();
+    let mut body_off: u64 = 0;
+    for r in guest_mem.iter() {
+        let host_addr = r
+            .get_host_address(vm_memory::MemoryRegionAddress(0))
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("get_host_address: {e:?}"),
+                )
+            })? as u64;
+        let len = r.len();
+        let mut reg = UffdioRegister {
+            range: UffdioRange {
+                start: host_addr,
+                len,
+            },
+            mode: UFFDIO_REGISTER_MODE_MISSING,
+            ioctls: 0,
+        };
+        let rc =
+            unsafe { libc::ioctl(fd.as_raw_fd(), UFFDIO_REGISTER, &mut reg as *mut _) };
+        if rc < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        region_meta.push((body_off, host_addr, len));
+        body_off += len;
+    }
+
+    // Read the lazy offsets file. u64-BE per offset.
+    let mut lazy_file = std::fs::File::open(lazy_path)?;
+    let mut buf = Vec::new();
+    lazy_file.read_to_end(&mut buf)?;
+    if buf.len() % 8 != 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("lazy file len {} not multiple of 8", buf.len()),
+        ));
+    }
+    let lazy_count = buf.len() / 8;
+
+    // For each lazy offset, compute host_addr and madvise
+    // DONTNEED. Reads bytes from the local memory.bin had
+    // already populated the page; DONTNEED frees the
+    // physical page so subsequent guest access faults via
+    // uffd-MISSING.
+    const PAGE: u64 = 4096;
+    let mut madvised: u64 = 0;
+    for i in 0..lazy_count {
+        let off = u64::from_be_bytes(buf[i * 8..(i + 1) * 8].try_into().unwrap());
+        let (region_idx, in_region_off) = match find_region(&region_meta, off) {
+            Some(x) => x,
+            None => continue,
+        };
+        let host_addr = region_meta[region_idx].1 + in_region_off;
+        let rc = unsafe {
+            libc::madvise(
+                host_addr as *mut libc::c_void,
+                PAGE as libc::size_t,
+                libc::MADV_DONTNEED,
+            )
+        };
+        if rc == 0 {
+            madvised += 1;
+        }
+    }
+    eprintln!(
+        "[krun-uffd-missing] registered {} regions, MADV_DONTNEED {} of {} lazy pages",
+        region_meta.len(),
+        madvised,
+        lazy_count
+    );
+
+    // Connect to the SCM_RIGHTS sock, send the uffd fd.
+    let stream = std::os::unix::net::UnixStream::connect(send_sock_path)?;
+    send_fd_via_scm_rights(&stream, fd.as_raw_fd())?;
+    eprintln!(
+        "[krun-uffd-missing] sent uffd fd via SCM_RIGHTS to {}",
+        send_sock_path
+    );
+    // Keep the fd alive in this process so the dest's dup'd fd
+    // remains valid. Leak intentionally — the libkrun process
+    // is going to exec/exit when the guest does.
+    std::mem::forget(fd);
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn find_region(meta: &[(u64, u64, u64)], file_off: u64) -> Option<(usize, u64)> {
+    for (i, &(body_off, _host, len)) in meta.iter().enumerate() {
+        if file_off >= body_off && file_off < body_off + len {
+            return Some((i, file_off - body_off));
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn send_fd_via_scm_rights(
+    stream: &std::os::unix::net::UnixStream,
+    fd: i32,
+) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let sock_fd = stream.as_raw_fd();
+    let mut payload = [b'F', b'D'];
+    let mut iov = libc::iovec {
+        iov_base: payload.as_mut_ptr() as *mut libc::c_void,
+        iov_len: payload.len(),
+    };
+    let cmsg_len = unsafe { libc::CMSG_LEN(std::mem::size_of::<i32>() as u32) } as usize;
+    let cmsg_space = unsafe { libc::CMSG_SPACE(std::mem::size_of::<i32>() as u32) } as usize;
+    let mut cmsg_buf = vec![0u8; cmsg_space];
+    let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+    msg.msg_iov = &mut iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = cmsg_buf.as_mut_ptr() as *mut libc::c_void;
+    msg.msg_controllen = cmsg_space;
+    let cmsg = unsafe { libc::CMSG_FIRSTHDR(&msg) };
+    unsafe {
+        (*cmsg).cmsg_level = libc::SOL_SOCKET;
+        (*cmsg).cmsg_type = libc::SCM_RIGHTS;
+        (*cmsg).cmsg_len = cmsg_len;
+        let data = libc::CMSG_DATA(cmsg) as *mut i32;
+        std::ptr::write_unaligned(data, fd);
+    }
+    let n = unsafe { libc::sendmsg(sock_fd, &msg, 0) };
+    if n < 0 {
+        return Err(std::io::Error::last_os_error());
     }
     Ok(())
 }
