@@ -1,2 +1,5 @@
 [target.aarch64-apple-darwin]
 runner = ".cargo/macos-test-runner.sh"
+
+[target.'cfg(target_env = "musl")']
+rustflags = ["--cfg", "musl_v1_2_3"]
