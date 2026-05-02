@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::test_net::get_krun_add_net_unixgram;
 use crate::test_net::gvproxy::{wait_for_socket, Gvproxy};
 use crate::{krun_call, TestSetup};
 use krun_sys::*;
@@ -144,7 +145,7 @@ pub fn setup_gvproxy_backend(ctx: u32, test_setup: &TestSetup) -> anyhow::Result
     let mut mac = random_mac_address();
 
     unsafe {
-        krun_call!(krun_add_net_unixgram(
+        krun_call!(get_krun_add_net_unixgram()(
             ctx,
             vfkit_cstr.as_ptr(),
             -1,

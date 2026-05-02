@@ -8,6 +8,12 @@ use crate::tcp_tester::TcpTester;
 use macros::{guest, host};
 
 #[host]
+use nix::libc;
+
+#[host]
+use std::ffi::CString;
+
+#[host]
 use crate::{ShouldRun, TestSetup};
 
 #[cfg(feature = "host")]
@@ -142,4 +148,22 @@ mod guest {
             println!("OK");
         }
     }
+}
+
+#[cfg(feature = "host")]
+type KrunAddNetUnixgramFn = unsafe extern "C" fn(
+    ctx_id: u32,
+    c_path: *const std::ffi::c_char,
+    fd: i32,
+    c_mac: *mut u8,
+    features: u32,
+    flags: u32,
+) -> i32;
+
+#[cfg(feature = "host")]
+pub(crate) fn get_krun_add_net_unixgram() -> KrunAddNetUnixgramFn {
+    let symbol = CString::new("krun_add_net_unixgram").unwrap();
+    let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, symbol.as_ptr()) };
+    assert!(!ptr.is_null(), "krun_add_net_unixgram not found");
+    unsafe { std::mem::transmute(ptr) }
 }

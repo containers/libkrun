@@ -1,9 +1,9 @@
 //! Gvproxy backend for virtio-net tests.
 
+use crate::test_net::get_krun_add_net_unixgram;
 use crate::{krun_call, ShouldRun, TestSetup};
 use anyhow::Context;
 use krun_sys::{COMPAT_NET_FEATURES, NET_FLAG_DHCP_CLIENT, NET_FLAG_VFKIT};
-use nix::libc;
 use std::ffi::CString;
 use std::io::{self, Read, Write};
 use std::net::Ipv4Addr;
@@ -11,22 +11,6 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
-
-type KrunAddNetUnixgramFn = unsafe extern "C" fn(
-    ctx_id: u32,
-    c_path: *const std::ffi::c_char,
-    fd: i32,
-    c_mac: *mut u8,
-    features: u32,
-    flags: u32,
-) -> i32;
-
-fn get_krun_add_net_unixgram() -> KrunAddNetUnixgramFn {
-    let symbol = CString::new("krun_add_net_unixgram").unwrap();
-    let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, symbol.as_ptr()) };
-    assert!(!ptr.is_null(), "krun_add_net_unixgram not found");
-    unsafe { std::mem::transmute(ptr) }
-}
 
 /// Read gvproxy binary path from `KRUN_TEST_GVPROXY_PATH` (set by `tests/run.sh`).
 /// Returns `None` if the variable is unset or the referenced file doesn't exist.

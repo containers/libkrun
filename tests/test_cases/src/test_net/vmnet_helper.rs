@@ -1,30 +1,14 @@
 //! vmnet-helper backend for virtio-net test (macOS only)
 
+use crate::test_net::get_krun_add_net_unixgram;
 use crate::{krun_call, ShouldRun, TestSetup};
 use krun_sys::{
     NET_FEATURE_CSUM, NET_FEATURE_GUEST_CSUM, NET_FEATURE_GUEST_TSO4, NET_FEATURE_HOST_TSO4,
     NET_FLAG_DHCP_CLIENT,
 };
 use nix::libc;
-use std::ffi::CString;
 use std::io::{BufRead, BufReader, Read};
 use std::process::{Command, Stdio};
-
-type KrunAddNetUnixgramFn = unsafe extern "C" fn(
-    ctx_id: u32,
-    c_path: *const std::ffi::c_char,
-    fd: i32,
-    c_mac: *mut u8,
-    features: u32,
-    flags: u32,
-) -> i32;
-
-fn get_krun_add_net_unixgram() -> KrunAddNetUnixgramFn {
-    let symbol = CString::new("krun_add_net_unixgram").unwrap();
-    let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, symbol.as_ptr()) };
-    assert!(!ptr.is_null(), "krun_add_net_unixgram not found");
-    unsafe { std::mem::transmute(ptr) }
-}
 
 const VMNET_HELPER_PATH: &str = match option_env!("VMNET_HELPER_PATH") {
     Some(path) => path,
