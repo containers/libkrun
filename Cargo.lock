@@ -847,6 +847,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "krun-whp"
+version = "0.1.0-1.18.0"
+dependencies = [
+ "log",
+ "windows-sys",
+]
+
+[[package]]
 name = "kvm-bindings"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
