@@ -2470,6 +2470,59 @@ pub extern "C" fn krun_disable_implicit_init(ctx_id: u32) -> i32 {
     KRUN_SUCCESS
 }
 
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(not(feature = "tee"))]
+pub unsafe extern "C" fn krun_fs_add_overlay_file(
+    ctx_id: u32,
+    c_fs_tag: *const c_char,
+    c_filename: *const c_char,
+    data: *const u8,
+    data_len: size_t,
+    mode: u32,
+    one_shot: bool,
+) -> i32 {
+    if c_fs_tag.is_null() || c_filename.is_null() || data.is_null() || data_len == 0 {
+        return -libc::EINVAL;
+    }
+
+    let fs_tag = match CStr::from_ptr(c_fs_tag).to_str() {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    let filename = match CString::new(CStr::from_ptr(c_filename).to_bytes()) {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    // SAFETY: The caller guarantees the memory remains valid for the VM
+    // lifetime (see the C header contract).
+    let payload: &'static [u8] = slice::from_raw_parts(data, data_len);
+
+    let entry = VirtualEntry {
+        name: filename,
+        file: VirtualFile {
+            data: payload,
+            mode,
+            one_shot,
+        },
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            match cfg.vmr.fs.iter_mut().find(|fs| fs.fs_id == fs_tag) {
+                Some(fs_cfg) => fs_cfg.virtual_entries.push(entry),
+                None => return -libc::ENOENT,
+            }
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
 #[no_mangle]
 pub extern "C" fn krun_disable_implicit_console(ctx_id: u32) -> i32 {
     match CTX_MAP.lock().unwrap().entry(ctx_id) {

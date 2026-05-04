@@ -1218,6 +1218,30 @@ int32_t krun_disable_implicit_console(uint32_t ctx_id);
 int32_t krun_disable_implicit_init(uint32_t ctx_id);
 
 /**
+ * Add a virtual overlay file to a virtiofs device.
+ *
+ * The file will appear in the root directory of the specified virtiofs
+ * mount and is backed entirely by host memory (no host file). The data
+ * pointer is NOT copied — the caller must keep the memory valid for the
+ * full VM lifetime.
+ *
+ * Arguments:
+ *  "ctx_id"   - the configuration context ID.
+ *  "fs_tag"   - tag of the virtiofs device (e.g. "/dev/root").
+ *  "filename" - name of the file in the root directory.
+ *  "data"     - pointer to the file content.
+ *  "data_len" - length of the file content in bytes.
+ *  "mode"     - file mode bits (e.g. 0100644 for a regular file).
+ *  "one_shot" - if true, the file can only be looked up once.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_fs_add_overlay_file(uint32_t ctx_id, const char *fs_tag,
+                                 const char *filename, const uint8_t *data,
+                                 size_t data_len, uint32_t mode, bool one_shot);
+
+/**
  * Disable the implicit vsock device.
  *
  * By default, libkrun creates a vsock device automatically. This function
