@@ -182,6 +182,8 @@ struct ContextConfig {
     console_output: Option<PathBuf>,
     vmm_uid: Option<libc::uid_t>,
     vmm_gid: Option<libc::gid_t>,
+    #[cfg(not(feature = "tee"))]
+    disable_implicit_init: bool,
 }
 
 impl ContextConfig {
@@ -607,6 +609,10 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
+            let mut virtual_entries = Vec::new();
+            if !cfg.disable_implicit_init {
+                virtual_entries.push(init_virtual_entry());
+            }
             cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id,
                 shared_dir,
@@ -614,7 +620,7 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
                 shm_size: Some(1 << 29),
                 allow_root_dir_delete: false,
                 read_only: false,
-                virtual_entries: vec![init_virtual_entry()],
+                virtual_entries,
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -682,7 +688,7 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             let mut virtual_entries = Vec::new();
-            if tag == "/dev/root" {
+            if tag == "/dev/root" && !cfg.disable_implicit_init {
                 virtual_entries.push(init_virtual_entry());
             }
             cfg.vmr.add_fs_device(FsDeviceConfig {
@@ -2429,6 +2435,10 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 return -libc::EINVAL;
             }
 
+            let mut virtual_entries = Vec::new();
+            if !ctx_cfg.disable_implicit_init {
+                virtual_entries.push(init_virtual_entry());
+            }
             ctx_cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id: "/dev/root".into(),
                 shared_dir: empty_root.to_string_lossy().into(),
@@ -2436,13 +2446,26 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 shm_size: Some(1 << 29),
                 allow_root_dir_delete: true,
                 read_only: false,
-                virtual_entries: vec![init_virtual_entry()],
+                virtual_entries,
             });
 
             ctx_cfg.set_block_root(device, fstype, options);
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     };
+
+    KRUN_SUCCESS
+}
+
+#[no_mangle]
+#[cfg(not(feature = "tee"))]
+pub extern "C" fn krun_disable_implicit_init(ctx_id: u32) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            ctx_cfg.get_mut().disable_implicit_init = true;
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
 
     KRUN_SUCCESS
 }
@@ -2894,5 +2917,60 @@ fn krun_start_enter_nitro(ctx_id: u32) -> i32 {
 
             -libc::EINVAL
         }
+    }
+}
+
+#[cfg(all(test, not(feature = "tee")))]
+mod tests {
+    use super::*;
+
+    use std::ffi::CString;
+    use std::ptr::null;
+
+    static TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+    #[test]
+    fn root_virtiofs_injects_default_init_by_default() {
+        let _guard = TEST_LOCK.lock().unwrap();
+
+        let tag = CString::new("/dev/root").unwrap();
+        let ctx = krun_create_ctx() as u32;
+
+        unsafe {
+            assert_eq!(krun_add_virtiofs3(ctx, tag.as_ptr(), null(), 0, false), KRUN_SUCCESS);
+        }
+
+        let ctx_map = CTX_MAP.lock().unwrap();
+        let cfg = ctx_map.get(&ctx).unwrap();
+        assert_eq!(cfg.vmr.fs.len(), 1);
+        assert_eq!(cfg.vmr.fs[0].virtual_entries.len(), 1);
+        assert_eq!(cfg.vmr.fs[0].virtual_entries[0].name.to_bytes(), b"init.krun");
+        drop(ctx_map);
+
+        assert_eq!(krun_free_ctx(ctx), KRUN_SUCCESS);
+    }
+
+    #[test]
+    fn root_virtiofs_respects_disable_implicit_init() {
+        let _guard = TEST_LOCK.lock().unwrap();
+
+        let tag = CString::new("/dev/root").unwrap();
+        let ctx = krun_create_ctx() as u32;
+
+        assert_eq!(krun_disable_implicit_init(ctx), KRUN_SUCCESS);
+        unsafe {
+            assert_eq!(krun_add_virtiofs3(ctx, tag.as_ptr(), null(), 0, false), KRUN_SUCCESS);
+        }
+
+        let ctx_map = CTX_MAP.lock().unwrap();
+        let cfg = ctx_map.get(&ctx).unwrap();
+        assert_eq!(cfg.vmr.fs.len(), 1);
+        assert!(
+            cfg.vmr.fs[0].virtual_entries.is_empty(),
+            "root virtiofs should not inject init.krun after krun_disable_implicit_init()"
+        );
+        drop(ctx_map);
+
+        assert_eq!(krun_free_ctx(ctx), KRUN_SUCCESS);
     }
 }
