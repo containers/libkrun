@@ -1192,6 +1192,13 @@ int32_t krun_get_max_vcpus(void);
 int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
 
 /*
+ * NOTE: Implicit resource creation is a legacy convenience. The 2.0 API
+ * (see https://github.com/containers/libkrun/issues/634) will not create
+ * any implicit resources. Callers should start using the
+ * krun_disable_implicit_* functions now to ease migration.
+ */
+
+/*
  * Do not create an implicit console device in the guest. By using this API,
  * libkrun will create zero console devices on behalf of the user. Any
  * console devices needed by the user must be added manually via other API
