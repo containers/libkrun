@@ -2,6 +2,7 @@ mod device;
 #[allow(dead_code)]
 mod filesystem;
 pub mod fuse;
+mod inode_alloc;
 #[allow(dead_code)]
 mod multikey;
 mod read_only;
