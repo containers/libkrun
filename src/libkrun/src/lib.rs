@@ -14,6 +14,8 @@ use env_logger::{Env, Target};
 #[cfg(feature = "gpu")]
 use krun_display::DisplayBackend;
 
+#[cfg(not(feature = "tee"))]
+use devices::virtio::fs::virtual_inode::{VirtualEntry, VirtualFile};
 use libc::{c_char, c_int, size_t};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
@@ -23,7 +25,6 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::env;
-#[cfg(target_os = "linux")]
 use std::ffi::CString;
 use std::ffi::{c_void, CStr};
 use std::fs::File;
@@ -90,6 +91,20 @@ static KRUN_NITRO_DEBUG: Mutex<bool> = Mutex::new(false);
 // Path to the init binary to be executed inside the VM.
 const INIT_PATH: &str = "/init.krun";
 
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+const DEFAULT_INIT_PAYLOAD: &[u8] = init_blob::INIT_BINARY;
+
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+fn init_virtual_entry() -> VirtualEntry {
+    VirtualEntry {
+        name: std::ffi::CString::new("init.krun").unwrap(),
+        file: VirtualFile {
+            data: DEFAULT_INIT_PAYLOAD,
+            mode: 0o100_755,
+            one_shot: true,
+        },
+    }
+}
 static KRUNFW: LazyLock<Option<libloading::Library>> =
     LazyLock::new(|| unsafe { libloading::Library::new(KRUNFW_NAME).ok() });
 
@@ -599,6 +614,7 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
                 shm_size: Some(1 << 29),
                 allow_root_dir_delete: false,
                 read_only: false,
+                virtual_entries: vec![init_virtual_entry()],
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -665,12 +681,17 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
+            let mut virtual_entries = Vec::new();
+            if tag == "/dev/root" {
+                virtual_entries.push(init_virtual_entry());
+            }
             cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id: tag.to_string(),
                 shared_dir: path.to_string(),
                 shm_size: shm,
                 allow_root_dir_delete: false,
                 read_only,
+                virtual_entries,
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -2415,6 +2436,7 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 shm_size: Some(1 << 29),
                 allow_root_dir_delete: true,
                 read_only: false,
+                virtual_entries: vec![init_virtual_entry()],
             });
 
             ctx_cfg.set_block_root(device, fstype, options);
@@ -2817,7 +2839,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     let (sender, _receiver) = unbounded();
 
     let _vmm = match vmm::builder::build_microvm(
-        &ctx_cfg.vmr,
+        &mut ctx_cfg.vmr,
         &mut event_manager,
         ctx_cfg.shutdown_efd,
         sender,

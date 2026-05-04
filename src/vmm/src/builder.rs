@@ -571,7 +571,7 @@ fn choose_payload(vm_resources: &VmResources) -> Result<Payload, StartMicrovmErr
 /// An `Arc` reference of the built `Vmm` is also plugged in the `EventManager`, while another
 /// is returned.
 pub fn build_microvm(
-    vm_resources: &super::resources::VmResources,
+    vm_resources: &mut super::resources::VmResources,
     event_manager: &mut EventManager,
     _shutdown_efd: Option<EventFd>,
     _sender: Sender<WorkerMessage>,
@@ -1064,7 +1064,7 @@ pub fn build_microvm(
     #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
     attach_fs_devices(
         &mut vmm,
-        &vm_resources.fs,
+        std::mem::take(&mut vm_resources.fs),
         &mut _shm_manager,
         #[cfg(not(feature = "tee"))]
         export_table,
@@ -2040,7 +2040,7 @@ fn attach_mmio_device(
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 fn attach_fs_devices(
     vmm: &mut Vmm,
-    fs_devs: &[FsDeviceConfig],
+    fs_devs: Vec<FsDeviceConfig>,
     shm_manager: &mut ShmManager,
     #[cfg(not(feature = "tee"))] export_table: Option<ExportTable>,
     intc: IrqChip,
@@ -2049,14 +2049,15 @@ fn attach_fs_devices(
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
-    for (i, config) in fs_devs.iter().enumerate() {
+    for (i, config) in fs_devs.into_iter().enumerate() {
         let fs = Arc::new(Mutex::new(
             devices::virtio::Fs::new(
-                config.fs_id.clone(),
-                config.shared_dir.clone(),
+                config.fs_id,
+                config.shared_dir,
                 exit_code.clone(),
                 config.allow_root_dir_delete,
                 config.read_only,
+                config.virtual_entries,
             )
             .unwrap(),
         ));

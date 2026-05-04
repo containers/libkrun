@@ -7,6 +7,8 @@ mod inode_alloc;
 mod multikey;
 mod read_only;
 mod server;
+mod augment_fs;
+pub mod virtual_inode;
 mod worker;
 
 #[cfg(target_os = "linux")]

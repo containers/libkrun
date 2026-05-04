@@ -32,9 +32,6 @@ const CURRENT_DIR_CSTR: &[u8] = b".\0";
 const PARENT_DIR_CSTR: &[u8] = b"..\0";
 const EMPTY_CSTR: &[u8] = b"\0";
 const PROC_CSTR: &[u8] = b"/proc/self/fd\0";
-const INIT_CSTR: &[u8] = b"init.krun\0";
-
-static INIT_BINARY: &[u8] = init_blob::INIT_BINARY;
 
 type Inode = u64;
 type Handle = u64;
@@ -360,13 +357,11 @@ pub struct PassthroughFs {
     // do with an fd opened with this flag.
     inodes: RwLock<MultikeyBTreeMap<Inode, InodeAltKey, Arc<InodeData>>>,
     inode_alloc: Arc<InodeAllocator>,
-    init_inode: u64,
 
     // File descriptors for open files and directories. Unlike the fds in `inodes`, these _can_ be
     // used for reading and writing data.
     handles: RwLock<BTreeMap<Handle, Arc<HandleData>>>,
     next_handle: AtomicU64,
-    init_handle: u64,
 
     // File descriptor pointing to the `/proc/self/fd` directory. This is used to convert an fd from
     // `inodes` into one that can go into `handles`. This is accomplished by reading the
@@ -440,11 +435,9 @@ impl PassthroughFs {
         Ok(PassthroughFs {
             inodes: RwLock::new(MultikeyBTreeMap::new()),
             inode_alloc,
-            init_inode: fuse::ROOT_ID + 1,
 
             handles: RwLock::new(BTreeMap::new()),
             next_handle: AtomicU64::new(1),
-            init_handle: 0,
 
             proc_self_fd,
 
@@ -993,25 +986,7 @@ impl FileSystem for PassthroughFs {
 
     fn lookup(&self, _ctx: Context, parent: Inode, name: &CStr) -> io::Result<Entry> {
         debug!("do_lookup: {name:?}");
-        let init_name = unsafe { CStr::from_bytes_with_nul_unchecked(INIT_CSTR) };
-
-        if self.init_inode != 0 && name == init_name {
-            let mut st: libc::stat64 = unsafe { mem::zeroed() };
-            st.st_size = INIT_BINARY.len() as i64;
-            st.st_ino = self.init_inode;
-            st.st_mode = 0o100_755;
-
-            Ok(Entry {
-                inode: self.init_inode,
-                generation: 0,
-                attr: st,
-                attr_flags: 0,
-                attr_timeout: self.cfg.attr_timeout,
-                entry_timeout: self.cfg.entry_timeout,
-            })
-        } else {
-            self.do_lookup(parent, name)
-        }
+        self.do_lookup(parent, name)
     }
 
     fn forget(&self, _ctx: Context, inode: Inode, count: u64) {
@@ -1130,11 +1105,7 @@ impl FileSystem for PassthroughFs {
         kill_priv: bool,
         flags: u32,
     ) -> io::Result<(Option<Handle>, OpenOptions)> {
-        if inode == self.init_inode {
-            Ok((Some(self.init_handle), OpenOptions::empty()))
-        } else {
-            self.do_open(inode, kill_priv, flags)
-        }
+        self.do_open(inode, kill_priv, flags)
     }
 
     fn release(
@@ -1235,16 +1206,6 @@ impl FileSystem for PassthroughFs {
         _flags: u32,
     ) -> io::Result<usize> {
         debug!("read: {inode:?}");
-        if inode == self.init_inode {
-            let off: usize = offset.try_into().map_err(|_| einval())?;
-            let len = if off + (size as usize) < INIT_BINARY.len() {
-                size as usize
-            } else {
-                INIT_BINARY.len() - off
-            };
-            return w.write(&INIT_BINARY[off..(off + len)]);
-        }
-
         let data = self
             .handles
             .read()
@@ -1825,10 +1786,6 @@ impl FileSystem for PassthroughFs {
             return Err(io::Error::from_raw_os_error(libc::ENOSYS));
         }
 
-        if inode == self.init_inode {
-            return Err(io::Error::from_raw_os_error(libc::ENODATA));
-        }
-
         let mut buf = vec![0; size as usize];
 
         // The f{set,get,remove,list}xattr functions don't work on an fd opened with `O_PATH` so we
@@ -2087,36 +2044,6 @@ impl FileSystem for PassthroughFs {
         let addr = host_shm_base + moffset;
 
         debug!("setupmapping: ino {inode:?} addr={addr:x} len={len}");
-
-        if inode == self.init_inode {
-            let ret = unsafe {
-                libc::mmap(
-                    addr as *mut libc::c_void,
-                    len as usize,
-                    libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
-                    -1,
-                    0,
-                )
-            };
-            if std::ptr::eq(ret, libc::MAP_FAILED) {
-                return Err(io::Error::last_os_error());
-            }
-
-            let to_copy = if len as usize > INIT_BINARY.len() {
-                INIT_BINARY.len()
-            } else {
-                len as usize
-            };
-            unsafe {
-                libc::memcpy(
-                    addr as *mut libc::c_void,
-                    INIT_BINARY.as_ptr() as *const _,
-                    to_copy,
-                )
-            };
-            return Ok(());
-        }
 
         let file = self.open_inode(inode, open_flags)?;
         let fd = file.as_raw_fd();
