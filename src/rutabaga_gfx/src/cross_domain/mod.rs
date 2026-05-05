@@ -991,6 +991,28 @@ impl CrossDomainContext {
 
                 Ok(())
             }
+            // Handle writes to Eventfd items. PipeWire (and other clients
+            // that pass eventfds via SCM_RIGHTS) uses these for per-period
+            // wakeups: an 8-byte write to the eventfd's counter signals
+            // the host. Without this arm, the first such write hits the
+            // catch-all below, returning InvalidCrossDomainItemType after
+            // the unconditional remove() above has already dropped the
+            // item — leaving every subsequent write to the same id
+            // failing with InvalidCrossDomainItemId. Mirrors the
+            // WaylandWritePipe re-insert semantics on hang_up == 0.
+            CrossDomainItem::Eventfd(file) => {
+                if len != 0 {
+                    write_volatile(&file, opaque_data)?;
+                }
+
+                if cmd_write.hang_up == 0 {
+                    items
+                        .table
+                        .insert(cmd_write.identifier, CrossDomainItem::Eventfd(file));
+                }
+
+                Ok(())
+            }
             _ => Err(RutabagaError::InvalidCrossDomainItemType),
         }
     }
