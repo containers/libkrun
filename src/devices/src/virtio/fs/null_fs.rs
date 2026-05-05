@@ -1,0 +1,44 @@
+// A minimal filesystem that serves an empty root directory.
+//
+// Used with AugmentFs to provide a virtual-only filesystem (e.g. for
+// booting from a block device where the virtiofs root only needs init.krun).
+
+use std::io;
+use std::mem;
+use std::time::Duration;
+
+use super::filesystem::{Context, FileSystem, FsOptions};
+use super::fuse;
+use crate::virtio::bindings;
+
+/// An empty filesystem with just a root directory and nothing in it.
+pub struct NullFs;
+
+type Inode = u64;
+type Handle = u64;
+
+impl FileSystem for NullFs {
+    type Inode = Inode;
+    type Handle = Handle;
+
+    fn init(&self, _capable: FsOptions) -> io::Result<FsOptions> {
+        Ok(FsOptions::empty())
+    }
+
+    fn getattr(
+        &self,
+        _ctx: Context,
+        inode: Inode,
+        _handle: Option<Handle>,
+    ) -> io::Result<(bindings::stat64, Duration)> {
+        if inode == fuse::ROOT_ID {
+            let mut st: bindings::stat64 = unsafe { mem::zeroed() };
+            st.st_ino = fuse::ROOT_ID;
+            st.st_mode = libc::S_IFDIR | 0o755;
+            st.st_nlink = 2;
+            st.st_blksize = 4096;
+            return Ok((st, Duration::from_secs(86400)));
+        }
+        Err(io::Error::from_raw_os_error(libc::ENOENT))
+    }
+}
