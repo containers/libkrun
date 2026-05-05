@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::io;
-use std::sync::atomic::AtomicI32;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
@@ -30,7 +30,7 @@ use super::filesystem::{
 };
 use super::fuse;
 use super::inode_alloc::InodeAllocator;
-use super::virtual_inode::{VirtualEntry, VirtualFile};
+use super::virtual_inode::{VirtualEntry, VirtualInode};
 use crate::virtio::bindings;
 
 type Inode = u64;
@@ -62,12 +62,12 @@ fn eperm() -> io::Error {
 /// Overlay that injects virtual inodes into an inner `FileSystem`.
 pub struct AugmentFs<T> {
     inner: T,
-    /// Maps (name in root dir) → virtual inode number. One-shot entries
+    /// Maps (parent_inode, name) → child inode number. One-shot entries
     /// are removed on first lookup so the file can only be opened once.
-    name_to_inode: RwLock<HashMap<CString, Inode>>,
-    /// Maps virtual inode number → file data. One-shot entries are removed
-    /// from this map on release.
-    inodes: RwLock<HashMap<Inode, VirtualFile>>,
+    name_to_inode: RwLock<HashMap<(Inode, CString), Inode>>,
+    /// Maps virtual inode number → (mode, inode data). One-shot entries are
+    /// removed from this map on release.
+    inodes: RwLock<HashMap<Inode, (u32, VirtualInode)>>,
 }
 
 impl<T: FileSystem<Inode = Inode, Handle = Handle>> AugmentFs<T> {
@@ -77,19 +77,50 @@ impl<T: FileSystem<Inode = Inode, Handle = Handle>> AugmentFs<T> {
     /// Inode numbers are obtained from `inode_alloc`, the same allocator
     /// used by the inner filesystem.
     pub fn new(inner: T, inode_alloc: &InodeAllocator, entries: Vec<VirtualEntry>) -> Self {
-        let mut name_to_inode = HashMap::with_capacity(entries.len());
-        let mut inodes = HashMap::with_capacity(entries.len());
+        let mut name_to_inode = HashMap::new();
+        let mut inodes = HashMap::new();
 
-        for entry in entries {
-            let inode = inode_alloc.next();
-            name_to_inode.insert(entry.name, inode);
-            inodes.insert(inode, entry.file);
-        }
+        Self::register_entries(
+            fuse::ROOT_ID,
+            entries,
+            inode_alloc,
+            &mut name_to_inode,
+            &mut inodes,
+        );
 
         Self {
             inner,
             name_to_inode: RwLock::new(name_to_inode),
             inodes: RwLock::new(inodes),
+        }
+    }
+
+    fn register_entries(
+        parent: Inode,
+        entries: Vec<VirtualEntry>,
+        inode_alloc: &InodeAllocator,
+        name_to_inode: &mut HashMap<(Inode, CString), Inode>,
+        inodes: &mut HashMap<Inode, (u32, VirtualInode)>,
+    ) {
+        for entry in entries {
+            let ino = inode_alloc.next();
+            name_to_inode.insert((parent, entry.name), ino);
+
+            // Recurse into directory children before moving the inode.
+            if let VirtualInode::Dir { children } = entry.inode {
+                Self::register_entries(ino, children, inode_alloc, name_to_inode, inodes);
+                inodes.insert(
+                    ino,
+                    (
+                        entry.mode,
+                        VirtualInode::Dir {
+                            children: Vec::new(),
+                        },
+                    ),
+                );
+            } else {
+                inodes.insert(ino, (entry.mode, entry.inode));
+            }
         }
     }
 
@@ -111,36 +142,32 @@ impl<T: FileSystem<Inode = Inode, Handle = Handle>> FileSystem for AugmentFs<T> 
     }
 
     fn lookup(&self, ctx: Context, parent: Inode, name: &CStr) -> io::Result<Entry> {
-        if parent == fuse::ROOT_ID {
-            let inode = self.name_to_inode.read().unwrap().get(name).copied();
-            if let Some(inode) = inode {
-                let inodes = self.inodes.read().unwrap();
-                if let Some(file) = inodes.get(&inode) {
-                    let one_shot = file.one_shot;
-                    let st = file.stat(inode);
-                    let entry_timeout = if one_shot {
-                        Duration::ZERO
-                    } else {
-                        VIRTUAL_TIMEOUT
-                    };
+        let key = (parent, CString::from(name));
+        let inode = self.name_to_inode.read().unwrap().get(&key).copied();
+        if let Some(inode) = inode {
+            let inodes = self.inodes.read().unwrap();
+            if let Some((mode, vnode)) = inodes.get(&inode) {
+                let one_shot = vnode.is_one_shot();
+                let st = vnode.stat(inode, *mode);
+                let entry_timeout = if one_shot {
+                    Duration::ZERO
+                } else {
+                    VIRTUAL_TIMEOUT
+                };
 
-                    // One-shot: remove name so subsequent lookups fall
-                    // through to the inner filesystem (or return ENOENT).
-                    if one_shot {
-                        // Drop the read lock first, before locking for write
-                        drop(inodes);
-                        self.name_to_inode.write().unwrap().remove(name);
-                    }
-
-                    return Ok(Entry {
-                        inode,
-                        generation: 0,
-                        attr: st,
-                        attr_flags: 0,
-                        attr_timeout: VIRTUAL_TIMEOUT,
-                        entry_timeout,
-                    });
+                if one_shot {
+                    drop(inodes);
+                    self.name_to_inode.write().unwrap().remove(&key);
                 }
+
+                return Ok(Entry {
+                    inode,
+                    generation: 0,
+                    attr: st,
+                    attr_flags: 0,
+                    attr_timeout: VIRTUAL_TIMEOUT,
+                    entry_timeout,
+                });
             }
         }
         self.inner.lookup(ctx, parent, name)
@@ -170,8 +197,8 @@ impl<T: FileSystem<Inode = Inode, Handle = Handle>> FileSystem for AugmentFs<T> 
     ) -> io::Result<(bindings::stat64, Duration)> {
         {
             let inodes = self.inodes.read().unwrap();
-            if let Some(file) = inodes.get(&inode) {
-                let st = file.stat(inode);
+            if let Some((mode, vnode)) = inodes.get(&inode) {
+                let st = vnode.stat(inode, *mode);
                 return Ok((st, VIRTUAL_TIMEOUT));
             }
         }
@@ -233,12 +260,101 @@ impl<T: FileSystem<Inode = Inode, Handle = Handle>> FileSystem for AugmentFs<T> 
         umask: u32,
         extensions: Extensions,
     ) -> io::Result<Entry> {
-                    .map_err(|_| io::Error::from_raw_os_error(LINUX_EINVAL))?;
-                if off >= data.len() {                    return Ok(0);
-                }
-                let remaining = file.data.len() - off;
+        let key = (parent, CString::from(name));
+        if self.name_to_inode.read().unwrap().contains_key(&key) {
+            return Err(io::Error::from_raw_os_error(libc::EEXIST));
+        }
+        self.inner.mkdir(ctx, parent, name, mode, umask, extensions)
+    }
+
+    fn unlink(&self, ctx: Context, parent: Inode, name: &CStr) -> io::Result<()> {
+        self.inner.unlink(ctx, parent, name)
+    }
+
+    fn rmdir(&self, ctx: Context, parent: Inode, name: &CStr) -> io::Result<()> {
+        self.inner.rmdir(ctx, parent, name)
+    }
+
+    fn rename(
+        &self,
+        ctx: Context,
+        olddir: Inode,
+        oldname: &CStr,
+        newdir: Inode,
+        newname: &CStr,
+        flags: u32,
+    ) -> io::Result<()> {
+        self.inner
+            .rename(ctx, olddir, oldname, newdir, newname, flags)
+    }
+
+    fn link(
+        &self,
+        ctx: Context,
+        inode: Inode,
+        newparent: Inode,
+        newname: &CStr,
+    ) -> io::Result<Entry> {
+        if self.is_virtual(inode) {
+            return Err(eperm());
+        }
+        self.inner.link(ctx, inode, newparent, newname)
+    }
+
+    fn open(
+        &self,
+        ctx: Context,
+        inode: Inode,
+        kill_priv: bool,
+        flags: u32,
+    ) -> io::Result<(Option<Handle>, OpenOptions)> {
+        if self.is_virtual(inode) {
+            if (flags as i32 & libc::O_ACCMODE) != libc::O_RDONLY {
+                return Err(io::Error::from_raw_os_error(libc::EACCES));
+            }
+            return Ok((Some(VIRTUAL_HANDLE), OpenOptions::empty()));
+        }
+        self.inner.open(ctx, inode, kill_priv, flags)
+    }
+
+    fn create(
+        &self,
+        ctx: Context,
+        parent: Inode,
+        name: &CStr,
+        mode: u32,
+        kill_priv: bool,
+        flags: u32,
+        umask: u32,
+        extensions: Extensions,
+    ) -> io::Result<(Entry, Option<Handle>, OpenOptions)> {
+        self.inner
+            .create(ctx, parent, name, mode, kill_priv, flags, umask, extensions)
+    }
+
+    fn read<W: io::Write + ZeroCopyWriter>(
+        &self,
+        ctx: Context,
+        inode: Inode,
+        handle: Handle,
+        mut w: W,
+        size: u32,
+        offset: u64,
+        lock_owner: Option<u64>,
+        flags: u32,
+    ) -> io::Result<usize> {
+        {
+            let inodes = self.inodes.read().unwrap();
+            if let Some((_, vnode)) = inodes.get(&inode) {
+                let data = vnode.data();
+                let off: usize = offset
+                    .try_into()
+                    .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+                if off >= data.len() {
+                    return Ok(0);                }
+                let remaining = data.len() - off;
                 let len = remaining.min(size as usize);
-                return w.write(&file.data[off..(off + len)]);
+                return w.write(&data[off..(off + len)]);
             }
         }
         self.inner
@@ -317,8 +433,8 @@ impl<T: FileSystem<Inode = Inode, Handle = Handle>> FileSystem for AugmentFs<T> 
     ) -> io::Result<()> {
         {
             let mut inodes = self.inodes.write().unwrap();
-            if let Some(file) = inodes.get(&inode) {
-                if file.one_shot {
+            if let Some((_, vnode)) = inodes.get(&inode) {
+                if vnode.is_one_shot() {
                     inodes.remove(&inode);
                 }
                 return Ok(());
@@ -451,8 +567,8 @@ impl<T: FileSystem<Inode = Inode, Handle = Handle>> FileSystem for AugmentFs<T> 
     ) -> io::Result<u64> {
         {
             let inodes = self.inodes.read().unwrap();
-            if let Some(file) = inodes.get(&inode) {
-                let size = file.data.len() as u64;
+            if let Some((_, vnode)) = inodes.get(&inode) {
+                let size = vnode.data().len() as u64;
                 // FUSE lseek is only called for SEEK_DATA/SEEK_HOLE.
                 return match whence as i32 {
                     libc::SEEK_DATA => {
@@ -514,7 +630,8 @@ impl<T: FileSystem<Inode = Inode, Handle = Handle>> FileSystem for AugmentFs<T> 
     ) -> io::Result<()> {
         {
             let inodes = self.inodes.read().unwrap();
-            if let Some(file) = inodes.get(&inode) {
+            if let Some((_, vnode)) = inodes.get(&inode) {
+                let data = vnode.data();
                 #[cfg(target_os = "linux")]
                 {
                     if (moffset + len) > shm_size {
@@ -537,13 +654,13 @@ impl<T: FileSystem<Inode = Inode, Handle = Handle>> FileSystem for AugmentFs<T> 
                     }
 
                     let foff = foffset as usize;
-                    if foff < file.data.len() {
-                        let available = file.data.len() - foff;
+                    if foff < data.len() {
+                        let available = data.len() - foff;
                         let to_copy = (len as usize).min(available);
                         unsafe {
                             libc::memcpy(
                                 addr as *mut libc::c_void,
-                                file.data.as_ptr().add(foff) as *const _,
+                                data.as_ptr().add(foff) as *const _,
                                 to_copy,
                             )
                         };
@@ -552,13 +669,14 @@ impl<T: FileSystem<Inode = Inode, Handle = Handle>> FileSystem for AugmentFs<T> 
                     return Ok(());
                 }
 
-                // TODO: implement DAX for virtual files on macOS using
-                // the ShmRegionManager once it exists (see dax-window-layering task).
+                // TODO: implement DAX for virtual files on macOS.
+                // Needs a shared memory region manager (see setupmapping
+                // in macos/passthrough.rs for the real-file DAX path).
                 #[cfg(target_os = "macos")]
                 {
                     let _ = data;
-                    return Err(io::Error::from_raw_os_error(LINUX_ENOSYS));                }
-            }
+                    return Err(io::Error::from_raw_os_error(libc::ENOSYS));
+                }            }
         }
         self.inner.setupmapping(
             ctx,
@@ -605,10 +723,18 @@ impl<T: FileSystem<Inode = Inode, Handle = Handle>> FileSystem for AugmentFs<T> 
         out_size: u32,
         exit_code: &Arc<AtomicI32>,
     ) -> io::Result<Vec<u8>> {
-        // Always delegate: the exit-code and root-dir-removal ioctls are
-        // dispatched by command number, not by inode.
-        self.inner.ioctl(
-            ctx, inode, handle, flags, cmd, arg, in_size, out_size, exit_code,
-        )
+        // The ioctl cmd values use Linux encoding regardless of host OS
+        // because the guest always runs Linux.
+        const VIRTIO_IOC_EXIT_CODE_REQ: u32 = 0x7602;
+
+        match cmd {
+            VIRTIO_IOC_EXIT_CODE_REQ => {
+                exit_code.store(arg as i32, Ordering::SeqCst);
+                Ok(Vec::new())
+            }
+            _ => self.inner.ioctl(
+                ctx, inode, handle, flags, cmd, arg, in_size, out_size, exit_code,
+            ),
+        }
     }
 }

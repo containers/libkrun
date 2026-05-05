@@ -1268,6 +1268,24 @@ int32_t krun_fs_add_overlay_file(uint32_t ctx_id, const char *fs_tag,
                                  size_t data_len, uint32_t mode, bool one_shot);
 
 /**
+ * Add a virtual overlay directory to a virtiofs device.
+ *
+ * The directory will appear in the root directory of the specified virtiofs
+ * mount. It is empty and read-only, useful as a mount point.
+ *
+ * Arguments:
+ *  "ctx_id"   - the configuration context ID.
+ *  "fs_tag"   - tag of the virtiofs device (e.g. "/dev/root").
+ *  "dirname"  - name of the directory in the root directory.
+ *  "mode"     - directory mode bits (e.g. 040755).
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_fs_add_overlay_dir(uint32_t ctx_id, const char *fs_tag,
+                                const char *dirname, uint32_t mode);
+
+/**
  * Disable the implicit vsock device.
  *
  * By default, libkrun creates a vsock device automatically. This function

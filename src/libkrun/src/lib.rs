@@ -15,7 +15,7 @@ use env_logger::{Env, Target};
 use krun_display::DisplayBackend;
 
 #[cfg(not(feature = "tee"))]
-use devices::virtio::fs::virtual_inode::{VirtualEntry, VirtualFile};
+use devices::virtio::fs::virtual_inode::{VirtualEntry, VirtualInode};
 use libc::{c_char, c_int, size_t};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
@@ -96,9 +96,9 @@ const DEFAULT_INIT_PAYLOAD: &[u8] = init_blob::INIT_BINARY;
 fn init_virtual_entry() -> VirtualEntry {
     VirtualEntry {
         name: std::ffi::CString::new("init.krun").unwrap(),
-        file: VirtualFile {
+        mode: 0o100_755,
+        inode: VirtualInode::File {
             data: DEFAULT_INIT_PAYLOAD,
-            mode: 0o100_755,
             one_shot: true,
         },
     }
@@ -659,7 +659,7 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
     shm_size: u64,
     read_only: bool,
 ) -> i32 {
-    if c_tag.is_null() || c_path.is_null() {
+    if c_tag.is_null() {
         return -libc::EINVAL;
     }
 
@@ -667,9 +667,15 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
         Ok(tag) => tag,
         Err(_) => return -libc::EINVAL,
     };
-    let path = match CStr::from_ptr(c_path).to_str() {
-        Ok(path) => path,
-        Err(_) => return -libc::EINVAL,
+
+    // NULL path means NullFs (virtual-only filesystem, no host directory).
+    let path = if c_path.is_null() {
+        None
+    } else {
+        match CStr::from_ptr(c_path).to_str() {
+            Ok(path) => Some(path),
+            Err(_) => return -libc::EINVAL,
+        }
     };
 
     let shm = if shm_size > 0 {
@@ -690,7 +696,7 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
             }
             cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id: tag.to_string(),
-                shared_dir: Some(path.to_string()),
+                shared_dir: path.map(|p| p.to_string()),
                 shm_size: shm,
                 read_only,
                 virtual_entries,
@@ -2514,10 +2520,55 @@ pub unsafe extern "C" fn krun_fs_add_overlay_file(
 
     let entry = VirtualEntry {
         name: filename,
-        file: VirtualFile {
+        mode,
+        inode: VirtualInode::File {
             data: payload,
-            mode,
             one_shot,
+        },
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            match cfg.vmr.fs.iter_mut().find(|fs| fs.fs_id == fs_tag) {
+                Some(fs_cfg) => fs_cfg.virtual_entries.push(entry),
+                None => return -libc::ENOENT,
+            }
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(not(feature = "tee"))]
+pub unsafe extern "C" fn krun_fs_add_overlay_dir(
+    ctx_id: u32,
+    c_fs_tag: *const c_char,
+    c_dirname: *const c_char,
+    mode: u32,
+) -> i32 {
+    if c_fs_tag.is_null() || c_dirname.is_null() {
+        return -libc::EINVAL;
+    }
+
+    let fs_tag = match CStr::from_ptr(c_fs_tag).to_str() {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    let dirname = match CString::new(CStr::from_ptr(c_dirname).to_bytes()) {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    let entry = VirtualEntry {
+        name: dirname,
+        mode,
+        inode: VirtualInode::Dir {
+            children: Vec::new(),
         },
     };
 
