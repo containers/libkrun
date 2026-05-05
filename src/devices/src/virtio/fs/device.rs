@@ -47,7 +47,7 @@ pub struct Fs {
     device_state: DeviceState,
     config: VirtioFsConfig,
     shm_region: Option<VirtioShmRegion>,
-    passthrough_cfg: passthrough::Config,
+    passthrough_cfg: Option<passthrough::Config>,
     read_only: bool,
     virtual_entries: Vec<VirtualEntry>,
     worker_thread: Option<JoinHandle<()>>,
@@ -60,9 +60,8 @@ pub struct Fs {
 impl Fs {
     pub fn new(
         fs_id: String,
-        shared_dir: String,
+        shared_dir: Option<String>,
         exit_code: Arc<AtomicI32>,
-        allow_root_dir_delete: bool,
         read_only: bool,
         virtual_entries: Vec<VirtualEntry>,
     ) -> super::Result<Fs> {
@@ -73,11 +72,10 @@ impl Fs {
         config.tag[..tag.len()].copy_from_slice(tag.as_slice());
         config.num_request_queues = 1;
 
-        let fs_cfg = passthrough::Config {
-            root_dir: shared_dir,
-            allow_root_dir_delete,
+        let fs_cfg = shared_dir.map(|root_dir| passthrough::Config {
+            root_dir,
             ..Default::default()
-        };
+        });
 
         Ok(Fs {
             avail_features,
@@ -107,10 +105,14 @@ impl Fs {
     pub fn set_export_table(&mut self, export_table: ExportTable) -> u64 {
         static FS_UNIQUE_ID: AtomicU64 = AtomicU64::new(0);
 
-        self.passthrough_cfg.export_fsid = FS_UNIQUE_ID.fetch_add(1, Ordering::Relaxed);
-        self.passthrough_cfg.export_table = Some(export_table);
+        let cfg = self
+            .passthrough_cfg
+            .as_mut()
+            .expect("export_table requires a passthrough filesystem");
+        cfg.export_fsid = FS_UNIQUE_ID.fetch_add(1, Ordering::Relaxed);
+        cfg.export_table = Some(export_table);
 
-        self.passthrough_cfg.export_fsid
+        cfg.export_fsid
     }
 
     #[cfg(target_os = "macos")]

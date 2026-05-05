@@ -19,8 +19,6 @@ use devices::virtio::fs::virtual_inode::{VirtualEntry, VirtualFile};
 use libc::{c_char, c_int, size_t};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
-#[cfg(all(feature = "blk", not(feature = "tee")))]
-use rand::distr::{Alphanumeric, SampleString};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -615,10 +613,9 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
             }
             cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id,
-                shared_dir,
+                shared_dir: Some(shared_dir),
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
-                allow_root_dir_delete: false,
                 read_only: false,
                 virtual_entries,
             });
@@ -693,9 +690,8 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
             }
             cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id: tag.to_string(),
-                shared_dir: path.to_string(),
+                shared_dir: Some(path.to_string()),
                 shm_size: shm,
-                allow_root_dir_delete: false,
                 read_only,
                 virtual_entries,
             });
@@ -2423,28 +2419,29 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 return -libc::EINVAL;
             }
 
-            // To boot from a filesystem other than virtiofs,
-            // we need to setup a temporary root from which init.krun can be executed.
-            // Otherwise, it would have to be copied to the target filesystem beforehand.
-            // Instead, init.krun will run from virtiofs and then switch to the real root.
-            let root_dir_suffix = Alphanumeric.sample_string(&mut rand::rng(), 6);
-            let empty_root = env::temp_dir().join(format!("krun-empty-root-{root_dir_suffix}"));
-
-            if let Err(e) = std::fs::create_dir_all(&empty_root) {
-                error!("Failed to create empty root directory: {e:?}");
-                return -libc::EINVAL;
-            }
-
+            // Boot from a block device: the virtiofs root only needs to
+            // serve init.krun and provide mount points for /dev, /proc, /sys.
+            // Use a NullFs (no host directory) with the inode overlay.
             let mut virtual_entries = Vec::new();
             if !ctx_cfg.disable_implicit_init {
                 virtual_entries.push(init_virtual_entry());
             }
+            // init.c needs these directories as mount points before
+            // pivoting to the block device root.
+            for name in ["dev", "proc", "sys", "newroot"] {
+                virtual_entries.push(VirtualEntry {
+                    name: CString::new(name).unwrap(),
+                    mode: libc::S_IFDIR as u32 | 0o755,
+                    inode: VirtualInode::Dir {
+                        children: Vec::new(),
+                    },
+                });
+            }
             ctx_cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id: "/dev/root".into(),
-                shared_dir: empty_root.to_string_lossy().into(),
+                shared_dir: None,
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
-                allow_root_dir_delete: true,
                 read_only: false,
                 virtual_entries,
             });

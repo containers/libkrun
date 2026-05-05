@@ -2055,7 +2055,6 @@ fn attach_fs_devices(
                 config.fs_id,
                 config.shared_dir,
                 exit_code.clone(),
-                config.allow_root_dir_delete,
                 config.read_only,
                 config.virtual_entries,
             )
