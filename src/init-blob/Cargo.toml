@@ -7,5 +7,10 @@ license = "Apache-2.0"
 repository = "https://github.com/containers/libkrun"
 build = "build.rs"
 
+[features]
+amd-sev = []
+tdx = []
+timesync = []
+
 [lib]
 path = "src/lib.rs"
