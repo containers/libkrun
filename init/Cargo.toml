@@ -1,0 +1,22 @@
+[package]
+name = "krun-init"
+version = "0.1.0-1.18.0"
+edition = "2021"
+description = "PID-1 init binary for libkrun guest VMs"
+license = "Apache-2.0"
+repository = "https://github.com/containers/libkrun"
+
+[[bin]]
+name = "krun-init"
+path = "src/main.rs"
+
+[features]
+amd-sev = []
+tdx = []
+timesync = []
+
+[dependencies]
+libc = "0.2"
+nix = { version = "0.30", features = ["fs", "hostname", "ioctl", "mount", "process", "reboot", "resource", "signal", "socket", "term", "uio"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

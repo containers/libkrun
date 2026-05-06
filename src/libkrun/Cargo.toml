@@ -10,8 +10,8 @@ repository = "https://github.com/containers/libkrun"
 
 [features]
 tee = ["vmm/tee", "devices/tee"]
-amd-sev = ["blk", "tee", "vmm/amd-sev", "devices/amd-sev"]
-tdx = ["blk", "tee", "vmm/tdx", "devices/tdx"]
+amd-sev = ["blk", "tee", "vmm/amd-sev", "devices/amd-sev", "init-blob/amd-sev"]
+tdx = ["blk", "tee", "vmm/tdx", "devices/tdx", "init-blob/tdx"]
 net = ["devices/net", "vmm/net"]
 blk = ["devices/blk", "vmm/blk"]
 gpu = ["vmm/gpu", "devices/gpu", "krun_display"]
