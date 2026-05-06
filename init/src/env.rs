@@ -1,3 +1,4 @@
+use std::env;
 #[cfg(target_os = "linux")]
 use std::mem;
 #[cfg(target_os = "linux")]
@@ -60,5 +61,45 @@ fn setup_dhcp(iface: &str, sock: i32) {
         if let Err(e) = crate::dhcp::do_dhcp(iface) {
             eprintln!("Warning: DHCP configuration for {iface} failed: {e}");
         }
+    }
+}
+
+pub fn apply_hostname() {
+    let hostname = env::var("HOSTNAME").unwrap_or_else(|_| "localhost".into());
+    let _ = nix::unistd::sethostname(&hostname);
+}
+
+pub fn apply_env() {
+    if let Ok(home) = env::var("KRUN_HOME") {
+        unsafe { env::set_var("HOME", home) };
+    }
+    if let Ok(term) = env::var("KRUN_TERM") {
+        unsafe { env::set_var("TERM", term) };
+    }
+}
+
+pub fn apply_rlimits() {
+    let Ok(rlimits) = env::var("KRUN_RLIMITS") else {
+        return;
+    };
+    for item in rlimits.split(',') {
+        let Some((id_s, rest)) = item.split_once('=') else {
+            continue;
+        };
+        let Some((cur_s, max_s)) = rest.split_once(':') else {
+            continue;
+        };
+        let (Ok(id), Ok(cur), Ok(max)) = (
+            id_s.parse::<u32>(),
+            cur_s.parse::<libc::rlim_t>(),
+            max_s.parse::<libc::rlim_t>(),
+        ) else {
+            continue;
+        };
+        let rlim = libc::rlimit {
+            rlim_cur: cur,
+            rlim_max: max,
+        };
+        unsafe { libc::setrlimit(id as _, &rlim) };
     }
 }
