@@ -16,6 +16,7 @@ tdx = []
 timesync = []
 
 [dependencies]
+anyhow = "1"
 libc = "0.2"
 nix = { version = "0.30", features = ["fs", "hostname", "ioctl", "mount", "process", "reboot", "resource", "signal", "socket", "term", "uio"] }
 serde = { version = "1", features = ["derive"] }
