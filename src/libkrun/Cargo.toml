@@ -12,8 +12,8 @@ repository = "https://github.com/containers/libkrun"
 default = ["init-blob"]
 init-blob = ["dep:init-blob"]
 tee = ["vmm/tee", "devices/tee"]
-amd-sev = ["blk", "tee", "vmm/amd-sev", "devices/amd-sev"]
-tdx = ["blk", "tee", "vmm/tdx", "devices/tdx"]
+amd-sev = ["blk", "tee", "vmm/amd-sev", "devices/amd-sev", "init-blob/amd-sev"]
+tdx = ["blk", "tee", "vmm/tdx", "devices/tdx", "init-blob/tdx"]
 net = ["devices/net", "vmm/net"]
 blk = ["devices/blk", "vmm/blk"]
 gpu = ["vmm/gpu", "devices/gpu", "krun_display"]
@@ -42,11 +42,11 @@ vmm = { package = "krun-vmm", version = "=0.1.0-1.18.0", path = "../vmm" }
 hvf = { package = "krun-hvf", version = "=0.1.0-1.18.0", path = "../hvf" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-kvm-bindings = { version = "0.12", features = ["fam-wrappers"] }
-kvm-ioctls = "0.22"
+kvm-bindings = { version = "0.14", features = ["fam-wrappers"] }
+kvm-ioctls = "0.24"
 aws-nitro = { package = "krun-aws-nitro", version = "=0.1.0-1.18.0", path = "../aws_nitro", optional = true }
 nitro-enclaves = { version = "0.5.0", optional = true }
-vm-memory = { version = "0.17", features = ["backend-mmap"] }
+vm-memory = { version = "=0.17.1", features = ["backend-mmap"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = [
