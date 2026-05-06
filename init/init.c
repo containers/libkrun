@@ -1460,6 +1460,7 @@ int main(int argc, char **argv)
     }
 #endif
 
+#if __linux__
     if (config_tmpfs) {
         /* TODO: Honour mount flags from the config file. Most notably,
          * tmpcopyup is set by Podman by default, requesting copying the files
@@ -1470,6 +1471,7 @@ int main(int argc, char **argv)
             exit(-1);
         }
     }
+#endif
 
     krun_home = getenv("KRUN_HOME");
     if (krun_home) {
