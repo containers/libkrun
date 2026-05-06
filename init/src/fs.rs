@@ -1,10 +1,13 @@
-use anyhow::Context;
+use anyhow::{bail, Context};
 use nix::errno::Errno;
 use nix::mount::{self, MsFlags};
 use nix::unistd;
+use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs as unix_fs;
+
+const KRUN_REMOVE_ROOT_DIR_IOCTL: libc::c_ulong = 0x7603;
 
 /// Mount, treating EBUSY (already mounted) as success.
 fn mount_once(
@@ -110,4 +113,77 @@ pub fn mount_tee_block_device() -> anyhow::Result<()> {
 
     mount_once(Some("."), "/", None::<&str>, MsFlags::MS_MOVE)?;
     unistd::chroot(".").context("chroot .")
+}
+
+/// Mount source onto target, trying each non-virtual filesystem listed in
+/// /proc/filesystems when fstype is None.
+pub fn try_mount(
+    source: &str,
+    target: &str,
+    fstype: Option<&str>,
+    flags: MsFlags,
+) -> anyhow::Result<()> {
+    if let Some(fs) = fstype {
+        mount::mount(Some(source), target, Some(fs), flags, None::<&str>)
+            .with_context(|| format!("mount {source} -> {target} as {fs}"))?;
+    }
+
+    let f = File::open("/proc/filesystems").context("open /proc/filesystems")?;
+    for line in BufReader::new(f).lines().map_while(Result::ok) {
+        if line.starts_with("nodev") {
+            continue;
+        }
+        let fs = line.trim();
+        if mount::mount(Some(source), target, Some(fs), flags, None::<&str>).is_ok() {
+            return Ok(());
+        }
+    }
+    bail!("no supported filesystem found for {source}")
+}
+
+/// Handle KRUN_BLOCK_ROOT_DEVICE: mount the block device at /newroot,
+/// ask the virtiofs device to remove the temporary root, then pivot.
+pub fn mount_block_root_device() -> anyhow::Result<()> {
+    let Some(krun_root) = env::var_os("KRUN_BLOCK_ROOT_DEVICE") else {
+        return Ok(());
+    };
+    let krun_root = krun_root.to_string_lossy().into_owned();
+
+    fs::create_dir_all("/newroot").context("create /newroot")?;
+
+    let fstype = env::var("KRUN_BLOCK_ROOT_FSTYPE").ok();
+    let options = env::var("KRUN_BLOCK_ROOT_OPTIONS").ok();
+
+    try_mount(&krun_root, "/newroot", fstype.as_deref(), MsFlags::empty())?;
+
+    unistd::chdir("/newroot").context("chdir /newroot")?;
+
+    // Ask the virtiofs device to tear down the temporary root directory.
+    let fd = unsafe { libc::open(c"/".as_ptr().cast(), libc::O_RDONLY) };
+    if fd >= 0 {
+        unsafe { libc::ioctl(fd, KRUN_REMOVE_ROOT_DIR_IOCTL as _) };
+        unsafe { libc::close(fd) };
+    }
+
+    mount::mount(Some("."), "/", None::<&str>, MsFlags::MS_MOVE, None::<&str>)
+        .context("pivot root MS_MOVE")?;
+
+    unistd::chroot(".").context("chroot after block root pivot")?;
+
+    // Re-mount standard filesystems now that we're in the new root.
+    mount_filesystems()?;
+
+    drop(options);
+    Ok(())
+}
+
+pub fn mount_shared_root() -> anyhow::Result<()> {
+    mount::mount(
+        None::<&str>,
+        "/",
+        None::<&str>,
+        MsFlags::MS_REC | MsFlags::MS_SHARED,
+        None::<&str>,
+    )
+    .context("set MS_SHARED on root mount")
 }
