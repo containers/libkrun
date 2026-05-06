@@ -3,10 +3,18 @@ mod config;
 mod dhcp;
 mod env;
 mod exec;
+#[cfg(target_os = "freebsd")]
+mod freebsd;
 #[cfg(target_os = "linux")]
 mod fs;
 
 fn main() -> anyhow::Result<()> {
+    #[cfg(target_os = "freebsd")]
+    freebsd::open_console();
+
+    #[cfg(target_os = "freebsd")]
+    freebsd::populate_env_from_kenv();
+
     #[cfg(any(feature = "amd-sev", feature = "tdx"))]
     fs::mount_tee_block_device()?;
 
@@ -20,15 +28,28 @@ fn main() -> anyhow::Result<()> {
     let _ = nix::unistd::setsid();
     unsafe { libc::ioctl(0, libc::TIOCSCTTY as _, 1i32) };
 
+    #[cfg(target_os = "freebsd")]
+    unsafe {
+        libc::setlogin(c"root".as_ptr())
+    };
+
     env::setup_network(
         #[cfg(target_os = "linux")]
         "eth0",
     );
 
+    #[cfg(target_os = "freebsd")]
+    let iso_mounted = std::env::var("KRUN_CONFIG").is_err() && freebsd::mount_config_iso();
+
     #[cfg(target_os = "linux")]
     let cfg = config::load(fs::is_mount_point);
     #[cfg(not(target_os = "linux"))]
     let cfg = config::load();
+
+    #[cfg(target_os = "freebsd")]
+    if iso_mounted {
+        freebsd::unmount_config_iso();
+    }
 
     #[cfg(target_os = "linux")]
     if let Some(ref path) = cfg.tmpfs {
