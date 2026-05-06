@@ -2472,6 +2472,21 @@ pub extern "C" fn krun_disable_implicit_init(ctx_id: u32) -> i32 {
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+pub unsafe extern "C" fn krun_get_default_init(
+    data_out: *mut *const u8,
+    len_out: *mut size_t,
+) -> i32 {
+    if data_out.is_null() || len_out.is_null() {
+        return -libc::EINVAL;
+    }
+    *data_out = DEFAULT_INIT_PAYLOAD.as_ptr();
+    *len_out = DEFAULT_INIT_PAYLOAD.len();
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
 #[cfg(not(feature = "tee"))]
 pub unsafe extern "C" fn krun_fs_add_overlay_file(
     ctx_id: u32,
