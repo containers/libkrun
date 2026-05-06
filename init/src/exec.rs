@@ -106,6 +106,8 @@ pub fn run_workload(argv: &[String]) -> ! {
 fn exec_workload(argv: &[String]) -> ! {
     #[cfg(target_os = "linux")]
     setup_redirects();
+    #[cfg(target_os = "freebsd")]
+    crate::freebsd::open_console();
 
     let c_argv: Vec<CString> = argv
         .iter()
