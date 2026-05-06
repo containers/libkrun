@@ -1,0 +1,132 @@
+# Contributing to libkrun
+
+Thank you for your interest in contributing to libkrun! This document
+describes the guidelines and expectations for contributions.
+
+## Submitting Changes
+
+Contributions are submitted as GitHub Pull Requests. When opening a PR,
+please keep the following in mind:
+
+### Logical Commits
+
+Split your changes into logical, self-contained commits. Each commit
+should represent a single coherent change that can be understood and
+reviewed independently. Avoid mixing unrelated changes in the same
+commit. A good sign that a commit should be split is if its subject
+line would contain "and".
+
+### Commit Messages
+
+Write clear, descriptive commit messages. The subject line should be
+prefixed with the subsystem or area the change touches, followed by a
+short description in imperative mood. For example:
+
+```
+virtio/fs/macos: fix fallocate semantics
+init: embed a simple DHCP client
+vmm: prevent CR translation to LF in interactive term
+CI: enable virtio-net tests
+tests: introduce pjdfstest POSIX filesystem conformance tests
+```
+
+When the change is broad or doesn't map to a single subsystem, a
+plain description without a prefix is fine:
+
+```
+Bump version to 1.18.0
+Add a "license" field to every internal crate
+```
+
+If the commit warrants further explanation, add a body after a blank
+line. For bug fixes and refactors, the body should explain *why* the
+change is being made — the diff already shows the what. For new
+features, concisely describe what the feature does and how it works.
+Prefer imperative mood (e.g. "Add support for..." not "Added
+support for...").
+
+### Developer Certificate of Origin (DCO)
+
+All commits must be signed off in accordance with the
+[Developer Certificate of Origin](https://developercertificate.org/).
+Every commit message must include a `Signed-off-by` trailer with your
+name and email address, certifying that you have the right to submit
+the contribution under the project's license:
+
+```
+Signed-off-by: Your Name <your.email@example.com>
+```
+
+You can add this automatically by committing with `git commit -s`.
+
+An automated DCO check runs on every pull request. PRs with commits
+that are missing the `Signed-off-by` trailer will not be merged.
+
+## Code Review and Merging
+
+We use **rebase merging** — PRs are not squash-merged. This means
+every commit in your PR will appear individually in the project
+history. As a consequence:
+
+- Each commit in your PR should build and pass tests on its own.
+- During review, squash fixup changes into the relevant original
+  commit rather than appending "fix review feedback" commits. Use
+  `git rebase -i` to keep the history clean before the PR is merged.
+
+### Pull Request Descriptions
+
+Since we rebase-merge, the PR description is not preserved in the
+project history — only commit messages are. The detailed explanation
+of each change therefore primarily belongs in the commit message body, 
+not in the PR description.
+
+For small single-commit PRs, mostly repeating the commit message as
+the PR description is fine. For multi-commit PRs, a brief summary of
+the overall change and how the commits fit together is helpful.
+
+Keep PR descriptions concise. Subheadings, bullet lists, and
+checkboxes are fine when they add clarity, but avoid using them as
+padding without real substance (LLMs in particular tend to overuse
+them).
+
+## AI Coding Assistants
+
+We allow contributions that make use of AI coding assistants, but the
+human submitter is responsible for the result. The following guidelines
+apply.
+
+### Signed-off-by
+
+Only a human contributor may sign off on a commit, and only after
+reviewing the result and accepting responsibility under the
+[Developer Certificate of Origin](https://developercertificate.org/).
+By signing off, you are certifying that you have reviewed the code,
+ensured it meets the project's quality standards and licensing
+requirements, and take full responsibility for it — regardless of how
+it was produced.
+
+### Attribution
+
+When AI tools are used in writing a commit, contributions should
+include an `Assisted-by` trailer in the format `AGENT:MODEL_VERSION`:
+
+```
+Assisted-by: Cursor:GPT-5.4
+Assisted-by: Claude Code:claude-opus-4.6
+```
+
+The `Assisted-by` trailer should appear before `Signed-off-by`:
+
+```
+Assisted-by: Claude Code:claude-opus-4.6
+Signed-off-by: Your Name <your.email@example.com>
+```
+
+Do **not** use `Co-authored-by` for AI tools. `Co-authored-by` implies
+authorship, but AI tools are generally not considered authors in a
+copyright sense. Many AI coding tools add `Co-authored-by` tags by
+default (e.g. Claude Code, Microsoft Copilot) - please use
+`Assisted-by` instead.
+
+This policy is inspired by the
+[Linux kernel's AI Coding Assistants policy](https://docs.kernel.org/process/coding-assistants.html).
