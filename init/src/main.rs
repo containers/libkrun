@@ -1,5 +1,6 @@
 mod config;
 mod dhcp;
+mod env;
 mod fs;
 
 fn main() {
