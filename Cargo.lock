@@ -745,6 +745,7 @@ dependencies = [
 name = "krun-init"
 version = "0.1.0-1.18.1"
 dependencies = [
+ "anyhow",
  "libc",
  "nix 0.30.1",
  "serde",

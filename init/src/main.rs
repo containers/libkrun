@@ -1,3 +1,6 @@
+mod fs;
+
 fn main() {
-    println!("hello, world!");
+    #[cfg(any(feature = "amd-sev", feature = "tdx"))]
+    fs::mount_tee_block_device().expect("mount block root failed");
 }
