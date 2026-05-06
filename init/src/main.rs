@@ -1,3 +1,4 @@
+mod dhcp;
 mod fs;
 
 fn main() {
