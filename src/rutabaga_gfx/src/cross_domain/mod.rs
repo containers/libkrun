@@ -965,56 +965,47 @@ impl CrossDomainContext {
     }
 
     fn write(&self, cmd_write: &CrossDomainReadWrite, opaque_data: &[u8]) -> RutabagaResult<()> {
-        let mut items = self.item_state.lock().unwrap();
-
-        // Most of the time, hang-up and writing will be paired.  In lieu of this, remove the
-        // item rather than getting a reference.  In case of an error, there's not much to do
-        // besides reporting it.
-        let item = items
-            .table
-            .remove(&cmd_write.identifier)
-            .ok_or(RutabagaError::InvalidCrossDomainItemId)?;
-
         let len: usize = cmd_write.opaque_data_size.try_into()?;
-        match item {
-            CrossDomainItem::WaylandWritePipe(file) => {
-                if len != 0 {
-                    write_volatile(&file, opaque_data)?;
-                }
 
-                if cmd_write.hang_up == 0 {
-                    items.table.insert(
-                        cmd_write.identifier,
-                        CrossDomainItem::WaylandWritePipe(file),
-                    );
+        // Phase 1 (under lock): look up the item and dup() its fd. We release
+        // the lock before the actual write syscall so unrelated operations on
+        // item_state aren't serialized behind it. The previous design held
+        // the lock across write_volatile, which was the dominant contention
+        // source for per-period eventfd writes from active audio streams
+        // competing with concurrent stream-create churn (process_receive's
+        // add_item path also takes this lock). Cloning the fd is a cheap
+        // dup() syscall; the actual write — which can be longer for pipe
+        // writes, and rate-limited for eventfds — happens lock-free.
+        let fd = {
+            let items = self.item_state.lock().unwrap();
+            let item = items
+                .table
+                .get(&cmd_write.identifier)
+                .ok_or(RutabagaError::InvalidCrossDomainItemId)?;
+            match item {
+                CrossDomainItem::WaylandWritePipe(file) | CrossDomainItem::Eventfd(file) => {
+                    file.try_clone()?
                 }
-
-                Ok(())
+                _ => return Err(RutabagaError::InvalidCrossDomainItemType),
             }
-            // Handle writes to Eventfd items. PipeWire (and other clients
-            // that pass eventfds via SCM_RIGHTS) uses these for per-period
-            // wakeups: an 8-byte write to the eventfd's counter signals
-            // the host. Without this arm, the first such write hits the
-            // catch-all below, returning InvalidCrossDomainItemType after
-            // the unconditional remove() above has already dropped the
-            // item — leaving every subsequent write to the same id
-            // failing with InvalidCrossDomainItemId. Mirrors the
-            // WaylandWritePipe re-insert semantics on hang_up == 0.
-            CrossDomainItem::Eventfd(file) => {
-                if len != 0 {
-                    write_volatile(&file, opaque_data)?;
-                }
+        };
 
-                if cmd_write.hang_up == 0 {
-                    items
-                        .table
-                        .insert(cmd_write.identifier, CrossDomainItem::Eventfd(file));
-                }
-
-                Ok(())
-            }
-            _ => Err(RutabagaError::InvalidCrossDomainItemType),
+        // Phase 2 (lock-free): do the actual write.
+        if len != 0 {
+            write_volatile(&fd, opaque_data)?;
         }
+
+        // Phase 3 (under lock): on hang_up, drop the item from the table.
+        // Without hang_up the item stays — common for Eventfd repeated wakeups
+        // and for any pipe being held open for further writes. This matches
+        // the previous "remove + conditional re-insert" behavior, but in the
+        // common (hang_up == 0) case avoids touching the table at all.
+        if cmd_write.hang_up != 0 {
+            let mut items = self.item_state.lock().unwrap();
+            items.table.remove(&cmd_write.identifier);
+        }
+
+        Ok(())
     }
 
     fn process_cmd_send<T: CrossDomainSendReceiveBase, const MAX_IDENTIFIERS: usize>(
