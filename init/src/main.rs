@@ -7,6 +7,8 @@ mod exec;
 mod freebsd;
 #[cfg(target_os = "linux")]
 mod fs;
+#[cfg(feature = "timesync")]
+mod timesync;
 
 fn main() -> anyhow::Result<()> {
     #[cfg(target_os = "freebsd")]
@@ -85,6 +87,9 @@ fn main() -> anyhow::Result<()> {
     } else {
         vec!["/bin/sh".to_string()]
     };
+
+    #[cfg(feature = "timesync")]
+    timesync::run();
 
     exec::run_workload(&argv);
 }

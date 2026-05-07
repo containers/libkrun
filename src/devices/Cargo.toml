@@ -19,6 +19,7 @@ input = ["zerocopy", "krun_input"]
 virgl_resource_map2 = []
 aws-nitro = []
 test_utils = []
+timesync = []
 vhost-user = ["vhost", "vmm-sys-util"]
 
 [dependencies]
