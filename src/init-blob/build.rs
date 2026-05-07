@@ -80,8 +80,6 @@ fn build_rust_init() -> PathBuf {
         workspace_root.join("init/src").display()
     );
     println!("cargo:rerun-if-changed={}", init_manifest.display());
-    println!("cargo:rerun-if-env-changed=TIMESYNC");
-
     // Resolve which rustc (and paired cargo) to use for the init binary.
     let (rustc, cargo, use_musl) = match find_musl_rustc(&default_rustc) {
         Some(musl_rustc) => {
@@ -127,7 +125,7 @@ fn build_rust_init() -> PathBuf {
     if cfg!(feature = "tdx") {
         features.push("tdx");
     }
-    if env::var_os("TIMESYNC").is_some_and(|v| v == "1") {
+    if cfg!(feature = "timesync") {
         features.push("timesync");
     }
     if !features.is_empty() {
