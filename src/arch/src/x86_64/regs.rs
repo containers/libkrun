@@ -7,8 +7,8 @@
 
 use std::mem;
 
-use super::gdt::{gdt_entry, kvm_segment_from_gdt};
-use kvm_bindings::{kvm_fpu, kvm_regs, kvm_sregs};
+use super::gdt::{gdt_entry, segment_from_gdt, SegmentDescriptor};
+use kvm_bindings::{kvm_fpu, kvm_regs, kvm_segment, kvm_sregs};
 use kvm_ioctls::VcpuFd;
 use vm_memory::{Address, Bytes, GuestAddress, GuestMemory, GuestMemoryMmap};
 
@@ -155,6 +155,24 @@ fn write_idt_value(val: u64, guest_mem: &GuestMemoryMmap) -> Result<()> {
         .map_err(|_| Error::WriteIDT)
 }
 
+fn kvm_segment_from(seg: &SegmentDescriptor) -> kvm_segment {
+    kvm_segment {
+        base: seg.base,
+        limit: seg.limit,
+        selector: seg.selector,
+        type_: seg.type_,
+        present: seg.present,
+        dpl: seg.dpl,
+        db: seg.db,
+        s: seg.s,
+        l: seg.l,
+        g: seg.g,
+        avl: seg.avl,
+        padding: 0,
+        unusable: seg.unusable,
+    }
+}
+
 fn configure_segments_and_sregs(
     mem: &GuestMemoryMmap,
     sregs: &mut kvm_sregs,
@@ -176,9 +194,9 @@ fn configure_segments_and_sregs(
         ]
     };
 
-    let code_seg = kvm_segment_from_gdt(gdt_table[1], 1);
-    let data_seg = kvm_segment_from_gdt(gdt_table[2], 2);
-    let tss_seg = kvm_segment_from_gdt(gdt_table[3], 3);
+    let code_seg = kvm_segment_from(&segment_from_gdt(gdt_table[1], 1));
+    let data_seg = kvm_segment_from(&segment_from_gdt(gdt_table[2], 2));
+    let tss_seg = kvm_segment_from(&segment_from_gdt(gdt_table[3], 3));
 
     // Write segments
     write_gdt_table(&gdt_table[..], mem)?;
