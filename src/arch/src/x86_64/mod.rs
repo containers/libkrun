@@ -17,6 +17,11 @@ pub mod msr;
 /// Logic for configuring x86_64 registers.
 pub mod regs;
 
+#[cfg(target_os = "linux")]
+pub mod linux;
+#[cfg(target_os = "windows")]
+pub mod windows;
+
 use crate::x86_64::layout::{EBDA_START, FIRST_ADDR_PAST_32BITS, MMIO_MEM_START};
 #[cfg(feature = "tee")]
 use crate::x86_64::layout::{FIRMWARE_SIZE, FIRMWARE_START};
