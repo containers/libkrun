@@ -35,7 +35,7 @@ jobs:
       - name: Install cross-compilation dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends lld
+          sudo apt-get install -y --no-install-recommends clang lld
 
       - name: Build FreeBSD init on Linux
         run: make BUILD_BSD_INIT=1 -- init/init-freebsd
@@ -52,7 +52,7 @@ jobs:
       - name: Install cross-compilation dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends lld
+          sudo apt-get install -y --no-install-recommends clang lld
 
       - name: Build FreeBSD init on Linux aarch64
         run: make BUILD_BSD_INIT=1 -- init/init-freebsd
