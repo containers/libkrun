@@ -9,6 +9,9 @@ runs:
         rustup update stable
         rustup default stable
         rustup component add rustfmt clippy
+        rustup target add x86_64-unknown-freebsd
+        rustup toolchain install nightly
+        rustup component add rust-src --toolchain nightly
 
     - name: Cache Cargo dependencies
       uses: actions/cache@v4
