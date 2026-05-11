@@ -188,6 +188,36 @@ clean-sysroot:
 	rm -rf $(ROOTFS_DIR)
 	rm -rf $(FREEBSD_ROOTFS_DIR)
 
+# smolvm: canonical build target for use in smolvm.
+#
+# Always use `make smolvm` (or the top-level `make libkrun`) rather than
+# calling cargo directly — the required feature set (blk + net + gpu) and
+# env vars (LIBCLANG_PATH, KRUN_INIT_BINARY_PATH) are enforced here.
+#
+# macOS requirements: brew install llvm virglrenderer
+SMOLVM_DEST ?= ../lib/libkrun.dylib
+
+.PHONY: smolvm
+smolvm:
+ifeq ($(OS),Darwin)
+	@LLVM_PREFIX=$$(brew --prefix llvm 2>/dev/null); \
+	[ -n "$$LLVM_PREFIX" ] && [ -f "$$LLVM_PREFIX/lib/libclang.dylib" ] || \
+		{ echo "Error: llvm not found — brew install llvm"; exit 1; }; \
+	brew --prefix virglrenderer >/dev/null 2>&1 || \
+		{ echo "Error: virglrenderer not found — brew install virglrenderer"; exit 1; }; \
+	LIBCLANG_PATH="$$LLVM_PREFIX/lib" \
+	KRUN_INIT_BINARY_PATH="$$(realpath init/init)" \
+		$(MAKE) BLK=1 NET=1 GPU=1
+	cp $(LIBRARY_RELEASE_$(OS)) $(SMOLVM_DEST)
+	@echo "Installed: $(SMOLVM_DEST)"
+	@echo "Re-codesign smolvm: codesign --force --sign - --entitlements ../smolvm.entitlements ../target/release/smolvm"
+else
+	KRUN_INIT_BINARY_PATH="$$(realpath init/init)" \
+		$(MAKE) BLK=1 NET=1 GPU=1
+	cp $(LIBRARY_RELEASE_$(OS)) $(SMOLVM_DEST)
+	@echo "Installed: $(SMOLVM_DEST)"
+endif
+
 
 $(LIBRARY_RELEASE_$(OS)): $(SYSROOT_TARGET) $(INIT_BINARY_BSD)
 	cargo build --release $(FEATURE_FLAGS)
