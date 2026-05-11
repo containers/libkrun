@@ -272,7 +272,13 @@ TEST_FLAGS ?=
 EXTRA_LIBPATH_Linux =
 EXTRA_LIBPATH_Darwin = /opt/homebrew/opt/libkrunfw/lib:/opt/homebrew/opt/llvm/lib
 
+# Extra cargo features for the test runner (passed via KRUN_TEST_FEATURES).
+TEST_FEATURE_FLAGS :=
+ifeq ($(BLK),1)
+    TEST_FEATURE_FLAGS += blk
+endif
+
 # On macOS, SIP strips DYLD_LIBRARY_PATH when executing scripts via a shebang,
 # so we pass the path via LIBKRUN_LIB_PATH and let run.sh set the real variable.
 test: test-prefix
-	cd tests; RUST_LOG=trace LIBKRUN_LIB_PATH="$$(realpath ../test-prefix/$(LIBDIR_$(OS))/):$(EXTRA_LIBPATH_$(OS))" PKG_CONFIG_PATH="$$(realpath ../test-prefix/$(LIBDIR_$(OS))/pkgconfig/)" ./run.sh test --test-case "$(TEST)" $(TEST_FLAGS)
+	cd tests; RUST_LOG=trace KRUN_TEST_FEATURES="$(TEST_FEATURE_FLAGS)" LIBKRUN_LIB_PATH="$$(realpath ../test-prefix/$(LIBDIR_$(OS))/):$(EXTRA_LIBPATH_$(OS))" PKG_CONFIG_PATH="$$(realpath ../test-prefix/$(LIBDIR_$(OS))/pkgconfig/)" ./run.sh test --test-case "$(TEST)" $(TEST_FLAGS)

@@ -44,8 +44,17 @@ if [ "$OS" = "Darwin" ]; then
 	echo "Cross-compiling guest-agent for $GUEST_TARGET"
 fi
 
-cargo build --target=$GUEST_TARGET -p guest-agent
-cargo build -p runner
+# KRUN_TEST_FEATURES can be set to pass extra features to test_cases/runner
+# (e.g. "blk" when libkrun was built with BLK=1).
+TEST_FEATURES="${KRUN_TEST_FEATURES:-}"
+
+if [ -n "$TEST_FEATURES" ]; then
+	cargo build --target=$GUEST_TARGET -p guest-agent --features "$TEST_FEATURES"
+	cargo build -p runner --features "$TEST_FEATURES"
+else
+	cargo build --target=$GUEST_TARGET -p guest-agent
+	cargo build -p runner
+fi
 
 # On macOS, the runner needs entitlements to use Hypervisor.framework
 if [ "$OS" = "Darwin" ]; then

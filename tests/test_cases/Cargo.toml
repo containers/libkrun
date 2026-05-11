@@ -5,6 +5,7 @@ edition = "2021"
 [features]
 host = ["krun-sys", "serde", "serde_json"]
 guest = []
+blk = []
 
 [lib]
 name = "test_cases"
