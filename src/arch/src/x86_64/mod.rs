@@ -21,6 +21,10 @@ pub mod regs;
 pub mod linux;
 #[cfg(target_os = "windows")]
 pub mod windows;
+#[cfg(target_os = "windows")]
+use std::mem::MaybeUninit;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
 
 use crate::x86_64::layout::{EBDA_START, FIRST_ADDR_PAST_32BITS, MMIO_MEM_START};
 #[cfg(feature = "tee")]
@@ -56,6 +60,21 @@ pub enum Error {
     InitrdAddress,
 }
 
+#[cfg(unix)]
+fn get_page_size() -> usize {
+    unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() }
+}
+#[cfg(windows)]
+fn get_page_size() -> usize {
+    let sysinfo = unsafe {
+        let mut info = MaybeUninit::<SYSTEM_INFO>::uninit();
+        GetSystemInfo(info.as_mut_ptr());
+        info.assume_init()
+    };
+
+    sysinfo.dwPageSize as usize
+}
+
 /// Returns a Vec of the valid memory addresses.
 /// These should be used to configure the GuestMemoryMmap structure for the platform.
 /// Make a hole for the kernel region that will be injected directly from libkrunfw's
@@ -68,7 +87,7 @@ pub fn arch_memory_regions(
     initrd_size: u64,
     firmware_size: Option<usize>,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
-    let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
+    let page_size: usize = get_page_size();
 
     let size = align_upwards!(size, page_size);
 
@@ -184,7 +203,7 @@ pub fn arch_memory_regions(
     _initrd_size: u64,
     _firmware_size: Option<usize>,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
-    let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
+    let page_size: usize = get_page_size();
 
     let size = align_upwards!(size, page_size);
     if let Some(kernel_load_addr) = kernel_load_addr {
