@@ -253,6 +253,10 @@ To avoid this problem, use the ```LD_LIBRARY_PATH``` environment variable to poi
 LD_LIBRARY_PATH=/usr/local/lib64 ./chroot_vm rootfs_fedora/ /bin/sh
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on submitting changes.
+
 ## Status
 
 ```libkrun``` has achieved maturity and starting version ```1.0.0``` the public API is guaranteed to be stable, following [SemVer](https://semver.org/).
