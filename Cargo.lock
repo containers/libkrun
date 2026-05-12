@@ -528,6 +528,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "init-blob"
+version = "0.1.0-1.18.1"
+
+[[package]]
 name = "iocuddle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -663,6 +667,7 @@ dependencies = [
  "caps",
  "crossbeam-channel",
  "imago",
+ "init-blob",
  "krun-arch",
  "krun-display",
  "krun-hvf",
