@@ -17,6 +17,7 @@ use super::super::{
     VirtioShmRegion,
 };
 use super::passthrough;
+use super::virtual_entry::VirtualDirEntry;
 use super::worker::FsWorker;
 use super::ExportTable;
 use super::{defs, defs::uapi};
@@ -48,6 +49,7 @@ pub struct Fs {
     shm_region: Option<VirtioShmRegion>,
     passthrough_cfg: passthrough::Config,
     read_only: bool,
+    virtual_entries: Vec<VirtualDirEntry>,
     worker_thread: Option<JoinHandle<()>>,
     worker_stopfd: EventFd,
     exit_code: Arc<AtomicI32>,
@@ -62,6 +64,7 @@ impl Fs {
         exit_code: Arc<AtomicI32>,
         allow_root_dir_delete: bool,
         read_only: bool,
+        virtual_entries: Vec<VirtualDirEntry>,
     ) -> super::Result<Fs> {
         let avail_features = (1u64 << VIRTIO_F_VERSION_1) | (1u64 << VIRTIO_RING_F_EVENT_IDX);
 
@@ -84,6 +87,7 @@ impl Fs {
             shm_region: None,
             passthrough_cfg: fs_cfg,
             read_only,
+            virtual_entries,
             worker_thread: None,
             worker_stopfd: EventFd::new(EFD_NONBLOCK).map_err(FsError::EventFd)?,
             exit_code,
@@ -180,6 +184,7 @@ impl VirtioDevice for Fs {
             queue_evts.push(dq.event);
         }
 
+        let virtual_entries = self.virtual_entries.clone();
         let worker = FsWorker::new(
             worker_queues,
             queue_evts,
@@ -188,6 +193,7 @@ impl VirtioDevice for Fs {
             self.shm_region.clone(),
             self.passthrough_cfg.clone(),
             self.read_only,
+            virtual_entries,
             self.worker_stopfd.try_clone().unwrap(),
             self.exit_code.clone(),
             #[cfg(target_os = "macos")]
