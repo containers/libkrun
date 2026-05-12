@@ -25,6 +25,7 @@ use super::super::filesystem::{
     ListxattrReply, OpenOptions, SetattrValid, ZeroCopyReader, ZeroCopyWriter,
 };
 use super::super::fuse;
+use super::super::inode_alloc::InodeAllocator;
 use super::super::multikey::MultikeyBTreeMap;
 
 const CURRENT_DIR_CSTR: &[u8] = b".\0";
@@ -358,7 +359,7 @@ pub struct PassthroughFs {
     // documentation of the `O_PATH` flag in `open(2)` for more details on what one can and cannot
     // do with an fd opened with this flag.
     inodes: RwLock<MultikeyBTreeMap<Inode, InodeAltKey, Arc<InodeData>>>,
-    next_inode: AtomicU64,
+    inode_alloc: Arc<InodeAllocator>,
     init_inode: u64,
 
     // File descriptors for open files and directories. Unlike the fds in `inodes`, these _can_ be
@@ -392,7 +393,7 @@ enum FileOrLink {
 }
 
 impl PassthroughFs {
-    pub fn new(cfg: Config) -> io::Result<PassthroughFs> {
+    pub fn new(cfg: Config, inode_alloc: Arc<InodeAllocator>) -> io::Result<PassthroughFs> {
         let fd = if let Some(fd) = cfg.proc_sfd_rawfd {
             fd
         } else {
@@ -438,7 +439,7 @@ impl PassthroughFs {
 
         Ok(PassthroughFs {
             inodes: RwLock::new(MultikeyBTreeMap::new()),
-            next_inode: AtomicU64::new(fuse::ROOT_ID + 2),
+            inode_alloc,
             init_inode: fuse::ROOT_ID + 1,
 
             handles: RwLock::new(BTreeMap::new()),
@@ -579,7 +580,7 @@ impl PassthroughFs {
             // There is a possible race here where 2 threads end up adding the same file
             // into the inode list.  However, since each of those will get a unique Inode
             // value and unique file descriptors this shouldn't be that much of a problem.
-            let inode = self.next_inode.fetch_add(1, Ordering::Relaxed);
+            let inode = self.inode_alloc.next();
             self.inodes.write().unwrap().insert(
                 inode,
                 InodeAltKey {

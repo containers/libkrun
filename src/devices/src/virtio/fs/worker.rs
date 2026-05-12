@@ -16,6 +16,7 @@ use vm_memory::GuestMemoryMmap;
 use super::super::{FsError, Queue};
 use super::defs::{HPQ_INDEX, REQ_INDEX};
 use super::descriptor_utils::{Reader, Writer};
+use super::inode_alloc::InodeAllocator;
 use super::passthrough::{self, PassthroughFs};
 use super::read_only::PassthroughFsRo;
 use super::server::Server;
@@ -83,10 +84,17 @@ impl FsWorker {
         exit_code: Arc<AtomicI32>,
         #[cfg(target_os = "macos")] map_sender: Option<Sender<WorkerMessage>>,
     ) -> Result<Self, io::Error> {
+        let inode_alloc = Arc::new(InodeAllocator::new());
         let server = if read_only {
-            FsServer::ReadOnly(Server::new(PassthroughFsRo::new(passthrough_cfg)?))
+            FsServer::ReadOnly(Server::new(PassthroughFsRo::new(
+                passthrough_cfg,
+                inode_alloc,
+            )?))
         } else {
-            FsServer::ReadWrite(Server::new(PassthroughFs::new(passthrough_cfg)?))
+            FsServer::ReadWrite(Server::new(PassthroughFs::new(
+                passthrough_cfg,
+                inode_alloc,
+            )?))
         };
         Ok(Self {
             queues,

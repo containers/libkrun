@@ -25,6 +25,7 @@ use super::filesystem::{
     OpenOptions, SetattrValid, ZeroCopyReader, ZeroCopyWriter,
 };
 use super::fuse;
+use super::inode_alloc::InodeAllocator;
 use super::passthrough::{self, PassthroughFs};
 use crate::virtio::bindings;
 
@@ -60,9 +61,9 @@ pub struct PassthroughFsRo {
 }
 
 impl PassthroughFsRo {
-    pub fn new(cfg: passthrough::Config) -> io::Result<Self> {
+    pub fn new(cfg: passthrough::Config, inode_alloc: Arc<InodeAllocator>) -> io::Result<Self> {
         Ok(Self {
-            inner: PassthroughFs::new(cfg)?,
+            inner: PassthroughFs::new(cfg, inode_alloc)?,
         })
     }
 }
