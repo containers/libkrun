@@ -612,7 +612,6 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
                 shared_dir: Some(shared_dir),
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
-                allow_root_dir_delete: false,
                 read_only: false,
                 virtual_entries: {
                     let mut v = Vec::new();
@@ -701,7 +700,6 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
                 fs_id: tag.to_string(),
                 shared_dir: path.map(|p| p.to_string()),
                 shm_size: shm,
-                allow_root_dir_delete: false,
                 read_only,
                 virtual_entries,
             });
@@ -2373,7 +2371,6 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 shared_dir: None,
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
-                allow_root_dir_delete: false,
                 read_only: false,
                 virtual_entries,
             });
