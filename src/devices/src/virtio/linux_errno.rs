@@ -183,3 +183,37 @@ pub fn linux_errno_raw(errno: i32) -> i32 {
         _ => LINUX_EIO,
     }
 }
+
+// Helper functions returning io::Error with Linux errno values.
+use std::io;
+
+pub fn eperm() -> io::Error {
+    io::Error::from_raw_os_error(LINUX_EPERM)
+}
+pub fn enoent() -> io::Error {
+    io::Error::from_raw_os_error(LINUX_ENOENT)
+}
+pub fn eacces() -> io::Error {
+    io::Error::from_raw_os_error(LINUX_EACCES)
+}
+pub fn eexist() -> io::Error {
+    io::Error::from_raw_os_error(LINUX_EEXIST)
+}
+pub fn einval() -> io::Error {
+    io::Error::from_raw_os_error(LINUX_EINVAL)
+}
+pub fn eisdir() -> io::Error {
+    io::Error::from_raw_os_error(LINUX_EISDIR)
+}
+pub fn exdev() -> io::Error {
+    io::Error::from_raw_os_error(LINUX_EXDEV)
+}
+pub fn enosys() -> io::Error {
+    io::Error::from_raw_os_error(LINUX_ENOSYS)
+}
+pub fn enodata() -> io::Error {
+    io::Error::from_raw_os_error(LINUX_ENODATA)
+}
+pub fn enxio() -> io::Error {
+    io::Error::from_raw_os_error(LINUX_ENXIO)
+}
