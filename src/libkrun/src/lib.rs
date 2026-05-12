@@ -613,7 +613,7 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
             let cfg = ctx_cfg.get_mut();
             cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id,
-                shared_dir,
+                shared_dir: Some(shared_dir),
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
                 allow_root_dir_delete: false,
@@ -666,7 +666,7 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
     shm_size: u64,
     read_only: bool,
 ) -> i32 {
-    if c_tag.is_null() || c_path.is_null() {
+    if c_tag.is_null() {
         return -libc::EINVAL;
     }
 
@@ -674,9 +674,15 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
         Ok(tag) => tag,
         Err(_) => return -libc::EINVAL,
     };
-    let path = match CStr::from_ptr(c_path).to_str() {
-        Ok(path) => path,
-        Err(_) => return -libc::EINVAL,
+
+    // NULL path means NullFs (virtual-only filesystem, no host directory).
+    let path = if c_path.is_null() {
+        None
+    } else {
+        match CStr::from_ptr(c_path).to_str() {
+            Ok(path) => Some(path),
+            Err(_) => return -libc::EINVAL,
+        }
     };
 
     let shm = if shm_size > 0 {
@@ -697,7 +703,7 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
             }
             cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id: tag.to_string(),
-                shared_dir: path.to_string(),
+                shared_dir: path.map(|p| p.to_string()),
                 shm_size: shm,
                 allow_root_dir_delete: false,
                 read_only,
