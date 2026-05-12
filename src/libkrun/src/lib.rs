@@ -2440,7 +2440,6 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 shared_dir: None,
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
-                allow_root_dir_delete: false,
                 read_only: false,
                 virtual_entries,
             });

@@ -7,7 +7,6 @@ pub struct FsDeviceConfig {
     /// (NullFs + AugmentFs, no host directory).
     pub shared_dir: Option<String>,
     pub shm_size: Option<usize>,
-    pub allow_root_dir_delete: bool,
     pub read_only: bool,
     pub virtual_entries: Vec<VirtualDirEntry>,
 }
