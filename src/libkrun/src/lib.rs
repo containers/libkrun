@@ -182,6 +182,8 @@ struct ContextConfig {
     console_output: Option<PathBuf>,
     vmm_uid: Option<libc::uid_t>,
     vmm_gid: Option<libc::gid_t>,
+    #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+    disable_implicit_init: bool,
 }
 
 impl ContextConfig {
@@ -614,7 +616,13 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
                 shm_size: Some(1 << 29),
                 allow_root_dir_delete: false,
                 read_only: false,
-                virtual_entries: vec![init_virtual_entry()],
+                virtual_entries: {
+                    let mut v = Vec::new();
+                    if !cfg.disable_implicit_init {
+                        v.push(init_virtual_entry());
+                    }
+                    v
+                },
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -682,7 +690,7 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
             let mut virtual_entries = Vec::new();
-            if tag == "/dev/root" {
+            if tag == "/dev/root" && !cfg.disable_implicit_init {
                 virtual_entries.push(init_virtual_entry());
             }
             cfg.vmr.add_fs_device(FsDeviceConfig {
@@ -2364,6 +2372,19 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
 }
 
 #[no_mangle]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+pub extern "C" fn krun_disable_implicit_init(ctx_id: u32) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            ctx_cfg.get_mut().disable_implicit_init = true;
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+#[no_mangle]
 pub extern "C" fn krun_disable_implicit_console(ctx_id: u32) -> i32 {
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
@@ -2811,5 +2832,30 @@ fn krun_start_enter_nitro(ctx_id: u32) -> i32 {
 
             -libc::EINVAL
         }
+    }
+}
+
+#[cfg(all(test, not(feature = "tee")))]
+mod test_disable_implicit_init {
+    use super::*;
+
+    #[test]
+    fn test_disable_implicit_init() {
+        let ctx = unsafe { krun_create_ctx() } as u32;
+        unsafe {
+            krun_disable_implicit_init(ctx);
+            krun_set_root(ctx, c"/tmp".as_ptr());
+        }
+
+        let ctx_map = CTX_MAP.lock().unwrap();
+        let cfg = ctx_map.get(&ctx).unwrap();
+        assert_eq!(cfg.vmr.fs.len(), 1);
+        assert!(
+            cfg.vmr.fs[0].virtual_entries.is_empty(),
+            "root virtiofs should not inject init.krun after krun_disable_implicit_init()"
+        );
+        drop(ctx_map);
+
+        assert_eq!(krun_free_ctx(ctx), KRUN_SUCCESS);
     }
 }
