@@ -2440,6 +2440,7 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 shared_dir: None,
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
+                allow_root_dir_delete: false,
                 read_only: false,
                 virtual_entries,
             });
@@ -2561,11 +2562,10 @@ pub unsafe extern "C" fn krun_fs_add_overlay_file(
     // lifetime (see the C header contract).
     let payload: &'static [u8] = if data_len == 0 {
         &[]
-    } else {
-        if data.is_null() {
-            return -libc::EINVAL;
-        }
+    } else if !data.is_null() {
         slice::from_raw_parts(data, data_len)
+    } else {
+        return -libc::EINVAL;
     };
 
     fs_add_overlay_entry(
