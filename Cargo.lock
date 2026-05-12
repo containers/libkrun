@@ -839,7 +839,6 @@ dependencies = [
  "log",
  "nitro-enclaves 0.5.0",
  "once_cell",
- "rand",
  "vm-memory",
 ]
 
