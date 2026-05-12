@@ -36,10 +36,6 @@ fn erofs() -> io::Error {
     io::Error::from_raw_os_error(libc::EROFS)
 }
 
-// Keep the Linux ioctl number so read-only virtio-fs can still handle
-// non-mutating control ioctls while rejecting host-side root deletion.
-const VIRTIO_IOC_REMOVE_ROOT_DIR_REQ: u32 = 0x7603;
-
 fn read_only_open_flags(flags: u32) -> io::Result<u32> {
     let f = flags as i32;
     if f & libc::O_ACCMODE != libc::O_RDONLY {
@@ -319,10 +315,6 @@ impl FileSystem for PassthroughFsRo {
         out_size: u32,
         exit_code: &Arc<AtomicI32>,
     ) -> io::Result<Vec<u8>> {
-        if cmd == VIRTIO_IOC_REMOVE_ROOT_DIR_REQ {
-            return Err(erofs());
-        }
-
         self.inner.ioctl(
             ctx, inode, handle, flags, cmd, arg, in_size, out_size, exit_code,
         )

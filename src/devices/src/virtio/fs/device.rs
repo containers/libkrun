@@ -62,7 +62,6 @@ impl Fs {
         fs_id: String,
         shared_dir: Option<String>,
         exit_code: Arc<AtomicI32>,
-        allow_root_dir_delete: bool,
         read_only: bool,
         virtual_entries: Vec<VirtualDirEntry>,
     ) -> super::Result<Fs> {
@@ -75,7 +74,6 @@ impl Fs {
 
         let fs_cfg = shared_dir.map(|root_dir| passthrough::Config {
             root_dir,
-            allow_root_dir_delete,
             ..Default::default()
         });
 
