@@ -8,11 +8,11 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
-use std::mem::{self, MaybeUninit};
+use std::mem::MaybeUninit;
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::ptr::null_mut;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -2422,30 +2422,5 @@ impl FileSystem for PassthroughFs {
         }
 
         Ok(())
-    }
-
-    fn ioctl(
-        &self,
-        _ctx: Context,
-        _inode: Self::Inode,
-        _handle: Self::Handle,
-        _flags: u32,
-        cmd: u32,
-        arg: u64,
-        _in_size: u32,
-        _out_size: u32,
-        exit_code: &Arc<AtomicI32>,
-    ) -> io::Result<Vec<u8>> {
-        // We can't use nix::request_code_none here since it's system-dependent
-        // and we need the value from Linux.
-        const VIRTIO_IOC_EXIT_CODE_REQ: u32 = 0x7602;
-
-        match cmd {
-            VIRTIO_IOC_EXIT_CODE_REQ => {
-                exit_code.store(arg as i32, Ordering::SeqCst);
-                Ok(Vec::new())
-            }
-            _ => Err(io::Error::from_raw_os_error(libc::EOPNOTSUPP)),
-        }
     }
 }
