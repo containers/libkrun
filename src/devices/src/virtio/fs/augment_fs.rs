@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::io;
 use std::mem;
-use std::sync::atomic::AtomicI32;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -728,8 +728,18 @@ impl<T: FileSystem<Inode = Inode, Handle = Handle>> FileSystem for AugmentFs<T> 
         out_size: u32,
         exit_code: &Arc<AtomicI32>,
     ) -> io::Result<Vec<u8>> {
-        self.inner.ioctl(
-            ctx, inode, handle, flags, cmd, arg, in_size, out_size, exit_code,
-        )
+        // We can't use nix::request_code_none here since it's system-dependent
+        // and we need the value from Linux.
+        const VIRTIO_IOC_EXIT_CODE_REQ: u32 = 0x7602;
+
+        match cmd {
+            VIRTIO_IOC_EXIT_CODE_REQ => {
+                exit_code.store(arg as i32, Ordering::SeqCst);
+                Ok(Vec::new())
+            }
+            _ => self.inner.ioctl(
+                ctx, inode, handle, flags, cmd, arg, in_size, out_size, exit_code,
+            ),
+        }
     }
 }
