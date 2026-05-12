@@ -3,7 +3,9 @@ use devices::virtio::fs::virtual_entry::VirtualDirEntry;
 #[derive(Clone, Debug)]
 pub struct FsDeviceConfig {
     pub fs_id: String,
-    pub shared_dir: String,
+    /// Host directory to pass through. None means a virtual-only filesystem
+    /// (NullFs + AugmentFs, no host directory).
+    pub shared_dir: Option<String>,
     pub shm_size: Option<usize>,
     pub allow_root_dir_delete: bool,
     pub read_only: bool,
