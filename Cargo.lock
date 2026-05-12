@@ -646,7 +646,6 @@ dependencies = [
  "caps",
  "crossbeam-channel",
  "imago",
- "init-blob",
  "krun-arch",
  "krun-display",
  "krun-hvf",
@@ -824,6 +823,7 @@ version = "1.18.1"
 dependencies = [
  "crossbeam-channel",
  "env_logger",
+ "init-blob",
  "krun-aws-nitro",
  "krun-devices",
  "krun-display",

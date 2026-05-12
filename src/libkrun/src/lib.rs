@@ -14,6 +14,8 @@ use env_logger::{Env, Target};
 #[cfg(feature = "gpu")]
 use krun_display::DisplayBackend;
 
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+use devices::virtio::fs::virtual_entry::{VirtualDirEntry, VirtualEntry, VirtualEntryContent};
 use libc::{c_char, c_int, size_t};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
@@ -23,7 +25,6 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::env;
-#[cfg(target_os = "linux")]
 use std::ffi::CString;
 use std::ffi::{c_void, CStr};
 use std::fs::File;
@@ -86,6 +87,23 @@ static KRUN_NITRO_DEBUG: Mutex<bool> = Mutex::new(false);
 
 // Path to the init binary to be executed inside the VM.
 const INIT_PATH: &str = "/init.krun";
+
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+const DEFAULT_INIT_PAYLOAD: &[u8] = init_blob::INIT_BINARY;
+
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+fn init_virtual_entry() -> VirtualDirEntry {
+    VirtualDirEntry {
+        name: CString::new("init.krun").unwrap(),
+        entry: VirtualEntry {
+            mode: 0o755,
+            one_shot: true,
+            content: VirtualEntryContent::File {
+                data: DEFAULT_INIT_PAYLOAD,
+            },
+        },
+    }
+}
 
 static KRUNFW: LazyLock<Option<libloading::Library>> =
     LazyLock::new(|| unsafe { libloading::Library::new(KRUNFW_NAME).ok() });
@@ -576,7 +594,7 @@ pub extern "C" fn krun_set_vm_config(ctx_id: u32, num_vcpus: u8, ram_mib: u32) -
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-#[cfg(not(feature = "tee"))]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) -> i32 {
     let root_path = match CStr::from_ptr(c_root_path).to_str() {
         Ok(root) => root,
@@ -596,6 +614,7 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
                 shm_size: Some(1 << 29),
                 allow_root_dir_delete: false,
                 read_only: false,
+                virtual_entries: vec![init_virtual_entry()],
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -606,7 +625,7 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-#[cfg(not(feature = "tee"))]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 pub unsafe extern "C" fn krun_add_virtiofs(
     ctx_id: u32,
     c_tag: *const c_char,
@@ -617,7 +636,7 @@ pub unsafe extern "C" fn krun_add_virtiofs(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-#[cfg(not(feature = "tee"))]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 pub unsafe extern "C" fn krun_add_virtiofs2(
     ctx_id: u32,
     c_tag: *const c_char,
@@ -629,7 +648,7 @@ pub unsafe extern "C" fn krun_add_virtiofs2(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-#[cfg(not(feature = "tee"))]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 pub unsafe extern "C" fn krun_add_virtiofs3(
     ctx_id: u32,
     c_tag: *const c_char,
@@ -662,12 +681,17 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
+            let mut virtual_entries = Vec::new();
+            if tag == "/dev/root" {
+                virtual_entries.push(init_virtual_entry());
+            }
             cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id: tag.to_string(),
                 shared_dir: path.to_string(),
                 shm_size: shm,
                 allow_root_dir_delete: false,
                 read_only,
+                virtual_entries,
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
