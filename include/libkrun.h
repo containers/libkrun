@@ -1181,6 +1181,56 @@ int32_t krun_disable_implicit_console(uint32_t ctx_id);
 int32_t krun_disable_implicit_init(uint32_t ctx_id);
 
 /**
+ * Add a virtual overlay file to a virtiofs device.
+ *
+ * The file is backed entirely by host memory (no host file). The data
+ * pointer is NOT copied — the caller must keep the memory valid for the
+ * full VM lifetime.
+ *
+ * "path" may contain '/' to place the file inside a virtual directory
+ * previously created with krun_fs_add_overlay_dir (e.g. "etc/hostname").
+ * All intermediate directories must already exist; -ENOENT is returned
+ * if a component is missing, -ENOTDIR if a component is not a directory.
+ *
+ * Arguments:
+ *  "ctx_id"   - the configuration context ID.
+ *  "fs_tag"   - tag of the virtiofs device (e.g. "/dev/root").
+ *  "path"     - path of the file (e.g. "init.krun" or "etc/hostname").
+ *  "data"     - pointer to the file content.
+ *  "data_len" - length of the file content in bytes.
+ *  "mode"     - file mode bits (e.g. 0100644 for a regular file).
+ *  "one_shot" - if true, the file can only be looked up once.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_fs_add_overlay_file(uint32_t ctx_id, const char *fs_tag,
+                                 const char *path, const uint8_t *data,
+                                 size_t data_len, uint32_t mode, bool one_shot);
+
+/**
+ * Add a virtual overlay directory to a virtiofs device.
+ *
+ * The directory is empty and read-only, useful as a mount point.
+ *
+ * "path" may contain '/' to nest inside an existing virtual directory
+ * (e.g. "usr/lib"). All intermediate directories must already exist;
+ * -ENOENT is returned if a component is missing, -ENOTDIR if a component
+ * is not a directory.
+ *
+ * Arguments:
+ *  "ctx_id"   - the configuration context ID.
+ *  "fs_tag"   - tag of the virtiofs device (e.g. "/dev/root").
+ *  "path"     - path of the directory (e.g. "dev" or "usr/lib").
+ *  "mode"     - directory mode bits (e.g. 040755).
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_fs_add_overlay_dir(uint32_t ctx_id, const char *fs_tag,
+                                const char *path, uint32_t mode);
+
+/**
  * Disable the implicit vsock device.
  *
  * By default, libkrun creates a vsock device automatically. This function
