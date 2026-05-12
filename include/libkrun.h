@@ -1153,6 +1153,7 @@ int32_t krun_get_max_vcpus(void);
 */
 int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
 
+
 /*
  * Do not create an implicit console device in the guest. By using this API,
  * libkrun will create zero console devices on behalf of the user. Any
@@ -1166,6 +1167,18 @@ int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_disable_implicit_console(uint32_t ctx_id);
+
+/**
+ * Do not inject the default init binary (/init.krun) into the root
+ * filesystem. Must be called before krun_set_root().
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_disable_implicit_init(uint32_t ctx_id);
 
 /**
  * Disable the implicit vsock device.
