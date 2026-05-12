@@ -43,7 +43,6 @@
 #endif
 
 #define KRUN_EXIT_CODE_IOCTL 0x7602
-#define KRUN_REMOVE_ROOT_DIR_IOCTL 0x7603
 
 #define KRUN_MAGIC "KRUN"
 #define KRUN_FOOTER_LEN 12
@@ -1482,16 +1481,6 @@ int main(int argc, char **argv)
         free(krun_root_options);
 
         chdir("/newroot");
-
-        fd = open("/", O_RDONLY);
-        if (fd < 0) {
-            perror("Couldn't open temporary root directory for removing");
-            exit(-1);
-        }
-        if (ioctl(fd, KRUN_REMOVE_ROOT_DIR_IOCTL) < 0) {
-            perror("Error removing temporary root directory");
-        }
-        close(fd);
 
         if (mount(".", "/", NULL, MS_MOVE, NULL) < 0) {
             perror("remount root");
