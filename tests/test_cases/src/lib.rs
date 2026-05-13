@@ -27,6 +27,13 @@ use test_pjdfstest::TestPjdfstest;
 
 mod test_virtiofs_misc;
 use test_virtiofs_misc::TestVirtioFsMisc;
+mod test_augmentfs;
+use test_augmentfs::TestAugmentFs;
+
+#[cfg(feature = "blk")]
+mod test_root_disk_remount;
+#[cfg(feature = "blk")]
+use test_root_disk_remount::TestRootDiskRemount;
 
 pub enum TestOutcome {
     Pass,
@@ -86,6 +93,9 @@ pub fn test_cases() -> Vec<TestCase> {
         TestCase::new("virtiofs-root-ro", Box::new(TestVirtiofsRootRo)),
         TestCase::new("virtiofs-misc", Box::new(TestVirtioFsMisc)),
         TestCase::new("pjdfstest", Box::new(TestPjdfstest)),
+        TestCase::new("augmentfs", Box::new(TestAugmentFs)),
+        #[cfg(feature = "blk")]
+        TestCase::new("root-disk-remount", Box::new(TestRootDiskRemount)),
         TestCase::new("perf-net-passt-tx", Box::new(TestNetPerf::new_passt_tx())),
         TestCase::new("perf-net-passt-rx", Box::new(TestNetPerf::new_passt_rx())),
         TestCase::new("perf-net-tap-tx", Box::new(TestNetPerf::new_tap_tx())),

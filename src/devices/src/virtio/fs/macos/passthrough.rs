@@ -29,15 +29,13 @@ use super::super::filesystem::{
     ListxattrReply, OpenOptions, SetattrValid, ZeroCopyReader, ZeroCopyWriter,
 };
 use super::super::fuse;
+use super::super::inode_alloc::InodeAllocator;
 use super::super::multikey::MultikeyBTreeMap;
 
-const INIT_CSTR: &[u8] = b"init.krun\0";
 const XATTR_KEY: &[u8] = b"user.containers.override_stat\0";
 const SECURITY_CAPABILITY: &[u8] = b"security.capability\0";
 
 const UID_MAX: u32 = u32::MAX - 1;
-
-static INIT_BINARY: &[u8] = include_bytes!(env!("KRUN_INIT_BINARY_PATH"));
 
 type Inode = u64;
 type Handle = u64;
@@ -516,7 +514,6 @@ pub struct Config {
     pub export_fsid: u64,
     /// Table of exported FDs to share with other subsystems. Not supported for macos.
     pub export_table: Option<ExportTable>,
-    pub allow_root_dir_delete: bool,
 }
 
 impl Default for Config {
@@ -531,7 +528,6 @@ impl Default for Config {
             proc_sfd_rawfd: None,
             export_fsid: 0,
             export_table: None,
-            allow_root_dir_delete: false,
         }
     }
 }
@@ -543,12 +539,10 @@ impl Default for Config {
 /// combination of mount namespaces and the pivot_root system call.
 pub struct PassthroughFs {
     inodes: RwLock<MultikeyBTreeMap<Inode, InodeAltKey, Arc<InodeData>>>,
-    next_inode: AtomicU64,
-    init_inode: u64,
+    inode_alloc: Arc<InodeAllocator>,
 
     handles: RwLock<BTreeMap<Handle, Arc<HandleData>>>,
     next_handle: AtomicU64,
-    init_handle: u64,
 
     map_windows: Mutex<HashMap<u64, u64>>,
 
@@ -560,7 +554,7 @@ pub struct PassthroughFs {
 }
 
 impl PassthroughFs {
-    pub fn new(cfg: Config) -> io::Result<PassthroughFs> {
+    pub fn new(cfg: Config, inode_alloc: Arc<InodeAllocator>) -> io::Result<PassthroughFs> {
         let root = CString::new(cfg.root_dir.as_str()).expect("CString::new failed");
 
         // Safe because this doesn't modify any memory and we check the return value.
@@ -579,12 +573,10 @@ impl PassthroughFs {
 
         Ok(PassthroughFs {
             inodes: RwLock::new(MultikeyBTreeMap::new()),
-            next_inode: AtomicU64::new(fuse::ROOT_ID + 2),
-            init_inode: fuse::ROOT_ID + 1,
+            inode_alloc,
 
             handles: RwLock::new(BTreeMap::new()),
             next_handle: AtomicU64::new(1),
-            init_handle: 0,
 
             map_windows: Mutex::new(HashMap::new()),
 
@@ -723,7 +715,7 @@ impl PassthroughFs {
             // There is a possible race here where 2 threads end up adding the same file
             // into the inode list.  However, since each of those will get a unique Inode
             // value and unique file descriptors this shouldn't be that much of a problem.
-            let inode = self.next_inode.fetch_add(1, Ordering::Relaxed);
+            let inode = self.inode_alloc.next();
             self.inodes.write().unwrap().insert(
                 inode,
                 InodeAltKey {
@@ -1201,25 +1193,7 @@ impl FileSystem for PassthroughFs {
 
     fn lookup(&self, _ctx: Context, parent: Inode, name: &CStr) -> io::Result<Entry> {
         debug!("lookup: {name:?}");
-        let _init_name = unsafe { CStr::from_bytes_with_nul_unchecked(INIT_CSTR) };
-
-        if self.init_inode != 0 && name == _init_name {
-            let mut st: bindings::stat64 = unsafe { mem::zeroed() };
-            st.st_size = INIT_BINARY.len() as i64;
-            st.st_ino = self.init_inode;
-            st.st_mode = 0o100_755;
-
-            Ok(Entry {
-                inode: self.init_inode,
-                generation: 0,
-                attr: st,
-                attr_flags: 0,
-                attr_timeout: self.cfg.attr_timeout,
-                entry_timeout: self.cfg.entry_timeout,
-            })
-        } else {
-            self.do_lookup(parent, name)
-        }
+        self.do_lookup(parent, name)
     }
 
     fn forget(&self, _ctx: Context, inode: Inode, count: u64) {
@@ -1339,11 +1313,7 @@ impl FileSystem for PassthroughFs {
         kill_priv: bool,
         flags: u32,
     ) -> io::Result<(Option<Handle>, OpenOptions)> {
-        if inode == self.init_inode {
-            Ok((Some(self.init_handle), OpenOptions::empty()))
-        } else {
-            self.do_open(inode, kill_priv, flags)
-        }
+        self.do_open(inode, kill_priv, flags)
     }
 
     fn release(
@@ -1456,18 +1426,6 @@ impl FileSystem for PassthroughFs {
         _flags: u32,
     ) -> io::Result<usize> {
         debug!("read: {inode:?}");
-        if inode == self.init_inode {
-            let off: usize = offset
-                .try_into()
-                .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
-            let len = if off + (size as usize) < INIT_BINARY.len() {
-                size as usize
-            } else {
-                INIT_BINARY.len() - off
-            };
-            return w.write(&INIT_BINARY[off..(off + len)]);
-        }
-
         let data = self
             .handles
             .read()
@@ -2053,10 +2011,6 @@ impl FileSystem for PassthroughFs {
             return Err(linux_error(io::Error::from_raw_os_error(libc::ENOSYS)));
         }
 
-        if inode == self.init_inode {
-            return Err(linux_error(io::Error::from_raw_os_error(libc::ENODATA)));
-        }
-
         if name.to_bytes() == XATTR_KEY {
             return Err(linux_error(io::Error::from_raw_os_error(libc::EACCES)));
         }
@@ -2468,35 +2422,5 @@ impl FileSystem for PassthroughFs {
         }
 
         Ok(())
-    }
-
-    fn ioctl(
-        &self,
-        _ctx: Context,
-        _inode: Self::Inode,
-        _handle: Self::Handle,
-        _flags: u32,
-        cmd: u32,
-        arg: u64,
-        _in_size: u32,
-        _out_size: u32,
-        exit_code: &Arc<AtomicI32>,
-    ) -> io::Result<Vec<u8>> {
-        // We can't use nix::request_code_none here since it's system-dependent
-        // and we need the value from Linux.
-        const VIRTIO_IOC_EXIT_CODE_REQ: u32 = 0x7602;
-        const VIRTIO_IOC_REMOVE_ROOT_DIR_REQ: u32 = 0x7603;
-
-        match cmd {
-            VIRTIO_IOC_EXIT_CODE_REQ => {
-                exit_code.store(arg as i32, Ordering::SeqCst);
-                Ok(Vec::new())
-            }
-            VIRTIO_IOC_REMOVE_ROOT_DIR_REQ if self.cfg.allow_root_dir_delete => {
-                std::fs::remove_dir_all(&self.cfg.root_dir)?;
-                Ok(Vec::new())
-            }
-            _ => Err(io::Error::from_raw_os_error(libc::EOPNOTSUPP)),
-        }
     }
 }

@@ -20,8 +20,6 @@ AWS_NITRO_INIT_SRC = \
 
 AWS_NITRO_INIT_LD_FLAGS = -larchive -lnsm
 
-INIT_SRC = init/init.c
-
 ifeq ($(SEV),1)
     VARIANT = -sev
     FEATURE_FLAGS := --features amd-sev
@@ -130,6 +128,7 @@ else
 endif
     # Cross-compile on macOS with the LLVM linker (brew install lld)
     CC_BSD=$(CLANG) -target $(ARCH)-unknown-freebsd -fuse-ld=lld -stdlib=libc++ -Wl,-strip-debug --sysroot $(SYSROOT_BSD)
+    CARGO_BSD_RUSTFLAGS = -C linker=$(CLANG) -C link-arg=-target -C link-arg=$(ARCH)-unknown-freebsd -C link-arg=-fuse-ld=lld -C link-arg=-stdlib=libc++ -C link-arg=--sysroot=$(abspath $(SYSROOT_BSD))
 else ifeq ($(OS),Linux)
 # Linux -> FreeBSD cross-compilation
 ifeq ($(SYSROOT_BSD),)
@@ -140,16 +139,34 @@ else
 endif
     # Cross-compile on Linux with clang
     CC_BSD=$(CLANG) -target $(ARCH)-unknown-freebsd -fuse-ld=lld -Wl,-strip-debug --sysroot $(SYSROOT_BSD)
+    CARGO_BSD_RUSTFLAGS = -C linker=$(CLANG) -C link-arg=-target -C link-arg=$(ARCH)-unknown-freebsd -C link-arg=-fuse-ld=lld -C link-arg=--sysroot=$(abspath $(SYSROOT_BSD))
 else
     # Build on FreeBSD host
     CC_BSD=$(CC)
     SYSROOT_BSD_TARGET =
+    CARGO_BSD_RUSTFLAGS =
+endif
+
+FREEBSD_RUST_TARGET = $(subst arm64,aarch64,$(ARCH))-unknown-freebsd
+
+# aarch64-unknown-freebsd is Tier 3: no prebuilt std, requires nightly + build-std.
+ifeq ($(FREEBSD_RUST_TARGET),aarch64-unknown-freebsd)
+    CARGO_BSD_TOOLCHAIN = +nightly
+    CARGO_BSD_EXTRA_FLAGS = -Z build-std
+else
+    CARGO_BSD_TOOLCHAIN =
+    CARGO_BSD_EXTRA_FLAGS =
 endif
 
 ifeq ($(BUILD_BSD_INIT),1)
 INIT_BINARY_BSD = init/init-freebsd
-$(INIT_BINARY_BSD): $(INIT_SRC) $(SYSROOT_BSD_TARGET)
-	$(CC_BSD) -std=c23 -O2 -static -Wall -o $@ $(INIT_SRC) -lutil
+$(INIT_BINARY_BSD): $(shell find init/src -name '*.rs') init/Cargo.toml $(SYSROOT_BSD_TARGET)
+	RUSTFLAGS="$(CARGO_BSD_RUSTFLAGS)" \
+	cargo $(CARGO_BSD_TOOLCHAIN) build --release \
+		$(CARGO_BSD_EXTRA_FLAGS) \
+		--manifest-path init/Cargo.toml \
+		--target $(FREEBSD_RUST_TARGET)
+	cp target/$(FREEBSD_RUST_TARGET)/release/krun-init $@
 endif
 
 # Sysroot preparation rules for cross-compilation on macOS
@@ -272,7 +289,13 @@ TEST_FLAGS ?=
 EXTRA_LIBPATH_Linux =
 EXTRA_LIBPATH_Darwin = /opt/homebrew/opt/libkrunfw/lib:/opt/homebrew/opt/llvm/lib
 
+# Extra cargo features for the test runner (passed via KRUN_TEST_FEATURES).
+TEST_FEATURE_FLAGS :=
+ifeq ($(BLK),1)
+    TEST_FEATURE_FLAGS += blk
+endif
+
 # On macOS, SIP strips DYLD_LIBRARY_PATH when executing scripts via a shebang,
 # so we pass the path via LIBKRUN_LIB_PATH and let run.sh set the real variable.
 test: test-prefix
-	cd tests; RUST_LOG=trace LIBKRUN_LIB_PATH="$$(realpath ../test-prefix/$(LIBDIR_$(OS))/):$(EXTRA_LIBPATH_$(OS))" PKG_CONFIG_PATH="$$(realpath ../test-prefix/$(LIBDIR_$(OS))/pkgconfig/)" ./run.sh test --test-case "$(TEST)" $(TEST_FLAGS)
+	cd tests; RUST_LOG=trace KRUN_TEST_FEATURES="$(TEST_FEATURE_FLAGS)" LIBKRUN_LIB_PATH="$$(realpath ../test-prefix/$(LIBDIR_$(OS))/):$(EXTRA_LIBPATH_$(OS))" PKG_CONFIG_PATH="$$(realpath ../test-prefix/$(LIBDIR_$(OS))/pkgconfig/)" ./run.sh test --test-case "$(TEST)" $(TEST_FLAGS)

@@ -1,0 +1,189 @@
+use anyhow::{bail, Context};
+use nix::errno::Errno;
+use nix::mount::{self, MsFlags};
+use nix::unistd;
+use std::env;
+use std::fs::{self, File};
+use std::io::{BufRead, BufReader};
+use std::os::unix::fs as unix_fs;
+
+const KRUN_REMOVE_ROOT_DIR_IOCTL: libc::c_ulong = 0x7603;
+
+/// Mount, treating EBUSY (already mounted) as success.
+fn mount_once(
+    src: Option<&str>,
+    target: &str,
+    fstype: Option<&str>,
+    flags: MsFlags,
+) -> anyhow::Result<()> {
+    match mount::mount(src, target, fstype, flags, None::<&str>) {
+        Ok(()) => Ok(()),
+        Err(Errno::EBUSY) => Ok(()),
+        Err(e) => Err(e).with_context(|| format!("mount {target}")),
+    }
+}
+
+pub fn mount_filesystems() -> anyhow::Result<()> {
+    let base_flags = MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_RELATIME;
+    fs::create_dir_all("/dev").context("create /dev")?;
+    fs::create_dir_all("/proc").context("create /proc")?;
+    fs::create_dir_all("/sys").context("create /sys")?;
+
+    mount_once(
+        Some("devtmpfs"),
+        "/dev",
+        Some("devtmpfs"),
+        MsFlags::MS_RELATIME,
+    )?;
+
+    mount_once(
+        Some("proc"),
+        "/proc",
+        Some("proc"),
+        MsFlags::MS_NODEV | base_flags,
+    )?;
+
+    mount_once(
+        Some("sysfs"),
+        "/sys",
+        Some("sysfs"),
+        MsFlags::MS_NODEV | base_flags,
+    )?;
+
+    mount_once(
+        Some("cgroup2"),
+        "/sys/fs/cgroup",
+        Some("cgroup2"),
+        MsFlags::MS_NODEV | base_flags,
+    )?;
+
+    fs::create_dir_all("/dev/pts").context("create /dev/pts")?;
+    fs::create_dir_all("/dev/shm").context("create /dev/shm")?;
+
+    mount_once(Some("devpts"), "/dev/pts", Some("devpts"), base_flags)?;
+    mount_once(Some("tmpfs"), "/dev/shm", Some("tmpfs"), base_flags)?;
+
+    // Best-effort; may already exist.
+    let _ = unix_fs::symlink("/proc/self/fd", "/dev/fd");
+
+    Ok(())
+}
+
+/// Returns true if path is listed as a mount point in /proc/mounts.
+///
+/// Uses /proc/mounts instead of stat() because Podman arranges tmpfs
+/// auto-mounts that would be triggered by a stat call.
+pub fn is_mount_point(path: &str) -> bool {
+    let Ok(f) = File::open("/proc/mounts") else {
+        return false;
+    };
+    for line in BufReader::new(f).lines().map_while(Result::ok) {
+        let mut parts = line.split_whitespace();
+        let _ = parts.next(); // device
+        if parts.next() == Some(path) {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn mount_tmpfs(path: &str) -> anyhow::Result<()> {
+    mount::mount(
+        Some("tmpfs"),
+        path,
+        Some("tmpfs"),
+        MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_RELATIME,
+        None::<&str>,
+    )
+    .with_context(|| format!("mount tmpfs at {path}"))
+}
+
+/// Mount /dev/vda as ext4, then pivot root into it.
+#[cfg(any(feature = "amd-sev", feature = "tdx"))]
+pub fn mount_tee_block_device() -> anyhow::Result<()> {
+    fs::create_dir_all("/tmp/vda").context("create /tmp/vda")?;
+
+    mount_once(
+        Some("/dev/vda"),
+        "/tmp/vda",
+        Some("ext4"),
+        MsFlags::MS_RELATIME,
+    )?;
+    unistd::chdir("/tmp/vda").context("chdir /tmp/vda")?;
+
+    mount_once(Some("."), "/", None::<&str>, MsFlags::MS_MOVE)?;
+    unistd::chroot(".").context("chroot .")
+}
+
+/// Mount source onto target, trying each non-virtual filesystem listed in
+/// /proc/filesystems when fstype is None.
+pub fn try_mount(
+    source: &str,
+    target: &str,
+    fstype: Option<&str>,
+    flags: MsFlags,
+) -> anyhow::Result<()> {
+    if let Some(fs) = fstype {
+        mount::mount(Some(source), target, Some(fs), flags, None::<&str>)
+            .with_context(|| format!("mount {source} -> {target} as {fs}"))?;
+    }
+
+    let f = File::open("/proc/filesystems").context("open /proc/filesystems")?;
+    for line in BufReader::new(f).lines().map_while(Result::ok) {
+        if line.starts_with("nodev") {
+            continue;
+        }
+        let fs = line.trim();
+        if mount::mount(Some(source), target, Some(fs), flags, None::<&str>).is_ok() {
+            return Ok(());
+        }
+    }
+    bail!("no supported filesystem found for {source}")
+}
+
+/// Handle KRUN_BLOCK_ROOT_DEVICE: mount the block device at /newroot,
+/// ask the virtiofs device to remove the temporary root, then pivot.
+pub fn mount_block_root_device() -> anyhow::Result<()> {
+    let Some(krun_root) = env::var_os("KRUN_BLOCK_ROOT_DEVICE") else {
+        return Ok(());
+    };
+    let krun_root = krun_root.to_string_lossy().into_owned();
+
+    fs::create_dir_all("/newroot").context("create /newroot")?;
+
+    let fstype = env::var("KRUN_BLOCK_ROOT_FSTYPE").ok();
+    let options = env::var("KRUN_BLOCK_ROOT_OPTIONS").ok();
+
+    try_mount(&krun_root, "/newroot", fstype.as_deref(), MsFlags::empty())?;
+
+    unistd::chdir("/newroot").context("chdir /newroot")?;
+
+    // Ask the virtiofs device to tear down the temporary root directory.
+    let fd = unsafe { libc::open(c"/".as_ptr().cast(), libc::O_RDONLY) };
+    if fd >= 0 {
+        unsafe { libc::ioctl(fd, KRUN_REMOVE_ROOT_DIR_IOCTL as _) };
+        unsafe { libc::close(fd) };
+    }
+
+    mount::mount(Some("."), "/", None::<&str>, MsFlags::MS_MOVE, None::<&str>)
+        .context("pivot root MS_MOVE")?;
+
+    unistd::chroot(".").context("chroot after block root pivot")?;
+
+    // Re-mount standard filesystems now that we're in the new root.
+    mount_filesystems()?;
+
+    drop(options);
+    Ok(())
+}
+
+pub fn mount_shared_root() -> anyhow::Result<()> {
+    mount::mount(
+        None::<&str>,
+        "/",
+        None::<&str>,
+        MsFlags::MS_REC | MsFlags::MS_SHARED,
+        None::<&str>,
+    )
+    .context("set MS_SHARED on root mount")
+}

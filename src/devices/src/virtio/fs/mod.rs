@@ -2,10 +2,14 @@ mod device;
 #[allow(dead_code)]
 mod filesystem;
 pub mod fuse;
+mod inode_alloc;
 #[allow(dead_code)]
 mod multikey;
+mod null_fs;
 mod read_only;
 mod server;
+mod augment_fs;
+pub mod virtual_inode;
 mod worker;
 
 #[cfg(target_os = "linux")]

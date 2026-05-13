@@ -3,7 +3,7 @@ name = "krun-devices"
 version = "0.1.0-1.18.0"
 authors = ["The libkrun Authors"]
 edition = "2021"
-build = "build.rs"
+
 description = "Virtual device emulation for libkrun"
 license = "Apache-2.0"
 repository = "https://github.com/containers/libkrun"
@@ -20,6 +20,7 @@ input = ["zerocopy", "krun_input"]
 virgl_resource_map2 = []
 aws-nitro = []
 test_utils = []
+timesync = []
 vhost-user = ["vhost", "vmm-sys-util"]
 
 [dependencies]
