@@ -641,27 +641,35 @@ static void unescape_string(char *string, int len)
         switch (*++val) {
         case 'n':
             string[i++] = '\n';
+            val++;
             break;
         case 't':
             string[i++] = '\t';
+            val++;
             break;
         case 'r':
             string[i++] = '\r';
+            val++;
             break;
         case 'b':
             string[i++] = '\b';
+            val++;
             break;
         case 'f':
             string[i++] = '\f';
+            val++;
             break;
         case '\\':
             string[i++] = '\\';
+            val++;
             break;
         case '\"':
             string[i++] = '\"';
+            val++;
             break;
         case '/':
             string[i++] = '/';
+            val++;
             break;
         case 'u': {
             const char *unescaped = "?";
