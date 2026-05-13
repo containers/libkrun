@@ -56,3 +56,6 @@ kvm-ioctls = "0.22"
 
 [target.'cfg(any(target_arch = "aarch64", target_arch = "riscv64"))'.dependencies]
 vm-fdt = ">= 0.2.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+whp = { package = "krun-whp", version = "=0.1.0-1.18.0", path = "../whp" }
