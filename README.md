@@ -263,6 +263,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on submitting changes.
 
 ## Getting in contact
 
+If you think you've identified a security issue in the project, please DO NOT report the issue publicly via the GitHub issue tracker or Matrix. Instead, send an email with as many details as possible to `libkrun-security@redhat.com`. This is a private mailing list for the core maintainers.
+
 The main communication channel is the [libkrun Matrix channel](https://matrix.to/#/#libkrun:matrix.org).
 
 ## Acknowledgments
