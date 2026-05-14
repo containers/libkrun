@@ -14,16 +14,21 @@ use utils::eventfd::EventFd;
 use vm_memory::GuestMemoryMmap;
 
 use super::super::{FsError, Queue};
+use super::augment_fs::AugmentFs;
 use super::defs::{HPQ_INDEX, REQ_INDEX};
 use super::descriptor_utils::{Reader, Writer};
+use super::inode_alloc::InodeAllocator;
+use super::null_fs::NullFs;
 use super::passthrough::{self, PassthroughFs};
 use super::read_only::PassthroughFsRo;
 use super::server::Server;
+use super::virtual_entry::VirtualDirEntry;
 use crate::virtio::{InterruptTransport, VirtioShmRegion};
 
 enum FsServer {
-    ReadWrite(Server<PassthroughFs>),
-    ReadOnly(Server<PassthroughFsRo>),
+    ReadWrite(Server<AugmentFs<PassthroughFs>>),
+    ReadOnly(Server<AugmentFs<PassthroughFsRo>>),
+    Null(Server<AugmentFs<NullFs>>),
 }
 
 impl FsServer {
@@ -45,6 +50,14 @@ impl FsServer {
                 map_sender,
             ),
             FsServer::ReadOnly(s) => s.handle_message(
+                r,
+                w,
+                shm_region,
+                exit_code,
+                #[cfg(target_os = "macos")]
+                map_sender,
+            ),
+            FsServer::Null(s) => s.handle_message(
                 r,
                 w,
                 shm_region,
@@ -77,16 +90,36 @@ impl FsWorker {
         interrupt: InterruptTransport,
         mem: GuestMemoryMmap,
         shm_region: Option<VirtioShmRegion>,
-        passthrough_cfg: passthrough::Config,
+        passthrough_cfg: Option<passthrough::Config>,
         read_only: bool,
+        virtual_entries: Vec<VirtualDirEntry>,
         stop_fd: EventFd,
         exit_code: Arc<AtomicI32>,
         #[cfg(target_os = "macos")] map_sender: Option<Sender<WorkerMessage>>,
     ) -> Result<Self, io::Error> {
-        let server = if read_only {
-            FsServer::ReadOnly(Server::new(PassthroughFsRo::new(passthrough_cfg)?))
-        } else {
-            FsServer::ReadWrite(Server::new(PassthroughFs::new(passthrough_cfg)?))
+        let inode_alloc = Arc::new(InodeAllocator::new());
+        let server = match passthrough_cfg {
+            Some(cfg) if read_only => {
+                let inner = PassthroughFsRo::new(cfg, inode_alloc.clone())?;
+                FsServer::ReadOnly(Server::new(AugmentFs::new(
+                    inner,
+                    &inode_alloc,
+                    virtual_entries,
+                )))
+            }
+            Some(cfg) => {
+                let inner = PassthroughFs::new(cfg, inode_alloc.clone())?;
+                FsServer::ReadWrite(Server::new(AugmentFs::new(
+                    inner,
+                    &inode_alloc,
+                    virtual_entries,
+                )))
+            }
+            None => FsServer::Null(Server::new(AugmentFs::new(
+                NullFs,
+                &inode_alloc,
+                virtual_entries,
+            ))),
         };
         Ok(Self {
             queues,

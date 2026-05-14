@@ -16,7 +16,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use caps::{has_cap, CapSet, Capability};
-use nix::{request_code_none, request_code_read};
+use nix::request_code_read;
 
 use vm_memory::ByteValued;
 
@@ -25,15 +25,13 @@ use super::super::filesystem::{
     ListxattrReply, OpenOptions, SetattrValid, ZeroCopyReader, ZeroCopyWriter,
 };
 use super::super::fuse;
+use super::super::inode_alloc::InodeAllocator;
 use super::super::multikey::MultikeyBTreeMap;
 
 const CURRENT_DIR_CSTR: &[u8] = b".\0";
 const PARENT_DIR_CSTR: &[u8] = b"..\0";
 const EMPTY_CSTR: &[u8] = b"\0";
 const PROC_CSTR: &[u8] = b"/proc/self/fd\0";
-const INIT_CSTR: &[u8] = b"init.krun\0";
-
-static INIT_BINARY: &[u8] = include_bytes!(env!("KRUN_INIT_BINARY_PATH"));
 
 type Inode = u64;
 type Handle = u64;
@@ -327,7 +325,6 @@ pub struct Config {
     pub export_fsid: u64,
     /// Table of exported FDs to share with other subsystems.
     pub export_table: Option<ExportTable>,
-    pub allow_root_dir_delete: bool,
 }
 
 impl Default for Config {
@@ -342,7 +339,6 @@ impl Default for Config {
             proc_sfd_rawfd: None,
             export_fsid: 0,
             export_table: None,
-            allow_root_dir_delete: false,
         }
     }
 }
@@ -358,14 +354,12 @@ pub struct PassthroughFs {
     // documentation of the `O_PATH` flag in `open(2)` for more details on what one can and cannot
     // do with an fd opened with this flag.
     inodes: RwLock<MultikeyBTreeMap<Inode, InodeAltKey, Arc<InodeData>>>,
-    next_inode: AtomicU64,
-    init_inode: u64,
+    inode_alloc: Arc<InodeAllocator>,
 
     // File descriptors for open files and directories. Unlike the fds in `inodes`, these _can_ be
     // used for reading and writing data.
     handles: RwLock<BTreeMap<Handle, Arc<HandleData>>>,
     next_handle: AtomicU64,
-    init_handle: u64,
 
     // File descriptor pointing to the `/proc/self/fd` directory. This is used to convert an fd from
     // `inodes` into one that can go into `handles`. This is accomplished by reading the
@@ -392,7 +386,7 @@ enum FileOrLink {
 }
 
 impl PassthroughFs {
-    pub fn new(cfg: Config) -> io::Result<PassthroughFs> {
+    pub fn new(cfg: Config, inode_alloc: Arc<InodeAllocator>) -> io::Result<PassthroughFs> {
         let fd = if let Some(fd) = cfg.proc_sfd_rawfd {
             fd
         } else {
@@ -438,12 +432,10 @@ impl PassthroughFs {
 
         Ok(PassthroughFs {
             inodes: RwLock::new(MultikeyBTreeMap::new()),
-            next_inode: AtomicU64::new(fuse::ROOT_ID + 2),
-            init_inode: fuse::ROOT_ID + 1,
+            inode_alloc,
 
             handles: RwLock::new(BTreeMap::new()),
             next_handle: AtomicU64::new(1),
-            init_handle: 0,
 
             proc_self_fd,
 
@@ -579,7 +571,7 @@ impl PassthroughFs {
             // There is a possible race here where 2 threads end up adding the same file
             // into the inode list.  However, since each of those will get a unique Inode
             // value and unique file descriptors this shouldn't be that much of a problem.
-            let inode = self.next_inode.fetch_add(1, Ordering::Relaxed);
+            let inode = self.inode_alloc.next();
             self.inodes.write().unwrap().insert(
                 inode,
                 InodeAltKey {
@@ -992,25 +984,7 @@ impl FileSystem for PassthroughFs {
 
     fn lookup(&self, _ctx: Context, parent: Inode, name: &CStr) -> io::Result<Entry> {
         debug!("do_lookup: {name:?}");
-        let init_name = unsafe { CStr::from_bytes_with_nul_unchecked(INIT_CSTR) };
-
-        if self.init_inode != 0 && name == init_name {
-            let mut st: libc::stat64 = unsafe { mem::zeroed() };
-            st.st_size = INIT_BINARY.len() as i64;
-            st.st_ino = self.init_inode;
-            st.st_mode = 0o100_755;
-
-            Ok(Entry {
-                inode: self.init_inode,
-                generation: 0,
-                attr: st,
-                attr_flags: 0,
-                attr_timeout: self.cfg.attr_timeout,
-                entry_timeout: self.cfg.entry_timeout,
-            })
-        } else {
-            self.do_lookup(parent, name)
-        }
+        self.do_lookup(parent, name)
     }
 
     fn forget(&self, _ctx: Context, inode: Inode, count: u64) {
@@ -1129,11 +1103,7 @@ impl FileSystem for PassthroughFs {
         kill_priv: bool,
         flags: u32,
     ) -> io::Result<(Option<Handle>, OpenOptions)> {
-        if inode == self.init_inode {
-            Ok((Some(self.init_handle), OpenOptions::empty()))
-        } else {
-            self.do_open(inode, kill_priv, flags)
-        }
+        self.do_open(inode, kill_priv, flags)
     }
 
     fn release(
@@ -1234,16 +1204,6 @@ impl FileSystem for PassthroughFs {
         _flags: u32,
     ) -> io::Result<usize> {
         debug!("read: {inode:?}");
-        if inode == self.init_inode {
-            let off: usize = offset.try_into().map_err(|_| einval())?;
-            let len = if off + (size as usize) < INIT_BINARY.len() {
-                size as usize
-            } else {
-                INIT_BINARY.len() - off
-            };
-            return w.write(&INIT_BINARY[off..(off + len)]);
-        }
-
         let data = self
             .handles
             .read()
@@ -1824,10 +1784,6 @@ impl FileSystem for PassthroughFs {
             return Err(io::Error::from_raw_os_error(libc::ENOSYS));
         }
 
-        if inode == self.init_inode {
-            return Err(io::Error::from_raw_os_error(libc::ENODATA));
-        }
-
         let mut buf = vec![0; size as usize];
 
         // The f{set,get,remove,list}xattr functions don't work on an fd opened with `O_PATH` so we
@@ -2087,36 +2043,6 @@ impl FileSystem for PassthroughFs {
 
         debug!("setupmapping: ino {inode:?} addr={addr:x} len={len}");
 
-        if inode == self.init_inode {
-            let ret = unsafe {
-                libc::mmap(
-                    addr as *mut libc::c_void,
-                    len as usize,
-                    libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
-                    -1,
-                    0,
-                )
-            };
-            if std::ptr::eq(ret, libc::MAP_FAILED) {
-                return Err(io::Error::last_os_error());
-            }
-
-            let to_copy = if len as usize > INIT_BINARY.len() {
-                INIT_BINARY.len()
-            } else {
-                len as usize
-            };
-            unsafe {
-                libc::memcpy(
-                    addr as *mut libc::c_void,
-                    INIT_BINARY.as_ptr() as *const _,
-                    to_copy,
-                )
-            };
-            return Ok(());
-        }
-
         let file = self.open_inode(inode, open_flags)?;
         let fd = file.as_raw_fd();
 
@@ -2175,10 +2101,10 @@ impl FileSystem for PassthroughFs {
         handle: Self::Handle,
         _flags: u32,
         cmd: u32,
-        arg: u64,
+        _arg: u64,
         _in_size: u32,
         out_size: u32,
-        exit_code: &Arc<AtomicI32>,
+        _exit_code: &Arc<AtomicI32>,
     ) -> io::Result<Vec<u8>> {
         const VIRTIO_IOC_MAGIC: u8 = b'v';
 
@@ -2189,14 +2115,6 @@ impl FileSystem for PassthroughFs {
             VIRTIO_IOC_TYPE_EXPORT_FD,
             VIRTIO_IOC_EXPORT_FD_SIZE
         ) as u32;
-
-        const VIRTIO_IOC_TYPE_EXIT_CODE: u8 = 2;
-        const VIRTIO_IOC_EXIT_CODE_REQ: u32 =
-            request_code_none!(VIRTIO_IOC_MAGIC, VIRTIO_IOC_TYPE_EXIT_CODE) as u32;
-
-        const VIRTIO_IOC_REMOVE_ROOT_DIR_CODE: u8 = 3;
-        const VIRTIO_IOC_REMOVE_ROOT_DIR_REQ: u32 =
-            request_code_none!(VIRTIO_IOC_MAGIC, VIRTIO_IOC_REMOVE_ROOT_DIR_CODE) as u32;
 
         match cmd {
             VIRTIO_IOC_EXPORT_FD_REQ => {
@@ -2227,14 +2145,6 @@ impl FileSystem for PassthroughFs {
                 let mut ret: Vec<_> = self.cfg.export_fsid.to_ne_bytes().into();
                 ret.extend_from_slice(&handle.to_ne_bytes());
                 Ok(ret)
-            }
-            VIRTIO_IOC_EXIT_CODE_REQ => {
-                exit_code.store(arg as i32, Ordering::SeqCst);
-                Ok(Vec::new())
-            }
-            VIRTIO_IOC_REMOVE_ROOT_DIR_REQ if self.cfg.allow_root_dir_delete => {
-                std::fs::remove_dir_all(&self.cfg.root_dir)?;
-                Ok(Vec::new())
             }
             _ => Err(io::Error::from_raw_os_error(libc::EOPNOTSUPP)),
         }

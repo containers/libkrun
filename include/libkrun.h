@@ -1154,6 +1154,14 @@ int32_t krun_get_max_vcpus(void);
 int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
 
 /*
+ * NOTE: Implicit resource creation is a legacy convenience. The 2.0 API
+ * (see https://github.com/containers/libkrun/issues/634) will not create
+ * any implicit resources. Callers should start using the
+ * krun_disable_implicit_* functions now to ease migration.
+ */
+
+
+/*
  * Do not create an implicit console device in the guest. By using this API,
  * libkrun will create zero console devices on behalf of the user. Any
  * console devices needed by the user must be added manually via other API
@@ -1166,6 +1174,87 @@ int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_disable_implicit_console(uint32_t ctx_id);
+
+/**
+ * Do not inject the default init binary (/init.krun) into the root
+ * filesystem. Must be called before krun_set_root().
+ *
+ * Arguments:
+ *  "ctx_id" - the configuration context ID.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_disable_implicit_init(uint32_t ctx_id);
+
+/**
+ * Get a pointer to the built-in default init binary.
+ *
+ * This is the same binary that libkrun injects as /init.krun by default.
+ * Callers that use krun_disable_implicit_init() can use this to inject the
+ * init binary themselves (e.g. via krun_fs_add_overlay_file with custom
+ * settings).
+ *
+ * The returned pointer is valid for the lifetime of the process (static data).
+ *
+ * Arguments:
+ *  "data_out" - receives a pointer to the init binary bytes.
+ *  "len_out"  - receives the length in bytes.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_get_default_init(const uint8_t **data_out, size_t *len_out);
+
+/**
+ * Add a virtual overlay file to a virtiofs device.
+ *
+ * The file is backed entirely by host memory (no host file). The data
+ * pointer is NOT copied — the caller must keep the memory valid for the
+ * full VM lifetime.
+ *
+ * "path" may contain '/' to place the file inside a virtual directory
+ * previously created with krun_fs_add_overlay_dir (e.g. "etc/hostname").
+ * All intermediate directories must already exist; -ENOENT is returned
+ * if a component is missing, -ENOTDIR if a component is not a directory.
+ *
+ * Arguments:
+ *  "ctx_id"   - the configuration context ID.
+ *  "fs_tag"   - tag of the virtiofs device (e.g. "/dev/root").
+ *  "path"     - path of the file (e.g. "init.krun" or "etc/hostname").
+ *  "data"     - pointer to the file content.
+ *  "data_len" - length of the file content in bytes.
+ *  "mode"     - file mode bits (e.g. 0100644 for a regular file).
+ *  "one_shot" - if true, the file can only be looked up once.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_fs_add_overlay_file(uint32_t ctx_id, const char *fs_tag,
+                                 const char *path, const uint8_t *data,
+                                 size_t data_len, uint32_t mode, bool one_shot);
+
+/**
+ * Add a virtual overlay directory to a virtiofs device.
+ *
+ * The directory is empty and read-only, useful as a mount point.
+ *
+ * "path" may contain '/' to nest inside an existing virtual directory
+ * (e.g. "usr/lib"). All intermediate directories must already exist;
+ * -ENOENT is returned if a component is missing, -ENOTDIR if a component
+ * is not a directory.
+ *
+ * Arguments:
+ *  "ctx_id"   - the configuration context ID.
+ *  "fs_tag"   - tag of the virtiofs device (e.g. "/dev/root").
+ *  "path"     - path of the directory (e.g. "dev" or "usr/lib").
+ *  "mode"     - directory mode bits (e.g. 040755).
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_fs_add_overlay_dir(uint32_t ctx_id, const char *fs_tag,
+                                const char *path, uint32_t mode);
 
 /**
  * Disable the implicit vsock device.

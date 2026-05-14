@@ -42,6 +42,11 @@ if [ "$OS" = "Darwin" ]; then
 	export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="clang"
 	export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C link-arg=-target -C link-arg=aarch64-linux-gnu -C link-arg=-fuse-ld=lld -C link-arg=--sysroot=$SYSROOT -C link-arg=-static"
 	echo "Cross-compiling guest-agent for $GUEST_TARGET"
+
+	# e2fsprogs is keg-only on macOS; add it to PATH for mke2fs.
+	if [ -d "/opt/homebrew/opt/e2fsprogs/sbin" ]; then
+		export PATH="/opt/homebrew/opt/e2fsprogs/sbin:$PATH"
+	fi
 fi
 
 cargo build --target=$GUEST_TARGET -p guest-agent

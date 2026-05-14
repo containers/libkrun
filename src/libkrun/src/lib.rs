@@ -14,16 +14,15 @@ use env_logger::{Env, Target};
 #[cfg(feature = "gpu")]
 use krun_display::DisplayBackend;
 
+#[cfg(not(feature = "tee"))]
+use devices::virtio::fs::virtual_entry::{VirtualDirEntry, VirtualEntry, VirtualEntryContent};
 use libc::{c_char, c_int, size_t};
 use once_cell::sync::Lazy;
 use polly::event_manager::EventManager;
-#[cfg(all(feature = "blk", not(feature = "tee")))]
-use rand::distr::{Alphanumeric, SampleString};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::env;
-#[cfg(target_os = "linux")]
 use std::ffi::CString;
 use std::ffi::{c_void, CStr};
 use std::fs::File;
@@ -89,6 +88,23 @@ static KRUN_NITRO_DEBUG: Mutex<bool> = Mutex::new(false);
 
 // Path to the init binary to be executed inside the VM.
 const INIT_PATH: &str = "/init.krun";
+
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+const DEFAULT_INIT_PAYLOAD: &[u8] = init_blob::INIT_BINARY;
+
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+fn init_virtual_entry() -> VirtualDirEntry {
+    VirtualDirEntry {
+        name: CString::new("init.krun").unwrap(),
+        entry: VirtualEntry {
+            mode: 0o755,
+            one_shot: true,
+            content: VirtualEntryContent::File {
+                data: DEFAULT_INIT_PAYLOAD,
+            },
+        },
+    }
+}
 
 static KRUNFW: LazyLock<Option<libloading::Library>> =
     LazyLock::new(|| unsafe { libloading::Library::new(KRUNFW_NAME).ok() });
@@ -166,6 +182,8 @@ struct ContextConfig {
     console_output: Option<PathBuf>,
     vmm_uid: Option<libc::uid_t>,
     vmm_gid: Option<libc::gid_t>,
+    #[cfg(not(feature = "tee"))]
+    disable_implicit_init: bool,
 }
 
 impl ContextConfig {
@@ -593,11 +611,17 @@ pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) 
             let cfg = ctx_cfg.get_mut();
             cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id,
-                shared_dir,
+                shared_dir: Some(shared_dir),
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
-                allow_root_dir_delete: false,
                 read_only: false,
+                virtual_entries: {
+                    let mut v = Vec::new();
+                    if !cfg.disable_implicit_init {
+                        v.push(init_virtual_entry());
+                    }
+                    v
+                },
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -639,7 +663,7 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
     shm_size: u64,
     read_only: bool,
 ) -> i32 {
-    if c_tag.is_null() || c_path.is_null() {
+    if c_tag.is_null() {
         return -libc::EINVAL;
     }
 
@@ -647,9 +671,15 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
         Ok(tag) => tag,
         Err(_) => return -libc::EINVAL,
     };
-    let path = match CStr::from_ptr(c_path).to_str() {
-        Ok(path) => path,
-        Err(_) => return -libc::EINVAL,
+
+    // NULL path means NullFs (virtual-only filesystem, no host directory).
+    let path = if c_path.is_null() {
+        None
+    } else {
+        match CStr::from_ptr(c_path).to_str() {
+            Ok(path) => Some(path),
+            Err(_) => return -libc::EINVAL,
+        }
     };
 
     let shm = if shm_size > 0 {
@@ -664,12 +694,16 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
         Entry::Occupied(mut ctx_cfg) => {
             let cfg = ctx_cfg.get_mut();
+            let mut virtual_entries = Vec::new();
+            if tag == "/dev/root" && !cfg.disable_implicit_init {
+                virtual_entries.push(init_virtual_entry());
+            }
             cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id: tag.to_string(),
-                shared_dir: path.to_string(),
+                shared_dir: path.map(|p| p.to_string()),
                 shm_size: shm,
-                allow_root_dir_delete: false,
                 read_only,
+                virtual_entries,
             });
         }
         Entry::Vacant(_) => return -libc::ENOENT,
@@ -2379,25 +2413,35 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 return -libc::EINVAL;
             }
 
-            // To boot from a filesystem other than virtiofs,
-            // we need to setup a temporary root from which init.krun can be executed.
-            // Otherwise, it would have to be copied to the target filesystem beforehand.
-            // Instead, init.krun will run from virtiofs and then switch to the real root.
-            let root_dir_suffix = Alphanumeric.sample_string(&mut rand::rng(), 6);
-            let empty_root = env::temp_dir().join(format!("krun-empty-root-{root_dir_suffix}"));
-
-            if let Err(e) = std::fs::create_dir_all(&empty_root) {
-                error!("Failed to create empty root directory: {e:?}");
-                return -libc::EINVAL;
+            // Boot from a block device: the virtiofs root only needs to
+            // serve init.krun and provide mount points for /dev, /proc, /sys.
+            // Use a NullFs (no host directory) with the inode overlay.
+            let mut virtual_entries = Vec::new();
+            if !ctx_cfg.disable_implicit_init {
+                virtual_entries.push(init_virtual_entry());
+            }
+            // init.c needs these directories as mount points before
+            // pivoting to the block device root.
+            for name in ["dev", "proc", "sys", "newroot"] {
+                virtual_entries.push(VirtualDirEntry {
+                    name: CString::new(name).unwrap(),
+                    entry: VirtualEntry {
+                        mode: 0o755,
+                        one_shot: false,
+                        content: VirtualEntryContent::Dir {
+                            children: Vec::new(),
+                        },
+                    },
+                });
             }
 
             ctx_cfg.vmr.add_fs_device(FsDeviceConfig {
                 fs_id: "/dev/root".into(),
-                shared_dir: empty_root.to_string_lossy().into(),
+                shared_dir: None,
                 // Default to a conservative 512 MB window.
                 shm_size: Some(1 << 29),
-                allow_root_dir_delete: true,
                 read_only: false,
+                virtual_entries,
             });
 
             ctx_cfg.set_block_root(device, fstype, options);
@@ -2406,6 +2450,169 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
     };
 
     KRUN_SUCCESS
+}
+
+#[no_mangle]
+#[cfg(not(feature = "tee"))]
+pub extern "C" fn krun_disable_implicit_init(ctx_id: u32) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            ctx_cfg.get_mut().disable_implicit_init = true;
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
+}
+
+/// Resolve a path like "a/b/c" into parent directory children + leaf name.
+/// Errors with a libc errno if any intermediate component is missing or not a Dir.
+#[cfg(not(feature = "tee"))]
+fn resolve_overlay_path<'a>(
+    entries: &'a mut Vec<VirtualDirEntry>,
+    path: &str,
+) -> Result<(&'a mut Vec<VirtualDirEntry>, CString), i32> {
+    let path = path.strip_prefix('/').unwrap_or(path);
+    let components: Vec<&str> = path.split('/').collect();
+    let (leaf, parents) = components.split_last().ok_or(-libc::EINVAL)?;
+    if leaf.is_empty() {
+        return Err(-libc::EINVAL);
+    }
+
+    let mut current = entries;
+    for component in parents {
+        let dir = current
+            .iter_mut()
+            .find(|e| e.name.as_c_str().to_bytes() == component.as_bytes())
+            .ok_or(-libc::ENOENT)?;
+        match &mut dir.entry.content {
+            VirtualEntryContent::Dir { children } => current = children,
+            _ => return Err(-libc::ENOTDIR),
+        }
+    }
+
+    let name = CString::new(*leaf).map_err(|_| -libc::EINVAL)?;
+    Ok((current, name))
+}
+
+/// Add a virtual overlay entry to a virtiofs device, resolving paths with `/`.
+#[cfg(not(feature = "tee"))]
+fn fs_add_overlay_entry(ctx_id: u32, fs_tag: &str, path: &str, entry: VirtualEntry) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            let fs_cfg = match cfg.vmr.fs.iter_mut().find(|fs| fs.fs_id == fs_tag) {
+                Some(fs) => fs,
+                None => return -libc::ENOENT,
+            };
+            let (parent_children, name) =
+                match resolve_overlay_path(&mut fs_cfg.virtual_entries, path) {
+                    Ok(v) => v,
+                    Err(e) => return e,
+                };
+            parent_children.push(VirtualDirEntry { name, entry });
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+pub unsafe extern "C" fn krun_get_default_init(
+    data_out: *mut *const u8,
+    len_out: *mut size_t,
+) -> i32 {
+    if data_out.is_null() || len_out.is_null() {
+        return -libc::EINVAL;
+    }
+    *data_out = DEFAULT_INIT_PAYLOAD.as_ptr();
+    *len_out = DEFAULT_INIT_PAYLOAD.len();
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(not(feature = "tee"))]
+pub unsafe extern "C" fn krun_fs_add_overlay_file(
+    ctx_id: u32,
+    c_fs_tag: *const c_char,
+    c_path: *const c_char,
+    data: *const u8,
+    data_len: size_t,
+    mode: u32,
+    one_shot: bool,
+) -> i32 {
+    if c_fs_tag.is_null() || c_path.is_null() {
+        return -libc::EINVAL;
+    }
+
+    let fs_tag = match CStr::from_ptr(c_fs_tag).to_str() {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+    let path = match CStr::from_ptr(c_path).to_str() {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    // SAFETY: The caller guarantees the memory remains valid for the VM
+    // lifetime (see the C header contract).
+    let payload: &'static [u8] = if data_len == 0 {
+        &[]
+    } else if !data.is_null() {
+        slice::from_raw_parts(data, data_len)
+    } else {
+        return -libc::EINVAL;
+    };
+
+    fs_add_overlay_entry(
+        ctx_id,
+        fs_tag,
+        path,
+        VirtualEntry {
+            mode,
+            one_shot,
+            content: VirtualEntryContent::File { data: payload },
+        },
+    )
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(not(feature = "tee"))]
+pub unsafe extern "C" fn krun_fs_add_overlay_dir(
+    ctx_id: u32,
+    c_fs_tag: *const c_char,
+    c_path: *const c_char,
+    mode: u32,
+) -> i32 {
+    if c_fs_tag.is_null() || c_path.is_null() {
+        return -libc::EINVAL;
+    }
+
+    let fs_tag = match CStr::from_ptr(c_fs_tag).to_str() {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+    let path = match CStr::from_ptr(c_path).to_str() {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    fs_add_overlay_entry(
+        ctx_id,
+        fs_tag,
+        path,
+        VirtualEntry {
+            mode,
+            one_shot: false,
+            content: VirtualEntryContent::Dir {
+                children: Vec::new(),
+            },
+        },
+    )
 }
 
 #[no_mangle]
@@ -2852,5 +3059,30 @@ fn krun_start_enter_nitro(ctx_id: u32) -> i32 {
 
             -libc::EINVAL
         }
+    }
+}
+
+#[cfg(all(test, not(feature = "tee")))]
+mod test_disable_implicit_init {
+    use super::*;
+
+    #[test]
+    fn test_disable_implicit_init() {
+        let ctx = unsafe { krun_create_ctx() } as u32;
+        unsafe {
+            krun_disable_implicit_init(ctx);
+            krun_set_root(ctx, c"/tmp".as_ptr());
+        }
+
+        let ctx_map = CTX_MAP.lock().unwrap();
+        let cfg = ctx_map.get(&ctx).unwrap();
+        assert_eq!(cfg.vmr.fs.len(), 1);
+        assert!(
+            cfg.vmr.fs[0].virtual_entries.is_empty(),
+            "root virtiofs should not inject init.krun after krun_disable_implicit_init()"
+        );
+        drop(ctx_map);
+
+        assert_eq!(krun_free_ctx(ctx), KRUN_SUCCESS);
     }
 }

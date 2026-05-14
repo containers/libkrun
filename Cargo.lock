@@ -528,6 +528,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "init-blob"
+version = "0.1.0"
+
+[[package]]
 name = "iocuddle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -856,6 +860,7 @@ version = "1.18.0"
 dependencies = [
  "crossbeam-channel",
  "env_logger",
+ "init-blob",
  "krun-aws-nitro",
  "krun-devices",
  "krun-display",

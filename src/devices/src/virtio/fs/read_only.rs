@@ -25,6 +25,7 @@ use super::filesystem::{
     OpenOptions, SetattrValid, ZeroCopyReader, ZeroCopyWriter,
 };
 use super::fuse;
+use super::inode_alloc::InodeAllocator;
 use super::passthrough::{self, PassthroughFs};
 use crate::virtio::bindings;
 
@@ -34,10 +35,6 @@ type Handle = u64;
 fn erofs() -> io::Error {
     io::Error::from_raw_os_error(libc::EROFS)
 }
-
-// Keep the Linux ioctl number so read-only virtio-fs can still handle
-// non-mutating control ioctls while rejecting host-side root deletion.
-const VIRTIO_IOC_REMOVE_ROOT_DIR_REQ: u32 = 0x7603;
 
 fn read_only_open_flags(flags: u32) -> io::Result<u32> {
     let f = flags as i32;
@@ -60,9 +57,9 @@ pub struct PassthroughFsRo {
 }
 
 impl PassthroughFsRo {
-    pub fn new(cfg: passthrough::Config) -> io::Result<Self> {
+    pub fn new(cfg: passthrough::Config, inode_alloc: Arc<InodeAllocator>) -> io::Result<Self> {
         Ok(Self {
-            inner: PassthroughFs::new(cfg)?,
+            inner: PassthroughFs::new(cfg, inode_alloc)?,
         })
     }
 }
@@ -318,10 +315,6 @@ impl FileSystem for PassthroughFsRo {
         out_size: u32,
         exit_code: &Arc<AtomicI32>,
     ) -> io::Result<Vec<u8>> {
-        if cmd == VIRTIO_IOC_REMOVE_ROOT_DIR_REQ {
-            return Err(erofs());
-        }
-
         self.inner.ioctl(
             ctx, inode, handle, flags, cmd, arg, in_size, out_size, exit_code,
         )
