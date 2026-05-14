@@ -620,12 +620,14 @@ dependencies = [
  "krun-arch-gen",
  "krun-smbios",
  "krun-utils",
+ "krun-whp",
  "kvm-bindings",
  "kvm-ioctls",
  "libc",
  "tdx",
  "vm-memory",
  "vmm-sys-util 0.14.0",
+ "windows-sys",
 ]
 
 [[package]]

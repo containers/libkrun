@@ -7,7 +7,24 @@
 
 // For GDT details see arch/x86/include/asm/segment.h
 
-use kvm_bindings::kvm_segment;
+/// Hypervisor-agnostic segment descriptor with the same field semantics as
+/// `kvm_segment` -> https://github.com/rust-vmm/kvm/blob/main/kvm-bindings/src/x86_64/bindings.rs#L1190
+/// Platform-specific code converts this to the native type.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SegmentDescriptor {
+    pub base: u64,
+    pub limit: u32,
+    pub selector: u16,
+    pub type_: u8,
+    pub present: u8,
+    pub dpl: u8,
+    pub db: u8,
+    pub s: u8,
+    pub l: u8,
+    pub g: u8,
+    pub avl: u8,
+    pub unusable: u8,
+}
 
 /// Constructor for a conventional segment GDT (or LDT) entry. Derived from the kernel's segment.h.
 pub fn gdt_entry(flags: u16, base: u32, limit: u32) -> u64 {
@@ -60,14 +77,14 @@ fn get_type(entry: u64) -> u8 {
     ((entry & 0x0000_0F00_0000_0000) >> 40) as u8
 }
 
-/// Automatically build the kvm struct for SET_SREGS from the kernel bit fields.
+/// Automatically builds a hypervisor-agnostic `SegmentDescriptor` from a raw GDT entry.
 ///
 /// # Arguments
 ///
 /// * `entry` - The gdt entry.
 /// * `table_index` - Index of the entry in the gdt table.
-pub fn kvm_segment_from_gdt(entry: u64, table_index: u8) -> kvm_segment {
-    kvm_segment {
+pub fn segment_from_gdt(entry: u64, table_index: u8) -> SegmentDescriptor {
+    SegmentDescriptor {
         base: get_base(entry),
         limit: get_limit(entry),
         selector: u16::from(table_index * 8),
@@ -79,7 +96,6 @@ pub fn kvm_segment_from_gdt(entry: u64, table_index: u8) -> kvm_segment {
         l: get_l(entry),
         g: get_g(entry),
         avl: get_avl(entry),
-        padding: 0,
         unusable: match get_p(entry) {
             0 => 1,
             _ => 0,
@@ -94,7 +110,7 @@ mod tests {
     #[test]
     fn field_parse() {
         let gdt = gdt_entry(0xA09B, 0x10_0000, 0xfffff);
-        let seg = kvm_segment_from_gdt(gdt, 0);
+        let seg = segment_from_gdt(gdt, 0);
         // 0xA09B
         // 'A'
         assert_eq!(0x1, seg.g);
