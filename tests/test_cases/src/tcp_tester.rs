@@ -71,9 +71,27 @@ impl TcpTester {
     }
 
     pub fn run_client(&self) {
-        let mut stream = connect(self.server_ip, self.port);
-        set_timeouts(&mut stream);
-        expect_msg(&mut stream, b"ping!");
+        // Retry connect + first read until the proxy/guest bridge is fully wired up.
+        // gvproxy (and libkrun's TSI) accept the host-side connection immediately,
+        // but the upstream dial to the guest only succeeds once the guest has
+        // reached listen()/accept(). Until then the host either reads zero bytes
+        // (timeout/WouldBlock) or sees an EOF from a forced close. Once the first
+        // byte arrives, the bridge is live; any later error is a real bug.
+        let mut stream = loop {
+            let mut stream = connect(self.server_ip, self.port);
+            set_timeouts(&mut stream);
+            let mut buf = [0u8; 5];
+            match stream.read_exact(&mut buf) {
+                Ok(()) => {
+                    assert_eq!(&buf[..], b"ping!");
+                    break stream;
+                }
+                Err(_) => {
+                    drop(stream);
+                    thread::sleep(Duration::from_millis(200));
+                }
+            }
+        };
         expect_wouldblock(&mut stream);
         stream.write_all(b"pong!").unwrap();
         expect_msg(&mut stream, b"bye!");

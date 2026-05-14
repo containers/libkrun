@@ -62,20 +62,31 @@ pub fn setup_fpu(vcpu: &VcpuFd) -> Result<()> {
 ///
 /// * `vcpu` - Structure for the VCPU that holds the VCPU's fd.
 /// * `boot_ip` - Starting instruction pointer.
-pub fn setup_regs(vcpu: &VcpuFd, boot_ip: u64, id: u8) -> Result<()> {
+/// * `pvh` - Whether to use the PVH boot protocol.
+pub fn setup_regs(vcpu: &VcpuFd, boot_ip: u64, id: u8, pvh: bool) -> Result<()> {
     let regs: kvm_regs = if id == 0 || cfg!(not(feature = "tee")) {
-        kvm_regs {
-            rflags: 0x0000_0000_0000_0002u64,
-            rip: boot_ip,
-            // Frame pointer. It gets a snapshot of the stack pointer (rsp) so that when adjustments are
-            // made to rsp (i.e. reserving space for local variables or pushing values on to the stack),
-            // local variables and function parameters are still accessible from a constant offset from rbp.
-            rsp: super::layout::BOOT_STACK_POINTER,
-            // Starting stack pointer.
-            rbp: super::layout::BOOT_STACK_POINTER,
-            // Must point to zero page address per Linux ABI. This is x86_64 specific.
-            rsi: super::layout::ZERO_PAGE_START,
-            ..Default::default()
+        if pvh {
+            kvm_regs {
+                rflags: 0x0000_0000_0000_0002u64,
+                rip: boot_ip,
+                // PVH ABI: rbx points to hvm_start_info
+                rbx: super::layout::PVH_INFO_START,
+                ..Default::default()
+            }
+        } else {
+            kvm_regs {
+                rflags: 0x0000_0000_0000_0002u64,
+                rip: boot_ip,
+                // Frame pointer. It gets a snapshot of the stack pointer (rsp) so that when adjustments are
+                // made to rsp (i.e. reserving space for local variables or pushing values on to the stack),
+                // local variables and function parameters are still accessible from a constant offset from rbp.
+                rsp: super::layout::BOOT_STACK_POINTER,
+                // Starting stack pointer.
+                rbp: super::layout::BOOT_STACK_POINTER,
+                // Must point to zero page address per Linux ABI. This is x86_64 specific.
+                rsi: super::layout::ZERO_PAGE_START,
+                ..Default::default()
+            }
         }
     } else {
         kvm_regs {
@@ -94,12 +105,15 @@ pub fn setup_regs(vcpu: &VcpuFd, boot_ip: u64, id: u8) -> Result<()> {
 ///
 /// * `mem` - The memory that will be passed to the guest.
 /// * `vcpu` - Structure for the VCPU that holds the VCPU's fd.
-pub fn setup_sregs(mem: &GuestMemoryMmap, vcpu: &VcpuFd, id: u8) -> Result<()> {
+/// * `pvh` - Whether to use the PVH boot protocol.
+pub fn setup_sregs(mem: &GuestMemoryMmap, vcpu: &VcpuFd, id: u8, pvh: bool) -> Result<()> {
     let mut sregs: kvm_sregs = vcpu.get_sregs().map_err(Error::GetStatusRegisters)?;
 
     if cfg!(not(feature = "tee")) {
-        configure_segments_and_sregs(mem, &mut sregs)?;
-        setup_page_tables(mem, &mut sregs)?; // TODO(dgreid) - Can this be done once per system instead
+        configure_segments_and_sregs(mem, &mut sregs, pvh)?;
+        if !pvh {
+            setup_page_tables(mem, &mut sregs)?; // TODO(dgreid) - Can this be done once per system instead
+        }
     } else if id != 0 {
         //sregs.cs.selector = 0x9100;
         //sregs.cs.base = 0x91000;
@@ -116,6 +130,7 @@ const BOOT_GDT_MAX: usize = 4;
 const EFER_LMA: u64 = 0x400;
 const EFER_LME: u64 = 0x100;
 
+const X86_CR0_ET: u64 = 0x10;
 const X86_CR0_PE: u64 = 0x1;
 const X86_CR0_PG: u64 = 0x8000_0000;
 const X86_CR4_PAE: u64 = 0x20;
@@ -140,13 +155,26 @@ fn write_idt_value(val: u64, guest_mem: &GuestMemoryMmap) -> Result<()> {
         .map_err(|_| Error::WriteIDT)
 }
 
-fn configure_segments_and_sregs(mem: &GuestMemoryMmap, sregs: &mut kvm_sregs) -> Result<()> {
-    let gdt_table: [u64; BOOT_GDT_MAX] = [
-        gdt_entry(0, 0, 0),            // NULL
-        gdt_entry(0xa09b, 0, 0xfffff), // CODE
-        gdt_entry(0xc093, 0, 0xfffff), // DATA
-        gdt_entry(0x808b, 0, 0xfffff), // TSS
-    ];
+fn configure_segments_and_sregs(
+    mem: &GuestMemoryMmap,
+    sregs: &mut kvm_sregs,
+    pvh: bool,
+) -> Result<()> {
+    let gdt_table: [u64; BOOT_GDT_MAX] = if pvh {
+        [
+            gdt_entry(0, 0, 0),                // NULL
+            gdt_entry(0xc09b, 0, 0xffff_ffff), // CODE (32-bit protected mode)
+            gdt_entry(0xc093, 0, 0xffff_ffff), // DATA
+            gdt_entry(0x008b, 0, 0x67),        // TSS
+        ]
+    } else {
+        [
+            gdt_entry(0, 0, 0),            // NULL
+            gdt_entry(0xa09b, 0, 0xfffff), // CODE (64-bit long mode)
+            gdt_entry(0xc093, 0, 0xfffff), // DATA
+            gdt_entry(0x808b, 0, 0xfffff), // TSS
+        ]
+    };
 
     let code_seg = kvm_segment_from_gdt(gdt_table[1], 1);
     let data_seg = kvm_segment_from_gdt(gdt_table[2], 2);
@@ -169,9 +197,14 @@ fn configure_segments_and_sregs(mem: &GuestMemoryMmap, sregs: &mut kvm_sregs) ->
     sregs.ss = data_seg;
     sregs.tr = tss_seg;
 
-    /* 64-bit protected mode */
-    sregs.cr0 |= X86_CR0_PE;
-    sregs.efer |= EFER_LME | EFER_LMA;
+    if pvh {
+        sregs.cr0 = X86_CR0_PE | X86_CR0_ET;
+        sregs.cr4 = 0;
+    } else {
+        /* 64-bit protected mode */
+        sregs.cr0 |= X86_CR0_PE;
+        sregs.efer |= EFER_LME | EFER_LMA;
+    }
 
     Ok(())
 }
@@ -225,13 +258,13 @@ mod tests {
         assert_eq!(0x0, read_u64(gm, BOOT_IDT_OFFSET));
 
         assert_eq!(0, sregs.cs.base);
-        assert_eq!(0xfffff, sregs.ds.limit);
+        assert_eq!(0xffffffff, sregs.ds.limit);
         assert_eq!(0x10, sregs.es.selector);
         assert_eq!(1, sregs.fs.present);
         assert_eq!(1, sregs.gs.g);
         assert_eq!(0, sregs.ss.avl);
         assert_eq!(0, sregs.tr.base);
-        assert_eq!(0xfffff, sregs.tr.limit);
+        assert_eq!(0xffffffff, sregs.tr.limit);
         assert_eq!(0, sregs.tr.avl);
         assert!(sregs.cr0 & X86_CR0_PE != 0);
         assert!(sregs.efer & EFER_LME != 0 && sregs.efer & EFER_LMA != 0);
@@ -241,7 +274,7 @@ mod tests {
     fn test_configure_segments_and_sregs() {
         let mut sregs: kvm_sregs = Default::default();
         let gm = create_guest_mem();
-        configure_segments_and_sregs(&gm, &mut sregs).unwrap();
+        configure_segments_and_sregs(&gm, &mut sregs, false).unwrap();
 
         validate_segments_and_sregs(&gm, &sregs);
     }
@@ -304,7 +337,7 @@ mod tests {
             ..Default::default()
         };
 
-        setup_regs(&vcpu, expected_regs.rip, 1).unwrap();
+        setup_regs(&vcpu, expected_regs.rip, 1, false).unwrap();
 
         let actual_regs: kvm_regs = vcpu.get_regs().unwrap();
         assert_eq!(actual_regs, expected_regs);
@@ -318,7 +351,7 @@ mod tests {
         let gm = create_guest_mem();
 
         assert!(vcpu.set_sregs(&Default::default()).is_ok());
-        setup_sregs(&gm, &vcpu, 1).unwrap();
+        setup_sregs(&gm, &vcpu, 1, false).unwrap();
 
         let mut sregs: kvm_sregs = vcpu.get_sregs().unwrap();
         // for AMD KVM_GET_SREGS returns g = 0 for each kvm_segment.
