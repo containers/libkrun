@@ -675,7 +675,8 @@ static void unescape_string(char *string, int len)
             const char *unescaped = "?";
             char utf8Buf[5];
             unsigned int codepoint = 0;
-            hexToDigit(&codepoint, val++);
+            /* skip 'u', point at first hex digit */
+            hexToDigit(&codepoint, ++val);
             val += 3;
             /* check if this is a surrogate */
             if ((codepoint & 0xFC00) == 0xD800) {
@@ -701,9 +702,11 @@ static void unescape_string(char *string, int len)
                 continue;
             }
             memcpy(&string[i], unescaped, (unsigned int)strlen(unescaped));
+            i += strlen(unescaped);
             break;
         }
         }
+        val++;
     }
     string[i] = '\0';
 }
