@@ -836,26 +836,33 @@ impl PassthroughFs {
         gid: libc::gid_t,
     ) -> io::Result<(Option<ScopedUid>, Option<ScopedGid>)> {
         // Change the gid first, since once we change the uid we lose the capability to change the gid.
-        let scoped_gid = if gid == 0 || self.my_gid == Some(gid) {
+        let scoped_gid = if self.my_gid == Some(gid) {
+            None
+        } else if self.my_gid.is_none() {
+            // We can switch gids, so actually do it. Without this,
+            // operations from guest root would run with the VMM's
+            // current gid instead of gid 0.
+            ScopedGid::new(gid)?
+        } else if gid == 0 {
             // Always allow "root" accesses even if we don't have root powers.
             // This means guest processes running as root can use /tmp (though
             // the files will not be actually owned by root), which is desirable.
             None
-        } else if self.my_gid.is_some() {
+        } else {
             // Reject writes as any other gid if we do not have setgid
             // privileges.
             return Err(io::Error::from_raw_os_error(libc::EPERM));
-        } else {
-            ScopedGid::new(gid)?
         };
 
         // Same logic as above, for uid.
-        let scoped_uid = if uid == 0 || self.my_uid == Some(uid) {
+        let scoped_uid = if self.my_uid == Some(uid) {
             None
-        } else if self.my_uid.is_some() {
-            return Err(io::Error::from_raw_os_error(libc::EPERM));
-        } else {
+        } else if self.my_uid.is_none() {
             ScopedUid::new(uid)?
+        } else if uid == 0 {
+            None
+        } else {
+            return Err(io::Error::from_raw_os_error(libc::EPERM));
         };
 
         Ok((scoped_uid, scoped_gid))
