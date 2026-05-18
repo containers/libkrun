@@ -31,9 +31,9 @@ Fedora, `musl-dev` on Alpine, etc.).
 make
 ```
 
-Produces `./host` and `./rootfs/guest`. The rootfs is just the static
-guest binary plus empty `proc/`, `sys/`, `dev/` mountpoints — no
-container image or external rootfs needed.
+Produces `./host` and `./rootfs/guest`. The rootfs is just the
+single static guest binary — no userland, no `/proc` or `/dev`
+mountpoints, no container image needed.
 
 ## Run
 

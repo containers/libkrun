@@ -17,12 +17,12 @@ all: host $(ROOTFS_DIR)/guest
 host: host.c
 	gcc -o $@ $< $(CFLAGS_HOST) $(LDFLAGS_$(ARCH)_$(OS))
 
-# Minimal rootfs: a statically linked guest binary plus the
-# conventional /proc, /sys, /dev mountpoints. No userland needed —
-# the guest binary doesn't fork/exec or open anything outside vsock,
-# so we don't need /bin, /lib, /etc, or any container image.
+# Minimal rootfs: just the statically linked guest binary. No userland
+# needed — the guest binary doesn't fork/exec or open anything outside
+# vsock, and libkrunfw's init doesn't require /proc, /sys, or /dev to
+# exist as mountpoints in the rootfs.
 $(ROOTFS_DIR)/guest: guest.c
-	mkdir -p $(ROOTFS_DIR)/proc $(ROOTFS_DIR)/sys $(ROOTFS_DIR)/dev
+	mkdir -p $(ROOTFS_DIR)
 	gcc -o $@ $< $(CFLAGS_GUEST)
 
 # Run the host a few times at different per-probe timeouts and print
