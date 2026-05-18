@@ -211,6 +211,9 @@ struct WhvInterruptControl {
 pub enum InterruptType {
     Fixed = 0,
     LowestPriority = 1,
+    Nmi = 4,
+    Init = 5,
+    Sipi = 6,
 }
 
 #[repr(u8)]

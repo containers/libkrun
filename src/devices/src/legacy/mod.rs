@@ -17,6 +17,8 @@ mod i8042;
 mod ioapic;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod ioapic_kvm;
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+mod ioapic_whp;
 mod irqchip;
 #[cfg(all(target_os = "linux", target_arch = "riscv64"))]
 mod kvmaia;
@@ -59,6 +61,8 @@ pub use self::hvfgicv3::HvfGicV3;
 pub use self::i8042::{Error as I8042DeviceError, I8042Device};
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub use self::ioapic_kvm::IoApic;
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+pub use self::ioapic_whp::WhpIoapic;
 #[cfg(any(test, feature = "test_utils"))]
 pub use self::irqchip::test_utils::DummyIrqChip;
 pub use self::irqchip::{IrqChip, IrqChipDevice, IrqChipT};
