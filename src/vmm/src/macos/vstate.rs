@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::io;
 use std::result;
-#[cfg(not(test))]
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -40,6 +39,10 @@ pub enum Error {
     SetUserMemoryRegion(hvf::Error),
     /// Failed to signal Vcpu.
     SignalVcpu(utils::errno::Error),
+    /// Failed to request an HVF vCPU exit.
+    VcpuRequestExit(hvf::Error),
+    /// Cannot send event to vCPU.
+    VcpuEvent,
     /// Error doing Vcpu Init on Arm.
     VcpuArmInit,
     /// Error getting the Vcpu preferred target on Arm.
@@ -75,6 +78,8 @@ impl Display for Error {
             ),
             SetUserMemoryRegion(e) => write!(f, "Cannot set the memory regions: {e:?}"),
             SignalVcpu(e) => write!(f, "Failed to signal Vcpu: {e}"),
+            VcpuRequestExit(e) => write!(f, "Failed to request vCPU exit: {e:?}"),
+            VcpuEvent => write!(f, "Cannot send event to vCPU"),
             REGSConfiguration(e) => write!(
                 f,
                 "Error configuring the general purpose aarch64 registers: {e:?}"
@@ -106,6 +111,10 @@ impl Vm {
 
     pub fn hvf_vm(&self) -> &HvfVm {
         &self.hvf_vm
+    }
+
+    pub fn adjust_clock_after_pause(&self, _paused_ns: u64) -> Result<()> {
+        Ok(())
     }
 
     /// Initializes the guest memory.
@@ -333,6 +342,7 @@ impl Vcpu {
         let event_sender = self.event_sender.take().unwrap();
         let response_receiver = self.response_receiver.take().unwrap();
         let (init_tls_sender, init_tls_receiver) = unbounded();
+        let vcpu_list = self.vcpu_list.clone();
 
         let vcpu_thread = thread::Builder::new()
             .name(format!("fc_vcpu {}", self.cpu_index()))
@@ -344,13 +354,15 @@ impl Vcpu {
             })
             .map_err(Error::VcpuSpawn)?;
 
-        init_tls_receiver
+        let hvf_vcpuid = init_tls_receiver
             .recv()
             .expect("Error waiting for TLS initialization.");
 
         Ok(VcpuHandle::new(
             event_sender,
             response_receiver,
+            hvf_vcpuid,
+            vcpu_list,
             vcpu_thread,
         ))
     }
@@ -367,7 +379,7 @@ impl Vcpu {
                 }
                 VcpuExit::Canceled => {
                     debug!("vCPU {vcpuid} canceled");
-                    Ok(VcpuEmulation::Handled)
+                    Ok(VcpuEmulation::Interrupted)
                 }
                 VcpuExit::CpuOn(mpidr, entry, context_id) => {
                     debug!("CpuOn: mpidr=0x{mpidr:x} entry=0x{entry:x} context_id={context_id}");
@@ -436,17 +448,17 @@ impl Vcpu {
     }
 
     /// Main loop of the vCPU thread.
-    pub fn run(&mut self, init_tls_sender: Sender<bool>) {
+    pub fn run(&mut self, init_tls_sender: Sender<u64>) {
         let mut hvf_vcpu =
             HvfVcpu::new(self.mpidr, self.nested_enabled).expect("Can't create HVF vCPU");
         let hvf_vcpuid = hvf_vcpu.id();
 
-        init_tls_sender
-            .send(true)
-            .expect("Cannot notify vcpu TLS initialization.");
-
         let (wfe_sender, wfe_receiver) = unbounded();
         self.vcpu_list.register(hvf_vcpuid, wfe_sender);
+
+        init_tls_sender
+            .send(hvf_vcpuid)
+            .expect("Cannot notify vcpu TLS initialization.");
 
         let entry_addr = if let Some(boot_receiver) = &self.boot_receiver {
             boot_receiver.recv().unwrap()
@@ -459,11 +471,21 @@ impl Vcpu {
             .unwrap_or_else(|_| panic!("Can't set HVF vCPU {hvf_vcpuid} initial state"));
 
         loop {
+            if !self.handle_pending_event(false, hvf_vcpuid) {
+                self.exit(FC_EXIT_CODE_GENERIC_ERROR);
+                break;
+            }
+
             match self.run_emulation(&mut hvf_vcpu) {
                 // Emulation ran successfully, continue.
                 Ok(VcpuEmulation::Handled) => (),
                 // Emulation was interrupted by a breakpoint.
-                Ok(VcpuEmulation::Interrupted) => self.wait_for_resume(),
+                Ok(VcpuEmulation::Interrupted) => {
+                    if !self.handle_pending_event(false, hvf_vcpuid) {
+                        self.exit(FC_EXIT_CODE_GENERIC_ERROR);
+                        break;
+                    }
+                }
                 // Wait for an external event.
                 Ok(VcpuEmulation::WaitForEvent) => {
                     self.wait_for_event(hvf_vcpuid, &wfe_receiver, None)
@@ -507,7 +529,57 @@ impl Vcpu {
         }
     }
 
-    fn wait_for_resume(&mut self) {}
+    fn handle_pending_event(&mut self, block: bool, hvf_vcpuid: u64) -> bool {
+        let event = if block {
+            match self.event_receiver.recv() {
+                Ok(event) => Some(event),
+                Err(_) => return false,
+            }
+        } else {
+            match self.event_receiver.try_recv() {
+                Ok(event) => Some(event),
+                Err(crossbeam_channel::TryRecvError::Empty) => None,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => return false,
+            }
+        };
+
+        match event {
+            Some(VcpuEvent::Pause) => {
+                self.response_sender
+                    .send(VcpuResponse::Paused)
+                    .expect("failed to send pause status");
+                loop {
+                    match self.event_receiver.recv() {
+                        Ok(VcpuEvent::Resume { paused_ns }) => {
+                            if hvf::vcpu_adjust_vtimer_offset(hvf_vcpuid, paused_ns).is_err() {
+                                return false;
+                            }
+                            self.response_sender
+                                .send(VcpuResponse::Resumed)
+                                .expect("failed to send resume status");
+                            return true;
+                        }
+                        Ok(VcpuEvent::Pause) => {
+                            self.response_sender
+                                .send(VcpuResponse::Paused)
+                                .expect("failed to send pause status");
+                        }
+                        Err(_) => return false,
+                    }
+                }
+            }
+            Some(VcpuEvent::Resume { paused_ns }) => {
+                if hvf::vcpu_adjust_vtimer_offset(hvf_vcpuid, paused_ns).is_err() {
+                    return false;
+                }
+                self.response_sender
+                    .send(VcpuResponse::Resumed)
+                    .expect("failed to send resume status");
+                true
+            }
+            None => true,
+        }
+    }
 
     fn exit(&mut self, exit_code: u8) {
         self.response_sender
@@ -526,16 +598,13 @@ impl Drop for Vcpu {
     }
 }
 
-// Allow currently unused Pause and Exit events. These will be used by the vmm later on.
-#[allow(unused)]
 #[derive(Debug)]
 /// List of events that the Vcpu can receive.
 pub enum VcpuEvent {
     /// Pause the Vcpu.
     Pause,
     /// Event that should resume the Vcpu.
-    Resume,
-    // Serialize and Deserialize to follow after we get the support from kvm-ioctls.
+    Resume { paused_ns: u64 },
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -553,34 +622,35 @@ pub enum VcpuResponse {
 pub struct VcpuHandle {
     event_sender: Sender<VcpuEvent>,
     response_receiver: Receiver<VcpuResponse>,
+    hvf_vcpuid: u64,
+    vcpu_list: Arc<VcpuList>,
+    vcpu_thread: Option<thread::JoinHandle<()>>,
 }
 
 impl VcpuHandle {
     pub fn new(
         event_sender: Sender<VcpuEvent>,
         response_receiver: Receiver<VcpuResponse>,
-        _vcpu_thread: thread::JoinHandle<()>,
+        hvf_vcpuid: u64,
+        vcpu_list: Arc<VcpuList>,
+        vcpu_thread: thread::JoinHandle<()>,
     ) -> Self {
         Self {
             event_sender,
             response_receiver,
+            hvf_vcpuid,
+            vcpu_list,
+            vcpu_thread: Some(vcpu_thread),
         }
     }
 
     pub fn send_event(&self, event: VcpuEvent) -> Result<()> {
-        // Use expect() to crash if the other thread closed this channel.
         self.event_sender
             .send(event)
-            .expect("event sender channel closed on vcpu end.");
-        // Kick the vcpu so it picks up the message.
-        /*
-        self.vcpu_thread
-            .as_ref()
-            // Safe to unwrap since constructor make this 'Some'.
-            .unwrap()
-            .kill(sigrtmin() + VCPU_RTSIG_OFFSET)
-            .map_err(Error::SignalVcpu)?;
-        */
+            .map_err(|_| Error::VcpuEvent)?;
+
+        hvf::vcpu_request_exit(self.hvf_vcpuid).map_err(Error::VcpuRequestExit)?;
+        self.vcpu_list.wake(self.hvf_vcpuid);
         Ok(())
     }
 

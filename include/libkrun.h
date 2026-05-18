@@ -951,6 +951,24 @@ int32_t krun_set_egress_policy(uint32_t ctx_id, const char **c_cidrs);
 int32_t krun_get_shutdown_eventfd(uint32_t ctx_id);
 
 /**
+ * Configures a Unix stream socket used to control a running microVM.
+ *
+ * The socket is created by the VMM process after the microVM is built and before
+ * the event loop starts. Clients may send one of the newline-terminated commands
+ * "PAUSE", "RESUME", or "STATUS" and receive a single-line response.
+ *
+ * Arguments:
+ *  "ctx_id"        - the configuration context ID.
+ *  "c_socket_path" - a null-terminated path for the control socket.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ *  -EINVAL if c_socket_path is NULL or invalid.
+ *  -ENOENT if ctx_id is invalid.
+ */
+int32_t krun_set_control_socket(uint32_t ctx_id, const char *c_socket_path);
+
+/**
  * Configures the console device to ignore stdin and write the output to "c_filepath".
  *
  * Arguments:

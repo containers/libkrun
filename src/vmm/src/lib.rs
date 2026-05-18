@@ -41,13 +41,11 @@ use std::io;
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
-#[cfg(target_os = "linux")]
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(target_arch = "x86_64")]
 use crate::device_manager::legacy::PortIODeviceManager;
 use crate::device_manager::mmio::MMIODeviceManager;
-#[cfg(target_os = "linux")]
 use crate::vstate::VcpuEvent;
 use crate::vstate::{Vcpu, VcpuHandle, VcpuResponse, Vm};
 
@@ -124,6 +122,8 @@ pub enum Error {
     VcpuEvent(vstate::Error),
     /// Cannot create a vCPU handle.
     VcpuHandle(vstate::Error),
+    /// vCPU pause failed.
+    VcpuPause,
     /// vCPU resume failed.
     VcpuResume,
     /// Cannot spawn a new Vcpu thread.
@@ -160,6 +160,7 @@ impl Display for Error {
             Vcpu(e) => write!(f, "Vcpu error: {e}"),
             VcpuEvent(e) => write!(f, "Cannot send event to vCPU. {e:?}"),
             VcpuHandle(e) => write!(f, "Cannot create a vCPU handle. {e}"),
+            VcpuPause => write!(f, "vCPUs pause failed."),
             VcpuResume => write!(f, "vCPUs resume failed."),
             VcpuSpawn(e) => write!(f, "Cannot spawn Vcpu thread: {e}"),
             Vm(e) => write!(f, "Vm error: {e}"),
@@ -189,6 +190,14 @@ pub trait VmmEventsObserver {
 /// Shorthand result type for internal VMM commands.
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VmmRunState {
+    Paused,
+    Running,
+    Pausing,
+    Resuming,
+}
+
 /// Contains the state and associated methods required for the Firecracker VMM.
 pub struct Vmm {
     // Guest VM core resources.
@@ -198,6 +207,8 @@ pub struct Vmm {
     kernel_cmdline: KernelCmdline,
 
     vcpus_handles: Vec<VcpuHandle>,
+    run_state: VmmRunState,
+    paused_at: Option<Instant>,
     exit_evt: EventFd,
     vm: Vm,
     exit_observers: Vec<Arc<Mutex<dyn VmmExitObserver>>>,
@@ -210,6 +221,35 @@ pub struct Vmm {
 }
 
 impl Vmm {
+    fn wait_for_vcpu_response(
+        handle: &VcpuHandle,
+        expected: VcpuResponse,
+        deadline: Instant,
+    ) -> Result<()> {
+        loop {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .ok_or(Error::VcpuPause)?;
+
+            match handle.response_receiver().recv_timeout(remaining) {
+                Ok(response) if response == expected => return Ok(()),
+                Ok(VcpuResponse::Exited(_)) => return Err(Error::VcpuPause),
+                Ok(_) => {}
+                Err(_) => return Err(Error::VcpuPause),
+            }
+        }
+    }
+
+    fn paused_duration_ns(paused_duration: Duration) -> u64 {
+        u64::try_from(paused_duration.as_nanos()).unwrap_or(u64::MAX)
+    }
+
+    fn adjust_guest_clock_after_pause(&self, paused_duration: Duration) -> Result<()> {
+        self.vm
+            .adjust_clock_after_pause(Self::paused_duration_ns(paused_duration))
+            .map_err(Error::Vm)
+    }
+
     /// Gets the the specified bus device.
     pub fn get_bus_device(
         &self,
@@ -221,6 +261,16 @@ impl Vmm {
 
     /// Starts the microVM vcpus.
     pub fn start_vcpus(&mut self, mut vcpus: Vec<Vcpu>) -> Result<()> {
+        let t_sv = std::time::Instant::now();
+        let sv_timing_on = std::env::var("RUST_LOG").unwrap_or_default().contains("info");
+        macro_rules! sv_timing {
+            ($label:expr) => {
+                if sv_timing_on {
+                    eprintln!("[vcpu] {:28} {}ms", $label, t_sv.elapsed().as_millis());
+                }
+            };
+        }
+
         let vcpu_count = vcpus.len();
 
         Vcpu::register_kick_signal_handler();
@@ -233,36 +283,126 @@ impl Vmm {
             self.vcpus_handles
                 .push(vcpu.start_threaded().map_err(Error::VcpuHandle)?);
         }
+        sv_timing!("threads spawned (hv_vcpu_create)");
 
-        // The vcpus start off in the `Paused` state, let them run.
-        self.resume_vcpus()?;
+        self.run_state = VmmRunState::Running;
 
+        // HVF (macOS): vCPU threads are not in a Paused state after spawn —
+        // handle_pending_event() uses a non-blocking try_recv on the first
+        // iteration, finds nothing, and enters hv_vcpu_run() immediately.
+        // Sending VcpuEvent::Resume would queue a VcpuResponse::Resumed that
+        // sits in the channel and is silently discarded by the next
+        // wait_for_vcpu_response call, so skip it.
+        //
+        // KVM (Linux): vCPU threads start in the Paused state machine
+        // (vstate.rs: StateMachine::run(self, Self::paused)). They block
+        // waiting for a Resume event and will never execute guest code until
+        // one is sent.
+        #[cfg(target_os = "linux")]
+        self.resume_vcpus(Duration::ZERO)?;
+
+        sv_timing!("vcpus started");
+
+        Ok(())
+    }
+
+    /// Sends a pause command to the vcpus.
+    pub fn pause_vcpus(&mut self) -> Result<()> {
+        for handle in self.vcpus_handles.iter() {
+            handle
+                .send_event(VcpuEvent::Pause)
+                .map_err(Error::VcpuEvent)?;
+        }
+
+        let deadline = Instant::now() + Duration::from_millis(1000);
+        for handle in self.vcpus_handles.iter() {
+            Self::wait_for_vcpu_response(handle, VcpuResponse::Paused, deadline)?;
+        }
         Ok(())
     }
 
     /// Sends a resume command to the vcpus.
-    #[cfg(target_os = "linux")]
-    pub fn resume_vcpus(&mut self) -> Result<()> {
+    pub fn resume_vcpus(&mut self, paused_duration: Duration) -> Result<()> {
+        let paused_ns = Self::paused_duration_ns(paused_duration);
         for handle in self.vcpus_handles.iter() {
             handle
-                .send_event(VcpuEvent::Resume)
+                .send_event(VcpuEvent::Resume { paused_ns })
                 .map_err(Error::VcpuEvent)?;
         }
+
+        let deadline = Instant::now() + Duration::from_millis(1000);
         for handle in self.vcpus_handles.iter() {
-            match handle
-                .response_receiver()
-                .recv_timeout(Duration::from_millis(1000))
-            {
-                Ok(VcpuResponse::Resumed) => (),
-                _ => return Err(Error::VcpuResume),
-            }
+            Self::wait_for_vcpu_response(handle, VcpuResponse::Resumed, deadline)
+                .map_err(|_| Error::VcpuResume)?;
         }
         Ok(())
     }
 
-    #[cfg(target_os = "macos")]
-    pub fn resume_vcpus(&mut self) -> Result<()> {
-        Ok(())
+    /// Pause the microVM.
+    pub fn pause(&mut self) -> Result<()> {
+        match self.run_state {
+            VmmRunState::Paused => Ok(()),
+            VmmRunState::Running | VmmRunState::Resuming => {
+                self.run_state = VmmRunState::Pausing;
+                match self.pause_vcpus() {
+                    Ok(()) => {
+                        self.run_state = VmmRunState::Paused;
+                        self.paused_at = Some(Instant::now());
+                        Ok(())
+                    }
+                    Err(e) => {
+                        if self.resume_vcpus(Duration::ZERO).is_ok() {
+                            self.run_state = VmmRunState::Running;
+                            self.paused_at = None;
+                        }
+                        Err(e)
+                    }
+                }
+            }
+            VmmRunState::Pausing => Err(Error::VcpuPause),
+        }
+    }
+
+    /// Resume the microVM.
+    pub fn resume(&mut self) -> Result<()> {
+        match self.run_state {
+            VmmRunState::Running => Ok(()),
+            VmmRunState::Paused | VmmRunState::Pausing => {
+                self.run_state = VmmRunState::Resuming;
+                let paused_duration = self
+                    .paused_at
+                    .map(|paused_at| paused_at.elapsed())
+                    .unwrap_or_default();
+                match self
+                    .adjust_guest_clock_after_pause(paused_duration)
+                    .and_then(|_| self.resume_vcpus(paused_duration))
+                {
+                    Ok(()) => {
+                        self.run_state = VmmRunState::Running;
+                        self.paused_at = None;
+                        Ok(())
+                    }
+                    Err(e) => {
+                        if self.pause_vcpus().is_ok() {
+                            self.run_state = VmmRunState::Paused;
+                            self.paused_at = Some(Instant::now());
+                        }
+                        Err(e)
+                    }
+                }
+            }
+            VmmRunState::Resuming => Err(Error::VcpuResume),
+        }
+    }
+
+    /// Return the current runtime state.
+    pub fn run_state(&self) -> &'static str {
+        match self.run_state {
+            VmmRunState::Paused => "paused",
+            VmmRunState::Running => "running",
+            VmmRunState::Pausing => "pausing",
+            VmmRunState::Resuming => "resuming",
+        }
     }
 
     /// Configures the system for boot.

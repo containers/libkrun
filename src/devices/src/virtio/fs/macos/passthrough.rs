@@ -704,7 +704,6 @@ impl PassthroughFs {
             st.st_ino,
             c_path.to_str().unwrap()
         );
-
         let mut attr_flags: u32 = 0;
 
         if st.st_mode & libc::S_IFMT == libc::S_IFDIR
@@ -1378,7 +1377,6 @@ impl FileSystem for PassthroughFs {
         extensions: Extensions,
     ) -> io::Result<(Entry, Option<Handle>, OpenOptions)> {
         let c_path = self.name_to_path(parent, name)?;
-
         let flags = self.parse_open_flags(flags as i32);
         let hostmode = if (flags & libc::O_DIRECTORY) != 0 {
             0o700

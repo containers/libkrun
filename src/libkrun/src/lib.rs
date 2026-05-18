@@ -27,15 +27,16 @@ use std::env;
 use std::ffi::CString;
 use std::ffi::{c_void, CStr};
 use std::fs::File;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Read, Write};
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::os::fd::{BorrowedFd, FromRawFd, RawFd};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::slice;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::LazyLock;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use utils::eventfd::EventFd;
 use vmm::resources::{
     DefaultVirtioConsoleConfig, PortConfig, SerialConsoleConfig, TsiFlags, VirtioConsoleConfigMode,
@@ -163,6 +164,7 @@ struct ContextConfig {
     gpu_shm_size: Option<usize>,
     enable_snd: bool,
     console_output: Option<PathBuf>,
+    control_socket_path: Option<PathBuf>,
     vmm_uid: Option<libc::uid_t>,
     vmm_gid: Option<libc::gid_t>,
 }
@@ -440,6 +442,55 @@ fn log_level_to_filter_str(level: u32) -> &'static str {
         4 => "debug",
         _ => "trace",
     }
+}
+
+fn handle_control_stream(mut stream: UnixStream, vmm: &Arc<Mutex<vmm::Vmm>>) {
+    let mut buf = [0_u8; 128];
+    let response = match stream.read(&mut buf) {
+        Ok(0) => "ERR EINVAL empty command\n".to_string(),
+        Ok(n) => {
+            let cmd = String::from_utf8_lossy(&buf[..n]);
+            match cmd.trim().to_ascii_uppercase().as_str() {
+                "PAUSE" => match vmm.lock().unwrap().pause() {
+                    Ok(()) => "OK paused\n".to_string(),
+                    Err(e) => format!("ERR EIO {e}\n"),
+                },
+                "RESUME" => match vmm.lock().unwrap().resume() {
+                    Ok(()) => "OK running\n".to_string(),
+                    Err(e) => format!("ERR EIO {e}\n"),
+                },
+                "STATUS" => {
+                    let state = vmm.lock().unwrap().run_state();
+                    format!("OK {state}\n")
+                }
+                _ => "ERR EINVAL unknown command\n".to_string(),
+            }
+        }
+        Err(e) => format!("ERR EIO {e}\n"),
+    };
+
+    let _ = stream.write_all(response.as_bytes());
+}
+
+fn start_control_socket(path: PathBuf, vmm: Arc<Mutex<vmm::Vmm>>) -> std::io::Result<()> {
+    let _ = std::fs::remove_file(&path);
+    let listener = UnixListener::bind(&path)?;
+
+    std::thread::Builder::new()
+        .name("krun control".into())
+        .spawn(move || {
+            for stream in listener.incoming() {
+                match stream {
+                    Ok(stream) => handle_control_stream(stream, &vmm),
+                    Err(e) => {
+                        error!("control socket accept failed: {e}");
+                        break;
+                    }
+                }
+            }
+        })?;
+
+    Ok(())
 }
 
 #[no_mangle]
@@ -1895,6 +1946,27 @@ pub extern "C" fn krun_get_shutdown_eventfd(ctx_id: u32) -> i32 {
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+pub unsafe extern "C" fn krun_set_control_socket(ctx_id: u32, c_socket_path: *const c_char) -> i32 {
+    if c_socket_path.is_null() {
+        return -libc::EINVAL;
+    }
+
+    let socket_path = match CStr::from_ptr(c_socket_path).to_str() {
+        Ok(path) => PathBuf::from(path),
+        Err(_) => return -libc::EINVAL,
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            ctx_cfg.get_mut().control_socket_path = Some(socket_path);
+            KRUN_SUCCESS
+        }
+        Entry::Vacant(_) => -libc::ENOENT,
+    }
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
 pub unsafe extern "C" fn krun_set_console_output(ctx_id: u32, c_filepath: *const c_char) -> i32 {
     let filepath = match CStr::from_ptr(c_filepath).to_str() {
         Ok(f) => f,
@@ -2649,6 +2721,17 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(feature = "aws-nitro")]
     return krun_start_enter_nitro(ctx_id);
 
+    let t_libkrun = std::time::Instant::now();
+    let lk_timing_on = std::env::var("RUST_LOG").unwrap_or_default().contains("info");
+    macro_rules! lk_timing {
+        ($label:expr) => {
+            if lk_timing_on {
+                eprintln!("[libkrun] {:28} {}ms", $label, t_libkrun.elapsed().as_millis());
+            }
+        };
+    }
+    lk_timing!("krun_start_enter");
+
     let mut event_manager = match EventManager::new() {
         Ok(em) => em,
         Err(e) => {
@@ -2677,6 +2760,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             return -libc::ENOENT;
         }
     }
+    lk_timing!("krunfw loaded");
 
     #[cfg(feature = "blk")]
     for block_cfg in ctx_cfg.get_block_cfg() {
@@ -2811,6 +2895,7 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
 
     let (sender, _receiver) = unbounded();
 
+    lk_timing!("before build_microvm");
     let _vmm = match vmm::builder::build_microvm(
         &ctx_cfg.vmr,
         &mut event_manager,
@@ -2823,6 +2908,14 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
             return -libc::EINVAL;
         }
     };
+    lk_timing!("build_microvm done");
+
+    if let Some(control_socket_path) = ctx_cfg.control_socket_path.take() {
+        if let Err(e) = start_control_socket(control_socket_path, _vmm.clone()) {
+            error!("Unable to start control socket: {e}");
+            return -libc::EINVAL;
+        }
+    }
 
     #[cfg(target_os = "macos")]
     if ctx_cfg.gpu_virgl_flags.is_some() {

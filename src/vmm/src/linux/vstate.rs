@@ -14,6 +14,7 @@ use std::fmt::{Display, Formatter};
 use std::io;
 use std::ops::Range;
 
+use std::os::fd::AsRawFd;
 use std::os::unix::io::RawFd;
 
 #[cfg(target_arch = "x86_64")]
@@ -73,6 +74,9 @@ use super::tee::amdsnp::launch as snp;
 
 /// Signal number (SIGRTMIN) used to kick Vcpus.
 pub(crate) const VCPU_RTSIG_OFFSET: i32 = 0;
+
+#[cfg(target_arch = "x86_64")]
+const KVM_KVMCLOCK_CTRL: libc::c_ulong = 0xAEAD;
 
 /// Errors associated with the wrappers over KVM ioctls.
 #[derive(Debug)]
@@ -230,6 +234,8 @@ pub enum Error {
     VcpuTlsNotPresent,
     /// Unexpected KVM_RUN exit reason
     VcpuUnhandledKvmExit,
+    /// Failed to notify KVM that vCPU time was paused.
+    VcpuKvmClockCtrl(io::Error),
     /// Unsupported KVM_EXIT_HYPERCALL.
     #[cfg(feature = "tee")]
     VcpuUnsupportedHypercall,
@@ -397,6 +403,7 @@ impl Display for Error {
             VcpuTlsInit => write!(f, "Cannot clean init vcpu TLS"),
             VcpuTlsNotPresent => write!(f, "Vcpu not present in TLS"),
             VcpuUnhandledKvmExit => write!(f, "Unexpected KVM_RUN exit reason"),
+            VcpuKvmClockCtrl(e) => write!(f, "Failed to adjust KVM vCPU clock: {e}"),
             #[cfg(feature = "tee")]
             VcpuUnsupportedHypercall => write!(f, "Unsupported KVM_EXIT_HYPERCALL"),
             #[cfg(target_arch = "x86_64")]
@@ -826,6 +833,22 @@ impl Vm {
     /// Gets a reference to the kvm file descriptor owned by this VM.
     pub fn fd(&self) -> &VmFd {
         &self.fd
+    }
+
+    pub fn adjust_clock_after_pause(&self, paused_ns: u64) -> Result<()> {
+        if paused_ns == 0 {
+            return Ok(());
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            let mut clock = self.fd.get_clock().map_err(Error::VmGetClock)?;
+            clock.clock = clock.clock.saturating_sub(paused_ns);
+            clock.flags &= !KVM_CLOCK_TSC_STABLE;
+            self.fd.set_clock(&clock).map_err(Error::VmSetClock)?;
+        }
+
+        Ok(())
     }
 
     #[allow(unused)]
@@ -1573,6 +1596,28 @@ impl Vcpu {
         StateMachine::run(self, Self::paused);
     }
 
+    fn adjust_guest_clock_after_pause(&self, paused_ns: u64) -> Result<()> {
+        if paused_ns == 0 {
+            return Ok(());
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            let ret = unsafe { libc::ioctl(self.fd.as_raw_fd(), KVM_KVMCLOCK_CTRL) };
+            if ret < 0 {
+                return Err(Error::VcpuKvmClockCtrl(io::Error::last_os_error()));
+            }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            arch::aarch64::regs::adjust_virtual_timer_offset(&self.fd, paused_ns)
+                .map_err(Error::REGSConfiguration)?;
+        }
+
+        Ok(())
+    }
+
     // This is the main loop of the `Running` state.
     fn running(&mut self) -> StateMachine<Self> {
         // This loop is here just for optimizing the emulation path.
@@ -1608,13 +1653,10 @@ impl Vcpu {
                     .send(VcpuResponse::Paused)
                     .expect("failed to send pause status");
 
-                // TODO: we should call `KVM_KVMCLOCK_CTRL` here to make sure
-                // TODO continued: the guest soft lockup watchdog does not panic on Resume.
-
                 // Move to 'paused' state.
                 state = StateMachine::next(Self::paused);
             }
-            Ok(VcpuEvent::Resume) => {
+            Ok(VcpuEvent::Resume { .. }) => {
                 self.response_sender
                     .send(VcpuResponse::Resumed)
                     .expect("failed to send resume status");
@@ -1635,8 +1677,11 @@ impl Vcpu {
     fn paused(&mut self) -> StateMachine<Self> {
         match self.event_receiver.recv() {
             // Paused ---- Resume ----> Running
-            Ok(VcpuEvent::Resume) => {
-                // Nothing special to do.
+            Ok(VcpuEvent::Resume { paused_ns }) => {
+                if let Err(e) = self.adjust_guest_clock_after_pause(paused_ns) {
+                    error!("failed to adjust guest clock after pause: {e}");
+                    return self.exit(FC_EXIT_CODE_GENERIC_ERROR);
+                }
                 self.response_sender
                     .send(VcpuResponse::Resumed)
                     .expect("failed to send resume status");
@@ -1724,7 +1769,7 @@ pub enum VcpuEvent {
     /// Pause the Vcpu.
     Pause,
     /// Event that should resume the Vcpu.
-    Resume,
+    Resume { paused_ns: u64 },
     // Serialize and Deserialize to follow after we get the support from kvm-ioctls.
 }
 

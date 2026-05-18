@@ -131,11 +131,16 @@ impl InterruptTransport {
     }
 
     fn try_signal(&self, status: u32) -> Result<(), crate::Error> {
-        self.status().fetch_or(status as usize, Ordering::SeqCst);
-        self.intc()
-            .lock()
-            .unwrap()
-            .set_irq(self.0.irq_line, Some(&self.0.event))?;
+        let prev = self.status().fetch_or(status as usize, Ordering::SeqCst);
+        // Only kick the interrupt controller if this status bit was not already
+        // pending. If it was, the guest has not acknowledged the interrupt yet;
+        // another set_irq/vcpu_request_exit call would waste an HVF exit (~5ms).
+        if prev & (status as usize) == 0 {
+            self.intc()
+                .lock()
+                .unwrap()
+                .set_irq(self.0.irq_line, Some(&self.0.event))?;
+        }
         Ok(())
     }
 

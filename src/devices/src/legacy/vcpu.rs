@@ -31,7 +31,22 @@ impl PerCPUInterruptControllerState {
             "[GICv3] SET_IRQ_COMMON vcpuid={}, irq_line={}",
             self.vcpuid, irq
         );
+        // Dedupe: if this IRQ is already in the pending queue, the guest has
+        // not acknowledged it yet. Pushing again and calling vcpu_request_exit
+        // would waste an HVF exit (~5ms) with no benefit.
+        if self.pending_irqs.contains(&irq) {
+            return;
+        }
+        let was_empty = self.pending_irqs.is_empty();
         self.pending_irqs.push_back(irq);
+
+        // Only request a vCPU exit on the empty→non-empty transition.
+        // If the queue was already non-empty, the vCPU is already being
+        // interrupted; it will see this new IRQ at the top of the next
+        // run-loop iteration without an additional HVF exit.
+        if !was_empty {
+            return;
+        }
 
         match self.status {
             VcpuStatus::Waiting => {
@@ -62,6 +77,13 @@ impl PerCPUInterruptControllerState {
 
     fn get_pending_irq(&mut self) -> u32 {
         self.pending_irqs.pop_front().unwrap_or(GIC_INTID_SPURIOUS)
+    }
+
+    fn wake(&mut self) {
+        if let Some(wfe_sender) = self.wfe_sender.as_ref() {
+            let _ = wfe_sender.send(self.vcpuid as u32);
+        }
+        self.status = VcpuStatus::Running;
     }
 }
 
@@ -109,6 +131,11 @@ impl VcpuList {
     pub fn register(&self, vcpuid: u64, wfe_sender: Sender<u32>) {
         assert!(vcpuid < self.cpu_count);
         self.vcpus[vcpuid as usize].lock().unwrap().wfe_sender = Some(wfe_sender);
+    }
+
+    pub fn wake(&self, vcpuid: u64) {
+        assert!(vcpuid < self.cpu_count);
+        self.vcpus[vcpuid as usize].lock().unwrap().wake();
     }
 }
 

@@ -566,7 +566,18 @@ pub fn build_microvm(
     _shutdown_efd: Option<EventFd>,
     _sender: Sender<WorkerMessage>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
+    let t_vmm = std::time::Instant::now();
+    let vmm_timing_on = std::env::var("RUST_LOG").unwrap_or_default().contains("info");
+    macro_rules! vmm_timing {
+        ($label:expr) => {
+            if vmm_timing_on {
+                eprintln!("[vmm] {:28} {}ms", $label, t_vmm.elapsed().as_millis());
+            }
+        };
+    }
+
     let payload = choose_payload(vm_resources)?;
+    vmm_timing!("payload selected");
 
     let (guest_memory, arch_memory_info, mut _shm_manager, payload_config) = create_guest_memory(
         vm_resources
@@ -576,6 +587,7 @@ pub fn build_microvm(
         vm_resources,
         &payload,
     )?;
+    vmm_timing!("memory created");
 
     let vcpu_config = vm_resources.vcpu_config();
 
@@ -612,6 +624,8 @@ pub fn build_microvm(
     #[cfg(not(feature = "tee"))]
     #[allow(unused_mut)]
     let mut vm = setup_vm(&guest_memory, vm_resources.nested_enabled)?;
+    #[cfg(not(feature = "tee"))]
+    vmm_timing!("vm created (HVF+mmap)");
 
     #[cfg(feature = "tee")]
     let (_kvm, vm) = {
@@ -923,6 +937,8 @@ pub fn build_microvm(
             _shutdown_efd,
         )?;
     }
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    vmm_timing!("vcpus + irq created");
 
     #[cfg(all(target_arch = "riscv64", target_os = "linux"))]
     {
@@ -956,6 +972,8 @@ pub fn build_microvm(
         arch_memory_info,
         kernel_cmdline,
         vcpus_handles: Vec::new(),
+        run_state: super::VmmRunState::Paused,
+        paused_at: None,
         exit_evt,
         exit_observers: Vec::new(),
         exit_code: exit_code.clone(),
@@ -970,6 +988,7 @@ pub fn build_microvm(
         setup_terminal_raw_mode(&mut vmm, Some(serial_tty), false);
     }
 
+    vmm_timing!("before device attach");
     #[cfg(not(feature = "tee"))]
     attach_balloon_device(&mut vmm, event_manager, intc.clone())?;
     #[cfg(not(feature = "tee"))]
@@ -1072,6 +1091,7 @@ pub fn build_microvm(
     if let Some(s) = &vm_resources.kernel_cmdline.epilog {
         vmm.kernel_cmdline.insert_str(s).unwrap();
     };
+    vmm_timing!("devices attached");
 
     // Write the kernel command line to guest memory. This is x86_64 specific, since on
     // aarch64 the command line will be specified through the FDT.
@@ -1085,6 +1105,7 @@ pub fn build_microvm(
         &vm_resources.smbios_oem_strings,
     )
     .map_err(StartMicrovmError::Internal)?;
+    vmm_timing!("system configured (FDT)");
 
     #[cfg(feature = "tee")]
     {
@@ -1122,6 +1143,7 @@ pub fn build_microvm(
 
     vmm.start_vcpus(vcpus)
         .map_err(StartMicrovmError::Internal)?;
+    vmm_timing!("vcpus running");
 
     // Clippy thinks we don't need Arc<Mutex<...
     // but we don't want to change the event_manager interface
@@ -1130,6 +1152,7 @@ pub fn build_microvm(
     event_manager
         .add_subscriber(vmm.clone())
         .map_err(StartMicrovmError::RegisterEvent)?;
+    vmm_timing!("build_microvm complete");
 
     Ok(vmm)
 }

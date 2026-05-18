@@ -13,6 +13,7 @@ use utils::eventfd::EventFd;
 use virtio_bindings::virtio_blk::*;
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum RequestError {
@@ -159,6 +160,7 @@ impl BlockWorker {
     }
 
     fn process_queue(&mut self, mem: &GuestMemoryMmap) {
+        let mut signal_needed = false;
         while let Some(head) = self.device_queue.queue.pop(mem) {
             let mut reader = match Reader::new(mem, head.clone()) {
                 Ok(r) => r,
@@ -204,9 +206,15 @@ impl BlockWorker {
             }
 
             if self.device_queue.queue.needs_notification(mem).unwrap() {
-                if let Err(e) = self.interrupt.try_signal_used_queue() {
-                    error!("error signalling queue: {e:?}");
-                }
+                signal_needed = true;
+            }
+        }
+        // Signal once after draining all block requests rather than per-request.
+        // Each try_signal_used_queue() triggers a vcpu_request_exit (~5ms HVF exit);
+        // batching turns N exits into 1 for a burst of block I/O completions.
+        if signal_needed {
+            if let Err(e) = self.interrupt.try_signal_used_queue() {
+                error!("error signalling queue: {e:?}");
             }
         }
     }
