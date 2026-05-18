@@ -81,7 +81,7 @@ impl BitRangeExt<u32> for BitRange {
 }
 
 macro_rules! bit_range {
-    ($msb_index:expr, $lsb_index:expr) => {
+    ($msb_index:expr_2021, $lsb_index:expr_2021) => {
         BitRange {
             msb_index: $msb_index,
             lsb_index: $lsb_index,
