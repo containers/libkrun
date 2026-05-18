@@ -2,7 +2,7 @@
 
 #[cfg(feature = "virgl_renderer")]
 #[link(name = "virglrenderer")]
-extern "C" {}
+unsafe extern "C" {}
 
 pub const VIRGL_RENDERER_CALLBACKS_VERSION: u32 = 3;
 pub const VIRGL_RENDERER_USE_EGL: u32 = 1;
@@ -398,7 +398,7 @@ unsafe extern "C" {
     ) -> ::std::os::raw::c_int;
 }
 #[cfg(target_os = "macos")]
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_get_map_ptr(
         res_handle: u32,
         map_ptr: *mut u64,

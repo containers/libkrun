@@ -105,10 +105,10 @@ impl Worker {
                 error!("Failed to read control_evt: {e:?}");
                 continue;
             }
-            if self.process_queue(&mut virtio_gpu, &self.control_queue.clone()) {
-                if let Err(e) = self.interrupt.try_signal_used_queue() {
-                    error!("Error signaling queue: {e:?}");
-                }
+            if self.process_queue(&mut virtio_gpu, &self.control_queue.clone())
+                && let Err(e) = self.interrupt.try_signal_used_queue()
+            {
+                error!("Error signaling queue: {e:?}");
             }
         }
     }

@@ -212,7 +212,7 @@ extern "C" fn write_context_fence(cookie: *mut c_void, ctx_id: u32, ring_idx: u6
 unsafe extern "C" fn write_fence(cookie: *mut c_void, fence: u32) {
     catch_unwind(|| {
         assert!(!cookie.is_null());
-        let cookie = &*(cookie as *mut RutabagaCookie);
+        let cookie = unsafe { &*(cookie as *mut RutabagaCookie) };
 
         // Call fence completion callback
         if let Some(handler) = &cookie.fence_handler {
@@ -231,7 +231,7 @@ unsafe extern "C" fn write_fence(cookie: *mut c_void, fence: u32) {
 unsafe extern "C" fn get_server_fd(cookie: *mut c_void, version: u32) -> c_int {
     catch_unwind(|| {
         assert!(!cookie.is_null());
-        let cookie = &mut *(cookie as *mut RutabagaCookie);
+        let cookie = unsafe { &mut *(cookie as *mut RutabagaCookie) };
 
         if version != 0 {
             return -1;
@@ -470,10 +470,10 @@ impl RutabagaComponent for VirglRenderer {
     fn poll_descriptor(&self) -> Option<SafeDescriptor> {
         // Safe because it can be called anytime and returns -1 in the event of an error.
         let fd = unsafe { virgl_renderer_get_poll_fd() };
-        if fd >= 0 {
-            if let Ok(dup_fd) = SafeDescriptor::try_from(&fd as &dyn AsRawFd) {
-                return Some(dup_fd);
-            }
+        if fd >= 0
+            && let Ok(dup_fd) = SafeDescriptor::try_from(&fd as &dyn AsRawFd)
+        {
+            return Some(dup_fd);
         }
         None
     }
