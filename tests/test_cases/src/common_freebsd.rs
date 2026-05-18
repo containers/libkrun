@@ -182,7 +182,7 @@ unsafe fn do_setup_and_enter(
     kernel_path: &Path,
     rootfs_path: &Path,
     config_iso: &Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()> { unsafe {
     // Create a pipe for serial console input to avoid a kqueue busy-spin on macOS.
     // When the runner's check() calls wait_with_output(), it closes the subprocess's
     // stdin (fd 0). On macOS/kqueue a closed-write-end pipe fires EVFILT_READ
@@ -246,4 +246,4 @@ unsafe fn do_setup_and_enter(
 
     krun_call!(krun_start_enter(ctx))?;
     unreachable!()
-}
+}}

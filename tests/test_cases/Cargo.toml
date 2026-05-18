@@ -1,6 +1,6 @@
 [package]
 name = "test_cases"
-edition = "2021"
+edition = "2024"
 
 [features]
 host = ["krun-sys", "serde", "serde_json"]

@@ -1,6 +1,6 @@
 [package]
 name = "runner"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 test_cases = { path = "../test_cases", features = ["host"] }
