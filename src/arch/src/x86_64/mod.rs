@@ -194,10 +194,10 @@ pub fn arch_memory_regions(
     let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE).try_into().unwrap() };
 
     let size = align_upwards!(size, page_size);
-    if let Some(kernel_load_addr) = kernel_load_addr {
-        if size < (kernel_load_addr + kernel_size as u64) as usize {
-            panic!("Kernel doesn't fit in RAM");
-        }
+    if let Some(kernel_load_addr) = kernel_load_addr
+        && size < (kernel_load_addr + kernel_size as u64) as usize
+    {
+        panic!("Kernel doesn't fit in RAM");
     }
 
     // It's safe to cast MMIO_MEM_START to usize because it fits in a u32 variable
