@@ -1429,8 +1429,11 @@ fn load_payload(
                     // kernel_size bytes. Regions don't overlap as dest is newly allocated memfd-backed
                     // memory and source is from kernel bundle.
                     unsafe {
-                        let dest = region.as_ptr() as *mut u8;
-                        std::ptr::copy_nonoverlapping(kernel_data.as_ptr(), dest, kernel_size);
+                        std::ptr::copy_nonoverlapping(
+                            kernel_data.as_ptr(),
+                            region.as_ptr(),
+                            kernel_size,
+                        );
                     }
                     debug!("Copied kernel data to file-backed region");
 
@@ -1707,12 +1710,12 @@ pub fn create_guest_memory(
 
     // Only write firmware if data exists AND this isn't an ExternalKernel payload
     // (ExternalKernel does direct kernel boot and doesn't use EFI firmware)
-    if !matches!(payload, Payload::ExternalKernel(_)) {
-        if let Some(firmware_data) = firmware_data.as_ref() {
-            guest_mem
-                .write(firmware_data, GuestAddress(arch_mem_info.firmware_addr))
-                .map_err(StartMicrovmError::FirmwareInvalidAddress)?;
-        }
+    if !matches!(payload, Payload::ExternalKernel(_))
+        && let Some(firmware_data) = firmware_data.as_ref()
+    {
+        guest_mem
+            .write(firmware_data, GuestAddress(arch_mem_info.firmware_addr))
+            .map_err(StartMicrovmError::FirmwareInvalidAddress)?;
     }
 
     let payload_config = PayloadConfig {
@@ -1798,15 +1801,15 @@ pub fn setup_serial_device(
         .map_err(StartMicrovmError::Internal)?;
     let has_input = input.is_some();
     let serial = Arc::new(Mutex::new(Serial::new(interrupt_evt, out, input)));
-    if has_input {
-        if let Err(e) = event_manager.add_subscriber(serial.clone()) {
-            // TODO: We just log this message, and immediately return Ok, instead of returning the
-            // actual error because this operation always fails with EPERM when adding a fd which
-            // has been redirected to /dev/null via dup2 (this may happen inside the jailer).
-            // Find a better solution to this (and think about the state of the serial device
-            // while we're at it).
-            warn!("Could not add serial input event to epoll: {e:?}");
-        }
+    if has_input
+        && let Err(e) = event_manager.add_subscriber(serial.clone())
+    {
+        // TODO: We just log this message, and immediately return Ok, instead of returning the
+        // actual error because this operation always fails with EPERM when adding a fd which
+        // has been redirected to /dev/null via dup2 (this may happen inside the jailer).
+        // Find a better solution to this (and think about the state of the serial device
+        // while we're at it).
+        warn!("Could not add serial input event to epoll: {e:?}");
     }
     Ok(serial)
 }
@@ -1832,7 +1835,7 @@ fn attach_legacy_devices(
     }
 
     macro_rules! register_irqfd_evt {
-        ($evt: ident, $index: expr) => {{
+        ($evt: ident, $index: expr_2021) => {{
             vm.fd()
                 .register_irqfd(&pio_device_manager.$evt, $index)
                 .map_err(|e| {
@@ -2135,10 +2138,10 @@ fn autoconfigure_console_ports(
     use self::StartMicrovmError::*;
 
     let mut console_output_path: Option<PathBuf> = None;
-    if let Some(path) = vm_resources.console_output.clone() {
-        if !vm_resources.disable_implicit_console && creating_implicit_console {
-            console_output_path = Some(path)
-        }
+    if let Some(path) = vm_resources.console_output.clone()
+        && !vm_resources.disable_implicit_console && creating_implicit_console
+    {
+        console_output_path = Some(path)
     }
 
     if let Some(console_output_path) = console_output_path {
@@ -2595,7 +2598,7 @@ pub mod tests {
         let (guest_memory, _arch_memory_info, _shm_manager, _payload_config) =
             default_guest_memory(128).unwrap();
         let vm = setup_vm(&guest_memory, false).unwrap();
-        let _kvmioapic = KvmIoapic::new(&vm.fd()).unwrap();
+        let _kvmioapic = KvmIoapic::new(vm.fd()).unwrap();
 
         // Dummy entry_addr, vcpus will not boot.
         let entry_addr = GuestAddress(0);

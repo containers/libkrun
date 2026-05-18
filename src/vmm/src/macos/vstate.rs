@@ -230,11 +230,11 @@ impl Vcpu {
         // Best-effort to clean up TLS. If the `Vcpu` was moved to another thread
         // _before_ running this, then there is nothing we can do.
         Self::TLS_VCPU_PTR.with(|cell: &VcpuCell| {
-            if let Some(vcpu_ptr) = cell.get() {
-                if std::ptr::eq(vcpu_ptr, self) {
-                    Self::TLS_VCPU_PTR.with(|cell: &VcpuCell| cell.take());
-                    return Ok(());
-                }
+            if let Some(vcpu_ptr) = cell.get()
+                && std::ptr::eq(vcpu_ptr, self)
+            {
+                Self::TLS_VCPU_PTR.with(|cell: &VcpuCell| cell.take());
+                return Ok(());
             }
             Err(Error::VcpuTlsNotPresent)
         })

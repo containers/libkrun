@@ -292,10 +292,9 @@ impl MMIODeviceManager {
         if let Some(dev_info) = self
             .id_to_dev_info
             .get(&(device_type, device_id.to_string()))
+            && let Some((_, device)) = self.bus.get_device(dev_info.addr)
         {
-            if let Some((_, device)) = self.bus.get_device(dev_info.addr) {
-                return Some(device);
-            }
+            return Some(device);
         }
         None
     }
