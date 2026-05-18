@@ -55,7 +55,7 @@ const MSR_IA32_PRED_CMD: u32 = 0x0000_0049;
 
 // Creates a MsrRange of one msr given as argument.
 macro_rules! SINGLE_MSR {
-    ($msr:expr) => {
+    ($msr:expr_2021) => {
         MsrRange {
             base: $msr,
             nmsrs: 1,
@@ -65,7 +65,7 @@ macro_rules! SINGLE_MSR {
 
 // Creates a MsrRange of with msr base and count given as arguments.
 macro_rules! MSR_RANGE {
-    ($first:expr, $count:expr) => {
+    ($first:expr_2021, $count:expr_2021) => {
         MsrRange {
             base: $first,
             nmsrs: $count,
