@@ -40,10 +40,10 @@ use super::{AsRawFd, RawFd};
 use windows_sys::Win32::Foundation::{
     CloseHandle, HANDLE, INVALID_HANDLE_VALUE, WAIT_TIMEOUT as WAIT_TIMEOUT_CODE,
 };
-use windows_sys::Win32::System::Threading::INFINITE;
 use windows_sys::Win32::System::IO::{
     CreateIoCompletionPort, GetQueuedCompletionStatusEx, OVERLAPPED_ENTRY,
 };
+use windows_sys::Win32::System::Threading::INFINITE;
 
 // Generic access mask requesting all permissions the caller is allowed.
 // https://learn.microsoft.com/en-us/windows/win32/secauthz/access-mask
@@ -513,12 +513,16 @@ mod tests {
         epoll
             .ctl(ControlOperation::Delete, ev, &EpollEvent::default())
             .unwrap();
-        assert!(epoll
-            .ctl(ControlOperation::Delete, ev, &EpollEvent::default())
-            .is_err());
-        assert!(epoll
-            .ctl(ControlOperation::Modify, ev, &EpollEvent::default())
-            .is_err());
+        assert!(
+            epoll
+                .ctl(ControlOperation::Delete, ev, &EpollEvent::default())
+                .is_err()
+        );
+        assert!(
+            epoll
+                .ctl(ControlOperation::Modify, ev, &EpollEvent::default())
+                .is_err()
+        );
 
         close(ev);
     }
@@ -536,9 +540,11 @@ mod tests {
         epoll2
             .ctl(ControlOperation::Delete, ev, &EpollEvent::default())
             .unwrap();
-        assert!(epoll
-            .ctl(ControlOperation::Delete, ev, &EpollEvent::default())
-            .is_err());
+        assert!(
+            epoll
+                .ctl(ControlOperation::Delete, ev, &EpollEvent::default())
+                .is_err()
+        );
 
         close(ev);
     }

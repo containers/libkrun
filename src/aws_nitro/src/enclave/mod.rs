@@ -3,14 +3,14 @@
 pub(crate) mod args_writer;
 pub(crate) mod proxy;
 
-use super::error::{return_code, start, Error};
+use super::error::{Error, return_code, start};
 use args_writer::EnclaveArgsWriter;
 use nitro_enclaves::{
-    launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
     Device,
+    launch::{ImageType, Launcher, MemoryInfo, PollTimeout, StartFlags},
 };
 use proxy::{
-    net::NetProxy, output::OutputProxy, signal_handler::SignalHandler, DeviceProxy, DeviceProxyList,
+    DeviceProxy, DeviceProxyList, net::NetProxy, output::OutputProxy, signal_handler::SignalHandler,
 };
 use std::{
     env,
@@ -22,7 +22,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 use tar::HeaderMode;
-use vsock::{VsockAddr, VsockListener, VMADDR_CID_ANY};
+use vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener};
 
 const KRUN_NITRO_EIF_PATH_ENV_VAR: &str = "KRUN_NITRO_EIF_PATH";
 const KRUN_NITRO_EIF_PATH_DEFAULT: &str = "/krun-awsnitro/krun-awsnitro.eif";
@@ -255,8 +255,10 @@ impl NitroEnclave {
     fn start_console_debug(&self, cid: u32) -> Result<(), proxy::Error> {
         let mut output = OutputProxy::new(&self.output_path, true)?;
         let mut vsock_rcv = output.vsock(cid)?;
-        let _: JoinHandle<Result<(), proxy::Error>> = thread::spawn(move || loop {
-            output.rcv(&mut vsock_rcv)?;
+        let _: JoinHandle<Result<(), proxy::Error>> = thread::spawn(move || {
+            loop {
+                output.rcv(&mut vsock_rcv)?;
+            }
         });
 
         Ok(())

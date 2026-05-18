@@ -7,10 +7,10 @@ use std::os::fd::AsFd;
 use std::ptr::NonNull;
 
 use libc::c_void;
-use nix::sys::mman::mmap;
-use nix::sys::mman::munmap;
 use nix::sys::mman::MapFlags;
 use nix::sys::mman::ProtFlags;
+use nix::sys::mman::mmap;
+use nix::sys::mman::munmap;
 
 use crate::rutabaga_os::descriptor::SafeDescriptor;
 use crate::rutabaga_utils::RutabagaError;

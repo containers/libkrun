@@ -9,8 +9,8 @@ mod host {
     use super::*;
 
     use crate::common::setup_fs_and_enter;
-    use crate::{krun_call, krun_call_u32};
     use crate::{Test, TestOutcome, TestSetup};
+    use crate::{krun_call, krun_call_u32};
     use krun_sys::*;
     use std::io::Read;
 
@@ -78,7 +78,7 @@ mod guest {
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::io::AsRawFd;
 
-    use nix::fcntl::{fallocate, FallocateFlags};
+    use nix::fcntl::{FallocateFlags, fallocate};
 
     fn test_fallocate_basic() {
         let path = "/test_fallocate_basic";

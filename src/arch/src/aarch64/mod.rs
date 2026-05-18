@@ -18,10 +18,10 @@ pub use self::macos::*;
 use std::fmt::Debug;
 
 use crate::{
+    ArchMemoryInfo,
     aarch64::layout::{
         DRAM_MEM_MAX_SIZE, DRAM_MEM_START_EFI, DRAM_MEM_START_KERNEL, FIRMWARE_START,
     },
-    ArchMemoryInfo,
 };
 use vm_memory::{GuestAddress, GuestMemoryMmap};
 use vmm_sys_util::align_upwards;

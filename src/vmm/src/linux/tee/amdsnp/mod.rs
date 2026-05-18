@@ -10,7 +10,7 @@ use arch::x86_64::layout::*;
 
 use launch::{error::FirmwareError, firmware::Firmware, *};
 
-use kvm_bindings::{kvm_enc_region, CpuId, KVM_CPUID_FLAG_SIGNIFCANT_INDEX};
+use kvm_bindings::{CpuId, KVM_CPUID_FLAG_SIGNIFCANT_INDEX, kvm_enc_region};
 use kvm_ioctls::VmFd;
 use vm_memory::{
     Bytes, GuestAddress, GuestMemory, GuestMemoryMmap, GuestMemoryRegion, GuestRegionMmap,

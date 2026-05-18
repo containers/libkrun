@@ -29,7 +29,7 @@ use super::filesystem::{
 };
 use super::fuse;
 use super::inode_alloc::InodeAllocator;
-use super::virtual_entry::{VirtualDirEntry, VirtualEntry, VirtualEntryContent, VIRTUAL_BLKSIZE};
+use super::virtual_entry::{VIRTUAL_BLKSIZE, VirtualDirEntry, VirtualEntry, VirtualEntryContent};
 use crate::virtio::bindings;
 use crate::virtio::linux_errno;
 

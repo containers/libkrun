@@ -1,11 +1,11 @@
 use std::sync::{Arc, Mutex};
 
+use crate::Error as DeviceError;
 use crate::bus::BusDevice;
 #[cfg(target_arch = "riscv64")]
 use crate::legacy::aia::AIADevice;
 #[cfg(target_arch = "aarch64")]
 use crate::legacy::gic::GICDevice;
-use crate::Error as DeviceError;
 
 use utils::eventfd::EventFd;
 

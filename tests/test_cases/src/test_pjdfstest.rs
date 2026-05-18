@@ -6,7 +6,7 @@ pub struct TestPjdfstest;
 mod host {
     use super::*;
     use crate::common::setup_fs_and_enter_with_env;
-    use crate::{krun_call, krun_call_u32, ShouldRun, Test, TestOutcome, TestSetup};
+    use crate::{ShouldRun, Test, TestOutcome, TestSetup, krun_call, krun_call_u32};
     use krun_sys::*;
     use std::ffi::CString;
 

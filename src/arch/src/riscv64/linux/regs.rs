@@ -5,7 +5,7 @@ use std::mem::offset_of;
 use std::result;
 
 use super::super::get_fdt_addr;
-use kvm_bindings::{kvm_riscv_core, KVM_REG_RISCV_CORE};
+use kvm_bindings::{KVM_REG_RISCV_CORE, kvm_riscv_core};
 use kvm_ioctls::VcpuFd;
 
 use vm_memory::GuestMemoryMmap;

@@ -17,9 +17,9 @@ use super::super::{
     ActivateError, ActivateResult, DeviceQueue, DeviceState, Queue as VirtQueue, QueueConfig,
     VirtioDevice,
 };
+use super::TsiFlags;
 use super::muxer::VsockMuxer;
 use super::packet::VsockPacket;
-use super::TsiFlags;
 use super::{defs, defs::uapi};
 use crate::virtio::InterruptTransport;
 

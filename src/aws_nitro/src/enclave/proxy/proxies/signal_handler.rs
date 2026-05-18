@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::enclave::{
-    proxy::{EnclaveArg, Error, Result},
     DeviceProxy, VsockPortOffset,
+    proxy::{EnclaveArg, Error, Result},
 };
 use signal_hook::consts::SIGTERM;
 use std::{
     io::{ErrorKind, Read, Write},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
-use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
+use vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener, VsockStream};
 
 /// Signal handler proxy. Forwards signals from the host to the enclave. Currently, only SIGTERM is
 /// supported.

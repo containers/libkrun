@@ -153,7 +153,7 @@ impl TestNetPerf {
 mod host {
     use super::*;
     use crate::common::setup_fs_and_enter;
-    use crate::{krun_call, krun_call_u32, Test, TestOutcome, TestSetup};
+    use crate::{Test, TestOutcome, TestSetup, krun_call, krun_call_u32};
     use krun_sys::*;
     use std::process::{Child, Command, Stdio};
 

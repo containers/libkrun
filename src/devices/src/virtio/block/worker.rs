@@ -204,9 +204,10 @@ impl BlockWorker {
             }
 
             if self.device_queue.queue.needs_notification(mem).unwrap()
-                && let Err(e) = self.interrupt.try_signal_used_queue() {
-                    error!("error signalling queue: {e:?}");
-                }
+                && let Err(e) = self.interrupt.try_signal_used_queue()
+            {
+                error!("error signalling queue: {e:?}");
+            }
         }
     }
 

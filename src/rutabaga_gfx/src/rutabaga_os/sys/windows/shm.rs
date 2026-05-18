@@ -4,10 +4,10 @@
 
 use std::ffi::CStr;
 
-use crate::rutabaga_os::descriptor::AsRawDescriptor;
-use crate::rutabaga_os::descriptor::IntoRawDescriptor;
 use crate::rutabaga_os::RawDescriptor;
 use crate::rutabaga_os::SafeDescriptor;
+use crate::rutabaga_os::descriptor::AsRawDescriptor;
+use crate::rutabaga_os::descriptor::IntoRawDescriptor;
 use crate::rutabaga_utils::RutabagaError;
 use crate::rutabaga_utils::RutabagaResult;
 

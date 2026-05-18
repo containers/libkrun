@@ -57,22 +57,24 @@ impl DeviceProxyList {
 
                 // Receiver thread. Receive data from the vsock and perform some proxy-dependent
                 // action with the data.
-                let rcv: JoinHandle<Result<()>> = thread::spawn(move || loop {
-                    // Proxy rcv method returns the number of bytes read from the vsock.
-                    match proxy.rcv(&mut vsock_rcv) {
-                        // Zero bytes read indicates the enclave has closed the vsock connection.
-                        // Notify the sender thread that the vsock was closed.
-                        Ok(0) => {
-                            let _ = tx.send(());
-                            return Ok(());
-                        }
-                        // Bytes were read, continue the receive process.
-                        Ok(_) => continue,
-                        // An error occured, exit the receiver thread and notify the sender thread to
-                        // also exit.
-                        Err(e) => {
-                            let _ = tx.send(());
-                            return Err(e);
+                let rcv: JoinHandle<Result<()>> = thread::spawn(move || {
+                    loop {
+                        // Proxy rcv method returns the number of bytes read from the vsock.
+                        match proxy.rcv(&mut vsock_rcv) {
+                            // Zero bytes read indicates the enclave has closed the vsock connection.
+                            // Notify the sender thread that the vsock was closed.
+                            Ok(0) => {
+                                let _ = tx.send(());
+                                return Ok(());
+                            }
+                            // Bytes were read, continue the receive process.
+                            Ok(_) => continue,
+                            // An error occured, exit the receiver thread and notify the sender thread to
+                            // also exit.
+                            Err(e) => {
+                                let _ = tx.send(());
+                                return Err(e);
+                            }
                         }
                     }
                 });

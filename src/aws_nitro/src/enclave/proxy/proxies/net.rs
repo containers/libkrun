@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::enclave::{
+    VsockPortOffset,
     args_writer::EnclaveArg,
     proxy::{DeviceProxy, Error, Result},
-    VsockPortOffset,
 };
 use std::{
     io::{ErrorKind, Read, Write},
@@ -14,7 +14,7 @@ use std::{
     },
     time::Duration,
 };
-use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
+use vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener, VsockStream};
 
 /// Network proxy. Forwards data to/from a UNIX socket and vsock within an enclave to provide
 /// network access.

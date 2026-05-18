@@ -10,8 +10,8 @@ mod host {
     use super::*;
 
     use crate::common::setup_fs_and_enter;
-    use crate::{krun_call, krun_call_u32};
     use crate::{Test, TestSetup};
+    use crate::{krun_call, krun_call_u32};
     use krun_sys::*;
 
     impl Test for TestVmConfig {

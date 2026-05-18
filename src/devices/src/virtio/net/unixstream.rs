@@ -1,6 +1,6 @@
 use nix::sys::socket::{
-    connect, getsockopt, recv, send, setsockopt, socket, sockopt, AddressFamily, MsgFlags,
-    SockFlag, SockType, UnixAddr,
+    AddressFamily, MsgFlags, SockFlag, SockType, UnixAddr, connect, getsockopt, recv, send,
+    setsockopt, socket, sockopt,
 };
 use std::{
     os::fd::{AsRawFd, OwnedFd, RawFd},
@@ -86,7 +86,7 @@ impl Unixstream {
                 Ok(size) => bytes_read += size,
                 #[allow(unreachable_patterns)]
                 Err(nix::Error::EAGAIN | nix::Error::EWOULDBLOCK) => {
-                    return Err(ReadError::NothingRead)
+                    return Err(ReadError::NothingRead);
                 }
                 Err(e) => return Err(ReadError::Internal(e)),
             }

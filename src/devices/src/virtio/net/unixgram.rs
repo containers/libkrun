@@ -1,7 +1,7 @@
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use nix::sys::socket::{
-    bind, connect, getsockopt, recv, send, setsockopt, socket, sockopt, AddressFamily, MsgFlags,
-    SockFlag, SockType, UnixAddr,
+    AddressFamily, MsgFlags, SockFlag, SockType, UnixAddr, bind, connect, getsockopt, recv, send,
+    setsockopt, socket, sockopt,
 };
 use nix::unistd::unlink;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
@@ -117,7 +117,7 @@ impl NetBackend for Unixgram {
             Ok(f) => f,
             #[allow(unreachable_patterns)]
             Err(nix::Error::EAGAIN | nix::Error::EWOULDBLOCK) => {
-                return Err(ReadError::NothingRead)
+                return Err(ReadError::NothingRead);
             }
             Err(e) => {
                 return Err(ReadError::Internal(e));

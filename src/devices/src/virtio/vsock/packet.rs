@@ -24,7 +24,7 @@ use std::os::raw::c_char;
 use std::result;
 
 #[cfg(target_os = "linux")]
-use nix::sys::socket::{sockaddr, AddressFamily};
+use nix::sys::socket::{AddressFamily, sockaddr};
 use nix::sys::socket::{SockaddrLike, SockaddrStorage};
 use utils::byte_order;
 use vm_memory::{self, Address, GuestAddress, GuestMemory, GuestMemoryError};
@@ -655,9 +655,10 @@ impl VsockPacket {
 
     pub fn write_connect_rsp(&mut self, rsp: TsiConnectRsp) {
         if self.buf_size >= 4
-            && let Some(buf) = self.buf_mut() {
-                byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
-            }
+            && let Some(buf) = self.buf_mut()
+        {
+            byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
+        }
     }
 
     pub fn read_getname_req(&self) -> Option<TsiGetnameReq> {
@@ -677,29 +678,30 @@ impl VsockPacket {
 
     pub fn write_getname_rsp(&mut self, rsp: TsiGetnameRsp) {
         if self.buf_size >= 132
-            && let Some(buf) = self.buf_mut() {
-                byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
-                byte_order::write_le_u32(&mut buf[4..], rsp.addr_len);
-                let addr_ptr = rsp.addr.as_ptr();
-                let slice = unsafe {
-                    std::slice::from_raw_parts(addr_ptr as *const u8, rsp.addr.len() as usize)
-                };
-                buf[8..(rsp.addr.len() + 8) as usize].copy_from_slice(slice);
+            && let Some(buf) = self.buf_mut()
+        {
+            byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
+            byte_order::write_le_u32(&mut buf[4..], rsp.addr_len);
+            let addr_ptr = rsp.addr.as_ptr();
+            let slice = unsafe {
+                std::slice::from_raw_parts(addr_ptr as *const u8, rsp.addr.len() as usize)
+            };
+            buf[8..(rsp.addr.len() + 8) as usize].copy_from_slice(slice);
 
-                // On macOS, convert BSD sockaddr (u8 sa_len + u8 sa_family) to
-                // Linux wire format (u16 sa_family). Also translate macOS AF_*
-                // values to their Linux equivalents (e.g. AF_INET6: 30 → 10).
-                #[cfg(target_os = "macos")]
-                {
-                    let bsd_family = buf[9];
-                    let linux_family: u16 = match bsd_family as i32 {
-                        libc::AF_INET => defs::LINUX_AF_INET,
-                        libc::AF_INET6 => defs::LINUX_AF_INET6,
-                        _ => 0, // AF_UNSPEC
-                    };
-                    byte_order::write_le_u16(&mut buf[8..], linux_family);
-                }
+            // On macOS, convert BSD sockaddr (u8 sa_len + u8 sa_family) to
+            // Linux wire format (u16 sa_family). Also translate macOS AF_*
+            // values to their Linux equivalents (e.g. AF_INET6: 30 → 10).
+            #[cfg(target_os = "macos")]
+            {
+                let bsd_family = buf[9];
+                let linux_family: u16 = match bsd_family as i32 {
+                    libc::AF_INET => defs::LINUX_AF_INET,
+                    libc::AF_INET6 => defs::LINUX_AF_INET6,
+                    _ => 0, // AF_UNSPEC
+                };
+                byte_order::write_le_u16(&mut buf[8..], linux_family);
             }
+        }
     }
 
     pub fn read_sendto_addr(&self) -> Option<TsiSendtoAddr> {
@@ -737,9 +739,10 @@ impl VsockPacket {
 
     pub fn write_listen_rsp(&mut self, rsp: TsiListenRsp) {
         if self.buf_size >= 4
-            && let Some(buf) = self.buf_mut() {
-                byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
-            }
+            && let Some(buf) = self.buf_mut()
+        {
+            byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
+        }
     }
 
     pub fn read_accept_req(&self) -> Option<TsiAcceptReq> {
@@ -755,9 +758,10 @@ impl VsockPacket {
 
     pub fn write_accept_rsp(&mut self, rsp: TsiAcceptRsp) {
         if self.buf_size >= 4
-            && let Some(buf) = self.buf_mut() {
-                byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
-            }
+            && let Some(buf) = self.buf_mut()
+        {
+            byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
+        }
     }
 
     pub fn read_release_req(&self) -> Option<TsiReleaseReq> {
@@ -775,8 +779,9 @@ impl VsockPacket {
 
     pub fn write_time_sync(&mut self, time: u64) {
         if self.buf_size >= 8
-            && let Some(buf) = self.buf_mut() {
-                byte_order::write_le_u64(&mut buf[0..], time);
-            }
+            && let Some(buf) = self.buf_mut()
+        {
+            byte_order::write_le_u64(&mut buf[0..], time);
+        }
     }
 }

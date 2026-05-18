@@ -5,20 +5,20 @@ use std::os::fd::OwnedFd;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use nix::fcntl::{FcntlArg, OFlag, fcntl};
 #[cfg(target_os = "linux")]
 use nix::sys::socket::UnixAddr;
 use nix::sys::socket::{
-    bind, connect, getpeername, recv, send, sendto, socket, AddressFamily, MsgFlags, SockFlag,
-    SockType, SockaddrIn, SockaddrLike, SockaddrStorage,
+    AddressFamily, MsgFlags, SockFlag, SockType, SockaddrIn, SockaddrLike, SockaddrStorage, bind,
+    connect, getpeername, recv, send, sendto, socket,
 };
 
+use super::super::Queue as VirtQueue;
 #[cfg(target_os = "macos")]
 use super::super::linux_errno::linux_errno_raw;
-use super::super::Queue as VirtQueue;
 use super::defs;
 use super::defs::uapi;
-use super::muxer::{push_packet, MuxerRx};
+use super::muxer::{MuxerRx, push_packet};
 use super::muxer_rxq::MuxerRxQ;
 use super::packet::{
     TsiAcceptReq, TsiConnectReq, TsiGetnameRsp, TsiListenReq, TsiSendtoAddr, VsockPacket,

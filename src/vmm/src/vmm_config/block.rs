@@ -3,8 +3,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use devices::virtio::{
-    block::{ImageType, SyncMode},
     Block, CacheType,
+    block::{ImageType, SyncMode},
 };
 
 #[derive(Debug)]

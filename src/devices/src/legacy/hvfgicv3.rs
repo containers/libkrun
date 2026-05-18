@@ -4,13 +4,13 @@
 use std::io;
 use std::sync::LazyLock;
 
+use crate::Error as DeviceError;
 use crate::bus::BusDevice;
 use crate::legacy::gic::GICDevice;
 use crate::legacy::irqchip::IrqChipT;
-use crate::Error as DeviceError;
 
-use hvf::bindings::{hv_gic_config_t, hv_ipa_t, hv_return_t, HV_SUCCESS};
 use hvf::Error;
+use hvf::bindings::{HV_SUCCESS, hv_gic_config_t, hv_ipa_t, hv_return_t};
 use utils::eventfd::EventFd;
 
 // Device trees specific constants

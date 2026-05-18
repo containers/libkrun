@@ -36,8 +36,8 @@ mod host {
     use super::*;
 
     use crate::common::setup_fs_and_enter;
-    use crate::{krun_call, krun_call_u32};
     use crate::{Test, TestSetup};
+    use crate::{krun_call, krun_call_u32};
     use krun_sys::*;
     use std::ffi::CString;
     use std::io::Write;
@@ -86,7 +86,7 @@ mod guest {
     use crate::Test;
 
     use nix::libc::VMADDR_CID_HOST;
-    use nix::sys::socket::{connect, socket, AddressFamily, SockFlag, SockType, VsockAddr};
+    use nix::sys::socket::{AddressFamily, SockFlag, SockType, VsockAddr, connect, socket};
     use std::io::Write;
     use std::os::fd::AsRawFd;
 

@@ -1,9 +1,9 @@
 use crossbeam_channel::unbounded;
 #[cfg(not(feature = "tdx"))]
-use kvm_bindings::{kvm_enable_cap, KVM_CAP_SPLIT_IRQCHIP};
+use kvm_bindings::{KVM_CAP_SPLIT_IRQCHIP, kvm_enable_cap};
 use kvm_bindings::{
-    kvm_irq_routing_entry, kvm_irq_routing_entry__bindgen_ty_1, kvm_irq_routing_msi, KvmIrqRouting,
-    KVM_IRQ_ROUTING_MSI,
+    KVM_IRQ_ROUTING_MSI, KvmIrqRouting, kvm_irq_routing_entry, kvm_irq_routing_entry__bindgen_ty_1,
+    kvm_irq_routing_msi,
 };
 
 use kvm_ioctls::{Error, VmFd};
@@ -11,9 +11,9 @@ use kvm_ioctls::{Error, VmFd};
 use utils::eventfd::EventFd;
 use utils::worker_message::WorkerMessage;
 
+use crate::Error as DeviceError;
 use crate::bus::BusDevice;
 use crate::legacy::irqchip::IrqChipT;
-use crate::Error as DeviceError;
 
 const IOAPIC_BASE: u32 = 0xfec0_0000;
 const APIC_DEFAULT_ADDRESS: u32 = 0xfee0_0000;

@@ -13,10 +13,6 @@ use nix::sys::epoll::EpollCreateFlags;
 use nix::sys::epoll::EpollFlags;
 use nix::sys::eventfd::EfdFlags;
 use nix::sys::eventfd::EventFd;
-use nix::sys::socket::connect;
-use nix::sys::socket::recvmsg;
-use nix::sys::socket::sendmsg;
-use nix::sys::socket::socket;
 use nix::sys::socket::AddressFamily;
 use nix::sys::socket::ControlMessage;
 use nix::sys::socket::ControlMessageOwned;
@@ -24,30 +20,34 @@ use nix::sys::socket::MsgFlags;
 use nix::sys::socket::SockFlag;
 use nix::sys::socket::SockType;
 use nix::sys::socket::UnixAddr;
+use nix::sys::socket::connect;
+use nix::sys::socket::recvmsg;
+use nix::sys::socket::sendmsg;
+use nix::sys::socket::socket;
 use nix::unistd::pipe;
 use nix::unistd::read;
 use nix::unistd::write;
 
-use super::super::add_item;
-use super::super::cross_domain_protocol::CROSS_DOMAIN_ID_TYPE_READ_PIPE;
-use super::super::cross_domain_protocol::CROSS_DOMAIN_ID_TYPE_VIRTGPU_BLOB;
 use super::super::CrossDomainContext;
 use super::super::CrossDomainItem;
 use super::super::CrossDomainJob;
 use super::super::CrossDomainState;
+use super::super::add_item;
+use super::super::cross_domain_protocol::CROSS_DOMAIN_ID_TYPE_READ_PIPE;
+use super::super::cross_domain_protocol::CROSS_DOMAIN_ID_TYPE_VIRTGPU_BLOB;
 use super::epoll_internal::Epoll;
 use super::epoll_internal::EpollEvent;
-use crate::cross_domain::cross_domain_protocol::{
-    CrossDomainInitV1, CrossDomainSendReceiveBase, CROSS_DOMAIN_ID_TYPE_SHM,
-};
+use crate::RutabagaError;
+use crate::RutabagaResult;
 use crate::cross_domain::CrossDomainEvent;
 use crate::cross_domain::CrossDomainToken;
 use crate::cross_domain::WAIT_CONTEXT_MAX;
+use crate::cross_domain::cross_domain_protocol::{
+    CROSS_DOMAIN_ID_TYPE_SHM, CrossDomainInitV1, CrossDomainSendReceiveBase,
+};
 use crate::rutabaga_os::AsRawDescriptor;
 use crate::rutabaga_os::FromRawDescriptor;
 use crate::rutabaga_os::RawDescriptor;
-use crate::RutabagaError;
-use crate::RutabagaResult;
 
 pub type SystemStream = File;
 

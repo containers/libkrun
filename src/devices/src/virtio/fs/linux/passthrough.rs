@@ -2,20 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use std::collections::btree_map;
 use std::collections::BTreeMap;
+use std::collections::btree_map;
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
-use std::mem::{self, size_of, MaybeUninit};
+use std::mem::{self, MaybeUninit, size_of};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use caps::{has_cap, CapSet, Capability};
+use caps::{CapSet, Capability, has_cap};
 use nix::request_code_read;
 
 use vm_memory::ByteValued;
@@ -687,22 +687,23 @@ impl PassthroughFs {
         let mut handles = self.handles.write().unwrap();
 
         if let btree_map::Entry::Occupied(e) = handles.entry(handle)
-            && e.get().inode == inode {
-                if e.get().exported.load(Ordering::Relaxed) {
-                    self.cfg
-                        .export_table
-                        .as_ref()
-                        .unwrap()
-                        .lock()
-                        .unwrap()
-                        .remove(&(self.cfg.export_fsid, handle));
-                }
-
-                // We don't need to close the file here because that will happen automatically when
-                // the last `Arc` is dropped.
-                e.remove();
-                return Ok(());
+            && e.get().inode == inode
+        {
+            if e.get().exported.load(Ordering::Relaxed) {
+                self.cfg
+                    .export_table
+                    .as_ref()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .remove(&(self.cfg.export_fsid, handle));
             }
+
+            // We don't need to close the file here because that will happen automatically when
+            // the last `Arc` is dropped.
+            e.remove();
+            return Ok(());
+        }
 
         Err(ebadf())
     }

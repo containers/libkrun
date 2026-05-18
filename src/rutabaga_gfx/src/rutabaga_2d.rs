@@ -4,9 +4,9 @@
 
 //! rutabaga_2d: Handles 2D virtio-gpu hypercalls.
 
+use std::cmp::Ordering;
 use std::cmp::max;
 use std::cmp::min;
-use std::cmp::Ordering;
 use std::io::IoSliceMut;
 
 use crate::rutabaga_core::Rutabaga2DInfo;

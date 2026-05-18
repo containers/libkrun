@@ -19,6 +19,10 @@ use nix::Error as NixError;
 use remain::sorted;
 use thiserror::Error;
 #[cfg(feature = "vulkano")]
+use vulkano::LoadingError;
+#[cfg(feature = "vulkano")]
+use vulkano::VulkanError;
+#[cfg(feature = "vulkano")]
 use vulkano::device::DeviceCreationError;
 #[cfg(feature = "vulkano")]
 use vulkano::image::ImageCreationError;
@@ -28,10 +32,6 @@ use vulkano::instance::InstanceCreationError;
 use vulkano::memory::DeviceMemoryError;
 #[cfg(feature = "vulkano")]
 use vulkano::memory::MemoryMapError;
-#[cfg(feature = "vulkano")]
-use vulkano::LoadingError;
-#[cfg(feature = "vulkano")]
-use vulkano::VulkanError;
 
 use crate::rutabaga_os::SafeDescriptor;
 

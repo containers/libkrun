@@ -10,7 +10,7 @@ use std::os::unix::io::AsRawFd;
 use polly::event_manager::{EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
 
-use super::device::{Vsock, EVQ_INDEX, RXQ_INDEX, TXQ_INDEX};
+use super::device::{EVQ_INDEX, RXQ_INDEX, TXQ_INDEX, Vsock};
 use crate::virtio::VirtioDevice;
 
 impl Vsock {

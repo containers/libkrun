@@ -266,9 +266,10 @@ mod tests {
 
         let mut bus = Bus::new();
         let mut data = [1, 2, 3, 4];
-        assert!(bus
-            .insert(Arc::new(Mutex::new(DummyDevice)), 0x10, 0x10)
-            .is_ok());
+        assert!(
+            bus.insert(Arc::new(Mutex::new(DummyDevice)), 0x10, 0x10)
+                .is_ok()
+        );
         assert!(bus.write(0, 0x10, &data));
         let bus_clone = bus.clone();
         assert!(bus.read(0, 0x10, &mut data));

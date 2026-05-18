@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::enclave::{
+    VsockPortOffset,
     args_writer::EnclaveArg,
     proxy::{DeviceProxy, Error},
-    VsockPortOffset,
 };
 use std::{
     fs::File,
@@ -11,7 +11,7 @@ use std::{
     io::{Read, Write},
     path::PathBuf,
 };
-use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY, VMADDR_CID_HYPERVISOR};
+use vsock::{VMADDR_CID_ANY, VMADDR_CID_HYPERVISOR, VsockAddr, VsockListener, VsockStream};
 
 type Result<T> = std::result::Result<T, Error>;
 

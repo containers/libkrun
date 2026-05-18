@@ -210,9 +210,10 @@ impl BusDevice for I8042Device {
                 // another interrupt, to let the guest know they need to issue another read from
                 // port 0x60.
                 if (self.status & SB_OUT_DATA_AVAIL) != 0
-                    && let Err(Error::KbdInterruptFailure(err)) = self.trigger_kbd_interrupt() {
-                        warn!("Failed to trigger i8042 kbd interrupt {err:?}");
-                    }
+                    && let Err(Error::KbdInterruptFailure(err)) = self.trigger_kbd_interrupt()
+                {
+                    warn!("Failed to trigger i8042 kbd interrupt {err:?}");
+                }
             }
             _ => {}
         }

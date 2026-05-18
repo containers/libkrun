@@ -28,8 +28,8 @@ mod host {
         freebsd_assets, normalize_serial_output, setup_gvproxy_backend, setup_kernel_and_enter,
     };
     use crate::test_net::gvproxy::gvproxy_path;
-    use crate::{krun_call, krun_call_u32};
     use crate::{ShouldRun, Test, TestOutcome, TestSetup};
+    use crate::{krun_call, krun_call_u32};
     use krun_sys::*;
     use std::thread;
 
@@ -78,8 +78,8 @@ mod host {
 #[guest]
 mod guest {
     use super::*;
-    use crate::freebsd_network::configure_virtio_net_ip;
     use crate::Test;
+    use crate::freebsd_network::configure_virtio_net_ip;
 
     impl Test for TestFreeBsdGvproxyTcpGuestConnect {
         fn in_guest(self: Box<Self>) {

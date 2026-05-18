@@ -1,4 +1,4 @@
-use rand::{rngs::OsRng, TryRngCore};
+use rand::{TryRngCore, rngs::OsRng};
 use utils::eventfd::EventFd;
 use vm_memory::{Bytes, GuestMemoryMmap};
 

@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use log::{debug, error, warn};
 use polly::event_manager::{EventManager, Subscriber};
 use utils::epoll::{EpollEvent, EventSet};
-use utils::eventfd::{EventFd, EFD_NONBLOCK};
+use utils::eventfd::{EFD_NONBLOCK, EventFd};
 use vhost::vhost_user::message::VhostUserConfigFlags;
 use vhost::vhost_user::{Frontend, VhostUserFrontend, VhostUserProtocolFeatures};
 use vhost::{VhostBackend, VhostUserMemoryRegionInfo, VringConfigData};
@@ -100,9 +100,7 @@ impl VhostUserDevice {
         let mut frontend = Frontend::from_stream(stream, num_queues as u64);
 
         // Get available features from backend
-        let avail_features = frontend
-            .get_features()
-            .map_err(io::Error::other)?;
+        let avail_features = frontend.get_features().map_err(io::Error::other)?;
 
         debug!("{}: backend features: 0x{:x}", device_name, avail_features);
 
@@ -111,9 +109,7 @@ impl VhostUserDevice {
         let avail_features = avail_features & !VHOST_USER_F_PROTOCOL_FEATURES;
 
         if has_protocol_features {
-            let protocol_features = frontend
-                .get_protocol_features()
-                .map_err(io::Error::other)?;
+            let protocol_features = frontend.get_protocol_features().map_err(io::Error::other)?;
 
             let mut our_protocol_features = VhostUserProtocolFeatures::empty();
             if protocol_features.contains(VhostUserProtocolFeatures::CONFIG) {
@@ -131,9 +127,7 @@ impl VhostUserDevice {
         // Determine actual queue count - may require protocol feature negotiation
         let actual_num_queues = if num_queues == 0 {
             if has_protocol_features {
-                let backend_queue_num = frontend
-                    .get_queue_num()
-                    .map_err(io::Error::other)?;
+                let backend_queue_num = frontend.get_queue_num().map_err(io::Error::other)?;
 
                 debug!(
                     "{}: backend reports {} queues available",
@@ -190,9 +184,7 @@ impl VhostUserDevice {
             self.acked_features
         };
 
-        frontend
-            .set_owner()
-            .map_err(io::Error::other)?;
+        frontend.set_owner().map_err(io::Error::other)?;
 
         // Only share memory regions that have file backing (memfd)
         let regions: Vec<VhostUserMemoryRegionInfo> = mem
@@ -364,33 +356,34 @@ impl VirtioDevice for VhostUserDevice {
         // Fetch config from backend on every read (same as QEMU/crosvm)
         // No caching to avoid invalidation issues
         if self.has_protocol_features
-            && let Ok(mut frontend) = self.frontend.lock() {
-                match frontend.get_config(
-                    offset as u32,
-                    data.len() as u32,
-                    VhostUserConfigFlags::empty(),
-                    data,
-                ) {
-                    Ok((_, returned_buf)) => {
-                        if data.len() <= returned_buf.len() {
-                            data.copy_from_slice(&returned_buf[..data.len()]);
-                            debug!(
-                                "{}: read {} bytes from config at offset {}",
-                                self.device_name,
-                                data.len(),
-                                offset
-                            );
-                            return;
-                        }
-                    }
-                    Err(e) => {
+            && let Ok(mut frontend) = self.frontend.lock()
+        {
+            match frontend.get_config(
+                offset as u32,
+                data.len() as u32,
+                VhostUserConfigFlags::empty(),
+                data,
+            ) {
+                Ok((_, returned_buf)) => {
+                    if data.len() <= returned_buf.len() {
+                        data.copy_from_slice(&returned_buf[..data.len()]);
                         debug!(
-                            "{}: failed to read config from backend: {:?}",
-                            self.device_name, e
+                            "{}: read {} bytes from config at offset {}",
+                            self.device_name,
+                            data.len(),
+                            offset
                         );
+                        return;
                     }
                 }
+                Err(e) => {
+                    debug!(
+                        "{}: failed to read config from backend: {:?}",
+                        self.device_name, e
+                    );
+                }
             }
+        }
 
         debug!(
             "{}: config read at offset {} returning zeros (backend not available)",

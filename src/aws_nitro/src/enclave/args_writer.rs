@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::enclave::{proxy::DeviceProxyList, VsockPortOffset};
+use crate::enclave::{VsockPortOffset, proxy::DeviceProxyList};
 use libc::c_int;
 use nitro_enclaves::launch::PollTimeout;
-use nix::poll::{poll, PollFd, PollFlags, PollTimeout as NixPollTimeout};
+use nix::poll::{PollFd, PollFlags, PollTimeout as NixPollTimeout, poll};
 use std::{
     ffi::{self, CString},
     fmt,
@@ -12,7 +12,7 @@ use std::{
     os::fd::AsFd,
     str::FromStr,
 };
-use vsock::{VsockAddr, VsockListener, VsockStream, VMADDR_CID_ANY};
+use vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener, VsockStream};
 
 // A known byte that libkrun-awsnitro and the enclave initramfs will exchange to confirm that startup
 // was successful and the initramfs is ready to begin reading enclave arguments.

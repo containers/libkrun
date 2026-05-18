@@ -2,11 +2,11 @@ use std::convert::TryInto;
 use std::io;
 use std::sync::Arc;
 
+use crate::Error as DeviceError;
 use crate::bus::BusDevice;
+use crate::legacy::VcpuList;
 use crate::legacy::gic::GICDevice;
 use crate::legacy::irqchip::IrqChipT;
-use crate::legacy::VcpuList;
-use crate::Error as DeviceError;
 
 use utils::eventfd::EventFd;
 

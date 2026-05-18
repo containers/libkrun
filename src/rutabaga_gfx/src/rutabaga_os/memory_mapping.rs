@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use crate::rutabaga_os::sys::platform::MemoryMapping as PlatformMapping;
 use crate::rutabaga_os::SafeDescriptor;
+use crate::rutabaga_os::sys::platform::MemoryMapping as PlatformMapping;
 use crate::rutabaga_utils::RutabagaMapping;
 use crate::rutabaga_utils::RutabagaResult;
 

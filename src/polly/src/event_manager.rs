@@ -514,17 +514,23 @@ mod tests {
             .unwrap();
 
         // At this point ev2 is not registered. Check that unregistering it throws an error.
-        assert!(event_manager
-            .unregister(dummy_subscriber.lock().unwrap().event_fd_2.as_raw_fd())
-            .is_err());
+        assert!(
+            event_manager
+                .unregister(dummy_subscriber.lock().unwrap().event_fd_2.as_raw_fd())
+                .is_err()
+        );
 
         // Try to unregister ev1 twice. Only the first call should be successful.
-        assert!(event_manager
-            .unregister(dummy_subscriber.lock().unwrap().event_fd_1.as_raw_fd())
-            .is_ok());
-        assert!(event_manager
-            .unregister(dummy_subscriber.lock().unwrap().event_fd_1.as_raw_fd())
-            .is_err());
+        assert!(
+            event_manager
+                .unregister(dummy_subscriber.lock().unwrap().event_fd_1.as_raw_fd())
+                .is_ok()
+        );
+        assert!(
+            event_manager
+                .unregister(dummy_subscriber.lock().unwrap().event_fd_1.as_raw_fd())
+                .is_err()
+        );
     }
 
     #[test]

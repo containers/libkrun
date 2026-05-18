@@ -273,18 +273,19 @@ impl Subscriber for Serial {
         }
 
         if let Some(input) = self.input.as_mut()
-            && input.as_raw_fd() == source {
-                let mut out = [0u8; 32];
-                match input.read(&mut out[..]) {
-                    Ok(count) => {
-                        self.raw_input(&out[..count])
-                            .unwrap_or_else(|e| warn!("Serial error on input: {e}"));
-                    }
-                    Err(e) => {
-                        warn!("error while reading stdin: {e:?}");
-                    }
+            && input.as_raw_fd() == source
+        {
+            let mut out = [0u8; 32];
+            match input.read(&mut out[..]) {
+                Ok(count) => {
+                    self.raw_input(&out[..count])
+                        .unwrap_or_else(|e| warn!("Serial error on input: {e}"));
+                }
+                Err(e) => {
+                    warn!("error while reading stdin: {e:?}");
                 }
             }
+        }
     }
 
     /// Initial registration of pollable objects.

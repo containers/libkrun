@@ -11,7 +11,7 @@ pub use self::linux::*;
 
 use std::fmt::Debug;
 
-use crate::{riscv64::layout::FIRMWARE_START, ArchMemoryInfo};
+use crate::{ArchMemoryInfo, riscv64::layout::FIRMWARE_START};
 use vm_memory::{Address, GuestAddress, GuestMemory, GuestMemoryMmap};
 use vmm_sys_util::align_upwards;
 

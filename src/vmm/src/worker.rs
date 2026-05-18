@@ -9,14 +9,14 @@ use crossbeam_channel::Receiver;
 #[cfg(feature = "tee")]
 use crossbeam_channel::Sender;
 #[cfg(feature = "tee")]
-use kvm_bindings::{kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE};
+use kvm_bindings::{KVM_MEMORY_ATTRIBUTE_PRIVATE, kvm_memory_attributes};
 #[cfg(feature = "tee")]
-use libc::{fallocate, madvise, FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, MADV_DONTNEED};
+use libc::{FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE, MADV_DONTNEED, fallocate, madvise};
 #[cfg(feature = "tee")]
 use std::ffi::c_void;
 #[cfg(feature = "tee")]
 use vm_memory::{
-    guest_memory::GuestMemory, Address, GuestAddress, GuestMemoryRegion, MemoryRegionAddress,
+    Address, GuestAddress, GuestMemoryRegion, MemoryRegionAddress, guest_memory::GuestMemory,
 };
 
 pub fn start_worker_thread(
@@ -25,14 +25,16 @@ pub fn start_worker_thread(
 ) -> io::Result<()> {
     std::thread::Builder::new()
         .name("vmm worker".into())
-        .spawn(move || loop {
-            let received = receiver.recv();
-            match received {
-                Err(e) => error!("error receiving message from vmm worker thread: {e:?}"),
-                #[cfg(target_os = "macos")]
-                Ok(message) => vmm.lock().unwrap().match_worker_message(message),
-                #[cfg(target_os = "linux")]
-                Ok(message) => vmm.lock().unwrap().match_worker_message(message),
+        .spawn(move || {
+            loop {
+                let received = receiver.recv();
+                match received {
+                    Err(e) => error!("error receiving message from vmm worker thread: {e:?}"),
+                    #[cfg(target_os = "macos")]
+                    Ok(message) => vmm.lock().unwrap().match_worker_message(message),
+                    #[cfg(target_os = "linux")]
+                    Ok(message) => vmm.lock().unwrap().match_worker_message(message),
+                }
             }
         })?;
     Ok(())
@@ -94,7 +96,10 @@ impl super::Vmm {
         };
 
         if self.kvm_vm().fd().set_memory_attributes(attr).is_err() {
-            error!("unable to set memory attributes for memory region corresponding to guest address 0x{:x}", properties.gpa);
+            error!(
+                "unable to set memory attributes for memory region corresponding to guest address 0x{:x}",
+                properties.gpa
+            );
             sender.send(false).unwrap();
             return;
         }
@@ -134,7 +139,10 @@ impl super::Vmm {
             };
 
             if ret < 0 {
-                error!("unable to advise kernel that memory region corresponding to GPA 0x{:x} will likely not be needed (madvise)", properties.gpa);
+                error!(
+                    "unable to advise kernel that memory region corresponding to GPA 0x{:x} will likely not be needed (madvise)",
+                    properties.gpa
+                );
                 sender.send(false).unwrap();
             }
         } else {

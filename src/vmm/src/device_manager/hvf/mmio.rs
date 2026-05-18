@@ -426,9 +426,11 @@ mod tests {
         let mut cmdline = kernel_cmdline::Cmdline::new(4096);
         let dummy = Arc::new(Mutex::new(DummyDevice::new()));
 
-        assert!(device_manager
-            .register_virtio_device(guest_mem, dummy, &mut cmdline, 0, "dummy")
-            .is_ok());
+        assert!(
+            device_manager
+                .register_virtio_device(guest_mem, dummy, &mut cmdline, 0, "dummy")
+                .is_ok()
+        );
     }
 
     #[test]
@@ -543,9 +545,11 @@ mod tests {
         if let Ok(addr) =
             device_manager.register_virtio_device(guest_mem, dummy, &mut cmdline, type_id, &id)
         {
-            assert!(device_manager
-                .get_device(DeviceType::Virtio(type_id), &id)
-                .is_some());
+            assert!(
+                device_manager
+                    .get_device(DeviceType::Virtio(type_id), &id)
+                    .is_some()
+            );
             assert_eq!(
                 addr,
                 device_manager.id_to_dev_info[&(DeviceType::Virtio(type_id), id.clone())].addr
@@ -556,8 +560,10 @@ mod tests {
             );
         }
         let id = "bar";
-        assert!(device_manager
-            .get_device(DeviceType::Virtio(type_id), &id)
-            .is_none());
+        assert!(
+            device_manager
+                .get_device(DeviceType::Virtio(type_id), &id)
+                .is_none()
+        );
     }
 }
