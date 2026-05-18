@@ -2,7 +2,7 @@
 name = "krun-whp"
 version = "0.1.0-1.18.0"
 authors = ["The libkrun Authors"]
-edition = "2021"
+edition = "2024"
 description = "Windows Hypervisor Platform backend for libkrun"
 license = "Apache-2.0"
 repository = "https://github.com/containers/libkrun"

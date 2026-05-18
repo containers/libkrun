@@ -1,7 +1,7 @@
 [package]
 name = "krun-aws-nitro"
 version = "0.1.0-1.18.0"
-edition = "2021"
+edition = "2024"
 description = "AWS Nitro Enclaves support for libkrun"
 license = "Apache-2.0"
 repository = "https://github.com/containers/libkrun"
