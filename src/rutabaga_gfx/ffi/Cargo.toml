@@ -2,7 +2,7 @@
 name = "krun-rutabaga-gfx-ffi"
 version = "0.1.0-1.18.0"
 authors = ["The libkrun Authors"]
-edition = "2021"
+edition = "2024"
 description = "Handling virtio-gpu protocols with C API"
 license-file = "LICENSE"
 repository = "https://github.com/containers/libkrun"

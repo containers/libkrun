@@ -481,7 +481,7 @@ impl CrossDomainWorker {
                         .ok_or(RutabagaError::InvalidCrossDomainItemId)?;
 
                     match item {
-                        CrossDomainItem::WaylandReadPipe(ref mut file) => {
+                        CrossDomainItem::WaylandReadPipe(file) => {
                             let ring_write =
                                 RingWrite::WriteFromFile(cmd_read, file, event.readable);
                             bytes_read = self.state.write_to_ring::<CrossDomainReadWrite>(
@@ -517,7 +517,7 @@ impl CrossDomainWorker {
                         .ok_or(RutabagaError::InvalidCrossDomainItemId)?;
 
                     match item {
-                        CrossDomainItem::Eventfd(ref mut file) => {
+                        CrossDomainItem::Eventfd(file) => {
                             let ring_write =
                                 RingWrite::WriteFromFile(cmd_read, file, event.readable);
                             self.state.write_to_ring::<CrossDomainReadWrite>(

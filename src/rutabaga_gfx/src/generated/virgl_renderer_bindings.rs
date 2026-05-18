@@ -107,24 +107,24 @@ pub struct virgl_renderer_callbacks {
         ) -> ::std::os::raw::c_int,
     >,
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_init(
         cookie: *mut ::std::os::raw::c_void,
         flags: ::std::os::raw::c_int,
         cb: *mut virgl_renderer_callbacks,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_poll();
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_get_cursor_data(
         resource_id: u32,
         width: *mut u32,
         height: *mut u32,
     ) -> *mut ::std::os::raw::c_void;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_get_rect(
         resource_id: ::std::os::raw::c_int,
         iov: *mut iovec,
@@ -136,13 +136,13 @@ extern "C" {
         height: ::std::os::raw::c_int,
     );
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_get_fd_for_texture(
         tex_id: u32,
         fd: *mut ::std::os::raw::c_int,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_get_fd_for_texture2(
         tex_id: u32,
         fd: *mut ::std::os::raw::c_int,
@@ -197,46 +197,46 @@ pub struct virgl_renderer_supported_structures {
     pub in_stype_version: u32,
     pub out_supported_structures_mask: u32,
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_create(
         args: *mut virgl_renderer_resource_create_args,
         iov: *mut iovec,
         num_iovs: u32,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_import_eglimage(
         args: *mut virgl_renderer_resource_create_args,
         image: *mut ::std::os::raw::c_void,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_unref(res_handle: u32);
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_set_priv(res_handle: u32, priv_: *mut ::std::os::raw::c_void);
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_get_priv(res_handle: u32) -> *mut ::std::os::raw::c_void;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_context_create(
         handle: u32,
         nlen: u32,
         name: *const ::std::os::raw::c_char,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_context_destroy(handle: u32);
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_submit_cmd(
         buffer: *mut ::std::os::raw::c_void,
         ctx_id: ::std::os::raw::c_int,
         ndw: ::std::os::raw::c_int,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_transfer_read_iov(
         handle: u32,
         ctx_id: u32,
@@ -249,7 +249,7 @@ extern "C" {
         iovec_cnt: ::std::os::raw::c_int,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_transfer_write_iov(
         handle: u32,
         ctx_id: u32,
@@ -262,42 +262,42 @@ extern "C" {
         iovec_cnt: ::std::os::raw::c_uint,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_get_cap_set(set: u32, max_ver: *mut u32, max_size: *mut u32);
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_fill_caps(set: u32, version: u32, caps: *mut ::std::os::raw::c_void);
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_attach_iov(
         res_handle: ::std::os::raw::c_int,
         iov: *mut iovec,
         num_iovs: ::std::os::raw::c_int,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_detach_iov(
         res_handle: ::std::os::raw::c_int,
         iov: *mut *mut iovec,
         num_iovs: *mut ::std::os::raw::c_int,
     );
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_create_fence(
         client_fence_id: ::std::os::raw::c_int,
         ctx_id: u32,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_force_ctx_0();
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_ctx_attach_resource(
         ctx_id: ::std::os::raw::c_int,
         res_handle: ::std::os::raw::c_int,
     );
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_ctx_detach_resource(
         ctx_id: ::std::os::raw::c_int,
         res_handle: ::std::os::raw::c_int,
@@ -316,28 +316,28 @@ pub struct virgl_renderer_resource_info {
     pub stride: u32,
     pub drm_fourcc: ::std::os::raw::c_int,
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_get_info(
         res_handle: ::std::os::raw::c_int,
         info: *mut virgl_renderer_resource_info,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_cleanup(cookie: *mut ::std::os::raw::c_void);
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_reset();
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_get_poll_fd() -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_execute(
         execute_args: *mut ::std::os::raw::c_void,
         execute_size: u32,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_context_create_with_flags(
         ctx_id: u32,
         ctx_flags: u32,
@@ -366,12 +366,12 @@ impl Default for virgl_renderer_resource_create_blob_args {
         }
     }
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_create_blob(
         args: *const virgl_renderer_resource_create_blob_args,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_map(
         res_handle: u32,
         map: *mut *mut ::std::os::raw::c_void,
@@ -379,7 +379,7 @@ extern "C" {
     ) -> ::std::os::raw::c_int;
 }
 #[cfg(feature = "virgl_resource_map2")]
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_map2(
         res_handle: u32,
         map: *const ::std::os::raw::c_void,
@@ -388,10 +388,10 @@ extern "C" {
         flags: i32,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_unmap(res_handle: u32) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_get_map_info(
         res_handle: u32,
         map_info: *mut u32,
@@ -404,7 +404,7 @@ extern "C" {
         map_ptr: *mut u64,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_export_blob(
         res_id: u32,
         fd_type: *mut u32,
@@ -420,18 +420,18 @@ pub struct virgl_renderer_resource_import_blob_args {
     pub fd: ::std::os::raw::c_int,
     pub size: u64,
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_resource_import_blob(
         args: *const virgl_renderer_resource_import_blob_args,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_export_fence(
         client_fence_id: u32,
         fd: *mut ::std::os::raw::c_int,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_context_create_fence(
         ctx_id: u32,
         flags: u32,
@@ -439,9 +439,9 @@ extern "C" {
         fence_id: u64,
     ) -> ::std::os::raw::c_int;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_context_poll(ctx_id: u32);
 }
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_renderer_context_get_poll_fd(ctx_id: u32) -> ::std::os::raw::c_int;
 }

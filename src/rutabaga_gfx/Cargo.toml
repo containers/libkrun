@@ -2,7 +2,7 @@
 name = "krun-rutabaga-gfx"
 version = "0.1.0-1.18.0"
 authors = ["The libkrun Authors"]
-edition = "2021"
+edition = "2024"
 description = "[highly unstable] Handling virtio-gpu protocols"
 license-file = "LICENSE"
 repository = "https://github.com/containers/libkrun"

@@ -6,7 +6,7 @@
 
 #[macro_export]
 macro_rules! checked_range {
-    ($x:expr; <= $y:expr) => {
+    ($x:expr_2021; <= $y:expr_2021) => {
         if $x <= $y {
             Ok(())
         } else {
@@ -23,7 +23,7 @@ macro_rules! checked_range {
 
 #[macro_export]
 macro_rules! checked_arithmetic {
-    ($x:ident $op:ident $y:ident $op_name:expr) => {
+    ($x:ident $op:ident $y:ident $op_name:expr_2021) => {
         $x.$op($y).ok_or_else(|| RutabagaError::CheckedArithmetic {
             field1: (stringify!($x), $x as usize),
             field2: (stringify!($y), $y as usize),

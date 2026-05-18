@@ -8,7 +8,7 @@
  */
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub mod stdio {
-    extern "C" {
+    unsafe extern "C" {
         pub fn vsnprintf(
             __s: *mut ::std::os::raw::c_char,
             __maxlen: ::std::os::raw::c_ulong,
@@ -29,7 +29,7 @@ pub mod stdio {
 }
 #[cfg(target_arch = "arm")]
 pub mod stdio {
-    extern "C" {
+    unsafe extern "C" {
         pub fn vsnprintf(
             __s: *mut ::std::os::raw::c_char,
             __maxlen: ::std::os::raw::c_uint,
@@ -48,7 +48,7 @@ pub mod stdio {
 }
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 pub mod stdio {
-    extern "C" {
+    unsafe extern "C" {
         pub fn vsnprintf(
             __s: *mut ::std::os::raw::c_char,
             __maxlen: ::std::os::raw::c_ulong,
@@ -70,6 +70,6 @@ pub type virgl_debug_callback_type = ::std::option::Option<
     unsafe extern "C" fn(fmt: *const ::std::os::raw::c_char, ap: stdio::va_list),
 >;
 
-extern "C" {
+unsafe extern "C" {
     pub fn virgl_set_debug_callback(cb: virgl_debug_callback_type) -> virgl_debug_callback_type;
 }
