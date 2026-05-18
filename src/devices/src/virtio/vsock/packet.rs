@@ -654,11 +654,10 @@ impl VsockPacket {
     }
 
     pub fn write_connect_rsp(&mut self, rsp: TsiConnectRsp) {
-        if self.buf_size >= 4 {
-            if let Some(buf) = self.buf_mut() {
+        if self.buf_size >= 4
+            && let Some(buf) = self.buf_mut() {
                 byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
             }
-        }
     }
 
     pub fn read_getname_req(&self) -> Option<TsiGetnameReq> {
@@ -677,8 +676,8 @@ impl VsockPacket {
     }
 
     pub fn write_getname_rsp(&mut self, rsp: TsiGetnameRsp) {
-        if self.buf_size >= 132 {
-            if let Some(buf) = self.buf_mut() {
+        if self.buf_size >= 132
+            && let Some(buf) = self.buf_mut() {
                 byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
                 byte_order::write_le_u32(&mut buf[4..], rsp.addr_len);
                 let addr_ptr = rsp.addr.as_ptr();
@@ -701,7 +700,6 @@ impl VsockPacket {
                     byte_order::write_le_u16(&mut buf[8..], linux_family);
                 }
             }
-        }
     }
 
     pub fn read_sendto_addr(&self) -> Option<TsiSendtoAddr> {
@@ -738,11 +736,10 @@ impl VsockPacket {
     }
 
     pub fn write_listen_rsp(&mut self, rsp: TsiListenRsp) {
-        if self.buf_size >= 4 {
-            if let Some(buf) = self.buf_mut() {
+        if self.buf_size >= 4
+            && let Some(buf) = self.buf_mut() {
                 byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
             }
-        }
     }
 
     pub fn read_accept_req(&self) -> Option<TsiAcceptReq> {
@@ -757,11 +754,10 @@ impl VsockPacket {
     }
 
     pub fn write_accept_rsp(&mut self, rsp: TsiAcceptRsp) {
-        if self.buf_size >= 4 {
-            if let Some(buf) = self.buf_mut() {
+        if self.buf_size >= 4
+            && let Some(buf) = self.buf_mut() {
                 byte_order::write_le_u32(&mut buf[0..], rsp.result as u32);
             }
-        }
     }
 
     pub fn read_release_req(&self) -> Option<TsiReleaseReq> {
@@ -778,10 +774,9 @@ impl VsockPacket {
     }
 
     pub fn write_time_sync(&mut self, time: u64) {
-        if self.buf_size >= 8 {
-            if let Some(buf) = self.buf_mut() {
+        if self.buf_size >= 8
+            && let Some(buf) = self.buf_mut() {
                 byte_order::write_le_u64(&mut buf[0..], time);
             }
-        }
     }
 }

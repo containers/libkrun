@@ -69,7 +69,7 @@ struct LinuxDirent64 {
 unsafe impl ByteValued for LinuxDirent64 {}
 
 macro_rules! scoped_cred {
-    ($name:ident, $ty:ty, $syscall_nr:expr) => {
+    ($name:ident, $ty:ty, $syscall_nr:expr_2021) => {
         #[derive(Debug)]
         struct $name;
 
@@ -686,8 +686,8 @@ impl PassthroughFs {
     fn do_release(&self, inode: Inode, handle: Handle) -> io::Result<()> {
         let mut handles = self.handles.write().unwrap();
 
-        if let btree_map::Entry::Occupied(e) = handles.entry(handle) {
-            if e.get().inode == inode {
+        if let btree_map::Entry::Occupied(e) = handles.entry(handle)
+            && e.get().inode == inode {
                 if e.get().exported.load(Ordering::Relaxed) {
                     self.cfg
                         .export_table
@@ -703,7 +703,6 @@ impl PassthroughFs {
                 e.remove();
                 return Ok(());
             }
-        }
 
         Err(ebadf())
     }

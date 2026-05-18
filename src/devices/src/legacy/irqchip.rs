@@ -158,8 +158,8 @@ pub mod test_utils {
         }
     }
 
-    impl Into<IrqChip> for DummyIrqChip {
-        fn into(self) -> IrqChip {
+    impl From<DummyIrqChip> for IrqChip {
+        fn from(_val: DummyIrqChip) -> Self {
             Arc::new(Mutex::new(IrqChipDevice::new(
                 Box::new(DummyIrqChip::new()),
             )))

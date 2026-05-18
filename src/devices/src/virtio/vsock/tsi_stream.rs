@@ -227,11 +227,10 @@ impl TsiStreamProxy {
         let unixsock_path = self.get_unixsock_path(&addr);
         // If the userspace process in the guest has already created the socket,
         // we need to unlink it to take ownership of the node in the filesystem.
-        if let Some(path) = &unixsock_path {
-            if let Err(e) = fs::remove_file(path) {
+        if let Some(path) = &unixsock_path
+            && let Err(e) = fs::remove_file(path) {
                 debug!("error removing socket: {e}");
             }
-        }
 
         match bind(self.fd.as_raw_fd(), &addr) {
             Ok(_) => {
@@ -431,8 +430,8 @@ impl TsiStreamProxy {
     }
 
     fn get_unixsock_path(&self, addr: &SockaddrStorage) -> Option<PathBuf> {
-        if let Some(addr) = addr.as_unix_addr() {
-            if let Some(path) = addr.path() {
+        if let Some(addr) = addr.as_unix_addr()
+            && let Some(path) = addr.path() {
                 // SockaddrStorage doesn't clean up NULLs. This is fine when
                 // using addr with other nix methods, but we need to clean them
                 // up to be able to treat it as a path with other Rust crates.
@@ -451,7 +450,6 @@ impl TsiStreamProxy {
                     Err(e) => debug!("metadata failed with {e}"),
                 }
             }
-        }
 
         None
     }

@@ -75,11 +75,11 @@ where
     /// associated with the main key is updated, the value associated with the alternate key is
     /// removed, and the old value associated with the main key is returned.
     pub fn insert(&mut self, k1: K1, k2: K2, v: V) -> Option<V> {
-        let oldval = if let Some(oldkey) = self.alt.insert(k2.clone(), k1.clone()) {
+        let oldval = match self.alt.insert(k2.clone(), k1.clone()) { Some(oldkey) => {
             self.main.remove(&oldkey)
-        } else {
+        } _ => {
             None
-        };
+        }};
         self.main
             .insert(k1, (k2.clone(), v))
             .or(oldval)

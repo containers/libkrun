@@ -102,7 +102,7 @@ impl VhostUserDevice {
         // Get available features from backend
         let avail_features = frontend
             .get_features()
-            .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         debug!("{}: backend features: 0x{:x}", device_name, avail_features);
 
@@ -113,7 +113,7 @@ impl VhostUserDevice {
         if has_protocol_features {
             let protocol_features = frontend
                 .get_protocol_features()
-                .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
 
             let mut our_protocol_features = VhostUserProtocolFeatures::empty();
             if protocol_features.contains(VhostUserProtocolFeatures::CONFIG) {
@@ -125,7 +125,7 @@ impl VhostUserDevice {
 
             frontend
                 .set_protocol_features(our_protocol_features)
-                .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
         }
 
         // Determine actual queue count - may require protocol feature negotiation
@@ -133,7 +133,7 @@ impl VhostUserDevice {
             if has_protocol_features {
                 let backend_queue_num = frontend
                     .get_queue_num()
-                    .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+                    .map_err(io::Error::other)?;
 
                 debug!(
                     "{}: backend reports {} queues available",
@@ -192,7 +192,7 @@ impl VhostUserDevice {
 
         frontend
             .set_owner()
-            .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         // Only share memory regions that have file backing (memfd)
         let regions: Vec<VhostUserMemoryRegionInfo> = mem
@@ -210,7 +210,7 @@ impl VhostUserDevice {
                     "{}: failed to convert memory regions: {:?}",
                     self.device_name, e
                 );
-                io::Error::new(ErrorKind::Other, e)
+                io::Error::other(e)
             })?;
 
         debug!(
@@ -221,13 +221,13 @@ impl VhostUserDevice {
 
         frontend.set_mem_table(&regions).map_err(|e| {
             error!("{}: set_mem_table failed: {:?}", self.device_name, e);
-            io::Error::new(ErrorKind::Other, e)
+            io::Error::other(e)
         })?;
 
         // If protocol features not negotiated, this triggers automatic ring enabling
         frontend
             .set_features(backend_feature_bits)
-            .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         let vring_call_event = EventFd::new(EFD_NONBLOCK)?;
 
@@ -236,12 +236,12 @@ impl VhostUserDevice {
 
             frontend
                 .set_vring_num(queue_index, queue.actual_size())
-                .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
 
             // Set vring base
             frontend
                 .set_vring_base(queue_index, 0)
-                .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
 
             // Vring addresses in queue are GPAs, but vhost-user protocol expects VMM VAs
             let desc_table_gpa = queue.desc_table.0;
@@ -287,7 +287,7 @@ impl VhostUserDevice {
                 .set_vring_addr(queue_index, &vring_config)
                 .map_err(|e| {
                     error!("{}: set_vring_addr failed: {:?}", self.device_name, e);
-                    io::Error::new(ErrorKind::Other, e)
+                    io::Error::other(e)
                 })?;
 
             // Create vhost-compatible EventFd from the raw fd
@@ -297,7 +297,7 @@ impl VhostUserDevice {
                 .set_vring_kick(queue_index, &kick_fd)
                 .map_err(|e| {
                     error!("{}: set_vring_kick failed: {:?}", self.device_name, e);
-                    io::Error::new(ErrorKind::Other, e)
+                    io::Error::other(e)
                 })?;
             std::mem::forget(kick_fd); // Don't close the fd twice
 
@@ -306,7 +306,7 @@ impl VhostUserDevice {
                 .set_vring_call(queue_index, &call_fd)
                 .map_err(|e| {
                     error!("{}: set_vring_call failed: {:?}", self.device_name, e);
-                    io::Error::new(ErrorKind::Other, e)
+                    io::Error::other(e)
                 })?;
             std::mem::forget(call_fd); // Don't close the fd twice
 
@@ -315,7 +315,7 @@ impl VhostUserDevice {
             if self.has_protocol_features {
                 frontend
                     .set_vring_enable(queue_index, true)
-                    .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+                    .map_err(io::Error::other)?;
             } else {
                 debug!(
                     "{}: vring {} already enabled (protocol features not negotiated)",
@@ -363,8 +363,8 @@ impl VirtioDevice for VhostUserDevice {
     fn read_config(&self, offset: u64, data: &mut [u8]) {
         // Fetch config from backend on every read (same as QEMU/crosvm)
         // No caching to avoid invalidation issues
-        if self.has_protocol_features {
-            if let Ok(mut frontend) = self.frontend.lock() {
+        if self.has_protocol_features
+            && let Ok(mut frontend) = self.frontend.lock() {
                 match frontend.get_config(
                     offset as u32,
                     data.len() as u32,
@@ -391,7 +391,6 @@ impl VirtioDevice for VhostUserDevice {
                     }
                 }
             }
-        }
 
         debug!(
             "{}: config read at offset {} returning zeros (backend not available)",
