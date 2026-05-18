@@ -109,7 +109,7 @@ macro_rules! FromRawDescriptor {
     ($name:ident) => {
         impl FromRawDescriptor for $name {
             unsafe fn from_raw_descriptor(descriptor: RawDescriptor) -> Self {
-                $name::from_raw_fd(descriptor)
+                unsafe { $name::from_raw_fd(descriptor) }
             }
         }
     };

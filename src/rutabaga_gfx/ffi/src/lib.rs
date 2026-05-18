@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-///! C-bindings for the rutabaga_gfx crate
+//! C-bindings for the rutabaga_gfx crate
 extern crate rutabaga_gfx;
 
 use std::convert::TryInto;
@@ -15,7 +15,6 @@ use std::panic::catch_unwind;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::ptr::copy_nonoverlapping;
-use std::ptr::null;
 use std::ptr::null_mut;
 use std::slice::from_raw_parts;
 use std::slice::from_raw_parts_mut;
@@ -35,7 +34,7 @@ static S_DEBUG_HANDLER: OnceCell<Mutex<RutabagaDebugHandler>> = OnceCell::new();
 fn log_error(debug_string: String) {
     // Although this should be only called from a single-thread environment, add locking to
     // to reduce the amount of unsafe code blocks.
-    if let Some(ref handler_mutex) = S_DEBUG_HANDLER.get() {
+    if let Some(handler_mutex) = S_DEBUG_HANDLER.get() {
         let cstring = CString::new(debug_string.as_str()).expect("CString creation failed");
 
         let debug = RutabagaDebug {
@@ -158,15 +157,15 @@ fn create_ffi_debug_handler(
     RutabagaDebugHandler::new(move |rutabaga_debug| debug_cb(user_data, &rutabaga_debug))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// # Safety
 /// - `capset_names` must be a null-terminated C-string.
 pub unsafe extern "C" fn rutabaga_calculate_capset_mask(
     capset_names: *const c_char,
     capset_mask: &mut u64,
-) -> i32 {
+) -> i32 { unsafe {
     catch_unwind(AssertUnwindSafe(|| {
-        if capset_names == null() {
+        if capset_names.is_null() {
             return -EINVAL;
         }
 
@@ -177,20 +176,20 @@ pub unsafe extern "C" fn rutabaga_calculate_capset_mask(
         NO_ERROR
     }))
     .unwrap_or(-ESRCH)
-}
+}}
 
 /// # Safety
 /// - If `(*builder).channels` is not null, the caller must ensure `(*channels).channels` points to
 ///   a valid array of `struct rutabaga_channel` of size `(*channels).num_channels`.
 /// - The `channel_name` field of `struct rutabaga_channel` must be a null-terminated C-string.
-#[no_mangle]
-pub unsafe extern "C" fn rutabaga_init(builder: &rutabaga_builder, ptr: &mut *mut rutabaga) -> i32 {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rutabaga_init(builder: &rutabaga_builder, ptr: &mut *mut rutabaga) -> i32 { unsafe {
     catch_unwind(AssertUnwindSafe(|| {
-        let fence_handler = create_ffi_fence_handler((*builder).user_data, (*builder).fence_cb);
+        let fence_handler = create_ffi_fence_handler(builder.user_data, builder.fence_cb);
         let mut debug_handler_opt: Option<RutabagaDebugHandler> = None;
 
-        if let Some(func) = (*builder).debug_cb {
-            let debug_handler = create_ffi_debug_handler((*builder).user_data, func);
+        if let Some(func) = builder.debug_cb {
+            let debug_handler = create_ffi_debug_handler(builder.user_data, func);
             S_DEBUG_HANDLER
                 .set(Mutex::new(debug_handler.clone()))
                 .expect("once_cell set failed");
@@ -198,7 +197,7 @@ pub unsafe extern "C" fn rutabaga_init(builder: &rutabaga_builder, ptr: &mut *mu
         }
 
         let mut rutabaga_channels_opt = None;
-        if let Some(channels) = (*builder).channels {
+        if let Some(channels) = builder.channels {
             let mut rutabaga_channels: Vec<RutabagaChannel> = Vec::new();
             let channels_slice = from_raw_parts(channels.channels, channels.num_channels);
 
@@ -219,16 +218,16 @@ pub unsafe extern "C" fn rutabaga_init(builder: &rutabaga_builder, ptr: &mut *mu
         }
 
         let mut component_type = RutabagaComponentType::CrossDomain;
-        if (*builder).capset_mask == 0 {
+        if builder.capset_mask == 0 {
             component_type = RutabagaComponentType::Rutabaga2D;
         }
 
-        let rutabaga_wsi = match (*builder).wsi {
+        let rutabaga_wsi = match builder.wsi {
             RUTABAGA_WSI_SURFACELESS => RutabagaWsi::Surfaceless,
             _ => return -EINVAL,
         };
 
-        let result = RutabagaBuilder::new(component_type, (*builder).capset_mask)
+        let result = RutabagaBuilder::new(component_type, 0, builder.capset_mask)
             .set_use_external_blob(false)
             .set_use_egl(true)
             .set_wsi(rutabaga_wsi)
@@ -241,21 +240,21 @@ pub unsafe extern "C" fn rutabaga_init(builder: &rutabaga_builder, ptr: &mut *mu
         NO_ERROR
     }))
     .unwrap_or(-ESRCH)
-}
+}}
 
 /// # Safety
 /// - `ptr` must have been created by `rutabaga_init`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_finish(ptr: &mut *mut rutabaga) -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
-        unsafe { Box::from_raw(*ptr) };
+        unsafe { drop(Box::from_raw(*ptr)) };
         *ptr = null_mut();
         NO_ERROR
     }))
     .unwrap_or(-ESRCH)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_get_num_capsets(ptr: &mut rutabaga, num_capsets: &mut u32) -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
         *num_capsets = ptr.get_num_capsets();
@@ -264,7 +263,7 @@ pub extern "C" fn rutabaga_get_num_capsets(ptr: &mut rutabaga, num_capsets: &mut
     .unwrap_or(-ESRCH)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_get_capset_info(
     ptr: &mut rutabaga,
     capset_index: u32,
@@ -285,14 +284,14 @@ pub extern "C" fn rutabaga_get_capset_info(
 
 /// # Safety
 /// - `capset` must point an array of bytes of size `capset_size`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rutabaga_get_capset(
     ptr: &mut rutabaga,
     capset_id: u32,
     version: u32,
     capset: *mut u8,
     capset_size: u32,
-) -> i32 {
+) -> i32 { unsafe {
     catch_unwind(AssertUnwindSafe(|| {
         let size: usize = capset_size.try_into().map_err(|_e| -EINVAL).unwrap();
         let result = ptr.get_capset(capset_id, version);
@@ -301,9 +300,9 @@ pub unsafe extern "C" fn rutabaga_get_capset(
         NO_ERROR
     }))
     .unwrap_or(-ESRCH)
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_context_create(
     ptr: &mut rutabaga,
     ctx_id: u32,
@@ -330,7 +329,7 @@ pub extern "C" fn rutabaga_context_create(
     .unwrap_or(-ESRCH)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_context_destroy(ptr: &mut rutabaga, ctx_id: u32) -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
         let result = ptr.destroy_context(ctx_id);
@@ -339,7 +338,7 @@ pub extern "C" fn rutabaga_context_destroy(ptr: &mut rutabaga, ctx_id: u32) -> i
     .unwrap_or(-ESRCH)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_context_attach_resource(
     ptr: &mut rutabaga,
     ctx_id: u32,
@@ -352,7 +351,7 @@ pub extern "C" fn rutabaga_context_attach_resource(
     .unwrap_or(-ESRCH)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_context_detach_resource(
     ptr: &mut rutabaga,
     ctx_id: u32,
@@ -365,7 +364,7 @@ pub extern "C" fn rutabaga_context_detach_resource(
     .unwrap_or(-ESRCH)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_resource_create_3d(
     ptr: &mut rutabaga,
     resource_id: u32,
@@ -384,14 +383,14 @@ pub extern "C" fn rutabaga_resource_create_3d(
 /// - Each iovec must point to valid memory starting at `iov_base` with length `iov_len`.
 /// - Each iovec must valid until the resource's backing is explictly detached or the resource is
 ///   is unreferenced.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rutabaga_resource_attach_backing(
     ptr: &mut rutabaga,
     resource_id: u32,
     iovecs: &rutabaga_iovecs,
-) -> i32 {
+) -> i32 { unsafe {
     catch_unwind(AssertUnwindSafe(|| {
-        let slice = from_raw_parts((*iovecs).iovecs, (*iovecs).num_iovecs);
+        let slice = from_raw_parts(iovecs.iovecs, iovecs.num_iovecs);
         let vecs = slice
             .iter()
             .map(|iov| RutabagaIovec {
@@ -404,9 +403,9 @@ pub unsafe extern "C" fn rutabaga_resource_attach_backing(
         return_result(result)
     }))
     .unwrap_or(-ESRCH)
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_resource_detach_backing(ptr: &mut rutabaga, resource_id: u32) -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
         let result = ptr.detach_backing(resource_id);
@@ -418,14 +417,14 @@ pub extern "C" fn rutabaga_resource_detach_backing(ptr: &mut rutabaga, resource_
 /// # Safety
 /// - If `iovecs` is not null, the caller must ensure `(*iovecs).iovecs` points to a valid array of
 ///   iovecs of size `(*iovecs).num_iovecs`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rutabaga_resource_transfer_read(
     ptr: &mut rutabaga,
     ctx_id: u32,
     resource_id: u32,
     transfer: &rutabaga_transfer,
     buf: Option<&iovec>,
-) -> i32 {
+) -> i32 { unsafe {
     catch_unwind(AssertUnwindSafe(|| {
         let mut slice_opt = None;
         if let Some(iovec) = buf {
@@ -439,9 +438,9 @@ pub unsafe extern "C" fn rutabaga_resource_transfer_read(
         return_result(result)
     }))
     .unwrap_or(-ESRCH)
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_resource_transfer_write(
     ptr: &mut rutabaga,
     ctx_id: u32,
@@ -462,7 +461,7 @@ pub extern "C" fn rutabaga_resource_transfer_write(
 ///   transfered to rutabaga.
 /// - Each iovec must valid until the resource's backing is explictly detached or the resource is
 ///   is unreferenced.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rutabaga_resource_create_blob(
     ptr: &mut rutabaga,
     ctx_id: u32,
@@ -470,11 +469,11 @@ pub unsafe extern "C" fn rutabaga_resource_create_blob(
     create_blob: &rutabaga_create_blob,
     iovecs: Option<&rutabaga_iovecs>,
     handle: Option<&rutabaga_handle>,
-) -> i32 {
+) -> i32 { unsafe {
     catch_unwind(AssertUnwindSafe(|| {
         let mut iovecs_opt: Option<Vec<RutabagaIovec>> = None;
         if let Some(iovs) = iovecs {
-            let slice = from_raw_parts((*iovs).iovecs, (*iovs).num_iovecs);
+            let slice = from_raw_parts(iovs.iovecs, iovs.num_iovecs);
             let vecs = slice
                 .iter()
                 .map(|iov| RutabagaIovec {
@@ -489,9 +488,9 @@ pub unsafe extern "C" fn rutabaga_resource_create_blob(
         if let Some(hnd) = handle {
             handle_opt = Some(RutabagaHandle {
                 os_handle: RutabagaDescriptor::from_raw_descriptor(
-                    (*hnd).os_handle.try_into().unwrap(),
+                    hnd.os_handle.try_into().unwrap(),
                 ),
-                handle_type: (*hnd).handle_type,
+                handle_type: hnd.handle_type,
             });
         }
 
@@ -501,9 +500,9 @@ pub unsafe extern "C" fn rutabaga_resource_create_blob(
         return_result(result)
     }))
     .unwrap_or(-ESRCH)
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_resource_unref(ptr: &mut rutabaga, resource_id: u32) -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
         let result = ptr.unref_resource(resource_id);
@@ -514,7 +513,7 @@ pub extern "C" fn rutabaga_resource_unref(ptr: &mut rutabaga, resource_id: u32) 
 
 /// # Safety
 /// Caller owns raw descriptor on success and is responsible for closing it.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_resource_export_blob(
     ptr: &mut rutabaga,
     resource_id: u32,
@@ -524,14 +523,14 @@ pub extern "C" fn rutabaga_resource_export_blob(
         let result = ptr.export_blob(resource_id);
         let hnd = return_on_error!(result);
 
-        (*handle).handle_type = hnd.handle_type;
-        (*handle).os_handle = hnd.os_handle.into_raw_descriptor() as i64;
+        handle.handle_type = hnd.handle_type;
+        handle.os_handle = hnd.os_handle.into_raw_descriptor() as i64;
         NO_ERROR
     }))
     .unwrap_or(-ESRCH)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_resource_map(
     ptr: &mut rutabaga,
     resource_id: u32,
@@ -540,14 +539,14 @@ pub extern "C" fn rutabaga_resource_map(
     catch_unwind(AssertUnwindSafe(|| {
         let result = ptr.map(resource_id);
         let internal_map = return_on_error!(result);
-        (*mapping).ptr = internal_map.ptr as *mut c_void;
-        (*mapping).size = internal_map.size;
+        mapping.ptr = internal_map.ptr as *mut c_void;
+        mapping.size = internal_map.size;
         NO_ERROR
     }))
     .unwrap_or(-ESRCH)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_resource_unmap(ptr: &mut rutabaga, resource_id: u32) -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
         let result = ptr.unmap(resource_id);
@@ -556,7 +555,7 @@ pub extern "C" fn rutabaga_resource_unmap(ptr: &mut rutabaga, resource_id: u32) 
     .unwrap_or(-ESRCH)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_resource_map_info(
     ptr: &mut rutabaga,
     resource_id: u32,
@@ -572,11 +571,11 @@ pub extern "C" fn rutabaga_resource_map_info(
 
 /// # Safety
 /// - `commands` must point to a contiguous memory region of `size` bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rutabaga_submit_command(
     ptr: &mut rutabaga,
     cmd: &rutabaga_command,
-) -> i32 {
+) -> i32 { unsafe {
     catch_unwind(AssertUnwindSafe(|| {
         let cmd_slice = from_raw_parts_mut(cmd.cmd, cmd.cmd_size as usize);
         let fence_ids = from_raw_parts(cmd.fence_ids, cmd.num_in_fences as usize);
@@ -584,9 +583,9 @@ pub unsafe extern "C" fn rutabaga_submit_command(
         return_result(result)
     }))
     .unwrap_or(-ESRCH)
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rutabaga_create_fence(ptr: &mut rutabaga, fence: &rutabaga_fence) -> i32 {
     catch_unwind(AssertUnwindSafe(|| {
         let result = ptr.create_fence(*fence);
