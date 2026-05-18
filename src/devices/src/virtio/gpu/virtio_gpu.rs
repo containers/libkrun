@@ -240,14 +240,14 @@ impl VirtioGpu {
         }];
 
         #[cfg(target_os = "linux")]
-        if let Ok(x_display) = env::var("DISPLAY") {
-            if let Some(x_display) = x_display.strip_prefix(":") {
-                let x_path = PathBuf::from(format!("/tmp/.X11-unix/X{x_display}"));
-                rutabaga_channels.push(RutabagaChannel {
-                    base_channel: x_path,
-                    channel_type: RUTABAGA_CHANNEL_TYPE_X11,
-                });
-            }
+        if let Ok(x_display) = env::var("DISPLAY")
+            && let Some(x_display) = x_display.strip_prefix(":")
+        {
+            let x_path = PathBuf::from(format!("/tmp/.X11-unix/X{x_display}"));
+            rutabaga_channels.push(RutabagaChannel {
+                base_channel: x_path,
+                channel_type: RUTABAGA_CHANNEL_TYPE_X11,
+            });
         }
         #[cfg(target_os = "linux")]
         if let Ok(pw_sock_dir) = env::var("PIPEWIRE_RUNTIME_DIR")
