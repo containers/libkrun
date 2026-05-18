@@ -873,7 +873,7 @@ const _: () = {
     ["Alignment of fd_set"][::std::mem::align_of::<fd_set>() - 4usize];
     ["Offset of field: fd_set::fds_bits"][::std::mem::offset_of!(fd_set, fds_bits) - 0usize];
 };
-extern "C" {
+unsafe extern "C" {
     pub fn __darwin_check_fd_set_overflow(
         arg1: ::std::os::raw::c_int,
         arg2: *const ::std::os::raw::c_void,
@@ -912,10 +912,10 @@ pub const HV_MEMORY_WRITE: _bindgen_ty_2 = 2;
 pub const HV_MEMORY_EXEC: _bindgen_ty_2 = 4;
 pub type _bindgen_ty_2 = ::std::os::raw::c_uint;
 pub type hv_memory_flags_t = u64;
-extern "C" {
+unsafe extern "C" {
     pub fn os_retain(object: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn os_release(object: *mut ::std::os::raw::c_void);
 }
 #[repr(C)]
@@ -4369,251 +4369,251 @@ pub type hv_interrupt_type_t = u32;
 pub const hv_cache_type_t_HV_CACHE_TYPE_DATA: hv_cache_type_t = 0;
 pub const hv_cache_type_t_HV_CACHE_TYPE_INSTRUCTION: hv_cache_type_t = 1;
 pub type hv_cache_type_t = u32;
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_create(
         vcpu: *mut hv_vcpu_t,
         exit: *mut *mut hv_vcpu_exit_t,
         config: hv_vcpu_config_t,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_destroy(vcpu: hv_vcpu_t) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_get_reg(vcpu: hv_vcpu_t, reg: hv_reg_t, value: *mut u64) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_set_reg(vcpu: hv_vcpu_t, reg: hv_reg_t, value: u64) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_get_simd_fp_reg(
         vcpu: hv_vcpu_t,
         reg: hv_simd_fp_reg_t,
         value: *mut hv_simd_fp_uchar16_t,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_set_simd_fp_reg(
         vcpu: hv_vcpu_t,
         reg: hv_simd_fp_reg_t,
         value: hv_simd_fp_uchar16_t,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_get_sys_reg(vcpu: hv_vcpu_t, reg: hv_sys_reg_t, value: *mut u64) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_set_sys_reg(vcpu: hv_vcpu_t, reg: hv_sys_reg_t, value: u64) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_get_pending_interrupt(
         vcpu: hv_vcpu_t,
         type_: hv_interrupt_type_t,
         pending: *mut bool,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_set_pending_interrupt(
         vcpu: hv_vcpu_t,
         type_: hv_interrupt_type_t,
         pending: bool,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_get_trap_debug_exceptions(vcpu: hv_vcpu_t, value: *mut bool) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_set_trap_debug_exceptions(vcpu: hv_vcpu_t, value: bool) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_get_trap_debug_reg_accesses(vcpu: hv_vcpu_t, value: *mut bool) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_set_trap_debug_reg_accesses(vcpu: hv_vcpu_t, value: bool) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_run(vcpu: hv_vcpu_t) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpus_exit(vcpus: *mut hv_vcpu_t, vcpu_count: u32) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_get_exec_time(vcpu: hv_vcpu_t, time: *mut u64) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_get_vtimer_mask(vcpu: hv_vcpu_t, vtimer_is_masked: *mut bool) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_set_vtimer_mask(vcpu: hv_vcpu_t, vtimer_is_masked: bool) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_get_vtimer_offset(vcpu: hv_vcpu_t, vtimer_offset: *mut u64) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_set_vtimer_offset(vcpu: hv_vcpu_t, vtimer_offset: u64) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_create(gic_config: hv_gic_config_t) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_set_spi(intid: u32, level: bool) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_send_msi(address: hv_ipa_t, intid: u32) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_distributor_reg(
         reg: hv_gic_distributor_reg_t,
         value: *mut u64,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_set_distributor_reg(reg: hv_gic_distributor_reg_t, value: u64) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_redistributor_base(
         vcpu: hv_vcpu_t,
         redistributor_base_address: *mut hv_ipa_t,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_redistributor_reg(
         vcpu: hv_vcpu_t,
         reg: hv_gic_redistributor_reg_t,
         value: *mut u64,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_set_redistributor_reg(
         vcpu: hv_vcpu_t,
         reg: hv_gic_redistributor_reg_t,
         value: u64,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_icc_reg(
         vcpu: hv_vcpu_t,
         reg: hv_gic_icc_reg_t,
         value: *mut u64,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_set_icc_reg(vcpu: hv_vcpu_t, reg: hv_gic_icc_reg_t, value: u64) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_ich_reg(
         vcpu: hv_vcpu_t,
         reg: hv_gic_ich_reg_t,
         value: *mut u64,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_set_ich_reg(vcpu: hv_vcpu_t, reg: hv_gic_ich_reg_t, value: u64) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_icv_reg(
         vcpu: hv_vcpu_t,
         reg: hv_gic_icv_reg_t,
         value: *mut u64,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_set_icv_reg(vcpu: hv_vcpu_t, reg: hv_gic_icv_reg_t, value: u64) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_msi_reg(reg: hv_gic_msi_reg_t, value: *mut u64) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_set_msi_reg(reg: hv_gic_msi_reg_t, value: u64) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_set_state(
         gic_state_data: *const ::std::os::raw::c_void,
         gic_state_size: usize,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_reset() -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_config_create() -> hv_gic_config_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_config_set_distributor_base(
         config: hv_gic_config_t,
         distributor_base_address: hv_ipa_t,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_config_set_redistributor_base(
         config: hv_gic_config_t,
         redistributor_base_address: hv_ipa_t,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_config_set_msi_region_base(
         config: hv_gic_config_t,
         msi_region_base_address: hv_ipa_t,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_config_set_msi_interrupt_range(
         config: hv_gic_config_t,
         msi_intid_base: u32,
         msi_intid_count: u32,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_distributor_size(distributor_size: *mut usize) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_distributor_base_alignment(
         distributor_base_alignment: *mut usize,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_redistributor_region_size(
         redistributor_region_size: *mut usize,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_redistributor_size(redistributor_size: *mut usize) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_redistributor_base_alignment(
         redistributor_base_alignment: *mut usize,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_msi_region_size(msi_region_size: *mut usize) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_msi_region_base_alignment(
         msi_region_base_alignment: *mut usize,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_spi_interrupt_range(
         spi_intid_base: *mut u32,
         spi_intid_count: *mut u32,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_get_intid(interrupt: hv_gic_intid_t, intid: *mut u32) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_state_create() -> hv_gic_state_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_state_get_size(state: hv_gic_state_t, gic_state_size: *mut usize) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_gic_state_get_data(
         state: hv_gic_state_t,
         gic_state_data: *mut ::std::os::raw::c_void,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_config_create() -> hv_vcpu_config_t;
 }
 pub const hv_feature_reg_t_HV_FEATURE_REG_ID_AA64DFR0_EL1: hv_feature_reg_t = 0;
@@ -4629,30 +4629,30 @@ pub const hv_feature_reg_t_HV_FEATURE_REG_CTR_EL0: hv_feature_reg_t = 9;
 pub const hv_feature_reg_t_HV_FEATURE_REG_CLIDR_EL1: hv_feature_reg_t = 10;
 pub const hv_feature_reg_t_HV_FEATURE_REG_DCZID_EL0: hv_feature_reg_t = 11;
 pub type hv_feature_reg_t = u32;
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_config_get_feature_reg(
         config: hv_vcpu_config_t,
         feature_reg: hv_feature_reg_t,
         value: *mut u64,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vcpu_config_get_ccsidr_el1_sys_reg_values(
         config: hv_vcpu_config_t,
         cache_type: hv_cache_type_t,
         values: *mut u64,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_get_max_vcpu_count(max_vcpu_count: *mut u32) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_create(config: hv_vm_config_t) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_destroy() -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_map(
         addr: *mut ::std::os::raw::c_void,
         ipa: hv_ipa_t,
@@ -4660,53 +4660,53 @@ extern "C" {
         flags: hv_memory_flags_t,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_unmap(ipa: hv_ipa_t, size: usize) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_protect(ipa: hv_ipa_t, size: usize, flags: hv_memory_flags_t) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_config_create() -> hv_vm_config_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_config_get_max_ipa_size(ipa_bit_length: *mut u32) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_config_get_default_ipa_size(ipa_bit_length: *mut u32) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_config_set_ipa_size(config: hv_vm_config_t, ipa_bit_length: u32) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_config_get_ipa_size(
         config: hv_vm_config_t,
         ipa_bit_length: *mut u32,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_config_get_el2_supported(el2_supported: *mut bool) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_config_get_el2_enabled(
         config: hv_vm_config_t,
         el2_enabled: *mut bool,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_config_set_el2_enabled(config: hv_vm_config_t, el2_enabled: bool) -> hv_return_t;
 }
 pub const HV_ALLOCATE_DEFAULT: _bindgen_ty_3 = 0;
 pub type _bindgen_ty_3 = ::std::os::raw::c_uint;
 pub type hv_allocate_flags_t = u64;
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_allocate(
         uvap: *mut *mut ::std::os::raw::c_void,
         size: usize,
         flags: hv_allocate_flags_t,
     ) -> hv_return_t;
 }
-extern "C" {
+unsafe extern "C" {
     pub fn hv_vm_deallocate(uva: *mut ::std::os::raw::c_void, size: usize) -> hv_return_t;
 }
 pub type __builtin_va_list = *mut ::std::os::raw::c_char;

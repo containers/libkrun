@@ -26,7 +26,7 @@ use std::time::Duration;
 use arch::aarch64::sysreg::{sys_reg_name, SYSREG_MASK};
 use log::debug;
 
-extern "C" {
+unsafe extern "C" {
     pub fn mach_absolute_time() -> u64;
 }
 
@@ -126,7 +126,7 @@ impl Display for Error {
 
         match self {
             EnableEL2 => write!(f, "Error enabling EL2 mode in HVF"),
-            FindSymbol(ref err) => write!(f, "Couldn't find symbol in HVF library: {err}"),
+            FindSymbol(err) => write!(f, "Couldn't find symbol in HVF library: {err}"),
             MemoryMap => write!(f, "Error registering memory region in HVF"),
             MemoryUnmap => write!(f, "Error unregistering memory region in HVF"),
             NestedCheck => write!(
