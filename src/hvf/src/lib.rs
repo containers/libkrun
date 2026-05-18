@@ -23,7 +23,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-use arch::aarch64::sysreg::{sys_reg_name, SYSREG_MASK};
+use arch::aarch64::sysreg::{SYSREG_MASK, sys_reg_name};
 use log::debug;
 
 unsafe extern "C" {
@@ -553,21 +553,21 @@ impl HvfVcpu<'_> {
     pub fn run(&mut self, vcpu_list: Arc<dyn Vcpus>) -> Result<VcpuExit<'_>, Error> {
         let pending_irq = vcpu_list.has_pending_irq(self.vcpuid);
 
-        if let Some(mmio_read) = self.pending_mmio_read.take() {
-            if mmio_read.srt < 31 {
-                let val = match mmio_read.len {
-                    1 => u8::from_le_bytes(self.mmio_buf[0..1].try_into().unwrap()) as u64,
-                    2 => u16::from_le_bytes(self.mmio_buf[0..2].try_into().unwrap()) as u64,
-                    4 => u32::from_le_bytes(self.mmio_buf[0..4].try_into().unwrap()) as u64,
-                    8 => u64::from_le_bytes(self.mmio_buf[0..8].try_into().unwrap()),
-                    _ => panic!(
-                        "unsupported mmio pa={} len={}",
-                        mmio_read.addr, mmio_read.len
-                    ),
-                };
+        if let Some(mmio_read) = self.pending_mmio_read.take()
+            && mmio_read.srt < 31
+        {
+            let val = match mmio_read.len {
+                1 => u8::from_le_bytes(self.mmio_buf[0..1].try_into().unwrap()) as u64,
+                2 => u16::from_le_bytes(self.mmio_buf[0..2].try_into().unwrap()) as u64,
+                4 => u32::from_le_bytes(self.mmio_buf[0..4].try_into().unwrap()) as u64,
+                8 => u64::from_le_bytes(self.mmio_buf[0..8].try_into().unwrap()),
+                _ => panic!(
+                    "unsupported mmio pa={} len={}",
+                    mmio_read.addr, mmio_read.len
+                ),
+            };
 
-                self.write_reg(mmio_read.srt, val)?;
-            }
+            self.write_reg(mmio_read.srt, val)?;
         }
 
         if self.pending_advance_pc {

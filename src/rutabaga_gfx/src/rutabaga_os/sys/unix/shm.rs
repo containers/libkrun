@@ -7,16 +7,16 @@ use std::ffi::CStr;
 use std::os::unix::io::OwnedFd;
 
 use libc::off_t;
-use nix::sys::memfd::memfd_create;
 use nix::sys::memfd::MFdFlags;
+use nix::sys::memfd::memfd_create;
+use nix::unistd::SysconfVar;
 use nix::unistd::ftruncate;
 use nix::unistd::sysconf;
-use nix::unistd::SysconfVar;
 use vmm_sys_util::align_upwards;
 
+use crate::rutabaga_os::RawDescriptor;
 use crate::rutabaga_os::descriptor::AsRawDescriptor;
 use crate::rutabaga_os::descriptor::IntoRawDescriptor;
-use crate::rutabaga_os::RawDescriptor;
 use crate::rutabaga_utils::RutabagaError;
 use crate::rutabaga_utils::RutabagaResult;
 

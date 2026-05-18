@@ -19,11 +19,11 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use imago::{
-    file::File as ImagoFile, qcow2::Qcow2, raw::Raw, vmdk::Vmdk, DynStorage, FormatDriverBuilder,
-    PermissiveImplicitOpenGate, Storage, StorageOpenOptions, SyncFormatAccess,
+    DynStorage, FormatDriverBuilder, PermissiveImplicitOpenGate, Storage, StorageOpenOptions,
+    SyncFormatAccess, file::File as ImagoFile, qcow2::Qcow2, raw::Raw, vmdk::Vmdk,
 };
 use log::{error, warn};
-use utils::eventfd::{EventFd, EFD_NONBLOCK};
+use utils::eventfd::{EFD_NONBLOCK, EventFd};
 use virtio_bindings::{
     virtio_blk::*, virtio_config::VIRTIO_F_VERSION_1, virtio_ring::VIRTIO_RING_F_EVENT_IDX,
 };
@@ -31,13 +31,13 @@ use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::worker::BlockWorker;
 use super::{
-    super::{ActivateResult, DeviceQueue, DeviceState, QueueConfig, VirtioDevice, TYPE_BLOCK},
+    super::{ActivateResult, DeviceQueue, DeviceState, QueueConfig, TYPE_BLOCK, VirtioDevice},
     Error, NUM_QUEUES, QUEUE_CONFIG, SECTOR_SHIFT, SECTOR_SIZE,
 };
 
 use crate::virtio::{
-    block::{ImageType, SyncMode},
     ActivateError, InterruptTransport,
+    block::{ImageType, SyncMode},
 };
 
 /// Configuration options for disk caching.

@@ -5,7 +5,7 @@ use utils::epoll::{EpollEvent, EventSet};
 
 use super::device::Console;
 use crate::virtio::console::device::{CONTROL_RXQ_INDEX, CONTROL_TXQ_INDEX};
-use crate::virtio::console::port_queue_mapping::{queue_idx_to_port_id, QueueDirection};
+use crate::virtio::console::port_queue_mapping::{QueueDirection, queue_idx_to_port_id};
 use crate::virtio::device::VirtioDevice;
 
 impl Console {

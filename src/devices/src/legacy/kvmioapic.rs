@@ -3,11 +3,11 @@
 
 use std::io;
 
+use crate::Error as DeviceError;
 use crate::bus::BusDevice;
 use crate::legacy::irqchip::IrqChipT;
-use crate::Error as DeviceError;
 
-use kvm_bindings::{kvm_pit_config, KVM_PIT_SPEAKER_DUMMY};
+use kvm_bindings::{KVM_PIT_SPEAKER_DUMMY, kvm_pit_config};
 use kvm_ioctls::{Error, VmFd};
 use utils::eventfd::EventFd;
 

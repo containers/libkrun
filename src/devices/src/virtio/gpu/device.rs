@@ -5,15 +5,15 @@ use crossbeam_channel::Sender;
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::super::{
-    fs::ExportTable, ActivateError, ActivateResult, DeviceQueue, DeviceState, QueueConfig,
-    VirtioDevice, VirtioShmRegion,
+    ActivateError, ActivateResult, DeviceQueue, DeviceState, QueueConfig, VirtioDevice,
+    VirtioShmRegion, fs::ExportTable,
 };
 use super::defs;
 use super::defs::uapi;
 use super::defs::uapi::virtio_gpu_config;
 use super::worker::Worker;
-use crate::virtio::display::DisplayInfo;
 use crate::virtio::InterruptTransport;
+use crate::virtio::display::DisplayInfo;
 use krun_display::DisplayBackend;
 #[cfg(target_os = "macos")]
 use utils::worker_message::WorkerMessage;

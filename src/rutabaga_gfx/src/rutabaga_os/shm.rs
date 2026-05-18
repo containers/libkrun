@@ -4,12 +4,12 @@
 
 use std::ffi::CString;
 
-use crate::rutabaga_os::sys::platform::SharedMemory as SysUtilSharedMemory;
 use crate::rutabaga_os::AsRawDescriptor;
 use crate::rutabaga_os::FromRawDescriptor;
 use crate::rutabaga_os::IntoRawDescriptor;
 use crate::rutabaga_os::RawDescriptor;
 use crate::rutabaga_os::SafeDescriptor;
+use crate::rutabaga_os::sys::platform::SharedMemory as SysUtilSharedMemory;
 use crate::rutabaga_utils::RutabagaResult;
 
 pub struct SharedMemory(pub(crate) SysUtilSharedMemory);

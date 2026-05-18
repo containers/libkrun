@@ -13,8 +13,8 @@
 use crossbeam_channel::Sender;
 use std::ffi::CStr;
 use std::io;
-use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
+use std::sync::atomic::AtomicI32;
 use std::time::Duration;
 
 #[cfg(target_os = "macos")]

@@ -9,11 +9,11 @@ use std::os::unix::io::FromRawFd;
 use std::os::unix::io::OwnedFd;
 
 use libc::c_int;
+use nix::Result;
 use nix::errno::Errno;
 use nix::sys::epoll::EpollCreateFlags;
 use nix::sys::epoll::EpollFlags;
 use nix::sys::epoll::EpollOp;
-use nix::Result;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(transparent)]

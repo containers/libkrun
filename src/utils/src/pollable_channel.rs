@@ -1,4 +1,4 @@
-use crate::eventfd::{EventFd, EFD_NONBLOCK, EFD_SEMAPHORE};
+use crate::eventfd::{EFD_NONBLOCK, EFD_SEMAPHORE, EventFd};
 use std::collections::VecDeque;
 use std::io;
 use std::io::ErrorKind;
@@ -10,8 +10,8 @@ use crate::windows::{AsRawFd, RawFd};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
 
 /// A multiple producer single consumer channel that can be listened to by a file descriptor
-pub fn pollable_channel<T: Send>(
-) -> io::Result<(PollableChannelSender<T>, PollableChannelReciever<T>)> {
+pub fn pollable_channel<T: Send>()
+-> io::Result<(PollableChannelSender<T>, PollableChannelReciever<T>)> {
     let eventfd = EventFd::new(EFD_NONBLOCK | EFD_SEMAPHORE)?;
 
     let inner = Arc::new(Inner {

@@ -1,6 +1,6 @@
 use anyhow::Context;
 use clap::Parser;
-use nix::sys::resource::{getrlimit, setrlimit, Resource};
+use nix::sys::resource::{Resource, getrlimit, setrlimit};
 use std::env;
 use std::fs::{self, File};
 use std::io::Write;
@@ -8,7 +8,7 @@ use std::panic::catch_unwind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tempdir::TempDir;
-use test_cases::{test_cases, Report, ShouldRun, Test, TestCase, TestOutcome, TestSetup};
+use test_cases::{Report, ShouldRun, Test, TestCase, TestOutcome, TestSetup, test_cases};
 
 struct TestResult {
     name: String,
@@ -42,7 +42,7 @@ fn start_vm(test_setup: TestSetup) -> anyhow::Result<()> {
 /// [`TestSetup::register_cleanup_pid`]. Sends SIGTERM first, waits up to 5s
 /// for graceful exit, then SIGKILL any survivors.
 fn kill_cleanup_pids(test_dir: &Path) {
-    use nix::sys::signal::{kill, Signal};
+    use nix::sys::signal::{Signal, kill};
     use nix::unistd::Pid;
     use std::io::BufRead;
 

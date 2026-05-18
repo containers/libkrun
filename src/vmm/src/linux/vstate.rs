@@ -7,7 +7,7 @@
 
 #[cfg(target_arch = "aarch64")]
 use arch::ArchMemoryInfo;
-use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
 use libc::{c_int, c_void, siginfo_t};
 use std::cell::Cell;
 use std::fmt::{Display, Formatter};
@@ -19,9 +19,9 @@ use std::os::unix::io::RawFd;
 #[cfg(target_arch = "x86_64")]
 use std::env;
 use std::result;
-use std::sync::atomic::{fence, Ordering};
 #[cfg(not(test))]
 use std::sync::Barrier;
+use std::sync::atomic::{Ordering, fence};
 use std::thread;
 #[cfg(target_arch = "x86_64")]
 use std::time::Duration;
@@ -41,25 +41,25 @@ use kbs_types::Tee;
 use crate::resources::TeeConfig;
 use crate::vmm_config::machine_config::CpuFeaturesTemplate;
 #[cfg(target_arch = "x86_64")]
-use cpuid::{c3, filter_cpuid, t2, VmSpec};
+use cpuid::{VmSpec, c3, filter_cpuid, t2};
 #[cfg(target_arch = "x86_64")]
 use kvm_bindings::{
-    kvm_clock_data, kvm_debugregs, kvm_irqchip, kvm_lapic_state, kvm_mp_state, kvm_pit_state2,
-    kvm_regs, kvm_sregs, kvm_vcpu_events, kvm_xcrs, kvm_xsave, CpuId, MsrList, Msrs,
-    KVM_CLOCK_TSC_STABLE, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
-    KVM_MAX_CPUID_ENTRIES,
+    CpuId, KVM_CLOCK_TSC_STABLE, KVM_IRQCHIP_IOAPIC, KVM_IRQCHIP_PIC_MASTER, KVM_IRQCHIP_PIC_SLAVE,
+    KVM_MAX_CPUID_ENTRIES, MsrList, Msrs, kvm_clock_data, kvm_debugregs, kvm_irqchip,
+    kvm_lapic_state, kvm_mp_state, kvm_pit_state2, kvm_regs, kvm_sregs, kvm_vcpu_events, kvm_xcrs,
+    kvm_xsave,
 };
 use kvm_bindings::{
-    kvm_create_guest_memfd, kvm_userspace_memory_region, kvm_userspace_memory_region2,
     KVM_API_VERSION, KVM_MEM_GUEST_MEMFD, KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN,
+    kvm_create_guest_memfd, kvm_userspace_memory_region, kvm_userspace_memory_region2,
 };
 #[cfg(feature = "tee")]
-use kvm_bindings::{kvm_enable_cap, KVM_CAP_EXIT_HYPERCALL, KVM_MEMORY_EXIT_FLAG_PRIVATE};
+use kvm_bindings::{KVM_CAP_EXIT_HYPERCALL, KVM_MEMORY_EXIT_FLAG_PRIVATE, kvm_enable_cap};
 #[cfg(not(target_arch = "riscv64"))]
-use kvm_bindings::{kvm_memory_attributes, KVM_MEMORY_ATTRIBUTE_PRIVATE};
+use kvm_bindings::{KVM_MEMORY_ATTRIBUTE_PRIVATE, kvm_memory_attributes};
 use kvm_ioctls::{Cap::*, *};
 use utils::eventfd::EventFd;
-use utils::signal::{register_signal_handler, sigrtmin, Killable};
+use utils::signal::{Killable, register_signal_handler, sigrtmin};
 use utils::sm::StateMachine;
 #[cfg(feature = "tee")]
 use utils::worker_message::{MemoryProperties, WorkerMessage};
@@ -1004,19 +1004,21 @@ impl Vcpu {
     unsafe fn run_on_thread_local<F>(func: F) -> Result<()>
     where
         F: FnOnce(&mut Vcpu),
-    { unsafe {
-        Self::TLS_VCPU_PTR.with(|cell: &VcpuCell| {
-            if let Some(vcpu_ptr) = cell.get() {
-                // Dereferencing here is safe since `TLS_VCPU_PTR` is populated/non-empty,
-                // and it is being cleared on `Vcpu::drop` so there is no dangling pointer.
-                let vcpu_ref: &mut Vcpu = &mut *vcpu_ptr;
-                func(vcpu_ref);
-                Ok(())
-            } else {
-                Err(Error::VcpuTlsNotPresent)
-            }
-        })
-    }}
+    {
+        unsafe {
+            Self::TLS_VCPU_PTR.with(|cell: &VcpuCell| {
+                if let Some(vcpu_ptr) = cell.get() {
+                    // Dereferencing here is safe since `TLS_VCPU_PTR` is populated/non-empty,
+                    // and it is being cleared on `Vcpu::drop` so there is no dangling pointer.
+                    let vcpu_ref: &mut Vcpu = &mut *vcpu_ptr;
+                    func(vcpu_ref);
+                    Ok(())
+                } else {
+                    Err(Error::VcpuTlsNotPresent)
+                }
+            })
+        }
+    }
 
     /// Registers a signal handler which makes use of TLS and kvm immediate exit to
     /// kick the vcpu running on the current thread, if there is one.
@@ -1463,7 +1465,9 @@ impl Vcpu {
                         ))
                         .unwrap();
                     if !response_receiver.recv().unwrap() {
-                        error!("Unable to convert memory with properties: gpa: 0x{gpa:x} size: 0x{size:x} to_private: {private}");
+                        error!(
+                            "Unable to convert memory with properties: gpa: 0x{gpa:x} size: 0x{size:x} to_private: {private}"
+                        );
                         return Err(Error::VcpuUnhandledKvmExit);
                     }
                     Ok(VcpuEmulation::Handled)
@@ -1494,7 +1498,9 @@ impl Vcpu {
                             ))
                             .unwrap();
                         if !response_receiver.recv().unwrap() {
-                            error!("Unable to convert memory with properties: gpa: 0x{gpa:x} size: 0x{size:x} to_private: {private}");
+                            error!(
+                                "Unable to convert memory with properties: gpa: 0x{gpa:x} size: 0x{size:x} to_private: {private}"
+                            );
                             return Err(Error::VcpuUnhandledKvmExit);
                         }
                         Ok(VcpuEmulation::Handled)
@@ -1795,9 +1801,9 @@ mod tests {
 
     use super::*;
     #[cfg(target_arch = "aarch64")]
-    use crate::builder::create_guest_memory;
-    #[cfg(target_arch = "aarch64")]
     use crate::builder::Payload;
+    #[cfg(target_arch = "aarch64")]
+    use crate::builder::create_guest_memory;
     #[cfg(target_arch = "aarch64")]
     use crate::resources::VmResources;
     use devices;
@@ -1904,21 +1910,24 @@ mod tests {
             nested_enabled: false,
         };
 
-        assert!(vcpu
-            .configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config, true, false)
-            .is_ok());
+        assert!(
+            vcpu.configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config, true, false)
+                .is_ok()
+        );
 
         // Test configure while using the T2 template.
         vcpu_config.cpu_template = Some(CpuFeaturesTemplate::T2);
-        assert!(vcpu
-            .configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config, true, false)
-            .is_ok());
+        assert!(
+            vcpu.configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config, true, false)
+                .is_ok()
+        );
 
         // Test configure while using the C3 template.
         vcpu_config.cpu_template = Some(CpuFeaturesTemplate::C3);
-        assert!(vcpu
-            .configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config, true, false)
-            .is_ok());
+        assert!(
+            vcpu.configure_x86_64(&vm_mem, GuestAddress(0), &vcpu_config, true, false)
+                .is_ok()
+        );
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -1939,9 +1948,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(vcpu
-            .configure_aarch64(vm.fd(), &arch_memory_info, GuestAddress(0))
-            .is_ok());
+        assert!(
+            vcpu.configure_aarch64(vm.fd(), &arch_memory_info, GuestAddress(0))
+                .is_ok()
+        );
 
         // Try it for when vcpu id is NOT 0.
         let mut vcpu = Vcpu::new_aarch64(
@@ -1951,9 +1961,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(vcpu
-            .configure_aarch64(vm.fd(), &arch_memory_info, GuestAddress(0))
-            .is_ok());
+        assert!(
+            vcpu.configure_aarch64(vm.fd(), &arch_memory_info, GuestAddress(0))
+                .is_ok()
+        );
     }
 
     #[test]

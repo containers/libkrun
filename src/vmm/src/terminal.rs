@@ -1,4 +1,4 @@
-use nix::sys::termios::{cfmakeraw, tcgetattr, tcsetattr, LocalFlags, SetArg, Termios};
+use nix::sys::termios::{LocalFlags, SetArg, Termios, cfmakeraw, tcgetattr, tcsetattr};
 use std::os::fd::BorrowedFd;
 
 #[must_use]

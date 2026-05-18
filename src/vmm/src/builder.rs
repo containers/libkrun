@@ -3,9 +3,9 @@
 
 //! Enables pre-boot setup, instantiation and booting of a Firecracker VMM.
 
+use crossbeam_channel::Sender;
 #[cfg(target_os = "macos")]
 use crossbeam_channel::unbounded;
-use crossbeam_channel::Sender;
 use kernel::cmdline::Cmdline;
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
@@ -45,7 +45,7 @@ use devices::legacy::{IoApic, IrqChipT};
 use devices::legacy::{IrqChip, IrqChipDevice};
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 use devices::legacy::{KvmGicV2, KvmGicV3};
-use devices::virtio::{port_io, MmioTransport, PortDescription, VirtioDevice, Vsock};
+use devices::virtio::{MmioTransport, PortDescription, VirtioDevice, Vsock, port_io};
 
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
@@ -75,7 +75,7 @@ use devices::virtio::display::DisplayInfo;
 #[cfg(feature = "gpu")]
 use devices::virtio::display::NoopDisplayBackend;
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-use devices::virtio::{fs::ExportTable, VirtioShmRegion};
+use devices::virtio::{VirtioShmRegion, fs::ExportTable};
 use flate2::read::GzDecoder;
 #[cfg(feature = "gpu")]
 use krun_display::DisplayBackend;
@@ -90,8 +90,6 @@ use nix::unistd::isatty;
 use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
 use utils::worker_message::WorkerMessage;
-#[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
-use vm_memory::mmap::MmapRegion;
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 use vm_memory::Address;
 use vm_memory::Bytes;
@@ -101,6 +99,8 @@ use vm_memory::FileOffset;
 use vm_memory::GuestMemory;
 #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
 use vm_memory::GuestRegionMmap;
+#[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
+use vm_memory::mmap::MmapRegion;
 use vm_memory::{GuestAddress, GuestMemoryMmap};
 
 /// Errors associated with starting the instance.
@@ -1801,9 +1801,7 @@ pub fn setup_serial_device(
         .map_err(StartMicrovmError::Internal)?;
     let has_input = input.is_some();
     let serial = Arc::new(Mutex::new(Serial::new(interrupt_evt, out, input)));
-    if has_input
-        && let Err(e) = event_manager.add_subscriber(serial.clone())
-    {
+    if has_input && let Err(e) = event_manager.add_subscriber(serial.clone()) {
         // TODO: We just log this message, and immediately return Ok, instead of returning the
         // actual error because this operation always fails with EPERM when adding a fd which
         // has been redirected to /dev/null via dup2 (this may happen inside the jailer).
@@ -2139,7 +2137,8 @@ fn autoconfigure_console_ports(
 
     let mut console_output_path: Option<PathBuf> = None;
     if let Some(path) = vm_resources.console_output.clone()
-        && !vm_resources.disable_implicit_console && creating_implicit_console
+        && !vm_resources.disable_implicit_console
+        && creating_implicit_console
     {
         console_output_path = Some(path)
     }

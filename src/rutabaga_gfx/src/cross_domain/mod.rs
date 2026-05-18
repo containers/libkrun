@@ -6,18 +6,18 @@
 //! boundaries.
 
 #[cfg(feature = "x")]
-use libc::{c_int, FUTEX_WAKE_BITSET};
+use libc::{FUTEX_WAKE_BITSET, c_int};
 use libc::{O_ACCMODE, O_WRONLY};
 use log::{error, info};
-use nix::fcntl::{fcntl, FcntlArg};
+use nix::fcntl::{FcntlArg, fcntl};
 #[cfg(feature = "x")]
-use nix::sys::mman::{mmap, munmap, MapFlags, ProtFlags};
+use nix::sys::mman::{MapFlags, ProtFlags, mmap, munmap};
 use std::cmp::max;
 use std::collections::BTreeMap as Map;
 use std::collections::VecDeque;
 use std::convert::TryInto;
 use std::ffi::c_void;
-use std::fs::{read_link, File};
+use std::fs::{File, read_link};
 use std::io::{Seek, SeekFrom};
 use std::mem::size_of;
 use std::os::fd::AsFd;
@@ -25,38 +25,38 @@ use std::os::fd::AsRawFd;
 #[cfg(feature = "x")]
 use std::ptr;
 use std::ptr::NonNull;
-use std::sync::atomic::AtomicBool;
-#[cfg(feature = "x")]
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::sync::Condvar;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+#[cfg(feature = "x")]
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 use zerocopy::FromBytes;
 use zerocopy::Immutable;
 use zerocopy::IntoBytes;
 
+use crate::DrmFormat;
+use crate::ImageAllocationInfo;
+use crate::ImageMemoryRequirements;
+use crate::RutabagaGralloc;
+use crate::RutabagaGrallocFlags;
 use crate::cross_domain::cross_domain_protocol::*;
+use crate::cross_domain::sys::Receiver;
+use crate::cross_domain::sys::Sender;
+use crate::cross_domain::sys::SystemStream;
+use crate::cross_domain::sys::WaitContext;
 use crate::cross_domain::sys::channel;
 use crate::cross_domain::sys::channel_signal;
 use crate::cross_domain::sys::channel_wait;
 use crate::cross_domain::sys::read_volatile;
 use crate::cross_domain::sys::write_volatile;
-use crate::cross_domain::sys::Receiver;
-use crate::cross_domain::sys::Sender;
-use crate::cross_domain::sys::SystemStream;
-use crate::cross_domain::sys::WaitContext;
 use crate::rutabaga_core::ExportTable;
 use crate::rutabaga_core::RutabagaComponent;
 use crate::rutabaga_core::RutabagaContext;
 use crate::rutabaga_core::RutabagaResource;
 use crate::rutabaga_os::SafeDescriptor;
 use crate::rutabaga_utils::*;
-use crate::DrmFormat;
-use crate::ImageAllocationInfo;
-use crate::ImageMemoryRequirements;
-use crate::RutabagaGralloc;
-use crate::RutabagaGrallocFlags;
 
 mod cross_domain_protocol;
 mod sys;

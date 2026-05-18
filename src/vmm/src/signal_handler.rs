@@ -4,7 +4,7 @@
 use std::os::unix::io::RawFd;
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use libc::{_exit, c_int, c_void, siginfo_t, SIGBUS, SIGINT, SIGSEGV, SIGSYS, SIGWINCH};
+use libc::{_exit, SIGBUS, SIGINT, SIGSEGV, SIGSYS, SIGWINCH, c_int, c_void, siginfo_t};
 use utils::signal::register_signal_handler;
 
 // The offset of `si_syscall` (offending syscall identifier) within the siginfo structure

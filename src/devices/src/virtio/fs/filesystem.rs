@@ -163,7 +163,7 @@ pub trait ZeroCopyReader {
                     return Err(io::Error::new(
                         io::ErrorKind::WriteZero,
                         "failed to fill whole buffer",
-                    ))
+                    ));
                 }
                 Ok(n) => {
                     count -= n;
@@ -253,7 +253,7 @@ pub trait ZeroCopyWriter {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "failed to write whole buffer",
-                    ))
+                    ));
                 }
                 Ok(n) => {
                     // No need for checked math here because we verified that `off + count` will not

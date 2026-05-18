@@ -6,7 +6,7 @@ use std::cmp;
 use std::collections::VecDeque;
 use std::fmt::{self, Display};
 use std::io::{self, Read, Write};
-use std::mem::{size_of, MaybeUninit};
+use std::mem::{MaybeUninit, size_of};
 use std::ops::Deref;
 use std::ptr::copy_nonoverlapping;
 use std::result;
@@ -276,7 +276,7 @@ impl<'a> Reader<'a> {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "failed to fill whole buffer",
-                    ))
+                    ));
                 }
                 Ok(n) => count -= n,
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -423,7 +423,7 @@ impl<'a> Writer<'a> {
                     return Err(io::Error::new(
                         io::ErrorKind::WriteZero,
                         "failed to write whole buffer",
-                    ))
+                    ));
                 }
                 Ok(n) => count -= n,
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}

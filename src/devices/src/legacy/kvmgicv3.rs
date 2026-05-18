@@ -3,10 +3,10 @@
 
 use std::io;
 
+use crate::Error as DeviceError;
 use crate::bus::BusDevice;
 use crate::legacy::gic::GICDevice;
 use crate::legacy::irqchip::IrqChipT;
-use crate::Error as DeviceError;
 
 use kvm_ioctls::{DeviceFd, Error, VmFd};
 use utils::eventfd::EventFd;

@@ -1,6 +1,6 @@
 //! Passt backend for virtio-net test
 
-use crate::{krun_call, ShouldRun, TestSetup};
+use crate::{ShouldRun, TestSetup, krun_call};
 use krun_sys::{COMPAT_NET_FEATURES, NET_FLAG_DHCP_CLIENT};
 use nix::libc;
 use std::ffi::CString;

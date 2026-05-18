@@ -5,8 +5,8 @@ use utils::worker_message::WorkerMessage;
 
 use std::io;
 use std::os::fd::AsRawFd;
-use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
+use std::sync::atomic::AtomicI32;
 use std::thread;
 
 use utils::epoll::{ControlOperation, Epoll, EpollEvent, EventSet};

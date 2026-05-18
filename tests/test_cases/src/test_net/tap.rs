@@ -1,9 +1,9 @@
 //! TAP backend for virtio-net test
 
-use crate::{krun_call, ShouldRun, TestSetup};
+use crate::{ShouldRun, TestSetup, krun_call};
 use krun_sys::{COMPAT_NET_FEATURES, NET_FLAG_DHCP_CLIENT};
 use nix::libc;
-use nix::sys::socket::{socket, AddressFamily, SockFlag, SockType};
+use nix::sys::socket::{AddressFamily, SockFlag, SockType, socket};
 use std::ffi::CString;
 use std::fs::OpenOptions;
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};

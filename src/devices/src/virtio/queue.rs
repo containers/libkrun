@@ -8,7 +8,7 @@
 use std::cmp::min;
 use std::fmt::{self, Debug, Display};
 use std::num::Wrapping;
-use std::sync::atomic::{fence, Ordering};
+use std::sync::atomic::{Ordering, fence};
 use virtio_bindings::virtio_ring::VRING_USED_F_NO_NOTIFY;
 use vm_memory::{
     Address, ByteValued, Bytes, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap,
@@ -254,11 +254,7 @@ impl<'a> DescriptorChain<'a> {
             next: desc.next,
         };
 
-        if chain.is_valid() {
-            Some(chain)
-        } else {
-            None
-        }
+        if chain.is_valid() { Some(chain) } else { None }
     }
 
     fn is_valid(&self) -> bool {

@@ -20,8 +20,8 @@ mod tsi_dgram;
 mod tsi_stream;
 mod unix;
 
-pub use self::defs::uapi::VIRTIO_ID_VSOCK as TYPE_VSOCK;
 pub use self::defs::TsiFlags;
+pub use self::defs::uapi::VIRTIO_ID_VSOCK as TYPE_VSOCK;
 pub use self::device::Vsock;
 
 use bitflags::bitflags;

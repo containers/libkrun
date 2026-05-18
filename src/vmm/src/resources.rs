@@ -405,7 +405,7 @@ mod tests {
     use crate::resources::VmResources;
     use crate::vmm_config::kernel_cmdline::KernelCmdlineConfig;
     use crate::vmm_config::machine_config::{CpuFeaturesTemplate, VmConfig, VmConfigError};
-    use crate::vmm_config::vsock::tests::{default_config, TempSockFile};
+    use crate::vmm_config::vsock::tests::{TempSockFile, default_config};
     use crate::vstate::VcpuConfig;
     use utils::tempfile::TempFile;
 

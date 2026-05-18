@@ -1,14 +1,14 @@
 //! Common utilities used by multiple test
 
 use anyhow::Context;
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 use std::fs;
 use std::fs::create_dir;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr::null;
 
-use crate::{krun_call, TestSetup};
+use crate::{TestSetup, krun_call};
 use krun_sys::*;
 
 fn copy_guest_agent(dir: &Path) -> anyhow::Result<()> {

@@ -1,7 +1,7 @@
 //! Gvproxy backend for virtio-net tests.
 
 use crate::test_net::get_krun_add_net_unixgram;
-use crate::{krun_call, ShouldRun, TestSetup};
+use crate::{ShouldRun, TestSetup, krun_call};
 use anyhow::Context;
 use krun_sys::{COMPAT_NET_FEATURES, NET_FLAG_DHCP_CLIENT, NET_FLAG_VFKIT};
 use std::ffi::CString;

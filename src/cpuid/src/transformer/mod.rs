@@ -5,7 +5,7 @@ pub mod amd;
 pub mod common;
 pub mod intel;
 
-pub use kvm_bindings::{kvm_cpuid_entry2, CpuId};
+pub use kvm_bindings::{CpuId, kvm_cpuid_entry2};
 
 use crate::brand_string::BrandString;
 use crate::brand_string::Reg as BsReg;
@@ -132,9 +132,11 @@ mod tests {
         let mut cpuid = CpuId::new(num_entries).unwrap();
         let vm_spec = VmSpec::new(0, 1, false, false);
         cpuid.as_mut_slice()[0].function = PROCESSED_FN;
-        assert!(MockCpuidTransformer {}
-            .process_cpuid(&mut cpuid, &vm_spec.unwrap())
-            .is_ok());
+        assert!(
+            MockCpuidTransformer {}
+                .process_cpuid(&mut cpuid, &vm_spec.unwrap())
+                .is_ok()
+        );
 
         assert!(cpuid.as_mut_slice().len() == num_entries);
         for entry in cpuid.as_mut_slice().iter() {

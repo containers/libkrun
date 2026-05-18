@@ -5,10 +5,10 @@
 use std::fs::File;
 use std::sync::Arc;
 
-use super::super::cross_domain_protocol::CrossDomainInitV1;
-use super::super::cross_domain_protocol::CrossDomainSendReceiveBase;
 use super::super::CrossDomainContext;
 use super::super::CrossDomainState;
+use super::super::cross_domain_protocol::CrossDomainInitV1;
+use super::super::cross_domain_protocol::CrossDomainSendReceiveBase;
 use crate::cross_domain::CrossDomainEvent;
 use crate::cross_domain::CrossDomainToken;
 use crate::rutabaga_utils::RutabagaError;

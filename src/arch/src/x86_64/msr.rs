@@ -5,7 +5,7 @@
 use std::result;
 
 use arch_gen::x86::msr_index::*;
-use kvm_bindings::{kvm_msr_entry, MsrList, Msrs};
+use kvm_bindings::{MsrList, Msrs, kvm_msr_entry};
 use kvm_ioctls::{Kvm, VcpuFd};
 
 #[derive(Debug)]

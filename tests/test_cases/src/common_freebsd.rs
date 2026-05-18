@@ -9,8 +9,8 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::test_net::get_krun_add_net_unixgram;
-use crate::test_net::gvproxy::{wait_for_socket, Gvproxy};
-use crate::{krun_call, TestSetup};
+use crate::test_net::gvproxy::{Gvproxy, wait_for_socket};
+use crate::{TestSetup, krun_call};
 use krun_sys::*;
 
 pub struct FreeBsdAssets {
@@ -182,68 +182,72 @@ unsafe fn do_setup_and_enter(
     kernel_path: &Path,
     rootfs_path: &Path,
     config_iso: &Path,
-) -> anyhow::Result<()> { unsafe {
-    // Create a pipe for serial console input to avoid a kqueue busy-spin on macOS.
-    // When the runner's check() calls wait_with_output(), it closes the subprocess's
-    // stdin (fd 0). On macOS/kqueue a closed-write-end pipe fires EVFILT_READ
-    // continuously, spinning the serial device at ~100% CPU.  Using a fresh pipe
-    // whose write end stays open until _exit() is called prevents that.
-    // libkrun takes ownership of the read fd via File::from_raw_fd(); we only
-    // need to keep the write end alive, which _exit() will close for us.
-    let mut pipe_fds: [libc::c_int; 2] = [-1, -1];
-    if libc::pipe(pipe_fds.as_mut_ptr()) != 0 {
-        anyhow::bail!(
-            "Failed to create serial input pipe: {}",
-            std::io::Error::last_os_error()
+) -> anyhow::Result<()> {
+    unsafe {
+        // Create a pipe for serial console input to avoid a kqueue busy-spin on macOS.
+        // When the runner's check() calls wait_with_output(), it closes the subprocess's
+        // stdin (fd 0). On macOS/kqueue a closed-write-end pipe fires EVFILT_READ
+        // continuously, spinning the serial device at ~100% CPU.  Using a fresh pipe
+        // whose write end stays open until _exit() is called prevents that.
+        // libkrun takes ownership of the read fd via File::from_raw_fd(); we only
+        // need to keep the write end alive, which _exit() will close for us.
+        let mut pipe_fds: [libc::c_int; 2] = [-1, -1];
+        if libc::pipe(pipe_fds.as_mut_ptr()) != 0 {
+            anyhow::bail!(
+                "Failed to create serial input pipe: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        let serial_read_fd = pipe_fds[0];
+
+        // Build CStrings for krun API.
+        let kernel_cstr =
+            CString::new(kernel_path.as_os_str().as_bytes()).context("CString::new")?;
+        let rootfs_cstr =
+            CString::new(rootfs_path.as_os_str().as_bytes()).context("CString::new")?;
+        let config_iso_cstr =
+            CString::new(config_iso.as_os_str().as_bytes()).context("CString::new")?;
+
+        // FreeBSD requires a serial console; virtio console is not supported.
+        krun_call!(krun_disable_implicit_console(ctx))?;
+        krun_call!(krun_add_serial_console_default(ctx, serial_read_fd, 1))?;
+
+        // Kernel cmdline: mount vtbd0 as root via cd9660 and hand off to init-freebsd.
+        #[cfg(target_arch = "x86_64")]
+        let (kernel_format, cmdline_prefix, flags) = (KRUN_KERNEL_FORMAT_ELF, "", "boot_mute=YES");
+        #[cfg(not(target_arch = "x86_64"))]
+        let (kernel_format, cmdline_prefix, flags) = (KRUN_KERNEL_FORMAT_RAW, "FreeBSD:", "-mq");
+
+        let cmdline = format!(
+            "{cmdline_prefix}vfs.root.mountfrom=cd9660:/dev/vtbd0 {flags} init_path=/init-freebsd"
         );
+        let cmdline_cstr = CString::new(cmdline).context("CString::new")?;
+
+        krun_call!(krun_set_kernel(
+            ctx,
+            kernel_cstr.as_ptr(),
+            kernel_format,
+            std::ptr::null(),
+            cmdline_cstr.as_ptr(),
+        ))?;
+
+        // vtbd0: rootfs ISO (init-freebsd + guest-agent)
+        krun_call!(krun_add_disk(
+            ctx,
+            c"vtbd0".as_ptr(),
+            rootfs_cstr.as_ptr(),
+            true,
+        ))?;
+
+        // vtbd1: config ISO (init-freebsd finds it by KRUN_CONFIG volume label, not vtbd index)
+        krun_call!(krun_add_disk(
+            ctx,
+            c"vtbd1".as_ptr(),
+            config_iso_cstr.as_ptr(),
+            true,
+        ))?;
+
+        krun_call!(krun_start_enter(ctx))?;
+        unreachable!()
     }
-    let serial_read_fd = pipe_fds[0];
-
-    // Build CStrings for krun API.
-    let kernel_cstr = CString::new(kernel_path.as_os_str().as_bytes()).context("CString::new")?;
-    let rootfs_cstr = CString::new(rootfs_path.as_os_str().as_bytes()).context("CString::new")?;
-    let config_iso_cstr =
-        CString::new(config_iso.as_os_str().as_bytes()).context("CString::new")?;
-
-    // FreeBSD requires a serial console; virtio console is not supported.
-    krun_call!(krun_disable_implicit_console(ctx))?;
-    krun_call!(krun_add_serial_console_default(ctx, serial_read_fd, 1))?;
-
-    // Kernel cmdline: mount vtbd0 as root via cd9660 and hand off to init-freebsd.
-    #[cfg(target_arch = "x86_64")]
-    let (kernel_format, cmdline_prefix, flags) = (KRUN_KERNEL_FORMAT_ELF, "", "boot_mute=YES");
-    #[cfg(not(target_arch = "x86_64"))]
-    let (kernel_format, cmdline_prefix, flags) = (KRUN_KERNEL_FORMAT_RAW, "FreeBSD:", "-mq");
-
-    let cmdline = format!(
-        "{cmdline_prefix}vfs.root.mountfrom=cd9660:/dev/vtbd0 {flags} init_path=/init-freebsd"
-    );
-    let cmdline_cstr = CString::new(cmdline).context("CString::new")?;
-
-    krun_call!(krun_set_kernel(
-        ctx,
-        kernel_cstr.as_ptr(),
-        kernel_format,
-        std::ptr::null(),
-        cmdline_cstr.as_ptr(),
-    ))?;
-
-    // vtbd0: rootfs ISO (init-freebsd + guest-agent)
-    krun_call!(krun_add_disk(
-        ctx,
-        c"vtbd0".as_ptr(),
-        rootfs_cstr.as_ptr(),
-        true,
-    ))?;
-
-    // vtbd1: config ISO (init-freebsd finds it by KRUN_CONFIG volume label, not vtbd index)
-    krun_call!(krun_add_disk(
-        ctx,
-        c"vtbd1".as_ptr(),
-        config_iso_cstr.as_ptr(),
-        true,
-    ))?;
-
-    krun_call!(krun_start_enter(ctx))?;
-    unreachable!()
-}}
+}

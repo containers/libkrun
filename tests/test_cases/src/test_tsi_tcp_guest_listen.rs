@@ -20,7 +20,7 @@ impl TestTsiTcpGuestListen {
 mod host {
     use super::*;
     use crate::common::setup_fs_and_enter;
-    use crate::{krun_call, krun_call_u32, Test, TestSetup};
+    use crate::{Test, TestSetup, krun_call, krun_call_u32};
     use krun_sys::*;
     use std::ffi::CString;
     use std::ptr::null;

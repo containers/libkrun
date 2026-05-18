@@ -375,7 +375,7 @@ impl AsRawFd for Epoll {
 mod tests {
     use super::*;
 
-    use crate::eventfd::{EventFd, EFD_NONBLOCK};
+    use crate::eventfd::{EFD_NONBLOCK, EventFd};
 
     #[test]
     fn test_event_ops() {
@@ -419,25 +419,29 @@ mod tests {
 
         // For EPOLL_CTL_ADD behavior we will try to add some fds with different event masks into
         // the interest list of epoll instance.
-        assert!(epoll
-            .ctl(
-                ControlOperation::Add,
-                event_fd_1.as_raw_fd() as i32,
-                &event_1
-            )
-            .is_ok());
+        assert!(
+            epoll
+                .ctl(
+                    ControlOperation::Add,
+                    event_fd_1.as_raw_fd() as i32,
+                    &event_1
+                )
+                .is_ok()
+        );
 
         let event_fd_2 = EventFd::new(EFD_NONBLOCK).unwrap();
         event_fd_2.write(1).unwrap();
-        assert!(epoll
-            .ctl(
-                ControlOperation::Add,
-                event_fd_2.as_raw_fd() as i32,
-                // For this fd, we want an Event instance that has `data` field set to other
-                // value than the value of the fd and `events` without EPOLLIN type set.
-                &EpollEvent::new(EventSet::IN, 10)
-            )
-            .is_ok());
+        assert!(
+            epoll
+                .ctl(
+                    ControlOperation::Add,
+                    event_fd_2.as_raw_fd() as i32,
+                    // For this fd, we want an Event instance that has `data` field set to other
+                    // value than the value of the fd and `events` without EPOLLIN type set.
+                    &EpollEvent::new(EventSet::IN, 10)
+                )
+                .is_ok()
+        );
 
         // Let's check `epoll_wait()` behavior for our epoll instance.
         let mut ready_events = vec![EpollEvent::default(); EVENT_BUFFER_SIZE];
@@ -458,13 +462,15 @@ mod tests {
         assert_eq!(ready_events[1].events(), EventSet::IN.bits());
 
         // Let's also delete a fd from the interest list.
-        assert!(epoll
-            .ctl(
-                ControlOperation::Delete,
-                event_fd_2.as_raw_fd() as i32,
-                &EpollEvent::default()
-            )
-            .is_ok());
+        assert!(
+            epoll
+                .ctl(
+                    ControlOperation::Delete,
+                    event_fd_2.as_raw_fd() as i32,
+                    &EpollEvent::default()
+                )
+                .is_ok()
+        );
 
         // We expect to have only one fd remained in the ready list (event_fd_3).
         ev_count = epoll

@@ -18,7 +18,7 @@ use crate::virtio::console::console_control::{
 use crate::virtio::console::defs::QUEUE_SIZE;
 use crate::virtio::console::port::Port;
 use crate::virtio::console::port_queue_mapping::{
-    num_queues, port_id_to_queue_idx, QueueDirection,
+    QueueDirection, num_queues, port_id_to_queue_idx,
 };
 use crate::virtio::{InterruptTransport, PortDescription, VmmExitObserver};
 
@@ -178,10 +178,10 @@ impl Console {
                 Ok(cmd) => cmd,
                 Err(e) => {
                     log::error!(
-                    "Failed to read VirtioConsoleControl struct: {e:?}, struct len = {len}, head.len = {head_len}",
-                    len = size_of::<VirtioConsoleControl>(),
-                    head_len = head.len,
-                );
+                        "Failed to read VirtioConsoleControl struct: {e:?}, struct len = {len}, head.len = {head_len}",
+                        len = size_of::<VirtioConsoleControl>(),
+                        head_len = head.len,
+                    );
                     continue;
                 }
             };

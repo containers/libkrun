@@ -14,18 +14,18 @@ use libc::EINVAL;
 #[cfg(target_os = "macos")]
 use libc::EINVAL;
 use nix::errno::Errno;
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use nix::sys::socket::{
-    accept, bind, connect, getpeername, listen, recv, send, setsockopt, shutdown, socket, sockopt,
     AddressFamily, Backlog, MsgFlags, Shutdown, SockFlag, SockType, SockaddrLike, SockaddrStorage,
+    accept, bind, connect, getpeername, listen, recv, send, setsockopt, shutdown, socket, sockopt,
 };
 
+use super::super::Queue as VirtQueue;
 #[cfg(target_os = "macos")]
 use super::super::linux_errno::linux_errno_raw;
-use super::super::Queue as VirtQueue;
 use super::defs;
 use super::defs::uapi;
-use super::muxer::{push_packet, MuxerRx};
+use super::muxer::{MuxerRx, push_packet};
 use super::muxer_rxq::MuxerRxQ;
 use super::packet::{
     TsiAcceptReq, TsiConnectReq, TsiGetnameRsp, TsiListenReq, TsiSendtoAddr, VsockPacket,
@@ -228,9 +228,10 @@ impl TsiStreamProxy {
         // If the userspace process in the guest has already created the socket,
         // we need to unlink it to take ownership of the node in the filesystem.
         if let Some(path) = &unixsock_path
-            && let Err(e) = fs::remove_file(path) {
-                debug!("error removing socket: {e}");
-            }
+            && let Err(e) = fs::remove_file(path)
+        {
+            debug!("error removing socket: {e}");
+        }
 
         match bind(self.fd.as_raw_fd(), &addr) {
             Ok(_) => {
@@ -431,25 +432,26 @@ impl TsiStreamProxy {
 
     fn get_unixsock_path(&self, addr: &SockaddrStorage) -> Option<PathBuf> {
         if let Some(addr) = addr.as_unix_addr()
-            && let Some(path) = addr.path() {
-                // SockaddrStorage doesn't clean up NULLs. This is fine when
-                // using addr with other nix methods, but we need to clean them
-                // up to be able to treat it as a path with other Rust crates.
-                let path_str = path.to_str()?.replace("\0", "");
-                debug!("unix socket path_str={path_str}");
+            && let Some(path) = addr.path()
+        {
+            // SockaddrStorage doesn't clean up NULLs. This is fine when
+            // using addr with other nix methods, but we need to clean them
+            // up to be able to treat it as a path with other Rust crates.
+            let path_str = path.to_str()?.replace("\0", "");
+            debug!("unix socket path_str={path_str}");
 
-                match fs::metadata(&path_str) {
-                    Ok(metadata) => {
-                        if metadata.file_type().is_socket() {
-                            debug!("unix socket path is socket");
-                            return PathBuf::from_str(&path_str).ok();
-                        } else {
-                            debug!("unix socket path is NOT a socket");
-                        }
+            match fs::metadata(&path_str) {
+                Ok(metadata) => {
+                    if metadata.file_type().is_socket() {
+                        debug!("unix socket path is socket");
+                        return PathBuf::from_str(&path_str).ok();
+                    } else {
+                        debug!("unix socket path is NOT a socket");
                     }
-                    Err(e) => debug!("metadata failed with {e}"),
                 }
+                Err(e) => debug!("metadata failed with {e}"),
             }
+        }
 
         None
     }

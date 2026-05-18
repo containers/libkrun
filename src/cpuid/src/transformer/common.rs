@@ -6,7 +6,7 @@ use crate::bit_helper::BitHelper;
 use crate::common::get_cpuid;
 
 use crate::transformer::Error::FamError;
-use kvm_bindings::{kvm_cpuid_entry2, CpuId};
+use kvm_bindings::{CpuId, kvm_cpuid_entry2};
 
 // constants for setting the fields of kvm_cpuid2 structures
 // CPUID bits in ebx, ecx, and edx.

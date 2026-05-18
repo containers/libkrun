@@ -1,8 +1,8 @@
 use libc::{
-    c_char, c_int, ifreq, IFF_NO_PI, IFF_TAP, IFF_VNET_HDR, TUN_F_CSUM, TUN_F_TSO4, TUN_F_TSO6,
-    TUN_F_UFO,
+    IFF_NO_PI, IFF_TAP, IFF_VNET_HDR, TUN_F_CSUM, TUN_F_TSO4, TUN_F_TSO6, TUN_F_UFO, c_char, c_int,
+    ifreq,
 };
-use nix::fcntl::{fcntl, open, FcntlArg, OFlag};
+use nix::fcntl::{FcntlArg, OFlag, fcntl, open};
 use nix::sys::stat::Mode;
 use nix::unistd::{read, write};
 use nix::{ioctl_write_int, ioctl_write_ptr};
@@ -96,7 +96,7 @@ impl NetBackend for Tap {
             Ok(f) => f,
             #[allow(unreachable_patterns)]
             Err(nix::Error::EAGAIN | nix::Error::EWOULDBLOCK) => {
-                return Err(ReadError::NothingRead)
+                return Err(ReadError::NothingRead);
             }
             Err(e) => {
                 return Err(ReadError::Internal(e));

@@ -7,7 +7,7 @@ mod host {
     use super::*;
 
     use crate::common_freebsd::{freebsd_assets, normalize_serial_output, setup_kernel_and_enter};
-    use crate::{krun_call, krun_call_u32, ShouldRun, Test, TestOutcome, TestSetup};
+    use crate::{ShouldRun, Test, TestOutcome, TestSetup, krun_call, krun_call_u32};
     use krun_sys::*;
 
     impl Test for TestFreeBsdBoot {

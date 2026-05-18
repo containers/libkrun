@@ -6,8 +6,8 @@ use std::fmt;
 use std::result;
 use std::sync::{Arc, Mutex};
 
-use devices::virtio::net::device::VirtioNetBackend;
 use devices::virtio::Net;
+use devices::virtio::net::device::VirtioNetBackend;
 
 pub struct NetworkInterfaceConfig {
     /// ID of the guest network interface.

@@ -1,7 +1,7 @@
 //! vmnet-helper backend for virtio-net test (macOS only)
 
 use crate::test_net::get_krun_add_net_unixgram;
-use crate::{krun_call, ShouldRun, TestSetup};
+use crate::{ShouldRun, TestSetup, krun_call};
 use krun_sys::{
     NET_FEATURE_CSUM, NET_FEATURE_GUEST_CSUM, NET_FEATURE_GUEST_TSO4, NET_FEATURE_HOST_TSO4,
     NET_FLAG_DHCP_CLIENT,

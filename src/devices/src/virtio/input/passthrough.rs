@@ -2,7 +2,7 @@ use krun_input::{
     InputAbsInfo, InputBackendError, InputDeviceIds, InputEvent, InputEventsImpl, InputQueryConfig,
     ObjectNew,
 };
-use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
+use nix::fcntl::{F_GETFL, F_SETFL, OFlag, fcntl};
 use nix::{errno::Errno, ioctl_read, ioctl_read_buf, unistd};
 use std::mem;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};

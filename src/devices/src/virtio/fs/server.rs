@@ -12,8 +12,8 @@ use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem::size_of;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
 use vm_memory::ByteValued;
 

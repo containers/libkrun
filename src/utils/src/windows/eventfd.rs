@@ -5,7 +5,7 @@ use std::{io, result};
 
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows_sys::Win32::System::Threading::{
-    CreateEventW, ResetEvent, SetEvent, WaitForSingleObject, INFINITE,
+    CreateEventW, INFINITE, ResetEvent, SetEvent, WaitForSingleObject,
 };
 
 use super::{AsRawFd, RawFd};

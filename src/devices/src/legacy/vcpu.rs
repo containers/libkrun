@@ -5,10 +5,10 @@ use std::sync::Mutex;
 use arch::aarch64::layout::VTIMER_IRQ;
 use arch::aarch64::sysreg::*;
 use hvf::bindings::{
-    hv_sys_reg_t_HV_SYS_REG_CNTHCTL_EL2, hv_sys_reg_t_HV_SYS_REG_MDCCINT_EL1, hv_vcpu_get_sys_reg,
-    hv_vcpu_set_sys_reg, HV_SUCCESS,
+    HV_SUCCESS, hv_sys_reg_t_HV_SYS_REG_CNTHCTL_EL2, hv_sys_reg_t_HV_SYS_REG_MDCCINT_EL1,
+    hv_vcpu_get_sys_reg, hv_vcpu_set_sys_reg,
 };
-use hvf::{vcpu_request_exit, Vcpus};
+use hvf::{Vcpus, vcpu_request_exit};
 
 // See https://developer.arm.com/documentation/ddi0595/2020-12/AArch64-Registers/ICC-IAR0-EL1--Interrupt-Controller-Interrupt-Acknowledge-Register-0
 const GIC_INTID_SPURIOUS: u32 = 1023;
@@ -172,11 +172,7 @@ impl Vcpus for VcpuList {
                         &val as *const _ as *mut _,
                     )
                 };
-                if ret == HV_SUCCESS {
-                    Some(val)
-                } else {
-                    None
-                }
+                if ret == HV_SUCCESS { Some(val) } else { None }
             }
             SYSREG_MDCCINT_EL1 => {
                 let val: u64 = 0;
@@ -187,11 +183,7 @@ impl Vcpus for VcpuList {
                         &val as *const _ as *mut _,
                     )
                 };
-                if ret == HV_SUCCESS {
-                    Some(val)
-                } else {
-                    None
-                }
+                if ret == HV_SUCCESS { Some(val) } else { None }
             }
             _ => None,
         }

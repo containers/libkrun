@@ -1,7 +1,7 @@
 //! FreeBSD guest-side utilities.
 
 #[cfg(target_os = "freebsd")]
-use nix::libc::{reboot, RB_NOSYNC};
+use nix::libc::{RB_NOSYNC, reboot};
 
 /// Clean shutdown for FreeBSD guest tests.
 ///

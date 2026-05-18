@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::{io, result};
 
-use crate::legacy::gic::GICDevice;
-use crate::legacy::IrqChip;
 use crate::DeviceType;
+use crate::legacy::IrqChip;
+use crate::legacy::gic::GICDevice;
 use arch::aarch64::layout::{GTIMER_HYP, GTIMER_PHYS, GTIMER_SEC, GTIMER_VIRT};
 use arch::{ArchMemoryInfo, InitrdConfig};
 use vm_fdt::{Error as FdtError, FdtWriter};

@@ -9,8 +9,8 @@ use virtio_bindings::virtio_input;
 use vm_memory::{ByteValued, GuestMemoryMmap};
 
 use super::super::DeviceQueue;
-use crate::virtio::descriptor_utils::{Reader, Writer};
 use crate::virtio::InterruptTransport;
+use crate::virtio::descriptor_utils::{Reader, Writer};
 use krun_input::{InputEventProviderBackend, InputEventProviderInstance, InputEventsImpl};
 
 // Create a wrapper type to work around orphan rules

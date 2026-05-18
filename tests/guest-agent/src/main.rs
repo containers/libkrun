@@ -1,6 +1,6 @@
 use anyhow::Context;
 use std::env::args;
-use test_cases::{test_cases, TestCase};
+use test_cases::{TestCase, test_cases};
 
 fn run_guest_agent(test_name: &str) -> anyhow::Result<()> {
     let tests = test_cases();

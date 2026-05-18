@@ -13,7 +13,7 @@ pub struct TestRootDiskRemount;
 mod host {
     use super::*;
 
-    use crate::{krun_call, krun_call_u32, ShouldRun};
+    use crate::{ShouldRun, krun_call, krun_call_u32};
     use crate::{Test, TestSetup};
     use krun_sys::*;
     use nix::libc;

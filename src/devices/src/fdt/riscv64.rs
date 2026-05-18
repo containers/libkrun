@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::{io, result};
 
-use crate::legacy::aia::AIADevice;
-use crate::legacy::IrqChip;
 use crate::DeviceType;
+use crate::legacy::IrqChip;
+use crate::legacy::aia::AIADevice;
 use arch::riscv64::get_fdt_addr;
 use arch::riscv64::layout::IRQ_BASE;
 use arch::{ArchMemoryInfo, InitrdConfig};

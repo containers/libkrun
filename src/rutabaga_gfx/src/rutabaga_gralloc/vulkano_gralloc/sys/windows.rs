@@ -11,12 +11,12 @@ use vulkano::memory::ExternalMemoryHandleType;
 use vulkano::memory::MemoryAllocateInfo;
 use vulkano::memory::MemoryImportInfo;
 
-use crate::rutabaga_gralloc::vulkano_gralloc::VulkanoGralloc;
-use crate::rutabaga_os::AsRawDescriptor;
-use crate::rutabaga_utils::RUTABAGA_MEM_HANDLE_TYPE_OPAQUE_WIN32;
 use crate::RutabagaError;
 use crate::RutabagaHandle;
 use crate::RutabagaResult;
+use crate::rutabaga_gralloc::vulkano_gralloc::VulkanoGralloc;
+use crate::rutabaga_os::AsRawDescriptor;
+use crate::rutabaga_utils::RUTABAGA_MEM_HANDLE_TYPE_OPAQUE_WIN32;
 
 impl VulkanoGralloc {
     /// Get the extensions that should be enabled.
