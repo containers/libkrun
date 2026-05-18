@@ -9,7 +9,7 @@ macro_rules! impl_const_id {
         $(#[$outer:meta])*
         $visibility:vis $trait:ident => $id_ty:ty;
         $(
-            $iocty:ty = $val:expr
+            $iocty:ty = $val:expr_2021
         ),* $(,)*
     ) => {
         $(#[$outer])*

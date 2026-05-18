@@ -981,11 +981,11 @@ impl Vcpu {
         // Best-effort to clean up TLS. If the `Vcpu` was moved to another thread
         // _before_ running this, then there is nothing we can do.
         Self::TLS_VCPU_PTR.with(|cell: &VcpuCell| {
-            if let Some(vcpu_ptr) = cell.get() {
-                if std::ptr::eq(vcpu_ptr, self) {
-                    Self::TLS_VCPU_PTR.with(|cell: &VcpuCell| cell.take());
-                    return Ok(());
-                }
+            if let Some(vcpu_ptr) = cell.get()
+                && std::ptr::eq(vcpu_ptr, self)
+            {
+                Self::TLS_VCPU_PTR.with(|cell: &VcpuCell| cell.take());
+                return Ok(());
             }
             Err(Error::VcpuTlsNotPresent)
         })
@@ -1004,7 +1004,7 @@ impl Vcpu {
     unsafe fn run_on_thread_local<F>(func: F) -> Result<()>
     where
         F: FnOnce(&mut Vcpu),
-    {
+    { unsafe {
         Self::TLS_VCPU_PTR.with(|cell: &VcpuCell| {
             if let Some(vcpu_ptr) = cell.get() {
                 // Dereferencing here is safe since `TLS_VCPU_PTR` is populated/non-empty,
@@ -1016,7 +1016,7 @@ impl Vcpu {
                 Err(Error::VcpuTlsNotPresent)
             }
         })
-    }
+    }}
 
     /// Registers a signal handler which makes use of TLS and kvm immediate exit to
     /// kick the vcpu running on the current thread, if there is one.
@@ -1825,7 +1825,7 @@ mod tests {
         let gm = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), mem_size)]).unwrap();
         let mut vm = Vm::new(kvm.fd()).expect("Cannot create new vm");
         #[cfg(target_arch = "x86_64")]
-        let _kvmioapic = KvmIoapic::new(&vm.fd()).unwrap();
+        let _kvmioapic = KvmIoapic::new(vm.fd()).unwrap();
         assert!(vm.memory_init(&gm, kvm.max_memslots()).is_ok());
 
         let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK).unwrap();
