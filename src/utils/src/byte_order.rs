@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 macro_rules! generate_read_fn {
-    ($fn_name: ident, $data_type: ty, $byte_type: ty, $type_size: expr, $endian_type: ident) => {
+    ($fn_name: ident, $data_type: ty, $byte_type: ty, $type_size: expr_2021, $endian_type: ident) => {
         pub fn $fn_name(input: &[$byte_type]) -> $data_type {
             assert!($type_size == std::mem::size_of::<$data_type>());
             let mut array = [0u8; $type_size];
@@ -47,7 +47,7 @@ generate_write_fn!(write_be_u32, u32, u8, to_be_bytes);
 mod tests {
     use super::*;
     macro_rules! byte_order_test_read_write {
-        ($test_name: ident, $write_fn_name: ident, $read_fn_name: ident, $is_be: expr, $data_type: ty) => {
+        ($test_name: ident, $write_fn_name: ident, $read_fn_name: ident, $is_be: expr_2021, $data_type: ty) => {
             #[test]
             fn $test_name() {
                 #[allow(overflowing_literals)]
