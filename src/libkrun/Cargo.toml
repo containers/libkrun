@@ -2,7 +2,7 @@
 name = "libkrun"
 version = "1.18.0"
 authors = ["The libkrun Authors"]
-edition = "2021"
+edition = "2024"
 description = "A dynamic library providing Virtualization-based process isolation capabilities"
 build = "build.rs"
 license = "Apache-2.0"
