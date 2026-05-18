@@ -79,6 +79,10 @@ pub trait IoApicBackend: Send + 'static {
     /// Called after the guest updates a redirection table entry.
     fn on_entry_changed(&mut self, regs: &mut IoApicRegs, index: usize);
 
+    /// Called when a guest EOI clears Remote-IRR for `index`.
+    /// Backends should re-deliver if the pin is still asserted (IRR set).
+    fn on_eoi(&mut self, regs: &mut IoApicRegs);
+
     /// Called from `IrqChipT::set_irq` to assert an interrupt line.
     fn set_irq(
         &mut self,
@@ -249,7 +253,29 @@ impl<B: IoApicBackend> BusDevice for Ioapic<B> {
                     }
                 }
             }
-            IO_EOI => todo!(),
+            IO_EOI => {
+                #[cfg(target_os = "windows")]
+                {
+                    let vector = (val as u64 & IOAPIC_VECTOR_MASK) as u8;
+                    let mut cleared = false;
+                    for i in 0..IOAPIC_NUM_PINS {
+                        let entry = regs.ioredtbl[i];
+                        if (entry & IOAPIC_VECTOR_MASK) as u8 == vector
+                            && entry & IOAPIC_LVT_REMOTE_IRR != 0
+                        {
+                            regs.ioredtbl[i] &= !IOAPIC_LVT_REMOTE_IRR;
+                            cleared = true;
+                        }
+                    }
+                    if cleared {
+                        backend.on_eoi(regs);
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    todo!()
+                }
+            }
             _ => unreachable!(),
         }
     }
