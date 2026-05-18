@@ -254,10 +254,11 @@ fn get_xattr_lstat(
 }
 
 fn is_valid_owner(owner: Option<(u32, u32)>) -> bool {
-    if let Some(owner) = owner {
-        if owner.0 < UID_MAX && owner.1 < UID_MAX {
-            return true;
-        }
+    if let Some(owner) = owner
+        && owner.0 < UID_MAX
+        && owner.1 < UID_MAX
+    {
+        return true;
     }
 
     false
@@ -284,7 +285,7 @@ fn set_xattr_stat(
     } else {
         let (orig_uid, orig_gid, orig_mode) = match file {
             InodeHandle::Fd(fd) => get_xattr_fstat(*fd, st)?,
-            InodeHandle::Path(ref c_path) => get_xattr_lstat(c_path, st)?,
+            InodeHandle::Path(c_path) => get_xattr_lstat(c_path, st)?,
         };
 
         let (uid, gid) = match owner {
@@ -416,7 +417,7 @@ fn lstat(c_path: &CString, host: bool) -> io::Result<bindings::stat64> {
 fn istat(ihandle: &InodeHandle, host: bool) -> io::Result<bindings::stat64> {
     match ihandle {
         InodeHandle::Fd(fd) => fstat(*fd, host),
-        InodeHandle::Path(ref c_path) => lstat(c_path, host),
+        InodeHandle::Path(c_path) => lstat(c_path, host),
     }
 }
 
@@ -757,10 +758,10 @@ impl PassthroughFs {
 
             if let Ok(st) = fstat(fd, false) {
                 let new_mode = clear_suid_sgid(st.st_mode as u32);
-                if new_mode != st.st_mode as u32 {
-                    if let Err(err) = set_xattr_stat(&ihandle, Some(st), None, Some(new_mode)) {
-                        error!("Couldn't clear suid/sgid for inode {inode}: {err}");
-                    }
+                if new_mode != st.st_mode as u32
+                    && let Err(err) = set_xattr_stat(&ihandle, Some(st), None, Some(new_mode))
+                {
+                    error!("Couldn't clear suid/sgid for inode {inode}: {err}");
                 }
             }
         }
@@ -794,13 +795,13 @@ impl PassthroughFs {
     fn do_release(&self, inode: Inode, handle: Handle) -> io::Result<()> {
         let mut handles = self.handles.write().unwrap();
 
-        if let btree_map::Entry::Occupied(e) = handles.entry(handle) {
-            if e.get().inode == inode {
-                // We don't need to close the file here because that will happen automatically when
-                // the last `Arc` is dropped.
-                e.remove();
-                return Ok(());
-            }
+        if let btree_map::Entry::Occupied(e) = handles.entry(handle)
+            && e.get().inode == inode
+        {
+            // We don't need to close the file here because that will happen automatically when
+            // the last `Arc` is dropped.
+            e.remove();
+            return Ok(());
         }
 
         Err(ebadf())
@@ -883,11 +884,11 @@ impl PassthroughFs {
         }
 
         if res == 0 {
-            if let Some(unlinked_fd) = unlinked_fd {
-                if let Err(err) = self.store_unlinked_fd(unlinked_fd) {
-                    unsafe { libc::close(unlinked_fd) };
-                    warn!("Couldn't store unlinked fd \"{}\": {err}", unlinked_fd);
-                }
+            if let Some(unlinked_fd) = unlinked_fd
+                && let Err(err) = self.store_unlinked_fd(unlinked_fd)
+            {
+                unsafe { libc::close(unlinked_fd) };
+                warn!("Couldn't store unlinked fd \"{}\": {err}", unlinked_fd);
             }
             Ok(())
         } else {
@@ -1618,7 +1619,7 @@ impl FileSystem for PassthroughFs {
             // Safe because this doesn't modify any memory and we check the return value.
             let res = match ihandle {
                 InodeHandle::Fd(fd) => unsafe { libc::futimens(fd, tvs.as_ptr()) },
-                InodeHandle::Path(ref c_path) => unsafe {
+                InodeHandle::Path(c_path) => unsafe {
                     let fd = libc::open(c_path.as_ptr(), libc::O_SYMLINK | libc::O_CLOEXEC);
                     let res = libc::futimens(fd, tvs.as_ptr());
                     libc::close(fd);

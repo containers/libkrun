@@ -37,24 +37,24 @@ impl TimesyncThread {
 
     fn send_time(&self, time: u64) {
         let mut queue = self.queue_mutex.lock().unwrap();
-        if let Some(head) = queue.pop(&self.mem) {
-            if let Ok(mut pkt) = VsockPacket::from_rx_virtq_head(&head) {
-                pkt.set_op(uapi::VSOCK_OP_RW)
-                    .set_src_cid(uapi::VSOCK_HOST_CID)
-                    .set_dst_cid(self.cid)
-                    .set_src_port(TSYNC_PORT)
-                    .set_dst_port(TSYNC_PORT)
-                    .set_type(uapi::VSOCK_TYPE_DGRAM);
+        if let Some(head) = queue.pop(&self.mem)
+            && let Ok(mut pkt) = VsockPacket::from_rx_virtq_head(&head)
+        {
+            pkt.set_op(uapi::VSOCK_OP_RW)
+                .set_src_cid(uapi::VSOCK_HOST_CID)
+                .set_dst_cid(self.cid)
+                .set_src_port(TSYNC_PORT)
+                .set_dst_port(TSYNC_PORT)
+                .set_type(uapi::VSOCK_TYPE_DGRAM);
 
-                pkt.write_time_sync(time);
-                pkt.set_len(pkt.buf().unwrap().len() as u32);
-                if let Err(e) =
-                    queue.add_used(&self.mem, head.index, pkt.hdr().len() as u32 + pkt.len())
-                {
-                    error!("failed to add used elements to the queue: {e:?}");
-                }
-                self.interrupt.signal_used_queue();
+            pkt.write_time_sync(time);
+            pkt.set_len(pkt.buf().unwrap().len() as u32);
+            if let Err(e) =
+                queue.add_used(&self.mem, head.index, pkt.hdr().len() as u32 + pkt.len())
+            {
+                error!("failed to add used elements to the queue: {e:?}");
             }
+            self.interrupt.signal_used_queue();
         }
     }
 

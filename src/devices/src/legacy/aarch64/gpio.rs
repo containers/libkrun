@@ -165,14 +165,13 @@ impl Gpio {
     }
 
     fn trigger_gpio_interrupt(&self) {
-        if let Some(intc) = &self.intc {
-            if let Err(e) = intc
+        if let Some(intc) = &self.intc
+            && let Err(e) = intc
                 .lock()
                 .unwrap()
                 .set_irq(self.irq_line, Some(&self.interrupt_evt))
-            {
-                warn!("Error signalling irq: {e:?}");
-            }
+        {
+            warn!("Error signalling irq: {e:?}");
         }
     }
 }

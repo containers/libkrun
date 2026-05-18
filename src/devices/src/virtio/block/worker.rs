@@ -203,11 +203,10 @@ impl BlockWorker {
                 error!("failed to add used elements to the queue: {e:?}");
             }
 
-            if self.device_queue.queue.needs_notification(mem).unwrap() {
-                if let Err(e) = self.interrupt.try_signal_used_queue() {
+            if self.device_queue.queue.needs_notification(mem).unwrap()
+                && let Err(e) = self.interrupt.try_signal_used_queue() {
                     error!("error signalling queue: {e:?}");
                 }
-            }
         }
     }
 

@@ -53,7 +53,7 @@ impl DeviceState {
             Self::Inactive => {
                 warn!("DeviceState::signal_used_queue() called, but device is not activated")
             }
-            Self::Activated(_, ref interrupt) => interrupt.signal_used_queue(),
+            Self::Activated(_, interrupt) => interrupt.signal_used_queue(),
         }
     }
 }

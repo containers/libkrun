@@ -243,19 +243,17 @@ impl VsockMuxer {
             }
             ProxyRemoval::Deferred => {
                 info!("deferring proxy removal: {id}");
-                if let Some(reaper_sender) = &self.reaper_sender {
-                    if reaper_sender.send(id).is_err() {
+                if let Some(reaper_sender) = &self.reaper_sender
+                    && reaper_sender.send(id).is_err() {
                         self.proxy_map.write().unwrap().remove(&id);
                     }
-                }
             }
         }
 
-        if update.signal_queue {
-            if let Some(interrupt) = &self.interrupt {
+        if update.signal_queue
+            && let Some(interrupt) = &self.interrupt {
                 interrupt.signal_used_queue();
             }
-        }
     }
 
     fn process_proxy_create(&self, pkt: &VsockPacket) {
@@ -545,8 +543,8 @@ impl VsockMuxer {
             if let Some(update) = proxy.lock().unwrap().confirm_connect(pkt) {
                 self.process_proxy_update(id, update);
             }
-        } else if let Some(ref mut ipc_map) = &mut self.unix_ipc_port_map {
-            if let Some((path, listen)) = ipc_map.get(&pkt.dst_port()) {
+        } else if let Some(ipc_map) = &mut self.unix_ipc_port_map
+            && let Some((path, listen)) = ipc_map.get(&pkt.dst_port()) {
                 let mem = self.mem.as_ref().unwrap();
                 let queue = self.queue.as_ref().unwrap();
                 if *listen {
@@ -580,7 +578,6 @@ impl VsockMuxer {
                 proxy_map.insert(id, Mutex::new(Box::new(unix)));
                 self.process_proxy_update(id, update);
             }
-        }
     }
 
     fn process_op_response(&self, pkt: &VsockPacket) {

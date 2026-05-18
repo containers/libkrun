@@ -402,17 +402,17 @@ impl Subscriber for Serial {
             return;
         }
 
-        if let Some(input) = self.input.as_mut() {
-            if input.as_raw_fd() == source {
-                let mut out = [0u8; 32];
-                match input.read(&mut out[..]) {
-                    Ok(count) => {
-                        self.queue_input_bytes(&out[..count])
-                            .unwrap_or_else(|e| warn!("Serial error on input: {e:?}"));
-                    }
-                    Err(e) => {
-                        warn!("error while reading stdin: {e:?}");
-                    }
+        if let Some(input) = self.input.as_mut()
+            && input.as_raw_fd() == source
+        {
+            let mut out = [0u8; 32];
+            match input.read(&mut out[..]) {
+                Ok(count) => {
+                    self.queue_input_bytes(&out[..count])
+                        .unwrap_or_else(|e| warn!("Serial error on input: {e:?}"));
+                }
+                Err(e) => {
+                    warn!("error while reading stdin: {e:?}");
                 }
             }
         }
