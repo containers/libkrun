@@ -86,12 +86,12 @@ impl BrandString {
         match vendor_id {
             VENDOR_ID_INTEL => {
                 let mut this = BrandString::from_bytes_unchecked(BRAND_STRING_INTEL);
-                if let Ok(host_bstr) = BrandString::from_host_cpuid() {
-                    if let Some(freq) = host_bstr.find_freq() {
-                        this.push_bytes(b" @ ").unwrap();
-                        this.push_bytes(freq)
-                            .expect("Unexpected frequency information in host CPUID");
-                    }
+                if let Ok(host_bstr) = BrandString::from_host_cpuid()
+                    && let Some(freq) = host_bstr.find_freq()
+                {
+                    this.push_bytes(b" @ ").unwrap();
+                    this.push_bytes(freq)
+                        .expect("Unexpected frequency information in host CPUID");
                 }
                 this
             }
@@ -304,7 +304,7 @@ impl BrandString {
 
 #[cfg(test)]
 mod tests {
-    use std::iter::repeat;
+    use std::iter::repeat_n;
 
     use super::*;
 
@@ -374,7 +374,7 @@ mod tests {
         // Test BrandString::push_bytes()
         //
         let actual_len = bstr.as_bytes().len();
-        let mut old_bytes: Vec<u8> = repeat(0).take(actual_len).collect();
+        let mut old_bytes: Vec<u8> = repeat_n(0, actual_len).collect();
         old_bytes.copy_from_slice(bstr.as_bytes());
         assert_eq!(
             bstr.push_bytes(&_overflow),
@@ -389,7 +389,7 @@ mod tests {
         match BrandString::from_host_cpuid() {
             Ok(bstr) => {
                 for leaf in 0x8000_0002..=0x8000_0004_u32 {
-                    let host_regs = unsafe { host_cpuid(leaf) };
+                    let host_regs = host_cpuid(leaf);
                     assert_eq!(bstr.get_reg_for_leaf(leaf, Reg::EAX), host_regs.eax);
                     assert_eq!(bstr.get_reg_for_leaf(leaf, Reg::EBX), host_regs.ebx);
                     assert_eq!(bstr.get_reg_for_leaf(leaf, Reg::ECX), host_regs.ecx);
@@ -399,7 +399,7 @@ mod tests {
             Err(Error::NotSupported) => {
                 // from_host_cpuid() should only fail if the host CPU doesn't support
                 // CPUID leaves up to 0x80000004, so let's make sure that's what happened.
-                let host_regs = unsafe { host_cpuid(0x8000_0000) };
+                let host_regs = host_cpuid(0x8000_0000);
                 assert!(host_regs.eax < 0x8000_0004);
             }
             _ => panic!("This function should not return another type of error"),

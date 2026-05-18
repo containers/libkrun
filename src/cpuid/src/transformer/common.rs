@@ -145,7 +145,7 @@ mod tests {
         assert_eq!(get_max_cpus_per_package(4).unwrap(), 4);
         assert_eq!(get_max_cpus_per_package(6).unwrap(), 8);
 
-        assert!(get_max_cpus_per_package(u8::max_value()).is_err());
+        assert!(get_max_cpus_per_package(u8::MAX).is_err());
     }
 
     fn check_update_feature_info_entry(cpu_count: u8, expected_htt: bool) {
