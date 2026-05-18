@@ -1,7 +1,7 @@
 use libc::c_int;
 pub use vmm_sys_util::signal::*;
 
-extern "C" {
+unsafe extern "C" {
     fn __libc_current_sigrtmin() -> c_int;
     fn __libc_current_sigrtmax() -> c_int;
 }
