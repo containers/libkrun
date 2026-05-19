@@ -6,6 +6,7 @@
  */
 
 #include <errno.h>
+#include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,6 +31,11 @@ int main(int argc, char *const argv[])
         "6=4096:8192",
         0
     };
+    static const struct option long_opts[] = {
+        { "td-shim", required_argument, 0, 's' },
+        { 0, 0, 0, 0 }
+    };
+    const char *td_shim_path = NULL;
     char current_path[MAX_PATH];
     char volume_tail[] = ":/work\0";
     char *volume;
@@ -37,10 +43,22 @@ int main(int argc, char *const argv[])
     int ctx_id;
     int err;
     int i;
+    int opt;
 
-    if (argc != 4) {
+    while ((opt = getopt_long(argc, argv, "", long_opts, NULL)) != -1) {
+        switch (opt) {
+        case 's':
+            td_shim_path = optarg;
+            break;
+        default:
+            printf("Usage: %s [--td-shim PATH] ROOT_DISK_IMAGE TEE_CONFIG_FILE DATA_DISK_IMAGE\n", argv[0]);
+            return -1;
+        }
+    }
+
+    if (argc - optind != 3) {
         printf("Invalid arguments\n");
-        printf("Usage: %s ROOT_DISK_IMAGE TEE_CONFIG_FILE DATA_DISK_IMAGE\n", argv[0]);
+        printf("Usage: %s [--td-shim PATH] ROOT_DISK_IMAGE TEE_CONFIG_FILE DATA_DISK_IMAGE\n", argv[0]);
         return -1;
     }
 
@@ -67,8 +85,8 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    // Use the first command line argument as the disk image containing the root fs.
-    if (err = krun_set_root_disk(ctx_id, argv[1])) {
+    // Use the first positional argument as the disk image containing the root fs.
+    if (err = krun_add_disk2(ctx_id, "root", argv[optind], KRUN_DISK_FORMAT_RAW, false)) {
         errno = -err;
         perror("Error configuring root disk image");
         return -1;
@@ -108,15 +126,47 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    if (err = krun_set_tee_config_file(ctx_id, argv[2])) {
+    if (err = krun_set_tee_config_file(ctx_id, argv[optind + 1])) {
         errno = -err;
         perror("Error setting the TEE config file");
         return -1;
     }
 
-    if (err = krun_set_data_disk(ctx_id, argv[3])) {
+    if (td_shim_path != NULL) {
+        if (err = krun_set_tee_firmware(ctx_id, KRUN_TEE_FW_TDSHIM, td_shim_path)) {
+            errno = -err;
+            perror("Error setting TD-Shim firmware path");
+            return -1;
+        }
+    }
+
+    if (err = krun_add_disk2(ctx_id, "data", argv[optind + 2], KRUN_DISK_FORMAT_RAW, false)) {
         errno = -err;
         perror("Error configuring the TEE config data disk");
+        return -1;
+    }
+
+    // Serial console (ttyS0) for kernel log output only (no stdin).
+    if (err = krun_add_serial_console_default(ctx_id, -1, STDOUT_FILENO)) {
+        errno = -err;
+        perror("Error adding serial console");
+        return -1;
+    }
+
+    // Disable the implicit virtio console: without explicit TTY fds, the implicit
+    // console creates krun-stdin/krun-stdout ports connected to /dev/null.
+    // setup_redirects() in init.krun finds those ports and silently redirects the
+    // shell's stdin/stdout to /dev/null, making all I/O disappear.
+    if (err = krun_disable_implicit_console(ctx_id)) {
+        errno = -err;
+        perror("Error disabling implicit console");
+        return -1;
+    }
+
+    // Virtio console (hvc0) for interactive shell I/O.
+    if (err = krun_add_virtio_console_default(ctx_id, STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO)) {
+        errno = -err;
+        perror("Error adding virtio console");
         return -1;
     }
 
