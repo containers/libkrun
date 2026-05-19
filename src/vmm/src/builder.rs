@@ -1222,8 +1222,15 @@ pub fn build_microvm(
 
     // Write the kernel command line to guest memory. This is x86_64 specific, since on
     // aarch64 the command line will be specified through the FDT.
+    // For the TD-Shim path, the cmdline is written so TD-Shim can reference it when
+    // populating boot_params for the Linux kernel (cmd_line_ptr already points here
+    // via configure_system).
     #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
     load_cmdline(&vmm)?;
+    #[cfg(all(target_arch = "x86_64", feature = "tdx"))]
+    if vm_resources.tee_firmware_config.is_some() {
+        load_cmdline(&vmm)?;
+    }
 
     vmm.configure_system(
         vcpus.as_slice(),
@@ -1876,7 +1883,7 @@ pub fn create_guest_memory(
     Ok((guest_mem, arch_mem_info, shm_manager, payload_config))
 }
 
-#[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
+#[cfg(all(target_arch = "x86_64", any(not(feature = "tee"), feature = "tdx")))]
 fn load_cmdline(vmm: &Vmm) -> std::result::Result<(), StartMicrovmError> {
     kernel::loader::load_cmdline(
         vmm.guest_memory(),
