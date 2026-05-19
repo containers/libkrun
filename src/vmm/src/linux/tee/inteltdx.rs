@@ -38,7 +38,7 @@ impl IntelTdx {
             let mem_region = tdx::launch::MemRegion::new(
                 region.guest_addr,
                 (region.size / 4096) as u64,
-                (arch::FIRMWARE_START == region.guest_addr).into(),
+                region.attributes,
                 region.host_addr,
             );
             launcher

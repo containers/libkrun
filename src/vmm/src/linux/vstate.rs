@@ -432,6 +432,7 @@ pub struct MeasuredRegion {
     pub guest_addr: u64,
     pub host_addr: u64,
     pub size: usize,
+    pub attributes: u32,
 }
 
 /// Describes a KVM context that gets attached to the microVM.
