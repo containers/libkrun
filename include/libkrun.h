@@ -974,6 +974,22 @@ int32_t krun_set_env(uint32_t ctx_id, const char *const envp[]);
  */
 int32_t krun_set_tee_config_file(uint32_t ctx_id, const char *filepath);
 
+#define KRUN_TEE_FW_TDSHIM 0
+
+/**
+ * Sets the TEE firmware binary for confidential guests. If not called, the guest
+ * uses the bundled firmware from the corresponding libkrunfw package.
+ *
+ * Arguments:
+ *  "ctx_id"  - the configuration context ID.
+ *  "fw_type" - the firmware type (e.g. KRUN_TEE_FW_TDSHIM).
+ *  "fw_path" - a null-terminated string representing the path to the firmware binary.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ */
+int32_t krun_set_tee_firmware(uint32_t ctx_id, uint32_t fw_type, const char *fw_path);
+
 /**
  * Adds a port-path pairing for guest IPC with a process in the host.
  *
