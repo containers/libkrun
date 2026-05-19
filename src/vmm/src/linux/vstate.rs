@@ -763,10 +763,14 @@ impl Vm {
     }
 
     #[cfg(feature = "tdx")]
-    pub fn tdx_secure_virt_init_vcpus(&self, launcher: &mut tdx::launch::Launcher) -> Result<()> {
+    pub fn tdx_secure_virt_init_vcpus(
+        &self,
+        launcher: &mut tdx::launch::Launcher,
+        hob_address: u64,
+    ) -> Result<()> {
         match &self.tdx {
             Some(_) => {
-                launcher.init_vcpus(0).unwrap();
+                launcher.init_vcpus(hob_address).unwrap();
                 Ok(())
             }
             None => Err(Error::InvalidTee),

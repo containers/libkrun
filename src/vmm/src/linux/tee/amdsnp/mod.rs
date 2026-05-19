@@ -323,6 +323,7 @@ impl AmdSnp {
                     .get_host_address(GuestAddress(SNP_LIDT_START))
                     .unwrap() as u64,
                 size: 0x1000,
+                attributes: 0,
             },
             &mut launcher,
             PageType::Zero,
@@ -337,6 +338,7 @@ impl AmdSnp {
                     .get_host_address(GuestAddress(SNP_SECRETS_START))
                     .unwrap() as u64,
                 size: 0x1000,
+                attributes: 0,
             },
             &mut launcher,
             PageType::Secrets,
@@ -352,6 +354,7 @@ impl AmdSnp {
                     .get_host_address(GuestAddress(SNP_CPUID_START))
                     .unwrap() as u64,
                 size: 0x1000,
+                attributes: 0,
             },
             &mut launcher,
             PageType::Cpuid,
@@ -368,6 +371,7 @@ impl AmdSnp {
                         .get_host_address(GuestAddress(SNP_CPUID_START))
                         .unwrap() as u64,
                     size: 0x1000,
+                    attributes: 0,
                 },
                 &mut launcher,
                 PageType::Cpuid,
@@ -385,6 +389,7 @@ impl AmdSnp {
                     .get_host_address(GuestAddress(SNP_FWDATA_START))
                     .unwrap() as u64,
                 size: SNP_FWDATA_SIZE,
+                attributes: 0,
             },
             &mut launcher,
             PageType::Zero,

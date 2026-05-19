@@ -51,6 +51,8 @@ use devices::virtio::{MmioTransport, PortDescription, VirtioDevice, Vsock, port_
 use kbs_types::Tee;
 
 use crate::device_manager;
+#[cfg(feature = "tdx")]
+use crate::linux::tee::tdshim::TdShim;
 #[cfg(all(feature = "vhost-user", target_os = "linux"))]
 use crate::resources::VhostUserDeviceConfig;
 #[cfg(target_os = "linux")]
@@ -60,6 +62,8 @@ use crate::signal_handler::register_sigwinch_handler;
 use crate::terminal::{term_restore_mode, term_set_raw_mode};
 #[cfg(feature = "blk")]
 use crate::vmm_config::block::BlockBuilder;
+#[cfg(feature = "tdx")]
+use crate::vmm_config::firmware::TeeFirmwareType;
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 use crate::vmm_config::fs::FsDeviceConfig;
 use crate::vmm_config::kernel_cmdline::DEFAULT_KERNEL_CMDLINE;
@@ -97,6 +101,8 @@ use vm_memory::Bytes;
 use vm_memory::FileOffset;
 #[cfg(not(feature = "aws-nitro"))]
 use vm_memory::GuestMemory;
+#[cfg(feature = "tdx")]
+use vm_memory::GuestMemoryRegion;
 #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
 use vm_memory::GuestRegionMmap;
 #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
@@ -221,6 +227,9 @@ pub enum StartMicrovmError {
     ShmCreate(device_manager::shm::Error),
     /// Error obtaining the host address of an SHM region.
     ShmHostAddr(vm_memory::GuestMemoryError),
+    /// Error in TD-Shim firmware handling.
+    #[cfg(feature = "tdx")]
+    TdShimError(String),
     /// The TEE specified is not supported.
     InvalidTee,
 }
@@ -509,6 +518,10 @@ impl Display for StartMicrovmError {
 
                 write!(f, "Error while creating an SHM region. {err_msg}")
             }
+            #[cfg(feature = "tdx")]
+            TdShimError(ref err) => {
+                write!(f, "TD-Shim error: {err}")
+            }
             InvalidTee => {
                 write!(f, "TEE selected is not currently supported")
             }
@@ -532,7 +545,16 @@ pub enum Payload {
 fn choose_payload(vm_resources: &VmResources) -> Result<Payload, StartMicrovmError> {
     if let Some(_kernel_bundle) = &vm_resources.kernel_bundle {
         #[cfg(feature = "tee")]
-        if vm_resources.qboot_bundle.is_none() || vm_resources.initrd_bundle.is_none() {
+        if vm_resources.initrd_bundle.is_none() {
+            return Err(StartMicrovmError::MissingKernelConfig);
+        }
+        #[cfg(feature = "tee")]
+        if vm_resources.qboot_bundle.is_none() {
+            #[cfg(feature = "tdx")]
+            if vm_resources.tee_firmware_config.is_none() {
+                return Err(StartMicrovmError::MissingKernelConfig);
+            }
+            #[cfg(not(feature = "tdx"))]
             return Err(StartMicrovmError::MissingKernelConfig);
         }
 
@@ -553,6 +575,104 @@ fn choose_payload(vm_resources: &VmResources) -> Result<Payload, StartMicrovmErr
     }
 }
 
+#[cfg(feature = "tdx")]
+fn measure_tdshim_regions(
+    td_shim: TdShim,
+    vm_resources: &super::resources::VmResources,
+    guest_memory: &GuestMemoryMmap,
+) -> Result<(Vec<MeasuredRegion>, u64), StartMicrovmError> {
+    td_shim
+        .load_sections(guest_memory)
+        .map_err(|e| StartMicrovmError::TdShimError(format!("{e}")))?;
+
+    let high_fw = td_shim.high_firmware_range();
+    let ram_regions: Vec<(u64, u64)> = guest_memory
+        .iter()
+        .filter_map(|region| {
+            let start = region.start_addr().0;
+            let len = region.len();
+            if let Some((fw_start, fw_end)) = high_fw
+                && start >= fw_start
+                && start < fw_end
+            {
+                return None;
+            }
+            Some((start, len))
+        })
+        .collect();
+
+    let kernel_bundle = vm_resources
+        .kernel_bundle
+        .as_ref()
+        .ok_or(StartMicrovmError::MissingKernelConfig)?;
+
+    // libkrunfw packages a raw ELF vmlinux, not a bzImage. The entry_addr
+    // is the ELF e_entry (startup_64 physical address), which td-shim
+    // uses directly with PayloadImageTypeRawVmLinux.
+    td_shim
+        .generate_hobs(guest_memory, kernel_bundle.entry_addr, &ram_regions)
+        .map_err(|e| StartMicrovmError::TdShimError(format!("{e}")))?;
+
+    // All RAM as one block (attributes=0, add but don't measure), plus the
+    // high firmware sections (BFV etc.) with their per-section attributes.
+    // Low-address TDVF sections (TempMem, TD_HOB) fall inside the RAM range
+    // and must not be added separately — TDX rejects duplicate TDH.MEM.PAGE.ADD.
+    let mut regions: Vec<MeasuredRegion> = guest_memory
+        .iter()
+        .filter(|r| r.start_addr().0 < arch::x86_64::layout::MMIO_MEM_START)
+        .map(|r| MeasuredRegion {
+            guest_addr: r.start_addr().0,
+            host_addr: guest_memory.get_host_address(r.start_addr()).unwrap() as u64,
+            size: r.len() as usize,
+            attributes: 0,
+        })
+        .collect();
+
+    for section in &td_shim.sections {
+        if section.memory_address >= arch::x86_64::layout::MMIO_MEM_START {
+            regions.push(MeasuredRegion {
+                guest_addr: section.memory_address,
+                host_addr: guest_memory
+                    .get_host_address(GuestAddress(section.memory_address))
+                    .unwrap() as u64,
+                size: section.memory_data_size as usize,
+                attributes: section.attributes,
+            });
+        }
+    }
+
+    Ok((regions, td_shim.hob_address))
+}
+
+#[cfg(feature = "tdx")]
+fn measure_qboot_regions(
+    vm_resources: &super::resources::VmResources,
+    guest_memory: &GuestMemoryMmap,
+) -> Result<(Vec<MeasuredRegion>, u64), StartMicrovmError> {
+    let qboot_size = if let Some(qboot_bundle) = &vm_resources.qboot_bundle {
+        qboot_bundle.size
+    } else {
+        return Err(StartMicrovmError::MissingKernelConfig);
+    };
+    let regions = vec![
+        MeasuredRegion {
+            guest_addr: 0,
+            host_addr: guest_memory.get_host_address(GuestAddress(0)).unwrap() as u64,
+            size: 0x8000_0000,
+            attributes: 0,
+        },
+        MeasuredRegion {
+            guest_addr: arch::FIRMWARE_START,
+            host_addr: guest_memory
+                .get_host_address(GuestAddress(arch::FIRMWARE_START))
+                .unwrap() as u64,
+            size: qboot_size,
+            attributes: 1,
+        },
+    ];
+    Ok((regions, 0u64))
+}
+
 /// Builds and starts a microVM based on the current Firecracker VmResources configuration.
 ///
 /// This is the default build recipe, one could build other microVM flavors by using the
@@ -568,6 +688,25 @@ pub fn build_microvm(
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
     let payload = choose_payload(vm_resources)?;
 
+    #[cfg(feature = "tdx")]
+    let td_shim_parsed = match &vm_resources.tee_firmware_config {
+        Some(tee_fw_cfg) => match tee_fw_cfg.fw_type {
+            TeeFirmwareType::TdShim => Some(
+                TdShim::parse(&tee_fw_cfg.path)
+                    .map_err(|e| StartMicrovmError::TdShimError(format!("{e}")))?,
+            ),
+        },
+        None => None,
+    };
+
+    #[cfg(feature = "tdx")]
+    let fw_range_for_mem = td_shim_parsed.as_ref().and_then(|ts| {
+        ts.high_firmware_range()
+            .map(|(start, end)| (start, (end - start) as usize))
+    });
+    #[cfg(all(feature = "tee", not(feature = "tdx")))]
+    let fw_range_for_mem: Option<(u64, usize)> = None;
+
     let (guest_memory, arch_memory_info, mut _shm_manager, payload_config) = create_guest_memory(
         vm_resources
             .vm_config()
@@ -575,6 +714,8 @@ pub fn build_microvm(
             .ok_or(StartMicrovmError::MissingMemSizeConfig)?,
         vm_resources,
         &payload,
+        #[cfg(feature = "tee")]
+        fw_range_for_mem,
     )?;
 
     let vcpu_config = vm_resources.vcpu_config();
@@ -705,31 +846,14 @@ pub fn build_microvm(
     };
 
     #[cfg(feature = "tdx")]
-    let measured_regions = {
+    let (measured_regions, tdx_hob_address) = {
         println!("Injecting and measuring memory regions. This may take a while.");
-        let qboot_size = if let Some(qboot_bundle) = &vm_resources.qboot_bundle {
-            qboot_bundle.size
-        } else {
-            return Err(StartMicrovmError::MissingKernelConfig);
-        };
-        let m = vec![
-            MeasuredRegion {
-                guest_addr: 0,
-                host_addr: guest_memory.get_host_address(GuestAddress(0)).unwrap() as u64,
-                size: 0x8000_0000,
-                attributes: 0,
-            },
-            MeasuredRegion {
-                guest_addr: arch::FIRMWARE_START,
-                host_addr: guest_memory
-                    .get_host_address(GuestAddress(arch::FIRMWARE_START))
-                    .unwrap() as u64,
-                size: qboot_size,
-                attributes: 1,
-            },
-        ];
 
-        m
+        if let Some(td_shim) = td_shim_parsed {
+            measure_tdshim_regions(td_shim, vm_resources, &guest_memory)?
+        } else {
+            measure_qboot_regions(vm_resources, &guest_memory)?
+        }
     };
 
     let mut serial_devices = Vec::new();
@@ -852,7 +976,8 @@ pub fn build_microvm(
         for vcpu in &vcpus {
             vcpu.tdx_secure_virt_prepare(&mut tdx_launcher);
         }
-        vm.tdx_secure_virt_init_vcpus(&mut tdx_launcher).unwrap();
+        vm.tdx_secure_virt_init_vcpus(&mut tdx_launcher, tdx_hob_address)
+            .unwrap();
     }
 
     // On aarch64, the vCPUs need to be created (i.e call KVM_CREATE_VCPU) and configured before
@@ -1510,17 +1635,24 @@ fn load_payload(
                 .write(kernel_data, GuestAddress(kernel_guest_addr))
                 .unwrap();
 
-            let (qboot_host_addr, qboot_size) =
-                if let Some(qboot_bundle) = &_vm_resources.qboot_bundle {
-                    (qboot_bundle.host_addr, qboot_bundle.size)
-                } else {
-                    return Err(StartMicrovmError::MissingKernelConfig);
+            // TD-Shim supplies its own firmware; skip qboot when it's configured.
+            #[cfg(feature = "tdx")]
+            let write_qboot = _vm_resources.tee_firmware_config.is_none();
+            #[cfg(not(feature = "tdx"))]
+            let write_qboot = true;
+
+            if write_qboot {
+                let qboot_bundle = _vm_resources
+                    .qboot_bundle
+                    .as_ref()
+                    .ok_or(StartMicrovmError::MissingKernelConfig)?;
+                let qboot_data = unsafe {
+                    std::slice::from_raw_parts(qboot_bundle.host_addr as *mut u8, qboot_bundle.size)
                 };
-            let qboot_data =
-                unsafe { std::slice::from_raw_parts(qboot_host_addr as *mut u8, qboot_size) };
-            guest_mem
-                .write(qboot_data, GuestAddress(arch::FIRMWARE_START))
-                .unwrap();
+                guest_mem
+                    .write(qboot_data, GuestAddress(arch::FIRMWARE_START))
+                    .unwrap();
+            }
 
             let (initrd_host_addr, initrd_size) =
                 if let Some(initrd_bundle) = &_vm_resources.initrd_bundle {
@@ -1568,6 +1700,7 @@ pub fn create_guest_memory(
     mem_size: usize,
     vm_resources: &VmResources,
     payload: &Payload,
+    #[cfg(feature = "tee")] firmware_range: Option<(u64, usize)>,
 ) -> std::result::Result<
     (GuestMemoryMmap, ArchMemoryInfo, ShmManager, PayloadConfig),
     StartMicrovmError,
@@ -1609,7 +1742,13 @@ pub fn create_guest_memory(
                 } else {
                     return Err(StartMicrovmError::MissingKernelConfig);
                 };
-            arch::arch_memory_regions(mem_size, Some(kernel_guest_addr), kernel_size, 0, None)
+            arch::arch_memory_regions(
+                mem_size,
+                Some(kernel_guest_addr),
+                kernel_size,
+                0,
+                firmware_range,
+            )
         }
         #[cfg(test)]
         Payload::Empty => arch::arch_memory_regions(mem_size, None, 0, 0, None),
@@ -2588,7 +2727,13 @@ pub mod tests {
             size: 0x1000,
         });
 
-        create_guest_memory(mem_size_mib, &vm_resources, &Payload::Empty)
+        create_guest_memory(
+            mem_size_mib,
+            &vm_resources,
+            &Payload::Empty,
+            #[cfg(feature = "tee")]
+            None,
+        )
     }
 
     #[test]
