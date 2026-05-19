@@ -1574,7 +1574,7 @@ pub fn create_guest_memory(
 > {
     let mem_size = mem_size << 20;
 
-    let (firmware_data, firmware_size) = if let Some(firmware) = &vm_resources.firmware_config {
+    let (firmware_data, _firmware_size) = if let Some(firmware) = &vm_resources.firmware_config {
         let data = std::fs::read(firmware.path.clone()).map_err(StartMicrovmError::FirmwareRead)?;
         let len = data.len();
         (Some(data), Some(len))
@@ -1594,13 +1594,13 @@ pub fn create_guest_memory(
                 };
             arch::arch_memory_regions(mem_size, Some(kernel_guest_addr), kernel_size, 0, None)
         }
-        Payload::ExternalKernel(external_kernel) => arch::arch_memory_regions(
-            mem_size,
-            None,
-            0,
-            external_kernel.initramfs_size,
-            firmware_size,
-        ),
+        Payload::ExternalKernel(external_kernel) => {
+            #[cfg(not(feature = "tee"))]
+            let fw = _firmware_size;
+            #[cfg(feature = "tee")]
+            let fw: Option<(u64, usize)> = None;
+            arch::arch_memory_regions(mem_size, None, 0, external_kernel.initramfs_size, fw)
+        }
         #[cfg(feature = "tee")]
         Payload::Tee => {
             let (kernel_guest_addr, kernel_size) =
@@ -1613,14 +1613,17 @@ pub fn create_guest_memory(
         }
         #[cfg(test)]
         Payload::Empty => arch::arch_memory_regions(mem_size, None, 0, 0, None),
-        Payload::Firmware => arch::arch_memory_regions(mem_size, None, 0, 0, firmware_size),
+        #[cfg(not(feature = "tee"))]
+        Payload::Firmware => arch::arch_memory_regions(mem_size, None, 0, 0, _firmware_size),
+        #[cfg(feature = "tee")]
+        Payload::Firmware => arch::arch_memory_regions(mem_size, None, 0, 0, None),
     };
     #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
     let (arch_mem_info, mut arch_mem_regions) = match payload {
         Payload::ExternalKernel(external_kernel) => {
             arch::arch_memory_regions(mem_size, external_kernel.initramfs_size, None)
         }
-        _ => arch::arch_memory_regions(mem_size, 0, firmware_size),
+        _ => arch::arch_memory_regions(mem_size, 0, _firmware_size),
     };
 
     let mut shm_manager = ShmManager::new(&arch_mem_info);

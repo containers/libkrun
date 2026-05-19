@@ -213,7 +213,7 @@ pub fn arch_memory_regions(
     kernel_load_addr: Option<u64>,
     kernel_size: usize,
     _initrd_size: u64,
-    _firmware_size: Option<usize>,
+    firmware_range: Option<(u64, usize)>,
 ) -> (ArchMemoryInfo, Vec<(GuestAddress, usize)>) {
     let page_size: usize = get_page_size();
 
@@ -232,21 +232,22 @@ pub fn arch_memory_regions(
             None | Some(0) => {
                 let ram_last_addr = size as u64;
                 let shm_start_addr = 0u64;
+                let (fw_addr, fw_sz) =
+                    firmware_range.unwrap_or((FIRMWARE_START, FIRMWARE_SIZE as usize));
                 (
                     size as u64,
                     0,
                     ram_last_addr,
                     shm_start_addr,
-                    vec![
-                        (GuestAddress(0), size),
-                        (GuestAddress(FIRMWARE_START), FIRMWARE_SIZE as usize),
-                    ],
+                    vec![(GuestAddress(0), size), (GuestAddress(fw_addr), fw_sz)],
                 )
             }
             // case2: guest memory extends beyond the gap
             Some(remaining) => {
                 let ram_last_addr = FIRST_ADDR_PAST_32BITS + remaining as u64;
                 let shm_start_addr = 0u64;
+                let (fw_addr, fw_sz) =
+                    firmware_range.unwrap_or((FIRMWARE_START, FIRMWARE_SIZE as usize));
                 (
                     MMIO_MEM_START,
                     remaining as u64,
@@ -254,7 +255,7 @@ pub fn arch_memory_regions(
                     shm_start_addr,
                     vec![
                         (GuestAddress(0), MMIO_MEM_START as usize),
-                        (GuestAddress(FIRMWARE_START), FIRMWARE_SIZE as usize),
+                        (GuestAddress(fw_addr), fw_sz),
                         (GuestAddress(FIRST_ADDR_PAST_32BITS), remaining),
                     ],
                 )
@@ -599,6 +600,19 @@ mod tests {
             false,
         )
         .unwrap();
+    }
+
+    #[cfg(feature = "tee")]
+    #[test]
+    fn test_arch_memory_regions_tee_dynamic_firmware_hole() {
+        let fw_start = 0xfffe_0000u64;
+        let fw_size = 0x2_0000usize;
+        let (_info, regions) =
+            arch_memory_regions(1usize << 29, None, 0, 0, Some((fw_start, fw_size)));
+        let has_fw_region = regions
+            .iter()
+            .any(|&(addr, size)| addr.0 == fw_start && size == fw_size);
+        assert!(has_fw_region, "firmware region not found in memory regions");
     }
 
     #[test]
