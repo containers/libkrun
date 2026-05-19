@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use crate::vmm_config::block::{BlockBuilder, BlockConfigError, BlockDeviceConfig};
 use crate::vmm_config::external_kernel::ExternalKernel;
 use crate::vmm_config::firmware::FirmwareConfig;
+#[cfg(feature = "tdx")]
+use crate::vmm_config::firmware::TeeFirmwareConfig;
 #[cfg(not(feature = "tee"))]
 use crate::vmm_config::fs::*;
 #[cfg(feature = "tee")]
@@ -160,6 +162,9 @@ pub struct VmResources {
     /// The parameters for the initrd bundle to be loaded in this microVM.
     #[cfg(feature = "tee")]
     pub initrd_bundle: Option<InitrdBundle>,
+    /// User-provided TEE firmware configuration for TDX guests.
+    #[cfg(feature = "tdx")]
+    pub tee_firmware_config: Option<TeeFirmwareConfig>,
     /// The fs device.
     #[cfg(not(feature = "tee"))]
     pub fs: Vec<FsDeviceConfig>,
@@ -333,6 +338,11 @@ impl VmResources {
     pub fn set_initrd_bundle(&mut self, initrd_bundle: InitrdBundle) -> Result<KernelBundleError> {
         self.initrd_bundle = Some(initrd_bundle);
         Ok(())
+    }
+
+    #[cfg(feature = "tdx")]
+    pub fn set_tee_firmware_config(&mut self, cfg: TeeFirmwareConfig) {
+        self.tee_firmware_config = Some(cfg);
     }
 
     #[cfg(not(feature = "tee"))]
@@ -523,6 +533,28 @@ mod tests {
         assert_eq!(
             actual_vsock_cfg.lock().unwrap().id(),
             &new_vsock_cfg.vsock_id
+        );
+    }
+}
+
+#[cfg(all(test, feature = "tdx"))]
+mod tee_firmware_tests {
+    use super::*;
+    use crate::vmm_config::firmware::{TeeFirmwareConfig, TeeFirmwareType};
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_set_and_get_tee_firmware_config() {
+        let mut r = VmResources::default();
+        assert!(r.tee_firmware_config.is_none());
+        let cfg = TeeFirmwareConfig {
+            fw_type: TeeFirmwareType::TdShim,
+            path: PathBuf::from("/tmp/td-shim.bin"),
+        };
+        r.set_tee_firmware_config(cfg);
+        assert_eq!(
+            r.tee_firmware_config.unwrap().path,
+            PathBuf::from("/tmp/td-shim.bin")
         );
     }
 }
