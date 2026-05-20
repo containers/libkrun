@@ -10,7 +10,7 @@ mod gdt;
 pub mod interrupts;
 /// Layout for the x86_64 system.
 pub mod layout;
-#[cfg(not(feature = "tee"))]
+#[cfg(any(not(feature = "tee"), feature = "tdx"))]
 mod mptable;
 /// Logic for configuring x86_64 model specific registers (MSRs).
 pub mod msr;
@@ -61,7 +61,7 @@ pub enum Error {
     /// Invalid e820 setup params.
     E820Configuration,
     /// Error writing MP table to memory.
-    #[cfg(not(feature = "tee"))]
+    #[cfg(any(not(feature = "tee"), feature = "tdx"))]
     MpTableSetup(mptable::Error),
     /// Error writing hvm_start_info to guest memory.
     #[cfg(all(not(feature = "tee"), target_os = "linux"))]
@@ -271,6 +271,14 @@ pub fn arch_memory_regions(
         firmware_addr: 0,
     };
     (info, regions)
+}
+
+/// Writes an MP table to guest memory. Only needed for the TD-Shim path: TD-Shim's
+/// ACPI MADT has no IOAPIC entry, so without an MP table the kernel never programs
+/// the IOAPIC and virtio-mmio IRQs stop working after the PIC→APIC transition.
+#[cfg(feature = "tdx")]
+pub fn setup_mptable_for_tdshim(guest_mem: &GuestMemoryMmap, num_cpus: u8) -> super::Result<()> {
+    mptable::setup_mptable(guest_mem, num_cpus).map_err(Error::MpTableSetup)
 }
 
 /// Configures the system and should be called once per vm before starting vcpu threads.

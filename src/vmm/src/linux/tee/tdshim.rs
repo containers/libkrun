@@ -233,6 +233,42 @@ pub fn write_hob_chain(
     Ok(())
 }
 
+/// Size of the boot_params trampoline placed just before startup_64.
+pub const TRAMPOLINE_SIZE: u64 = 38;
+
+/// td-shim builds its own boot_params without ramdisk or cmdline fields.
+/// This trampoline runs just before startup_64 and patches them in via RSI,
+/// so the kernel finds the initrd and command line normally.
+pub fn build_boot_params_trampoline(
+    initrd_addr: u32,
+    initrd_size: u32,
+    cmdline_addr: u32,
+) -> Vec<u8> {
+    const BP_RAMDISK_IMAGE: u32 = 0x218;
+    const BP_RAMDISK_SIZE: u32 = 0x21c;
+    const BP_CMD_LINE_PTR: u32 = 0x228;
+
+    let patches = [
+        (BP_RAMDISK_IMAGE, initrd_addr),
+        (BP_RAMDISK_SIZE, initrd_size),
+        (BP_CMD_LINE_PTR, cmdline_addr),
+    ];
+
+    let mut code = Vec::with_capacity(TRAMPOLINE_SIZE as usize);
+    for (offset, value) in patches {
+        // mov eax, imm32
+        code.push(0xB8);
+        code.extend_from_slice(&value.to_le_bytes());
+        // mov [rsi+disp32], eax
+        code.extend_from_slice(&[0x89, 0x86]);
+        code.extend_from_slice(&offset.to_le_bytes());
+    }
+    // jmp +0 (startup_64 immediately follows)
+    code.extend_from_slice(&[0xE9, 0x00, 0x00, 0x00, 0x00]);
+    debug_assert_eq!(code.len() as u64, TRAMPOLINE_SIZE);
+    code
+}
+
 fn is_bfv(s: &TdvfSection) -> bool {
     matches!(s.section_type, TdvfSectionType::Bfv)
 }
@@ -540,5 +576,37 @@ mod tests {
             hob_region_addr + hob_length as u64,
             "efi_end_of_hob_list must equal hob_region_addr + chain.len()"
         );
+    }
+
+    #[test]
+    fn test_trampoline_length() {
+        let code = build_boot_params_trampoline(0x00a0_0000, 0x1000, 0x0002_0000);
+        assert_eq!(code.len() as u64, TRAMPOLINE_SIZE);
+    }
+
+    #[test]
+    fn test_trampoline_immediate_values() {
+        let initrd_addr: u32 = 0x00a0_0000;
+        let initrd_size: u32 = 0x0040_0000;
+        let cmdline_addr: u32 = 0x0002_0000;
+        let code = build_boot_params_trampoline(initrd_addr, initrd_size, cmdline_addr);
+
+        // First mov eax, imm32 at offset 1..5
+        assert_eq!(
+            u32::from_le_bytes(code[1..5].try_into().unwrap()),
+            initrd_addr
+        );
+        // Second mov eax, imm32 at offset 11..15
+        assert_eq!(
+            u32::from_le_bytes(code[11..15].try_into().unwrap()),
+            initrd_size
+        );
+        // Third mov eax, imm32 at offset 21..25
+        assert_eq!(
+            u32::from_le_bytes(code[21..25].try_into().unwrap()),
+            cmdline_addr
+        );
+        // Ends with jmp rel32=0
+        assert_eq!(&code[33..38], &[0xE9, 0x00, 0x00, 0x00, 0x00]);
     }
 }

@@ -3072,17 +3072,38 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         ctx_cfg.vmr.set_tee_firmware_config(tee_fw_config);
     }
 
+    // In the TD-Shim path, init.krun reads its exec config from the TEE config on
+    // the data disk (vdb), not from the kernel cmdline.  Including krun_env and the
+    // " -- " epilog here would cause init.krun to take the non-TEE vsock code path
+    // and block waiting for a host-side exec command that never arrives.
+    #[cfg(feature = "tdx")]
+    let is_tdshim = ctx_cfg
+        .vmr
+        .tee_firmware_config
+        .as_ref()
+        .is_some_and(|cfg| matches!(cfg.fw_type, TeeFirmwareType::TdShim));
+    #[cfg(not(feature = "tdx"))]
+    let is_tdshim = false;
+
     let kernel_cmdline = KernelCmdlineConfig {
         prolog: Some(format!("{DEFAULT_KERNEL_CMDLINE} init={INIT_PATH}")),
-        krun_env: Some(format!(
-            " {} {} {} {} {}",
-            ctx_cfg.get_exec_path(),
-            ctx_cfg.get_workdir(),
-            ctx_cfg.get_block_root(),
-            ctx_cfg.get_rlimits(),
-            ctx_cfg.get_env(),
-        )),
-        epilog: Some(format!(" -- {}", ctx_cfg.get_args())),
+        krun_env: if is_tdshim {
+            None
+        } else {
+            Some(format!(
+                " {} {} {} {} {}",
+                ctx_cfg.get_exec_path(),
+                ctx_cfg.get_workdir(),
+                ctx_cfg.get_block_root(),
+                ctx_cfg.get_rlimits(),
+                ctx_cfg.get_env(),
+            ))
+        },
+        epilog: if is_tdshim {
+            None
+        } else {
+            Some(format!(" -- {}", ctx_cfg.get_args()))
+        },
     };
 
     if ctx_cfg.vmr.set_kernel_cmdline(kernel_cmdline).is_err() {

@@ -52,7 +52,7 @@ use kbs_types::Tee;
 
 use crate::device_manager;
 #[cfg(feature = "tdx")]
-use crate::linux::tee::tdshim::TdShim;
+use crate::linux::tee::tdshim::{self, TdShim};
 #[cfg(all(feature = "vhost-user", target_os = "linux"))]
 use crate::resources::VhostUserDeviceConfig;
 #[cfg(target_os = "linux")]
@@ -601,16 +601,21 @@ fn measure_tdshim_regions(
         })
         .collect();
 
-    let kernel_bundle = vm_resources
+    let startup_64 = vm_resources
         .kernel_bundle
         .as_ref()
-        .ok_or(StartMicrovmError::MissingKernelConfig)?;
-
-    // libkrunfw packages a raw ELF vmlinux, not a bzImage. The entry_addr
-    // is the ELF e_entry (startup_64 physical address), which td-shim
-    // uses directly with PayloadImageTypeRawVmLinux.
+        .ok_or(StartMicrovmError::MissingKernelConfig)?
+        .entry_addr;
+    // When an initrd is present, the HOB entry point is backed up by
+    // TRAMPOLINE_SIZE so td-shim lands on the boot_params trampoline
+    // that patches initrd address/size before jumping to startup_64.
+    let hob_entry_point = if vm_resources.initrd_bundle.is_some() {
+        startup_64 - tdshim::TRAMPOLINE_SIZE
+    } else {
+        startup_64
+    };
     td_shim
-        .generate_hobs(guest_memory, kernel_bundle.entry_addr, &ram_regions)
+        .generate_hobs(guest_memory, hob_entry_point, &ram_regions)
         .map_err(|e| StartMicrovmError::TdShimError(format!("{e}")))?;
 
     // All RAM as one block (attributes=0, add but don't measure), plus the
@@ -748,6 +753,55 @@ pub fn build_microvm(
         );
         kernel_cmdline = Cmdline::new(arch::CMDLINE_MAX_SIZE);
         kernel_cmdline.insert_str(cmdline).unwrap();
+    }
+
+    // Write the TD-Shim initrd trampoline and firmware sections into guest memory
+    // BEFORE setup_vm()/memory_init(). At this point the GuestMemoryMmap is backed
+    // by plain anonymous mmap pages. Once KVM registers the memory slots (memory_init),
+    // pages become KVM_MEM_PRIVATE and TDH.MEM.PAGE.ADD copies the shared content to
+    // the TD's private memory — so any writes here are guaranteed to reach the TD.
+    #[cfg(feature = "tdx")]
+    if let Some(ref td_shim) = td_shim_parsed {
+        td_shim
+            .load_sections(&guest_memory)
+            .map_err(|e| StartMicrovmError::TdShimError(format!("{e}")))?;
+
+        arch::x86_64::setup_mptable_for_tdshim(
+            &guest_memory,
+            vm_resources.vm_config().vcpu_count.unwrap_or(1),
+        )
+        .map_err(|e| StartMicrovmError::Internal(Error::ConfigureSystem(e)))?;
+
+        // Place the trampoline INSIDE the kernel image, just before startup_64.
+        // The HOB entry_point must be in the kernel's address range — any address
+        // outside (like 0x801000 in the TD_HOB section) causes td-shim to treat
+        // the jump target as HOB data and behave incorrectly before the kernel runs.
+        //
+        // The bytes before startup_64 are PE/COFF header data that td-shim's
+        // RawVmLinux boot path never reads or executes, so overwriting them is safe.
+        //
+        // td-shim creates its own boot_params with cmd_line_ptr=0, so the
+        // kernel falls back to CONFIG_CMDLINE and we have no way to inject a
+        // custom cmdline.  Patching cmd_line_ptr here lets load_cmdline's
+        // content (written to CMDLINE_START) reach the kernel.
+        //
+        // Note: the trampoline is only written when an initrd is present. Without
+        // an initrd no trampoline is placed, so boot_params.cmd_line_ptr will remain
+        // 0 and the kernel won't see any cmdline passed via load_cmdline. This is a
+        // known limitation of the current TD-Shim boot path.
+        if let (Some(kernel_bundle), Some(initrd_bundle)) =
+            (&vm_resources.kernel_bundle, &vm_resources.initrd_bundle)
+        {
+            let trampoline_addr = kernel_bundle.entry_addr - tdshim::TRAMPOLINE_SIZE;
+            let trampoline = tdshim::build_boot_params_trampoline(
+                arch::x86_64::layout::INITRD_SEV_START as u32,
+                initrd_bundle.size.try_into().unwrap(),
+                arch::x86_64::layout::CMDLINE_START as u32,
+            );
+            guest_memory
+                .write(&trampoline, GuestAddress(trampoline_addr))
+                .map_err(|e| StartMicrovmError::TdShimError(format!("{e}")))?;
+        }
     }
 
     #[cfg(not(feature = "tee"))]
