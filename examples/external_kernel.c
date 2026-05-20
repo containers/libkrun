@@ -218,7 +218,7 @@ int main(int argc, char *const argv[])
     }
 
     // Set the log level to "off".
-    err = krun_set_log_level(0);
+    err = krun_init_log(KRUN_LOG_TARGET_DEFAULT, KRUN_LOG_LEVEL_OFF, KRUN_LOG_STYLE_AUTO, 0);
     if (err)
     {
         errno = -err;

@@ -45,7 +45,7 @@ int main(int argc, char *const argv[])
     }
 
     // Set the log level to "error".
-    err = krun_set_log_level(1);
+    err = krun_init_log(KRUN_LOG_TARGET_DEFAULT, KRUN_LOG_LEVEL_ERROR, KRUN_LOG_STYLE_AUTO, 0);
     if (err) {
         errno = -err;
         perror("Error configuring log level");
