@@ -666,16 +666,6 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
 
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
-#[cfg(not(feature = "tee"))]
-pub unsafe extern "C" fn krun_set_mapped_volumes(
-    _ctx_id: u32,
-    _c_mapped_volumes: *const *const c_char,
-) -> i32 {
-    -libc::EINVAL
-}
-
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
 #[cfg(feature = "blk")]
 pub unsafe extern "C" fn krun_add_disk(
     ctx_id: u32,
