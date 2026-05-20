@@ -882,10 +882,6 @@ int32_t krun_add_vsock_port2(uint32_t ctx_id,
 /**
  * Add a vsock device with specified TSI features.
  *
- * By default, libkrun creates a vsock device implicitly with TSI hijacking
- * enabled based on heuristics. To use this function, you must first call
- * krun_disable_implicit_vsock() to disable the implicit vsock device.
- *
  * Currently only one vsock device is supported. Calling this function
  * multiple times will return an error.
  *
@@ -1110,20 +1106,6 @@ int32_t krun_fs_add_overlay_file(uint32_t ctx_id, const char *fs_tag,
  */
 int32_t krun_fs_add_overlay_dir(uint32_t ctx_id, const char *fs_tag,
                                 const char *path, uint32_t mode);
-
-/**
- * Disable the implicit vsock device.
- *
- * By default, libkrun creates a vsock device automatically. This function
- * disables that behavior entirely - no vsock device will be created.
- *
- * Arguments:
- *  "ctx_id" - the configuration context ID.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_disable_implicit_vsock(uint32_t ctx_id);
 
 /*
  * Specify the value of `console=` in the kernel commandline.

@@ -132,13 +132,11 @@ pub enum PortConfig {
 /// Configuration for the vsock device
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub enum VsockConfig {
-    /// Default behavior - vsock created implicitly with heuristics-based TSI
+    /// No vsock device
     #[default]
-    Implicit,
+    Disabled,
     /// Explicit configuration with specified TSI features
     Explicit { tsi_flags: TsiFlags },
-    /// Vsock device disabled
-    Disabled,
 }
 
 /// A data structure that encapsulates the device configurations
@@ -397,7 +395,7 @@ mod tests {
     use crate::resources::VmResources;
     use crate::vmm_config::kernel_cmdline::KernelCmdlineConfig;
     use crate::vmm_config::machine_config::{CpuFeaturesTemplate, VmConfig, VmConfigError};
-    use crate::vmm_config::vsock::tests::{default_config, TempSockFile};
+    use crate::vmm_config::vsock::tests::{TempSockFile, default_config};
     use crate::vstate::VcpuConfig;
     use utils::tempfile::TempFile;
 
