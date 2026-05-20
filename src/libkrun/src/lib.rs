@@ -2465,19 +2465,6 @@ pub unsafe extern "C" fn krun_get_default_init(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn krun_disable_implicit_vsock(ctx_id: u32) -> i32 {
-    match CTX_MAP.lock().unwrap().entry(ctx_id) {
-        Entry::Occupied(mut ctx_cfg) => {
-            let cfg = ctx_cfg.get_mut();
-            cfg.vsock_config = VsockConfig::Disabled;
-        }
-        Entry::Vacant(_) => return -libc::ENOENT,
-    }
-
-    KRUN_SUCCESS
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn krun_add_vsock(ctx_id: u32, tsi_features: u32) -> i32 {
     let tsi_flags = match TsiFlags::from_bits(tsi_features) {
         Some(flags) => flags,
@@ -2772,33 +2759,6 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
                 tsi_flags: *tsi_flags,
             };
             ctx_cfg.vmr.set_vsock_device(vsock_device_config).unwrap();
-        }
-        VsockConfig::Implicit => {
-            // Implicit vsock configuration - use heuristics
-            // Check if TSI should be enabled based on network configuration
-            #[cfg(feature = "net")]
-            let enable_tsi = ctx_cfg.vmr.net.list.is_empty();
-            #[cfg(not(feature = "net"))]
-            let enable_tsi = true;
-
-            let has_ipc_map = ctx_cfg.unix_ipc_port_map.is_some();
-
-            if enable_tsi || has_ipc_map {
-                let (tsi_flags, host_port_map) = if enable_tsi {
-                    (TsiFlags::HIJACK_INET, ctx_cfg.tsi_port_map)
-                } else {
-                    (TsiFlags::empty(), None)
-                };
-
-                let vsock_device_config = VsockDeviceConfig {
-                    vsock_id: "vsock0".to_string(),
-                    guest_cid: 3,
-                    host_port_map,
-                    unix_ipc_port_map: ctx_cfg.unix_ipc_port_map.clone(),
-                    tsi_flags,
-                };
-                ctx_cfg.vmr.set_vsock_device(vsock_device_config).unwrap();
-            }
         }
     }
 
