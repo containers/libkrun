@@ -36,8 +36,8 @@ mod host {
     use super::*;
 
     use crate::common::setup_fs_and_enter;
-    use crate::{Test, TestSetup};
     use crate::{krun_call, krun_call_u32};
+    use crate::{Test, TestSetup};
     use krun_sys::*;
     use std::ffi::CString;
     use std::io::Write;
@@ -74,10 +74,11 @@ mod host {
                 ))?;
                 let ctx = krun_call_u32!(krun_create_ctx())?;
                 krun_call!(krun_add_vsock(ctx, 0))?;
-                krun_call!(krun_add_vsock_port(
+                krun_call!(krun_add_vsock_port2(
                     ctx,
                     VSOCK_PORT,
-                    sock_path_cstr.as_ptr()
+                    sock_path_cstr.as_ptr(),
+                    false,
                 ))?;
                 krun_call!(krun_set_vm_config(ctx, 1, 1024))?;
                 krun_call!(krun_add_virtio_console_default(
@@ -99,7 +100,7 @@ mod guest {
     use crate::Test;
 
     use nix::libc::VMADDR_CID_HOST;
-    use nix::sys::socket::{AddressFamily, SockFlag, SockType, VsockAddr, connect, socket};
+    use nix::sys::socket::{connect, socket, AddressFamily, SockFlag, SockType, VsockAddr};
     use std::io::Write;
     use std::os::fd::AsRawFd;
 

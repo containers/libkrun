@@ -252,7 +252,7 @@ int main(int argc, char *const argv[])
 
     if (cmdline.boot_disk)
     {
-        if (err = krun_add_disk(ctx_id, "boot", cmdline.boot_disk, 0))
+        if (err = krun_add_disk3(ctx_id, "boot", cmdline.boot_disk, KRUN_DISK_FORMAT_RAW, 0, 0, KRUN_SYNC_FULL))
         {
             errno = -err,
             perror("Error configuring boot disk");
@@ -261,7 +261,7 @@ int main(int argc, char *const argv[])
     }
     if (cmdline.data_disk)
     {
-        if (err = krun_add_disk(ctx_id, "data", cmdline.data_disk, 0))
+        if (err = krun_add_disk3(ctx_id, "data", cmdline.data_disk, KRUN_DISK_FORMAT_RAW, 0, 0, KRUN_SYNC_FULL))
         {
             errno = -err,
             perror("Error configuring data disk");

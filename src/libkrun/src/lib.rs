@@ -557,29 +557,7 @@ pub extern "C" fn krun_set_vm_config(ctx_id: u32, num_vcpus: u8, ram_mib: u32) -
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-pub unsafe extern "C" fn krun_add_virtiofs(
-    ctx_id: u32,
-    c_tag: *const c_char,
-    c_path: *const c_char,
-) -> i32 {
-    unsafe { krun_add_virtiofs3(ctx_id, c_tag, c_path, 0, false) }
-}
 
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
-#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-pub unsafe extern "C" fn krun_add_virtiofs2(
-    ctx_id: u32,
-    c_tag: *const c_char,
-    c_path: *const c_char,
-    shm_size: u64,
-) -> i32 {
-    unsafe { krun_add_virtiofs3(ctx_id, c_tag, c_path, shm_size, false) }
-}
-
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
-#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 pub unsafe extern "C" fn krun_add_virtiofs3(
     ctx_id: u32,
     c_tag: *const c_char,
@@ -636,100 +614,7 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
 #[cfg(feature = "blk")]
-pub unsafe extern "C" fn krun_add_disk(
-    ctx_id: u32,
-    c_block_id: *const c_char,
-    c_disk_path: *const c_char,
-    read_only: bool,
-) -> i32 {
-    unsafe {
-        let disk_path = match CStr::from_ptr(c_disk_path).to_str() {
-            Ok(disk) => disk,
-            Err(_) => return -libc::EINVAL,
-        };
 
-        let block_id = match CStr::from_ptr(c_block_id).to_str() {
-            Ok(block_id) => block_id,
-            Err(_) => return -libc::EINVAL,
-        };
-
-        match CTX_MAP.lock().unwrap().entry(ctx_id) {
-            Entry::Occupied(mut ctx_cfg) => {
-                let cfg = ctx_cfg.get_mut();
-                let block_device_config = BlockDeviceConfig {
-                    block_id: block_id.to_string(),
-                    cache_type: CacheType::auto(disk_path),
-                    disk_image_path: disk_path.to_string(),
-                    disk_image_format: ImageType::Raw,
-                    is_disk_read_only: read_only,
-                    direct_io: false,
-                    #[cfg(not(target_os = "macos"))]
-                    sync_mode: SyncMode::Full,
-                    #[cfg(target_os = "macos")]
-                    sync_mode: SyncMode::Relaxed,
-                };
-                cfg.add_block_cfg(block_device_config);
-            }
-            Entry::Vacant(_) => return -libc::ENOENT,
-        }
-
-        KRUN_SUCCESS
-    }
-}
-
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
-#[cfg(feature = "blk")]
-pub unsafe extern "C" fn krun_add_disk2(
-    ctx_id: u32,
-    c_block_id: *const c_char,
-    c_disk_path: *const c_char,
-    disk_format: u32,
-    read_only: bool,
-) -> i32 {
-    unsafe {
-        let disk_path = match CStr::from_ptr(c_disk_path).to_str() {
-            Ok(disk) => disk,
-            Err(_) => return -libc::EINVAL,
-        };
-
-        let block_id = match CStr::from_ptr(c_block_id).to_str() {
-            Ok(block_id) => block_id,
-            Err(_) => return -libc::EINVAL,
-        };
-
-        let format = match ImageType::try_from(disk_format) {
-            Ok(format) => format,
-            Err(_) => return -libc::EINVAL,
-        };
-
-        match CTX_MAP.lock().unwrap().entry(ctx_id) {
-            Entry::Occupied(mut ctx_cfg) => {
-                let cfg = ctx_cfg.get_mut();
-                let block_device_config = BlockDeviceConfig {
-                    block_id: block_id.to_string(),
-                    cache_type: CacheType::auto(disk_path),
-                    disk_image_path: disk_path.to_string(),
-                    disk_image_format: format,
-                    is_disk_read_only: read_only,
-                    direct_io: false,
-                    #[cfg(not(target_os = "macos"))]
-                    sync_mode: SyncMode::Full,
-                    #[cfg(target_os = "macos")]
-                    sync_mode: SyncMode::Relaxed,
-                };
-                cfg.add_block_cfg(block_device_config);
-            }
-            Entry::Vacant(_) => return -libc::ENOENT,
-        }
-
-        KRUN_SUCCESS
-    }
-}
-
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
-#[cfg(feature = "blk")]
 pub unsafe extern "C" fn krun_add_disk3(
     ctx_id: u32,
     c_block_id: *const c_char,
@@ -1263,16 +1148,6 @@ pub unsafe extern "C" fn krun_set_tee_config_file(ctx_id: u32, c_filepath: *cons
 
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn krun_add_vsock_port(
-    ctx_id: u32,
-    port: u32,
-    c_filepath: *const c_char,
-) -> i32 {
-    unsafe { krun_add_vsock_port2(ctx_id, port, c_filepath, false) }
-}
-
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn krun_add_vsock_port2(
     ctx_id: u32,
     port: u32,
@@ -1311,20 +1186,6 @@ pub unsafe extern "C" fn krun_add_vsock_port2(
 
         KRUN_SUCCESS
     }
-}
-
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn krun_set_gpu_options(ctx_id: u32, virgl_flags: u32) -> i32 {
-    match CTX_MAP.lock().unwrap().entry(ctx_id) {
-        Entry::Occupied(mut ctx_cfg) => {
-            let cfg = ctx_cfg.get_mut();
-            cfg.set_gpu_virgl_flags(virgl_flags);
-        }
-        Entry::Vacant(_) => return -libc::ENOENT,
-    }
-
-    KRUN_SUCCESS
 }
 
 #[allow(clippy::missing_safety_doc)]

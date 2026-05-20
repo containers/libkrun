@@ -415,7 +415,7 @@ int main(int argc, char *const argv[])
 
     uint32_t virgl_flags = VIRGLRENDERER_USE_EGL | VIRGLRENDERER_DRM |
 	    VIRGLRENDERER_THREAD_SYNC | VIRGLRENDERER_USE_ASYNC_FENCE_CB;
-    if (err = krun_set_gpu_options(ctx_id, virgl_flags)) {
+    if (err = krun_set_gpu_options2(ctx_id, virgl_flags, (uint64_t)1 << 33)) {
         errno = -err;
         perror("Error configuring gpu");
         return -1;

@@ -22,11 +22,14 @@ mod host {
     use std::os::fd::AsRawFd;
     use std::process::Command;
 
-    type KrunAddDiskFn = unsafe extern "C" fn(
+    type KrunAddDisk3Fn = unsafe extern "C" fn(
         ctx_id: u32,
         block_id: *const std::ffi::c_char,
         disk_path: *const std::ffi::c_char,
+        disk_format: u32,
         read_only: bool,
+        direct_io: bool,
+        sync_mode: u32,
     ) -> i32;
 
     type KrunSetRootDiskRemountFn = unsafe extern "C" fn(
@@ -36,10 +39,10 @@ mod host {
         options: *const std::ffi::c_char,
     ) -> i32;
 
-    fn get_krun_add_disk() -> KrunAddDiskFn {
-        let symbol = CString::new("krun_add_disk").unwrap();
+    fn get_krun_add_disk3() -> KrunAddDisk3Fn {
+        let symbol = CString::new("krun_add_disk3").unwrap();
         let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, symbol.as_ptr()) };
-        assert!(!ptr.is_null(), "krun_add_disk not found");
+        assert!(!ptr.is_null(), "krun_add_disk3 not found");
         unsafe { std::mem::transmute(ptr) }
     }
 
@@ -86,7 +89,7 @@ mod host {
         }
 
         fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()> {
-            let krun_add_disk = get_krun_add_disk();
+            let krun_add_disk3 = get_krun_add_disk3();
             let krun_set_root_disk_remount = get_krun_set_root_disk_remount();
 
             let guest_agent_path = std::env::var("KRUN_TEST_GUEST_AGENT_PATH")
@@ -115,11 +118,14 @@ mod host {
                 ))?;
 
                 // Add a block device with the ext4 image.
-                krun_call!(krun_add_disk(
+                krun_call!(krun_add_disk3(
                     ctx,
                     c"vda".as_ptr(),
                     c_disk_path.as_ptr(),
+                    KRUN_DISK_FORMAT_RAW,
                     false,
+                    false,
+                    KRUN_SYNC_FULL,
                 ))?;
 
                 // Configure block device as root, pivot from NullFs.
