@@ -419,26 +419,6 @@ fn log_level_to_filter_str(level: u32) -> &'static str {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn krun_set_log_level(level: u32) -> i32 {
-    let filter = log_level_to_filter_str(level);
-    env_logger::Builder::from_env(Env::default().default_filter_or(filter))
-        .format_timestamp_micros()
-        .init();
-
-    #[cfg(feature = "aws-nitro")]
-    {
-        // Notify krun-awsnitro to enable debug for log level.
-        if level == 4 {
-            let mut debug = KRUN_NITRO_DEBUG.lock().unwrap();
-
-            *debug = true;
-        }
-    }
-
-    KRUN_SUCCESS
-}
-
 mod log_defs {
     pub const KRUN_LOG_STYLE_AUTO: u32 = 0;
     pub const KRUN_LOG_STYLE_ALWAYS: u32 = 1;
@@ -486,6 +466,14 @@ pub unsafe extern "C" fn krun_init_log(target: RawFd, level: u32, style: u32, op
             builder
         };
         builder.format_timestamp_micros().target(target).init();
+
+        #[cfg(feature = "aws-nitro")]
+        {
+            // Notify krun-awsnitro to enable debug for log level.
+            if level >= 4 {
+                *KRUN_NITRO_DEBUG.lock().unwrap() = true;
+            }
+        }
 
         KRUN_SUCCESS
     }
