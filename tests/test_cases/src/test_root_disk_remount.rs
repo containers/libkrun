@@ -18,6 +18,7 @@ mod host {
     use krun_sys::*;
     use nix::libc;
     use std::ffi::CString;
+    use std::os::fd::AsRawFd;
     use std::process::Command;
     use std::ptr::null;
 
@@ -106,6 +107,12 @@ mod host {
                 ))?;
                 let ctx = krun_call_u32!(krun_create_ctx())?;
                 krun_call!(krun_set_vm_config(ctx, 1, 512))?;
+                krun_call!(krun_add_virtio_console_default(
+                    ctx,
+                    std::io::stdin().as_raw_fd(),
+                    std::io::stdout().as_raw_fd(),
+                    std::io::stderr().as_raw_fd(),
+                ))?;
 
                 let argv = [test_case.as_ptr(), null()];
                 let envp = [null()];

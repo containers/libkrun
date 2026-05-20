@@ -67,6 +67,12 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
+    if (err = krun_add_virtio_console_default(ctx_id, STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO)) {
+        errno = -err;
+        perror("Error configuring console");
+        return -1;
+    }
+
     // Use the first command line argument as the disk image containing the root fs.
     if (err = krun_add_disk(ctx_id, "root", argv[1], false)) {
         errno = -err;

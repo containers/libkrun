@@ -9,6 +9,7 @@ mod host {
     use crate::{ShouldRun, Test, TestOutcome, TestSetup, krun_call, krun_call_u32};
     use krun_sys::*;
     use std::ffi::CString;
+    use std::os::fd::AsRawFd;
 
     use macros::env_or_default;
 
@@ -54,6 +55,12 @@ mod host {
             unsafe {
                 let ctx = krun_call_u32!(krun_create_ctx())?;
                 krun_call!(krun_set_vm_config(ctx, 2, 1024))?;
+                krun_call!(krun_add_virtio_console_default(
+                    ctx,
+                    std::io::stdin().as_raw_fd(),
+                    std::io::stdout().as_raw_fd(),
+                    std::io::stderr().as_raw_fd(),
+                ))?;
                 setup_fs_and_enter_with_env(ctx, test_setup, &[host_os_env.as_c_str()])?;
             }
             Ok(())

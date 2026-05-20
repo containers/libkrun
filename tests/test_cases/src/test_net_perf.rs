@@ -155,6 +155,7 @@ mod host {
     use crate::common::setup_fs_and_enter;
     use crate::{Test, TestOutcome, TestSetup, krun_call, krun_call_u32};
     use krun_sys::*;
+    use std::os::fd::AsRawFd;
     use std::process::{Child, Command, Stdio};
 
     const CONTAINERFILE: &str = "\
@@ -360,6 +361,12 @@ RUN dnf install -y iperf3 && dnf clean all
                 // Backend-specific setup
                 (self.setup_backend)(ctx, &test_setup)?;
 
+                krun_call!(krun_add_virtio_console_default(
+                    ctx,
+                    std::io::stdin().as_raw_fd(),
+                    std::io::stdout().as_raw_fd(),
+                    std::io::stderr().as_raw_fd(),
+                ))?;
                 setup_fs_and_enter(ctx, test_setup)?;
             }
             Ok(())

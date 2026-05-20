@@ -41,6 +41,7 @@ mod host {
     use krun_sys::*;
     use std::ffi::CString;
     use std::io::Write;
+    use std::os::fd::AsRawFd;
     use std::os::unix::net::UnixListener;
     use std::os::unix::prelude::OsStrExt;
     use std::{mem, thread};
@@ -73,6 +74,12 @@ mod host {
                     sock_path_cstr.as_ptr()
                 ))?;
                 krun_call!(krun_set_vm_config(ctx, 1, 1024))?;
+                krun_call!(krun_add_virtio_console_default(
+                    ctx,
+                    std::io::stdin().as_raw_fd(),
+                    std::io::stdout().as_raw_fd(),
+                    std::io::stderr().as_raw_fd(),
+                ))?;
                 setup_fs_and_enter(ctx, test_setup)?;
             }
             Ok(())
