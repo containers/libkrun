@@ -363,14 +363,8 @@ int main(int argc, char *const argv[])
         printf("Using vhost-user sound backend at %s\n", cmdline.vhost_user_snd_socket);
     }
 
-    // Configure vhost-user vsock if requested
+    // Configure vsock: either vhost-user or built-in with TSI
     if (cmdline.vhost_user_vsock_socket != NULL) {
-        // Disable the implicit vsock device to avoid conflict
-        if (!check_krun_error(krun_disable_implicit_vsock(ctx_id),
-                              "Error disabling implicit vsock")) {
-            return -1;
-        }
-
         if (!check_krun_error(krun_add_vhost_user_device(ctx_id, KRUN_VIRTIO_DEVICE_VSOCK,
                                                           cmdline.vhost_user_vsock_socket, NULL,
                                                           KRUN_VHOST_USER_VSOCK_NUM_QUEUES,
@@ -425,8 +419,16 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
+    // Add built-in vsock with TSI when not using vhost-user-vsock
+    if (cmdline.vhost_user_vsock_socket == NULL) {
+        if (err = krun_add_vsock(ctx_id, KRUN_TSI_HIJACK_INET)) {
+            errno = -err;
+            perror("Error configuring vsock");
+            return -1;
+        }
+    }
+
     // Map port 18000 in the host to 8000 in the guest (if networking uses TSI)
-    // Skip port mapping when using vhost-user-vsock (TSI requires built-in vsock)
     if (cmdline.net_mode == NET_MODE_TSI && cmdline.vhost_user_vsock_socket == NULL) {
         if (err = krun_set_port_map(ctx_id, &port_map[0])) {
             errno = -err;
