@@ -227,22 +227,6 @@ int32_t krun_add_disk2(uint32_t ctx_id,
                        uint32_t sync_mode);
 
 /**
- * NO LONGER SUPPORTED. DO NOT USE.
- *
- * Configures the mapped volumes for the microVM. Only supported on macOS, on Linux use
- * user_namespaces and bind-mounts instead. Not available in libkrun-SEV.
- *
- * Arguments:
- *  "ctx_id"         - the configuration context ID.
- *  "mapped_volumes" - an array of string pointers with format "host_path:guest_path" representing
- *                     the volumes to be mapped inside the microVM
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_mapped_volumes(uint32_t ctx_id, const char *const mapped_volumes[]);
-
-/**
  * Adds an independent virtio-fs device pointing to a host's directory with a tag.
  *
  * Arguments:
