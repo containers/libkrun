@@ -118,44 +118,11 @@ int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus, uint32_t ram_mib)
  */
 int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
 
-/**
- * DEPRECATED. Use krun_add_disk instead.
- *
- * Sets the path to the disk image that contains the file-system to be used as root for the microVM.
- * The only supported image format is "raw".
- *
- * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "disk_path" - a null-terminated string representing the path leading to the disk image that
- *                contains the root file-system.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_root_disk(uint32_t ctx_id, const char *disk_path);
 
-/**
- * DEPRECATED. Use krun_add_disk instead.
- *
- * Sets the path to the disk image that contains the file-system to be used as
- * a data partition for the microVM.  The only supported image format is "raw".
- *
- * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "disk_path" - a null-terminated string representing the path leading to the disk image that
- *                contains the root file-system.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_data_disk(uint32_t ctx_id, const char *disk_path);
 
 /**
  * Adds a disk image to be used as a general partition for the microVM. The only supported image
  * format is "raw".
- *
- * This API is mutually exclusive with the deprecated krun_set_root_disk and
- * krun_set_data_disk methods and must not be used together.
  *
  * This function deliberately only handles images in the Raw format, because it doesn't allow
  * specifying an image format, and probing an image's format is dangerous. For more information,
@@ -182,9 +149,6 @@ int32_t krun_add_disk(uint32_t ctx_id, const char *block_id, const char *disk_pa
 /**
  * Adds a disk image to be used as a general partition for the microVM. The supported
  * image formats are: "raw" and "qcow2".
- *
- * This API is mutually exclusive with the deprecated krun_set_root_disk and
- * krun_set_data_disk methods and must not be used together.
  *
  * SECURITY NOTE:
  * Non-Raw images can reference other files, which libkrun will automatically open, and to which the
@@ -253,9 +217,6 @@ int32_t krun_add_disk2(uint32_t ctx_id,
 
 /**
  * Adds a disk image to be used as a general partition for the microVM.
- *
- * This API is mutually exclusive with the deprecated krun_set_root_disk and
- * krun_set_data_disk methods and must not be used together.
  *
  * SECURITY NOTE:
  * See the security note for `krun_add_disk2`.

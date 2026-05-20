@@ -168,10 +168,6 @@ struct ContextConfig {
     #[cfg(feature = "blk")]
     block_cfgs: Vec<BlockDeviceConfig>,
     #[cfg(feature = "blk")]
-    root_block_cfg: Option<BlockDeviceConfig>,
-    #[cfg(feature = "blk")]
-    data_block_cfg: Option<BlockDeviceConfig>,
-    #[cfg(feature = "blk")]
     block_root: Option<BlockRootConfig>,
     #[cfg(feature = "tee")]
     tee_config_file: Option<PathBuf>,
@@ -276,30 +272,8 @@ impl ContextConfig {
     }
 
     #[cfg(feature = "blk")]
-    fn set_root_block_cfg(&mut self, block_cfg: BlockDeviceConfig) {
-        self.root_block_cfg = Some(block_cfg);
-    }
-
-    #[cfg(feature = "blk")]
-    fn set_data_block_cfg(&mut self, block_cfg: BlockDeviceConfig) {
-        self.data_block_cfg = Some(block_cfg);
-    }
-
-    #[cfg(feature = "blk")]
     fn get_block_cfg(&self) -> Vec<BlockDeviceConfig> {
-        // For backwards compat, when cfgs is empty (the new API is not used), this needs to be
-        // root and then data, in that order. Also for backwards compat, root/data are setters and
-        // need to discard redundant calls. So we have simple setters above and fix up here.
-        //
-        // When the new API is used, this is simpler.
-        if self.block_cfgs.is_empty() {
-            [&self.root_block_cfg, &self.data_block_cfg]
-                .into_iter()
-                .filter_map(|cfg| cfg.clone())
-                .collect()
-        } else {
-            self.block_cfgs.clone()
-        }
+        self.block_cfgs.clone()
     }
 
     #[cfg(feature = "net")]
@@ -868,74 +842,6 @@ pub unsafe extern "C" fn krun_add_disk3(
                     sync_mode,
                 };
                 cfg.add_block_cfg(block_device_config);
-            }
-            Entry::Vacant(_) => return -libc::ENOENT,
-        }
-
-        KRUN_SUCCESS
-    }
-}
-
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
-#[cfg(feature = "blk")]
-pub unsafe extern "C" fn krun_set_root_disk(ctx_id: u32, c_disk_path: *const c_char) -> i32 {
-    unsafe {
-        let disk_path = match CStr::from_ptr(c_disk_path).to_str() {
-            Ok(disk) => disk,
-            Err(_) => return -libc::EINVAL,
-        };
-
-        match CTX_MAP.lock().unwrap().entry(ctx_id) {
-            Entry::Occupied(mut ctx_cfg) => {
-                let cfg = ctx_cfg.get_mut();
-                let block_device_config = BlockDeviceConfig {
-                    block_id: "root".to_string(),
-                    cache_type: CacheType::auto(disk_path),
-                    disk_image_path: disk_path.to_string(),
-                    disk_image_format: ImageType::Raw,
-                    is_disk_read_only: false,
-                    direct_io: false,
-                    #[cfg(not(target_os = "macos"))]
-                    sync_mode: SyncMode::Full,
-                    #[cfg(target_os = "macos")]
-                    sync_mode: SyncMode::Relaxed,
-                };
-                cfg.set_root_block_cfg(block_device_config);
-            }
-            Entry::Vacant(_) => return -libc::ENOENT,
-        }
-
-        KRUN_SUCCESS
-    }
-}
-
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
-#[cfg(feature = "blk")]
-pub unsafe extern "C" fn krun_set_data_disk(ctx_id: u32, c_disk_path: *const c_char) -> i32 {
-    unsafe {
-        let disk_path = match CStr::from_ptr(c_disk_path).to_str() {
-            Ok(disk) => disk,
-            Err(_) => return -libc::EINVAL,
-        };
-
-        match CTX_MAP.lock().unwrap().entry(ctx_id) {
-            Entry::Occupied(mut ctx_cfg) => {
-                let cfg = ctx_cfg.get_mut();
-                let block_device_config = BlockDeviceConfig {
-                    block_id: "data".to_string(),
-                    cache_type: CacheType::auto(disk_path),
-                    disk_image_path: disk_path.to_string(),
-                    disk_image_format: ImageType::Raw,
-                    is_disk_read_only: false,
-                    direct_io: false,
-                    #[cfg(not(target_os = "macos"))]
-                    sync_mode: SyncMode::Full,
-                    #[cfg(target_os = "macos")]
-                    sync_mode: SyncMode::Relaxed,
-                };
-                cfg.set_data_block_cfg(block_device_config);
             }
             Entry::Vacant(_) => return -libc::ENOENT,
         }

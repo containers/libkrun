@@ -210,9 +210,8 @@ static char *get_luks_passphrase(int *pass_len)
     return_str = NULL;
 
     /*
-     * If a user registered the TEE config data disk with
-     * krun_set_data_disk(), it would appear as /dev/vdb in the guest.
-     * Mount this device and read the config.
+     * If a TEE config data disk was registered, it would appear as
+     * /dev/vdb in the guest. Mount this device and read the config.
      */
     if (mkdir("/dev", 0755) < 0 && errno != EEXIST) {
         perror("mkdir(/dev)");
