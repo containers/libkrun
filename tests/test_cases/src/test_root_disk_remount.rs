@@ -98,7 +98,12 @@ mod host {
             let test_case = CString::new(test_setup.test_case)?;
 
             unsafe {
-                krun_call!(krun_set_log_level(KRUN_LOG_LEVEL_TRACE))?;
+                krun_call!(krun_init_log(
+                    KRUN_LOG_TARGET_DEFAULT,
+                    KRUN_LOG_LEVEL_TRACE,
+                    KRUN_LOG_STYLE_AUTO,
+                    0
+                ))?;
                 let ctx = krun_call_u32!(krun_create_ctx())?;
                 krun_call!(krun_set_vm_config(ctx, 1, 512))?;
 

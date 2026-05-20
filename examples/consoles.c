@@ -119,7 +119,7 @@ int main(int argc, char *const argv[])
     const char *const *command_args = (argc > 3) ? (const char *const *)&argv[3] : NULL;
     const char *const envp[] = { 0 };
 
-    krun_set_log_level(KRUN_LOG_LEVEL_WARN);
+    krun_init_log(KRUN_LOG_TARGET_DEFAULT, KRUN_LOG_LEVEL_WARN, KRUN_LOG_STYLE_AUTO, 0);
 
     int err;
     int ctx_id = krun_create_ctx();

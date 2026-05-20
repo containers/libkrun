@@ -180,7 +180,7 @@ int main(int argc, char *const argv[])
 
     // Enable debug output if configured.
     log_level = (cmdline.debug) ? KRUN_LOG_LEVEL_DEBUG : KRUN_LOG_LEVEL_OFF;
-    err = krun_set_log_level(log_level);
+    err = krun_init_log(KRUN_LOG_TARGET_DEFAULT, log_level, KRUN_LOG_STYLE_AUTO, 0);
     if (err) {
         errno = -err;
         perror("Error configuring log level");
