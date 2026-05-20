@@ -209,7 +209,6 @@ unsafe fn do_setup_and_enter(
             CString::new(config_iso.as_os_str().as_bytes()).context("CString::new")?;
 
         // FreeBSD requires a serial console; virtio console is not supported.
-        krun_call!(krun_disable_implicit_console(ctx))?;
         krun_call!(krun_add_serial_console_default(ctx, serial_read_fd, 1))?;
 
         // Kernel cmdline: mount vtbd0 as root via cd9660 and hand off to init-freebsd.

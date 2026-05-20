@@ -308,6 +308,12 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
+    if (err = krun_add_virtio_console_default(ctx_id, STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO)) {
+        errno = -err;
+        perror("Error configuring console");
+        return -1;
+    }
+
     // Configure vhost-user RNG if requested
     if (cmdline.vhost_user_rng_socket != NULL) {
         // Test sentinel-terminated array: auto-detect queue count, use custom size

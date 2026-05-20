@@ -203,9 +203,9 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    if (err = krun_set_console_output(ctx_id, "/dev/stdout")) {
+    if (err = krun_add_virtio_console_default(ctx_id, -1, STDOUT_FILENO, -1)) {
         errno = -err;
-        perror("Error configuring the console output");
+        perror("Error configuring the console");
         return -1;
     }
 

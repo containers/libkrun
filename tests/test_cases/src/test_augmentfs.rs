@@ -21,6 +21,7 @@ mod host {
     use crate::{krun_call, krun_call_u32};
     use krun_sys::*;
     use std::ffi::CString;
+    use std::os::fd::AsRawFd;
     use std::ptr::null_mut;
 
     impl Test for TestAugmentFs {
@@ -48,9 +49,20 @@ mod host {
             let marker: &'static [u8] = b"virtual-file-marker-content-12345";
 
             unsafe {
-                krun_call!(krun_init_log(KRUN_LOG_TARGET_DEFAULT, KRUN_LOG_LEVEL_TRACE, KRUN_LOG_STYLE_AUTO, 0))?;
+                krun_call!(krun_init_log(
+                    KRUN_LOG_TARGET_DEFAULT,
+                    KRUN_LOG_LEVEL_TRACE,
+                    KRUN_LOG_STYLE_AUTO,
+                    0
+                ))?;
                 let ctx = krun_call_u32!(krun_create_ctx())?;
                 krun_call!(krun_set_vm_config(ctx, 1, 512))?;
+                krun_call!(krun_add_virtio_console_default(
+                    ctx,
+                    std::io::stdin().as_raw_fd(),
+                    std::io::stdout().as_raw_fd(),
+                    std::io::stderr().as_raw_fd(),
+                ))?;
 
                 // Disable the implicit init — we'll inject it ourselves.
                 krun_call!(krun_disable_implicit_init(ctx))?;
