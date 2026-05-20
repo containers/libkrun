@@ -912,22 +912,6 @@ int32_t krun_add_vsock(uint32_t ctx_id, uint32_t tsi_features);
 int32_t krun_get_shutdown_eventfd(uint32_t ctx_id);
 
 /**
- * Configures the console device to ignore stdin and write the output to "c_filepath".
- *
- * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "filepath"  - a null-terminated string representing the path of the file to write the
- *                console output.
- *
- * Notes:
- *  This API only applies to the implicitly created console. If the implicit console is
- *  disabled via `krun_disable_implicit_console` the operation is a NOOP. Additionally,
- *  this API does not have any effect on consoles created via the `krun_add_*_console_default`
- *  APIs.
- */
-int32_t krun_set_console_output(uint32_t ctx_id, const char *c_filepath);
-
-/**
  * Configures uid which is set right before the microVM is started.
  *
  * This is useful for example when you want to access host block devices
@@ -1037,19 +1021,7 @@ int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
  * krun_disable_implicit_* functions now to ease migration.
  */
 
-/*
- * Do not create an implicit console device in the guest. By using this API,
- * libkrun will create zero console devices on behalf of the user. Any
- * console devices needed by the user must be added manually via other API
- * calls.
- *
- * Arguments:
- *  "ctx_id" - the configuration context ID.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_disable_implicit_console(uint32_t ctx_id);
+
 
 /**
  * Do not inject the default init binary (/init.krun) into the root
@@ -1170,9 +1142,7 @@ int32_t krun_set_kernel_console(uint32_t ctx_id, const char *console_id);
  *
  * The function can be called multiple times for adding multiple virtio-console devices.
  * In the guest, the consoles will appear in the same order as they are added (that is,
- * the first added console will be "hvc0", the second "hvc1", ...). However, if the
- * implicit console is not disabled via `krun_disable_implicit_console`, the first
- * console created with the function will occupy the "hvc1" ID.
+ * the first added console will be "hvc0", the second "hvc1", ...).
  *
  * This function attaches a multi port virtio-console to the guest. If the input, output and error
  * file descriptors are TTYs, the device will be created with just a single console port (`err_fd`
@@ -1200,9 +1170,7 @@ int32_t krun_add_virtio_console_default(uint32_t ctx_id,
  *
  * The function can be called multiple times for adding multiple serial devices.
  * In the guest, the consoles will appear in the same order as they are added (that is,
- * the first added console will be "ttyS0", the second "ttyS1", ...). However, if the
- * implicit console is not disabled via `krun_disable_implicit_console` on aarch64 or macOS,
- * the first console created with the function will occupy the "ttyS1" ID.
+ * the first added console will be "ttyS0", the second "ttyS1", ...).
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
@@ -1225,8 +1193,7 @@ int32_t krun_add_serial_console_default(uint32_t ctx_id,
  *
  * The function can be called multiple times for adding multiple virtio-console devices.
  * Each device appears in the guest with port 0 accessible as /dev/hvcN (hvc0, hvc1, etc.) in the order
- * devices are added. If the implicit console is not disabled via `krun_disable_implicit_console`,
- * the first explicitly added device will occupy the "hvc1" ID. Additional ports within each device
+ * devices are added. Additional ports within each device
  * (port 1, 2, ...) appear as /dev/vportNpM character devices.
  *
  * Arguments:
