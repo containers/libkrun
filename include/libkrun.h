@@ -332,7 +332,7 @@ int32_t krun_add_virtiofs3(uint32_t ctx_id,
 #define NET_FEATURE_HOST_TSO6 1 << 12
 #define NET_FEATURE_HOST_UFO 1 << 14
 
-/* These are the features enabled by krun_set_passt_fd and krun_set_gvproxy_path. */
+/* These are the default features used by krun_add_net_unixstream and krun_add_net_unixgram. */
 #define COMPAT_NET_FEATURES NET_FEATURE_CSUM | NET_FEATURE_GUEST_CSUM | \
                             NET_FEATURE_GUEST_TSO4 | NET_FEATURE_GUEST_UFO | \
                             NET_FEATURE_HOST_TSO4 | NET_FEATURE_HOST_UFO
@@ -454,57 +454,6 @@ int32_t krun_add_net_tap(uint32_t ctx_id,
                          uint32_t flags);
 
 /**
- * DEPRECATED. Use krun_add_net_unixstream instead.
- *
- * Configures the networking to use passt.
- * Call to this function disables TSI backend to use passt instead.
- *
- * Arguments:
- *  "ctx_id"         - the configuration context ID.
- *  "fd"             - a file descriptor to communicate with passt
- *
- * Notes:
- * If you never call this function, networking uses the TSI backend.
- * This function should be called before krun_set_port_map.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_passt_fd(uint32_t ctx_id, int fd);
-
-/**
- * DEPRECATED. Use krun_add_net_unixgram instead.
- *
- * Configures the networking to use gvproxy in vfkit mode.
- * Call to this function disables TSI backend to use gvproxy instead.
- *
- * Arguments:
- *  "ctx_id"  - the configuration context ID.
- *  "c_path"  - a null-terminated string representing the path for
- *              gvproxy's listen-vfkit unixdgram socket.
- *
- * Notes:
- * If you never call this function, networking uses the TSI backend.
- * This function should be called before krun_set_port_map.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_gvproxy_path(uint32_t ctx_id, char *c_path);
-
-/**
- * Sets the MAC address for the virtio-net device when using the passt backend.
- *
- * Arguments:
- *  "ctx_id"         - the configuration context ID.
- *  "mac"            - MAC address as an array of 6 uint8_t entries.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_net_mac(uint32_t ctx_id, uint8_t *const c_mac);
-
-/**
  * Configures a map of host to guest TCP ports for the microVM.
  *
  * Arguments:
@@ -526,8 +475,9 @@ int32_t krun_set_net_mac(uint32_t ctx_id, uint8_t *const c_mac);
  *  means that for a map such as "8080:80", applications running inside the guest will also
  *  need to access the service through the "8080" port.
  *
- * If past networking mode is used (krun_set_passt_fd was called), port mapping is not supported
- * as an API of libkrun (but you can still do port mapping using command line arguments of passt)
+ * If passt networking mode is used, port mapping is not supported as an API
+ * of libkrun (but you can still do port mapping using command line arguments
+ * of passt)
  */
 int32_t krun_set_port_map(uint32_t ctx_id, const char *const port_map[]);
 
