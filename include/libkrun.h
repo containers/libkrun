@@ -10,24 +10,6 @@ extern "C" {
 #include <stdbool.h>
 #include <unistd.h>
 
-/**
- * Sets the log level for the library.
- *
- * Arguments:
- *  "level" can be one of the following values:
- *    0: Off
- *    1: Error
- *    2: Warn
- *    3: Info
- *    4: Debug
- *    5: Trace
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_log_level(uint32_t level);
-
-
 #define KRUN_LOG_TARGET_DEFAULT -1
 
 #define KRUN_LOG_LEVEL_OFF 0
