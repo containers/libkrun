@@ -197,7 +197,7 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    if (err = krun_set_root_disk(ctx_id, cmdline.disk_image)) {
+    if (err = krun_add_disk(ctx_id, "root", cmdline.disk_image, false)) {
         errno = -err;
         perror("Error configuring disk image");
         return -1;
