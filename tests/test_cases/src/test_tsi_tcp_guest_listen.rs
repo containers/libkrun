@@ -45,6 +45,7 @@ mod host {
                 let port_mapping = CString::new(port_mapping).unwrap();
                 let port_map = [port_mapping.as_ptr(), null()];
 
+                krun_call!(krun_add_vsock(ctx, KRUN_TSI_HIJACK_INET))?;
                 krun_call!(krun_set_port_map(ctx, port_map.as_ptr()))?;
                 krun_call!(krun_set_vm_config(ctx, 1, 512))?;
                 krun_call!(krun_add_virtio_console_default(

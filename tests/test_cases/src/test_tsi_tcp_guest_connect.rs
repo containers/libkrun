@@ -39,6 +39,7 @@ mod host {
                     0
                 ))?;
                 let ctx = krun_call_u32!(krun_create_ctx())?;
+                krun_call!(krun_add_vsock(ctx, KRUN_TSI_HIJACK_INET))?;
                 krun_call!(krun_set_vm_config(ctx, 1, 512))?;
                 krun_call!(krun_add_virtio_console_default(
                     ctx,
