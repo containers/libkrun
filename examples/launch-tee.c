@@ -68,7 +68,7 @@ int main(int argc, char *const argv[])
     }
 
     // Use the first command line argument as the disk image containing the root fs.
-    if (err = krun_set_root_disk(ctx_id, argv[1])) {
+    if (err = krun_add_disk(ctx_id, "root", argv[1], false)) {
         errno = -err;
         perror("Error configuring root disk image");
         return -1;
@@ -114,7 +114,7 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    if (err = krun_set_data_disk(ctx_id, argv[3])) {
+    if (err = krun_add_disk(ctx_id, "data", argv[3], false)) {
         errno = -err;
         perror("Error configuring the TEE config data disk");
         return -1;
