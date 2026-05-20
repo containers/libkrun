@@ -125,12 +125,6 @@ int main(int argc, char *const argv[])
     int ctx_id = krun_create_ctx();
     if (ctx_id < 0) { errno = -ctx_id; perror("krun_create_ctx"); return 1; }
 
-    if ((err = krun_disable_implicit_console(ctx_id))) {
-        errno = -err;
-        perror("krun_disable_implicit_console");
-        return 1;
-    }
-
     int console_id = krun_add_virtio_console_multiport(ctx_id);
     if (console_id < 0) {
         errno = -console_id;

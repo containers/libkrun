@@ -14,7 +14,6 @@ use std::fs::File;
 use std::io::{self, IsTerminal, Read};
 use std::os::fd::AsRawFd;
 use std::os::fd::{BorrowedFd, FromRawFd};
-use std::path::PathBuf;
 use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
 
@@ -728,17 +727,6 @@ pub fn build_microvm(
 
     let mut serial_devices = Vec::new();
 
-    // Create the legacy serial device if we're booting from a firmware
-    if vm_resources.firmware_config.is_some() && !vm_resources.disable_implicit_console {
-        serial_devices.push(setup_serial_device(
-            event_manager,
-            None,
-            None,
-            // Uncomment this to get EFI output when debugging EDK2.
-            //Some(Box::new(io::stdout())),
-        )?);
-    };
-
     // We can't call to `setup_terminal_raw_mode` until `Vmm` is created,
     // so let's keep track of FDs connected to legacy serial devices here
     // and set raw mode on them later.
@@ -995,29 +983,15 @@ pub fn build_microvm(
             attach_rng_device(&mut vmm, event_manager, intc.clone())?;
         }
     }
-    let mut console_id = 0;
-    if !vm_resources.disable_implicit_console {
-        attach_console_devices(
-            &mut vmm,
-            event_manager,
-            intc.clone(),
-            vm_resources,
-            None,
-            console_id,
-        )?;
-        console_id += 1;
-    }
-
-    for console_cfg in vm_resources.virtio_consoles.iter() {
+    for (console_id, console_cfg) in vm_resources.virtio_consoles.iter().enumerate() {
         attach_console_devices(
             &mut vmm,
             event_manager,
             intc.clone(),
             vm_resources,
             Some(console_cfg),
-            console_id,
+            console_id as u32,
         )?;
-        console_id += 1;
     }
 
     #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
@@ -2129,40 +2103,14 @@ fn attach_fs_devices(
 
 fn autoconfigure_console_ports(
     vmm: &mut Vmm,
-    vm_resources: &VmResources,
+    _vm_resources: &VmResources,
     cfg: Option<&DefaultVirtioConsoleConfig>,
-    creating_implicit_console: bool,
 ) -> std::result::Result<Vec<PortDescription>, StartMicrovmError> {
-    use self::StartMicrovmError::*;
-
-    let mut console_output_path: Option<PathBuf> = None;
-    if let Some(path) = vm_resources.console_output.clone()
-        && !vm_resources.disable_implicit_console
-        && creating_implicit_console
+    let (input_fd, output_fd, err_fd) = match cfg {
+        Some(c) => (c.input_fd, c.output_fd, c.err_fd),
+        None => (STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO),
+    };
     {
-        console_output_path = Some(path)
-    }
-
-    if let Some(console_output_path) = console_output_path {
-        let file = File::create(console_output_path).map_err(OpenConsoleFile)?;
-        // Manually emulate our Legacy behavior: In the case of output_path we have always used the
-        // stdin to determine the console size
-        let stdin_fd = unsafe { BorrowedFd::borrow_raw(STDIN_FILENO) };
-        let term_fd = if isatty(stdin_fd).is_ok_and(|v| v) {
-            port_io::term_fd(stdin_fd.as_raw_fd()).unwrap()
-        } else {
-            port_io::term_fixed_size(0, 0)
-        };
-        Ok(vec![PortDescription::console(
-            Some(port_io::input_empty().unwrap()),
-            Some(port_io::output_file(file).unwrap()),
-            term_fd,
-        )])
-    } else {
-        let (input_fd, output_fd, err_fd) = match cfg {
-            Some(c) => (c.input_fd, c.output_fd, c.err_fd),
-            None => (STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO),
-        };
         let input_is_terminal =
             input_fd >= 0 && isatty(unsafe { BorrowedFd::borrow_raw(input_fd) }).unwrap_or(false);
         let output_is_terminal =
@@ -2190,7 +2138,8 @@ fn autoconfigure_console_ports(
                 forwarding_sigint = true;
                 let sigint_input = port_io::PortInputSigInt::new();
                 let sigint_input_fd = sigint_input.sigint_evt().as_raw_fd();
-                register_sigint_handler(sigint_input_fd).map_err(RegisterFsSigwinch)?;
+                register_sigint_handler(sigint_input_fd)
+                    .map_err(StartMicrovmError::RegisterFsSigwinch)?;
                 Some(Box::new(sigint_input) as _)
             }
             #[cfg(not(target_os = "linux"))]
@@ -2323,16 +2272,11 @@ fn attach_console_devices(
 ) -> std::result::Result<(), StartMicrovmError> {
     use self::StartMicrovmError::*;
 
-    let creating_implicit_console = cfg.is_none();
-
     let ports = match cfg {
-        None => autoconfigure_console_ports(vmm, vm_resources, None, creating_implicit_console)?,
-        Some(VirtioConsoleConfigMode::Autoconfigure(autocfg)) => autoconfigure_console_ports(
-            vmm,
-            vm_resources,
-            Some(autocfg),
-            creating_implicit_console,
-        )?,
+        None => autoconfigure_console_ports(vmm, vm_resources, None)?,
+        Some(VirtioConsoleConfigMode::Autoconfigure(autocfg)) => {
+            autoconfigure_console_ports(vmm, vm_resources, Some(autocfg))?
+        }
         Some(VirtioConsoleConfigMode::Explicit(ports)) => create_explicit_ports(vmm, ports)?,
     };
 

@@ -8,6 +8,7 @@ use std::fs::File;
 #[cfg(feature = "tee")]
 use std::io::BufReader;
 use std::os::fd::RawFd;
+#[cfg(feature = "tee")]
 use std::path::PathBuf;
 
 #[cfg(feature = "tee")]
@@ -189,16 +190,13 @@ pub struct VmResources {
     #[cfg(feature = "vhost-user")]
     /// Vhost-user device configurations
     pub vhost_user_devices: Vec<VhostUserDeviceConfig>,
-    /// File to send console output.
-    pub console_output: Option<PathBuf>,
     /// SMBIOS OEM Strings
     pub smbios_oem_strings: Option<Vec<String>>,
     /// Whether to enable nested virtualization.
     pub nested_enabled: bool,
     /// Whether to enable split irqchip
     pub split_irqchip: bool,
-    /// Do not create an implicit console device in the guest
-    pub disable_implicit_console: bool,
+
     /// The console id to use for console= in the kernel cmdline
     pub kernel_console: Option<String>,
     /// Serial consoles to attach to the guest
@@ -358,10 +356,6 @@ impl VmResources {
         self.gpu_shm_size = Some(shm_size);
     }
 
-    pub fn set_console_output(&mut self, console_output: PathBuf) {
-        self.console_output = Some(console_output);
-    }
-
     /// Sets a network device to be attached when the VM starts.
     #[cfg(feature = "net")]
     pub fn add_network_interface(
@@ -400,12 +394,10 @@ impl VmResources {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "gpu")]
-    use crate::resources::DisplayBackendConfig;
     use crate::resources::VmResources;
     use crate::vmm_config::kernel_cmdline::KernelCmdlineConfig;
     use crate::vmm_config::machine_config::{CpuFeaturesTemplate, VmConfig, VmConfigError};
-    use crate::vmm_config::vsock::tests::{TempSockFile, default_config};
+    use crate::vmm_config::vsock::tests::{default_config, TempSockFile};
     use crate::vstate::VcpuConfig;
     use utils::tempfile::TempFile;
 
@@ -440,11 +432,10 @@ mod tests {
             input_backends: Vec::new(),
             #[cfg(feature = "vhost-user")]
             vhost_user_devices: Vec::new(),
-            console_output: None,
             smbios_oem_strings: None,
             nested_enabled: false,
             split_irqchip: false,
-            disable_implicit_console: false,
+
             serial_consoles: Vec::new(),
             virtio_consoles: Vec::new(),
             kernel_console: None,
