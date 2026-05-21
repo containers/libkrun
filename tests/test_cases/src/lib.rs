@@ -19,6 +19,9 @@ use test_net_perf::TestNetPerf;
 mod test_multiport_console;
 use test_multiport_console::TestMultiportConsole;
 
+mod test_tsi_ping;
+use test_tsi_ping::TestTsiPing;
+
 mod test_virtiofs_root_ro;
 use test_virtiofs_root_ro::TestVirtiofsRootRo;
 
@@ -82,6 +85,7 @@ pub fn test_cases() -> Vec<TestCase> {
         TestCase::new("net-tap", Box::new(TestNet::new_tap())),
         TestCase::new("net-gvproxy", Box::new(TestNet::new_gvproxy())),
         TestCase::new("net-vmnet-helper", Box::new(TestNet::new_vmnet_helper())),
+        TestCase::new("tsi-ping", Box::new(TestTsiPing)),
         TestCase::new("multiport-console", Box::new(TestMultiportConsole)),
         TestCase::new("virtiofs-root-ro", Box::new(TestVirtiofsRootRo)),
         TestCase::new("virtiofs-misc", Box::new(TestVirtioFsMisc)),
@@ -221,6 +225,11 @@ pub trait Test {
     fn timeout_secs(&self) -> u64 {
         15
     }
+
+    /// Whether this test needs the host's real network (skips unshare --net).
+    fn needs_host_network(&self) -> bool {
+        false
+    }
 }
 
 #[guest]
@@ -255,6 +264,11 @@ impl TestCase {
     #[host]
     pub fn timeout_secs(&self) -> u64 {
         self.test.timeout_secs()
+    }
+
+    #[host]
+    pub fn needs_host_network(&self) -> bool {
+        self.test.needs_host_network()
     }
 
     #[allow(dead_code)]
