@@ -38,6 +38,8 @@ pub struct TsiDgramProxy {
     sendto_addr: Option<SockaddrStorage>,
     listening: bool,
     family: AddressFamily,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    protocol: u16,
     mem: GuestMemoryMmap,
     queue: Arc<Mutex<VirtQueue>>,
     rxq: Arc<Mutex<MuxerRxQ>>,
@@ -116,6 +118,7 @@ impl TsiDgramProxy {
             sendto_addr: None,
             listening: false,
             family,
+            protocol,
             mem,
             queue,
             rxq,
@@ -180,11 +183,31 @@ impl TsiDgramProxy {
             match recv(self.fd.as_raw_fd(), &mut buf[..max_len], MsgFlags::empty()) {
                 Ok(cnt) => {
                     debug!("recv cnt={cnt}");
-                    if cnt > 0 {
-                        RecvPkt::Read(cnt)
-                    } else {
-                        RecvPkt::Close
+                    if cnt == 0 {
+                        return RecvPkt::Close;
                     }
+
+                    // macOS DGRAM ICMP sockets include the IP header in
+                    // recv, unlike Linux which strips it. Strip the IP
+                    // header (variable length, from the IHL field) so the
+                    // guest sees the same format as a Linux ping socket.
+                    // buf is the guest's RX virtqueue descriptor — writable.
+                    #[cfg(target_os = "macos")]
+                    if matches!(
+                        self.protocol as _,
+                        libc::IPPROTO_ICMP | libc::IPPROTO_ICMPV6
+                    ) && cnt >= 20
+                    {
+                        // IHL (Internet Header Length): low 4 bits of first
+                        // byte, in 32-bit words. Typically 5 (= 20 bytes).
+                        let ip_hdr_len = (buf[0] & 0x0F) as usize * 4;
+                        if ip_hdr_len <= cnt {
+                            buf.copy_within(ip_hdr_len..cnt, 0);
+                            return RecvPkt::Read(cnt - ip_hdr_len);
+                        }
+                    }
+
+                    RecvPkt::Read(cnt)
                 }
                 Err(e) => {
                     debug!("recv_pkt: recv error: {e:?}");
