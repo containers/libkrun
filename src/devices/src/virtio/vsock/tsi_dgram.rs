@@ -10,7 +10,7 @@ use nix::fcntl::{fcntl, FcntlArg, OFlag};
 use nix::sys::socket::UnixAddr;
 use nix::sys::socket::{
     bind, connect, getpeername, recv, send, sendto, socket, AddressFamily, MsgFlags, SockFlag,
-    SockType, SockaddrIn, SockaddrLike, SockaddrStorage,
+    SockProtocol, SockType, SockaddrIn, SockaddrLike, SockaddrStorage,
 };
 
 #[cfg(target_os = "macos")]
@@ -48,11 +48,13 @@ pub struct TsiDgramProxy {
 }
 
 impl TsiDgramProxy {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: u64,
         cid: u64,
         family: u16,
         peer_port: u32,
+        protocol: u16,
         mem: GuestMemoryMmap,
         queue: Arc<Mutex<VirtQueue>>,
         rxq: Arc<Mutex<MuxerRxQ>>,
@@ -65,7 +67,15 @@ impl TsiDgramProxy {
             _ => return Err(ProxyError::InvalidFamily),
         };
 
-        let fd = socket(family, SockType::Datagram, SockFlag::empty(), None)
+        // When the guest requests IPPROTO_ICMP (1) or IPPROTO_ICMPV6 (58),
+        // create a ping socket instead of a plain UDP socket.
+        let sock_protocol = match protocol as _ {
+            libc::IPPROTO_ICMP => Some(SockProtocol::Icmp),
+            libc::IPPROTO_ICMPV6 => Some(SockProtocol::IcmpV6),
+            _ => None,
+        };
+
+        let fd = socket(family, SockType::Datagram, SockFlag::empty(), sock_protocol)
             .map_err(ProxyError::CreatingSocket)?;
 
         // macOS forces us to do this here instead of just using SockFlag::SOCK_NONBLOCK above.
