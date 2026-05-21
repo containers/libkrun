@@ -1552,6 +1552,14 @@ int main(int argc, char **argv)
         if (enable_dummy_interface() < 0) {
             printf("Warning: Couldn't enable dummy interface\n");
         }
+
+        /* Allow unprivileged ICMP ping sockets (SOCK_DGRAM + IPPROTO_ICMP)
+         * for all GIDs so that TSI can hijack and proxy them to the host. */
+        int ping_fd = open("/proc/sys/net/ipv4/ping_group_range", O_WRONLY);
+        if (ping_fd >= 0) {
+            write(ping_fd, "0 2147483647\n", 13);
+            close(ping_fd);
+        }
     }
 #endif
 
