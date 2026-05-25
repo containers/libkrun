@@ -12,17 +12,20 @@ use log::{debug, error};
 use windows_sys::Win32::Foundation::S_OK;
 use windows_sys::Win32::System::Hypervisor::{
     WHV_CAPABILITY, WHV_EMULATOR_CALLBACKS, WHV_EMULATOR_STATUS, WHV_MEMORY_ACCESS_CONTEXT,
-    WHV_PARTITION_HANDLE, WHV_PARTITION_PROPERTY, WHV_PARTITION_PROPERTY_CODE, WHV_REGISTER_NAME,
-    WHV_REGISTER_VALUE, WHV_RUN_VP_EXIT_CONTEXT, WHV_VP_EXIT_CONTEXT, WHV_X64_CPUID_RESULT,
-    WHV_X64_IO_PORT_ACCESS_CONTEXT, WHvCancelRunVirtualProcessor,
-    WHvCapabilityCodeHypervisorPresent, WHvCreatePartition, WHvCreateVirtualProcessor,
+    WHV_PARTITION_HANDLE, WHV_PARTITION_PROPERTY, WHV_PARTITION_PROPERTY_CODE,
+    WHV_PROCESSOR_FEATURES_BANKS, WHV_REGISTER_NAME, WHV_REGISTER_VALUE, WHV_RUN_VP_EXIT_CONTEXT,
+    WHV_VP_EXIT_CONTEXT, WHV_X64_CPUID_RESULT, WHV_X64_IO_PORT_ACCESS_CONTEXT,
+    WHvCancelRunVirtualProcessor, WHvCapabilityCodeHypervisorPresent,
+    WHvCapabilityCodeProcessorFeaturesBanks, WHvCreatePartition, WHvCreateVirtualProcessor,
     WHvDeletePartition, WHvDeleteVirtualProcessor, WHvEmulatorCreateEmulator,
     WHvEmulatorDestroyEmulator, WHvEmulatorTryIoEmulation, WHvEmulatorTryMmioEmulation,
     WHvGetCapability, WHvGetVirtualProcessorRegisters, WHvMapGpaRange, WHvMapGpaRangeFlagExecute,
     WHvMapGpaRangeFlagRead, WHvMapGpaRangeFlagWrite, WHvPartitionPropertyCodeCpuidResultList,
     WHvPartitionPropertyCodeExtendedVmExits, WHvPartitionPropertyCodeLocalApicEmulationMode,
-    WHvPartitionPropertyCodeProcessorCount, WHvRegisterInternalActivityState, WHvRequestInterrupt,
-    WHvRunVirtualProcessor, WHvRunVpExitReasonCanceled, WHvRunVpExitReasonInvalidVpRegisterValue,
+    WHvPartitionPropertyCodeProcessorCount, WHvPartitionPropertyCodeProcessorFeaturesBanks,
+    WHvPartitionPropertyCodeSyntheticProcessorFeaturesBanks,
+    WHvPartitionPropertyCodeX64MsrExitBitmap, WHvRequestInterrupt, WHvRunVirtualProcessor,
+    WHvRunVpExitReasonCanceled, WHvRunVpExitReasonInvalidVpRegisterValue,
     WHvRunVpExitReasonMemoryAccess, WHvRunVpExitReasonUnrecoverableException,
     WHvRunVpExitReasonUnsupportedFeature, WHvRunVpExitReasonX64Cpuid, WHvRunVpExitReasonX64Halt,
     WHvRunVpExitReasonX64InterruptWindow, WHvRunVpExitReasonX64IoPortAccess,
@@ -152,6 +155,26 @@ pub fn check_hypervisor() -> Result<(), Error> {
     Ok(())
 }
 
+fn get_processor_features_banks() -> Result<WHV_PROCESSOR_FEATURES_BANKS, Error> {
+    let mut capability = MaybeUninit::<WHV_CAPABILITY>::uninit();
+    let mut written_size: u32 = 0;
+
+    unsafe {
+        let hr = WHvGetCapability(
+            WHvCapabilityCodeProcessorFeaturesBanks,
+            capability.as_mut_ptr().cast(),
+            mem::size_of::<WHV_CAPABILITY>() as u32,
+            &mut written_size,
+        );
+
+        if hr != S_OK {
+            return Err(Error::CheckCapability(hr));
+        }
+
+        Ok(capability.assume_init().ProcessorFeaturesBanks)
+    }
+}
+
 /// Parsed CPUID exit context returned by [`WhpVcpu::cpuid_exit_info`].
 #[derive(Debug, Clone)]
 pub struct CpuidExitInfo {
@@ -259,13 +282,153 @@ impl WhpVm {
             },
         )?;
 
-        // Enable CPUID exits (bit 0) and MSR exits (bit 1)
+        // Enable MSR exits (bit 1)
         // https://github.com/google/crosvm/blob/main/hypervisor/src/whpx/whpx_sys/WinHvPlatformDefs.h#L74
         Self::set_property(handle, WHvPartitionPropertyCodeExtendedVmExits, |p| {
-            p.ExtendedVmExits.AsUINT64 = 0b11; // bit 0 = X64CpuidExit, bit 1 = X64MsrExit
+            p.ExtendedVmExits.AsUINT64 = 0b10; // bit 1 = X64MsrExit
         })?;
 
+        // Configure how MSRs are handled
+        // We just set the bit 0 (UnhandledMsrs) so that any MSR read/write does not automatically fail
+        // but it triggers an exit that we can handle
+        Self::set_property(handle, WHvPartitionPropertyCodeX64MsrExitBitmap, |p| {
+            p.X64MsrExitBitmap.AsUINT64 = 0b01; // bit 0 = UnhandledMsrs
+        })?;
+
+        // Set invariant TSC support
+        // First we need to retrieve the processor features banks and re-set them with the invariant TSC support
+        // otherwise they get lost
+        let processor_features_banks = get_processor_features_banks()?;
+        if processor_features_banks.BanksCount >= 2 {
+            Self::set_property(
+                handle,
+                WHvPartitionPropertyCodeProcessorFeaturesBanks,
+                |p| {
+                    p.ProcessorFeaturesBanks = processor_features_banks;
+
+                    unsafe {
+                        p.ProcessorFeaturesBanks.Anonymous.AsUINT64[1] |= 0x2; // TscInvariantSupport
+                    }
+                },
+            )?;
+        }
+
+        // This unlocks the MSRs you are advertising in CPUID.
+        Self::set_property(
+            handle,
+            WHvPartitionPropertyCodeSyntheticProcessorFeaturesBanks,
+            |p| {
+                p.SyntheticProcessorFeaturesBanks.BanksCount = 1;
+                // We use bitwise OR on the AsUINT64 array of the union for safety/clarity.
+                // Bit 0: HypervisorPresent
+                // Bit 1: Hv1 (Report support for Hv1: CPUID leaves 0x40000000 - 0x40000006)
+                // Bit 2: AccessVpRunTimeReg
+                // Bit 3: AccessPartitionReferenceCounter
+                // Bit 7: Hypercalls
+                // Bit 8: AccessVpIndex
+                // Bit 9: AccessPartitionReferenceTsc
+                // Bit 11: AccessFrequencyRegs
+                unsafe {
+                    p.SyntheticProcessorFeaturesBanks.Anonymous.AsUINT64[0] = 0xB8F;
+                }
+            },
+        )?;
+
         let mut cpuid_results: Vec<WHV_X64_CPUID_RESULT> = Vec::new();
+
+        // WHP does NOT expose Hyper-V CPUID to the guest automatically;
+        // we must provide 0x40000000+ via CpuidResultList.
+        // More info on Hypervisor Top Level Functional Specification
+        // https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/tlfs
+
+        // 0x40000000 — Hypervisor signature: "Microsoft Hv"
+        cpuid_results.push(WHV_X64_CPUID_RESULT {
+            Function: 0x40000000,
+            Reserved: [0; 3],
+            Eax: 0x40000006,
+            Ebx: 0x7263694D, // "Micr"
+            Ecx: 0x666F736F, // "osof"
+            Edx: 0x76482074, // "t Hv"
+        });
+        // 0x40000001 — Interface identification: "Hv#1"
+        cpuid_results.push(WHV_X64_CPUID_RESULT {
+            Function: 0x40000001,
+            Reserved: [0; 3],
+            Eax: 0x31237648, // "Hv#1"
+            Ebx: 0,
+            Ecx: 0,
+            Edx: 0,
+        });
+        // 0x40000002 — Version (minimal)
+        cpuid_results.push(WHV_X64_CPUID_RESULT {
+            Function: 0x40000002,
+            Reserved: [0; 3],
+            Eax: 0x3839,  // build number
+            Ebx: 0xa0000, // version
+            Ecx: 0,
+            Edx: 0,
+        });
+        // 0x40000003 — Feature identification (Hyper-V TLFS §2.4)
+        const ACCESS_VP_RUNTIME: u32 = 1 << 0;
+        const ACCESS_REF_COUNTER: u32 = 1 << 1;
+        const ACCESS_HYPERCALLS: u32 = 1 << 5;
+        const ACCESS_VP_INDEX: u32 = 1 << 6;
+        const ACCESS_REF_TSC: u32 = 1 << 9;
+        const ACCESS_FREQ_REGS: u32 = 1 << 11;
+        cpuid_results.push(WHV_X64_CPUID_RESULT {
+            Function: 0x40000003,
+            Reserved: [0; 3],
+            Eax: ACCESS_VP_RUNTIME
+                | ACCESS_REF_COUNTER
+                | ACCESS_HYPERCALLS
+                | ACCESS_VP_INDEX
+                | ACCESS_REF_TSC
+                | ACCESS_FREQ_REGS,
+            Ebx: 0,
+            Ecx: 0,
+            Edx: 0,
+        });
+        // 0x40000004 — Recommendations
+        cpuid_results.push(WHV_X64_CPUID_RESULT {
+            Function: 0x40000004,
+            Reserved: [0; 3],
+            Eax: 1 << 5, // RelaxedTiming
+            Ebx: 0,
+            Ecx: 0,
+            Edx: 0,
+        });
+        // 0x40000005 — Implementation limits
+        cpuid_results.push(WHV_X64_CPUID_RESULT {
+            Function: 0x40000005,
+            Reserved: [0; 3],
+            Eax: 64, // max virtual processors
+            Ebx: 0,
+            Ecx: 0,
+            Edx: 0,
+        });
+        // 0x40000006: Hardware Features
+        const HV_MSR_BITMAPS: u32 = 1 << 1;
+        const HV_SLAT: u32 = 1 << 3;
+        cpuid_results.push(WHV_X64_CPUID_RESULT {
+            Function: 0x40000006,
+            Reserved: [0; 3],
+            Eax: HV_MSR_BITMAPS | HV_SLAT,
+            Ebx: 0,
+            Ecx: 0,
+            Edx: 0,
+        });
+
+        // invariant tsc
+        if processor_features_banks.BanksCount >= 2 {
+            cpuid_results.push(WHV_X64_CPUID_RESULT {
+                Function: 0x80000007,
+                Reserved: [0; 3],
+                Eax: 0,
+                Ebx: 0,
+                Ecx: 0,
+                Edx: 0x100, // bit 8 (Invariant TSC / nonstop_tsc)
+            });
+        }
 
         // Standard Intel CPUID leaves (Intel's SDM Vol. 2A)
         if tsc_freq_hz > 0 {
@@ -291,19 +454,16 @@ impl WhpVm {
             });
         }
 
-        if !cpuid_results.is_empty() {
-            let hr = unsafe {
-                WHvSetPartitionProperty(
-                    handle,
-                    WHvPartitionPropertyCodeCpuidResultList,
-                    cpuid_results.as_ptr() as *const _,
-                    (cpuid_results.len() * mem::size_of::<WHV_X64_CPUID_RESULT>()) as u32,
-                )
-            };
-            if hr != S_OK {
-                return Err(Error::SetPartitionProperty(hr));
-            }
-            debug!("CpuidResultList set ({} entries)", cpuid_results.len());
+        let hr = unsafe {
+            WHvSetPartitionProperty(
+                handle,
+                WHvPartitionPropertyCodeCpuidResultList,
+                cpuid_results.as_ptr() as *const _,
+                (cpuid_results.len() * mem::size_of::<WHV_X64_CPUID_RESULT>()) as u32,
+            )
+        };
+        if hr != S_OK {
+            return Err(Error::SetPartitionProperty(hr));
         }
 
         let hr = unsafe { WHvSetupPartition(handle) };
