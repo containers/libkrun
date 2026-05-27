@@ -521,88 +521,6 @@ impl PassthroughFs {
         }
     }
 
-    fn do_lookup(&self, parent: Inode, name: &CStr) -> io::Result<Entry> {
-        let p = self
-            .inodes
-            .read()
-            .unwrap()
-            .get(&parent)
-            .cloned()
-            .ok_or_else(ebadf)?;
-
-        // Safe because this doesn't modify any memory and we check the return value.
-        let fd = unsafe {
-            libc::openat(
-                p.file.as_raw_fd(),
-                name.as_ptr(),
-                libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            )
-        };
-        if fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        // Safe because we just opened this fd.
-        let f = unsafe { File::from_raw_fd(fd) };
-
-        let (st, mnt_id) = statx(&f)?;
-
-        let mut attr_flags: u32 = 0;
-
-        if st.st_mode & libc::S_IFMT == libc::S_IFDIR
-            && self.announce_submounts.load(Ordering::Relaxed)
-            && (st.st_dev != p.dev || mnt_id != p.mnt_id)
-        {
-            attr_flags |= fuse::ATTR_SUBMOUNT;
-        }
-
-        let altkey = InodeAltKey {
-            ino: st.st_ino,
-            dev: st.st_dev,
-            mnt_id,
-        };
-        let data = self.inodes.read().unwrap().get_alt(&altkey).cloned();
-
-        let inode = if let Some(data) = data {
-            // Matches with the release store in `forget`.
-            data.refcount.fetch_add(1, Ordering::Acquire);
-            data.inode
-        } else {
-            // There is a possible race here where 2 threads end up adding the same file
-            // into the inode list.  However, since each of those will get a unique Inode
-            // value and unique file descriptors this shouldn't be that much of a problem.
-            let inode = self.inode_alloc.next();
-            self.inodes.write().unwrap().insert(
-                inode,
-                InodeAltKey {
-                    ino: st.st_ino,
-                    dev: st.st_dev,
-                    mnt_id,
-                },
-                Arc::new(InodeData {
-                    inode,
-                    file: f,
-                    dev: st.st_dev,
-                    mnt_id,
-                    refcount: AtomicU64::new(1),
-                }),
-            );
-
-            inode
-        };
-
-        debug!("do_lookup: {}, inode: {:?}", name.to_str().unwrap(), inode);
-
-        Ok(Entry {
-            inode,
-            generation: 0,
-            attr: st,
-            attr_flags,
-            attr_timeout: self.cfg.attr_timeout,
-            entry_timeout: self.cfg.entry_timeout,
-        })
-    }
-
     fn do_readdir<F>(
         &self,
         inode: Inode,
@@ -871,7 +789,7 @@ fn forget_one(
             // we don't want misbehaving clients to cause integer overflow.
             let new_count = refcount.saturating_sub(count);
 
-            // Synchronizes with the acquire load in `do_lookup`.
+            // Synchronizes with the acquire load in `lookup`.
             if data
                 .refcount
                 .compare_exchange(refcount, new_count, Ordering::Release, Ordering::Relaxed)
@@ -983,8 +901,85 @@ impl FileSystem for PassthroughFs {
     }
 
     fn lookup(&self, _ctx: Context, parent: Inode, name: &CStr) -> io::Result<Entry> {
-        debug!("do_lookup: {name:?}");
-        self.do_lookup(parent, name)
+        let p = self
+            .inodes
+            .read()
+            .unwrap()
+            .get(&parent)
+            .cloned()
+            .ok_or_else(ebadf)?;
+
+        // Safe because this doesn't modify any memory and we check the return value.
+        let fd = unsafe {
+            libc::openat(
+                p.file.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        // Safe because we just opened this fd.
+        let f = unsafe { File::from_raw_fd(fd) };
+
+        let (st, mnt_id) = statx(&f)?;
+
+        let mut attr_flags: u32 = 0;
+
+        if st.st_mode & libc::S_IFMT == libc::S_IFDIR
+            && self.announce_submounts.load(Ordering::Relaxed)
+            && (st.st_dev != p.dev || mnt_id != p.mnt_id)
+        {
+            attr_flags |= fuse::ATTR_SUBMOUNT;
+        }
+
+        let altkey = InodeAltKey {
+            ino: st.st_ino,
+            dev: st.st_dev,
+            mnt_id,
+        };
+        let data = self.inodes.read().unwrap().get_alt(&altkey).cloned();
+
+        let inode = if let Some(data) = data {
+            // Matches with the release store in `forget`.
+            data.refcount.fetch_add(1, Ordering::Acquire);
+            data.inode
+        } else {
+            // There is a possible race here where 2 threads end up adding the same file
+            // into the inode list.  However, since each of those will get a unique Inode
+            // value and unique file descriptors this shouldn't be that much of a problem.
+            let inode = self.inode_alloc.next();
+            self.inodes.write().unwrap().insert(
+                inode,
+                InodeAltKey {
+                    ino: st.st_ino,
+                    dev: st.st_dev,
+                    mnt_id,
+                },
+                Arc::new(InodeData {
+                    inode,
+                    file: f,
+                    dev: st.st_dev,
+                    mnt_id,
+                    refcount: AtomicU64::new(1),
+                }),
+            );
+
+            inode
+        };
+
+        debug!("lookup: {}, inode: {:?}", name.to_str().unwrap(), inode);
+
+        Ok(Entry {
+            inode,
+            generation: 0,
+            attr: st,
+            attr_flags,
+            attr_timeout: self.cfg.attr_timeout,
+            entry_timeout: self.cfg.entry_timeout,
+        })
     }
 
     fn forget(&self, _ctx: Context, inode: Inode, count: u64) {
@@ -1045,7 +1040,7 @@ impl FileSystem for PassthroughFs {
         // Safe because this doesn't modify any memory and we check the return value.
         let res = unsafe { libc::mkdirat(data.file.as_raw_fd(), name.as_ptr(), mode & !umask) };
         if res == 0 {
-            self.do_lookup(parent, name)
+            self.lookup(ctx, parent, name)
         } else {
             Err(io::Error::last_os_error())
         }
@@ -1072,7 +1067,7 @@ impl FileSystem for PassthroughFs {
 
     fn readdirplus<F>(
         &self,
-        _ctx: Context,
+        ctx: Context,
         inode: Inode,
         handle: Handle,
         size: u32,
@@ -1090,7 +1085,7 @@ impl FileSystem for PassthroughFs {
             // interior '\0' bytes. We trust the kernel to provide us with properly formatted data
             // so we'll just skip the checks here.
             let name = unsafe { CStr::from_bytes_with_nul_unchecked(dir_entry.name) };
-            let entry = self.do_lookup(inode, name)?;
+            let entry = self.lookup(ctx, inode, name)?;
 
             add_entry(dir_entry, entry)
         })
@@ -1167,7 +1162,7 @@ impl FileSystem for PassthroughFs {
         // Safe because we just opened this fd.
         let file = RwLock::new(unsafe { File::from_raw_fd(fd) });
 
-        let entry = self.do_lookup(parent, name)?;
+        let entry = self.lookup(ctx, parent, name)?;
 
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
         let data = HandleData {
@@ -1488,13 +1483,13 @@ impl FileSystem for PassthroughFs {
         if res < 0 {
             Err(io::Error::last_os_error())
         } else {
-            self.do_lookup(parent, name)
+            self.lookup(ctx, parent, name)
         }
     }
 
     fn link(
         &self,
-        _ctx: Context,
+        ctx: Context,
         inode: Inode,
         newparent: Inode,
         newname: &CStr,
@@ -1528,7 +1523,7 @@ impl FileSystem for PassthroughFs {
             )
         };
         if res == 0 {
-            self.do_lookup(newparent, newname)
+            self.lookup(ctx, newparent, newname)
         } else {
             Err(io::Error::last_os_error())
         }
@@ -1560,7 +1555,7 @@ impl FileSystem for PassthroughFs {
         let res =
             unsafe { libc::symlinkat(linkname.as_ptr(), data.file.as_raw_fd(), name.as_ptr()) };
         if res == 0 {
-            self.do_lookup(parent, name)
+            self.lookup(ctx, parent, name)
         } else {
             Err(io::Error::last_os_error())
         }
