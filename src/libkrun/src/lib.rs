@@ -2453,6 +2453,141 @@ pub extern "C" fn krun_disable_implicit_init(ctx_id: u32) -> i32 {
     KRUN_SUCCESS
 }
 
+/// Resolve a path like "a/b/c" into parent directory children + leaf name.
+/// Errors with a libc errno if any intermediate component is missing or not a Dir.
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+fn resolve_overlay_path<'a>(
+    entries: &'a mut Vec<VirtualDirEntry>,
+    path: &str,
+) -> Result<(&'a mut Vec<VirtualDirEntry>, CString), i32> {
+    let path = path.strip_prefix('/').unwrap_or(path);
+    let components: Vec<&str> = path.split('/').collect();
+    let (leaf, parents) = components.split_last().ok_or(-libc::EINVAL)?;
+    if leaf.is_empty() {
+        return Err(-libc::EINVAL);
+    }
+
+    let mut current = entries;
+    for component in parents {
+        let dir = current
+            .iter_mut()
+            .find(|e| e.name.as_c_str().to_bytes() == component.as_bytes())
+            .ok_or(-libc::ENOENT)?;
+        match &mut dir.entry.content {
+            VirtualEntryContent::Dir { children } => current = children,
+            _ => return Err(-libc::ENOTDIR),
+        }
+    }
+
+    let name = CString::new(*leaf).map_err(|_| -libc::EINVAL)?;
+    Ok((current, name))
+}
+
+/// Add a virtual overlay entry to a virtiofs device, resolving paths with `/`.
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+fn fs_add_overlay_entry(ctx_id: u32, fs_tag: &str, path: &str, entry: VirtualEntry) -> i32 {
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            let fs_cfg = match cfg.vmr.fs.iter_mut().find(|fs| fs.fs_id == fs_tag) {
+                Some(fs) => fs,
+                None => return -libc::ENOENT,
+            };
+            let (parent_children, name) =
+                match resolve_overlay_path(&mut fs_cfg.virtual_entries, path) {
+                    Ok(v) => v,
+                    Err(e) => return e,
+                };
+            parent_children.push(VirtualDirEntry { name, entry });
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+    KRUN_SUCCESS
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+pub unsafe extern "C" fn krun_fs_add_overlay_file(
+    ctx_id: u32,
+    c_fs_tag: *const c_char,
+    c_path: *const c_char,
+    data: *const u8,
+    data_len: size_t,
+    mode: u32,
+    one_shot: bool,
+) -> i32 {
+    if c_fs_tag.is_null() || c_path.is_null() {
+        return -libc::EINVAL;
+    }
+
+    let fs_tag = match CStr::from_ptr(c_fs_tag).to_str() {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+    let path = match CStr::from_ptr(c_path).to_str() {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    // SAFETY: The caller guarantees the memory remains valid for the VM
+    // lifetime (see the C header contract).
+    let payload: &'static [u8] = if data_len == 0 {
+        &[]
+    } else if !data.is_null() {
+        slice::from_raw_parts(data, data_len)
+    } else {
+        return -libc::EINVAL;
+    };
+
+    fs_add_overlay_entry(
+        ctx_id,
+        fs_tag,
+        path,
+        VirtualEntry {
+            mode,
+            one_shot,
+            content: VirtualEntryContent::File { data: payload },
+        },
+    )
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[no_mangle]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+pub unsafe extern "C" fn krun_fs_add_overlay_dir(
+    ctx_id: u32,
+    c_fs_tag: *const c_char,
+    c_path: *const c_char,
+    mode: u32,
+) -> i32 {
+    if c_fs_tag.is_null() || c_path.is_null() {
+        return -libc::EINVAL;
+    }
+
+    let fs_tag = match CStr::from_ptr(c_fs_tag).to_str() {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+    let path = match CStr::from_ptr(c_path).to_str() {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    fs_add_overlay_entry(
+        ctx_id,
+        fs_tag,
+        path,
+        VirtualEntry {
+            mode,
+            one_shot: false,
+            content: VirtualEntryContent::Dir {
+                children: Vec::new(),
+            },
+        },
+    )
+}
+
 #[no_mangle]
 pub extern "C" fn krun_disable_implicit_console(ctx_id: u32) -> i32 {
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
