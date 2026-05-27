@@ -323,6 +323,13 @@ install: libkrun.pc libkrun_init.pc
 	install -m 755 target/release/$(KRUN_INIT_BINARY_$(OS)) $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/
 	cd $(DESTDIR)$(PREFIX)/$(LIBDIR_$(OS))/ ; ln -sf $(KRUN_INIT_BINARY_$(OS)) $(KRUN_INIT_SONAME_$(OS)) ; ln -sf $(KRUN_INIT_SONAME_$(OS)) $(KRUN_INIT_BASE_$(OS))
 
+TEST ?= all
+test:
+	cd tests && sh run.sh test --test-case $(TEST) $(TEST_FLAGS)
+
+test-cdylib: debug
+	cd tests && KRUN_TEST_CDYLIB=1 LIBKRUN_LIB_PATH=../target/debug sh run.sh test --test-case $(TEST) $(TEST_FLAGS)
+
 clean:
 ifeq ($(BUILD_BSD_INIT),1)
 	rm -f $(INIT_BINARY_BSD)

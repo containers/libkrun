@@ -19,7 +19,7 @@ pub fn guest(_args: TokenStream, input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn host(_args: TokenStream, input: TokenStream) -> TokenStream {
     let mut prefix: TokenStream = quote! {
-         #[cfg(feature = "host")]
+         #[cfg(any(feature = "host", feature = "cdylib"))]
     }
     .into();
 

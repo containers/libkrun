@@ -3,9 +3,16 @@ pub mod error;
 pub mod payload;
 pub mod vmm_builder;
 
+#[cfg(feature = "blk")]
+pub use devices::BlockDevice;
+#[cfg(feature = "gpu")]
+pub use devices::GpuDevice;
+#[cfg(feature = "net")]
+pub use devices::NetDevice;
+
 pub use devices::{
     AttachContext, AttachDevice, BalloonDevice, ConsoleBuilder, ConsoleDevice, DeviceManager,
-    DeviceRequirements, FsDevice, MmioDeviceManager, ResolvedShmRegion, RngDevice,
+    DeviceRequirements, FsDevice, MmioDeviceManager, ResolvedShmRegion, RngDevice, VsockDevice,
 };
 pub use error::{DetailedError, Error};
 pub use payload::{Init, InitBuilder, KrunPayload, Payload};

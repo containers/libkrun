@@ -1,7 +1,7 @@
 use std::io::IsTerminal;
 use std::marker::PhantomData;
 use std::os::fd::RawFd;
-use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd};
+use std::os::fd::{AsRawFd, BorrowedFd};
 use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
 
@@ -26,6 +26,16 @@ use super::error::{DetailedError, Error};
 pub struct DeviceRequirements {
     /// Size of shared memory (DAX) window needed, if any.
     pub shm_size: Option<usize>,
+    /// GPU shared memory size and virgl flags, if this is a GPU device.
+    #[cfg(feature = "gpu")]
+    pub gpu_shm: Option<GpuShmRequirement>,
+}
+
+/// GPU shared memory requirements.
+#[cfg(feature = "gpu")]
+pub struct GpuShmRequirement {
+    pub virgl_flags: u32,
+    pub shm_size: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -48,6 +58,8 @@ pub struct AttachContext<'a> {
         dyn Fn(&mut Vmm, String, IrqChip, Arc<Mutex<dyn VirtioDevice>>) -> Result<(), DetailedError>
             + 'a,
     >,
+    #[cfg(target_os = "macos")]
+    map_sender: Option<crossbeam_channel::Sender<utils::worker_message::WorkerMessage>>,
 }
 
 impl<'a> AttachContext<'a> {
@@ -57,6 +69,9 @@ impl<'a> AttachContext<'a> {
         shm_manager: &'a ShmManager,
         intc: IrqChip,
         device_index: usize,
+        #[cfg(target_os = "macos")] map_sender: Option<
+            crossbeam_channel::Sender<utils::worker_message::WorkerMessage>,
+        >,
     ) -> Self {
         Self {
             vmm,
@@ -69,6 +84,8 @@ impl<'a> AttachContext<'a> {
                     .map_err(|e| DetailedError::new(Error::Internal, format!("{e:?}")))?;
                 Ok(())
             }),
+            #[cfg(target_os = "macos")]
+            map_sender,
         }
     }
 
@@ -128,6 +145,23 @@ impl<'a> AttachContext<'a> {
         })
     }
 
+    /// The resolved GPU SHM region, if GPU is enabled and a region was allocated.
+    #[cfg(feature = "gpu")]
+    pub fn resolved_gpu_shm_region(&self) -> Option<ResolvedShmRegion> {
+        self.shm_manager.gpu_region().map(|r| {
+            let host_addr = self
+                .vmm
+                .guest_memory
+                .get_host_address(r.guest_addr)
+                .expect("gpu shm region host address");
+            ResolvedShmRegion {
+                host_addr: host_addr as u64,
+                guest_addr: r.guest_addr.raw_value(),
+                size: r.size,
+            }
+        })
+    }
+
     /// The index of the current device within its device manager.
     pub fn device_index(&self) -> usize {
         self.device_index
@@ -145,6 +179,25 @@ impl<'a> AttachContext<'a> {
     /// observer to restore the terminal on VM shutdown.
     pub fn setup_terminal_raw_mode(&mut self, fd: BorrowedFd<'_>) {
         setup_terminal_raw_mode(self.vmm, Some(fd), false);
+    }
+
+    /// Get the macOS memory mapping channel sender, if available.
+    /// Used by GPU and Fs devices for DAX memory mapping on macOS.
+    #[cfg(target_os = "macos")]
+    pub fn map_sender(
+        &self,
+    ) -> Option<crossbeam_channel::Sender<utils::worker_message::WorkerMessage>> {
+        self.map_sender.clone()
+    }
+
+    /// Append a string to the kernel command line.
+    /// Used by devices that need to pass parameters to the guest kernel
+    /// (e.g., vsock TSI flags).
+    pub fn append_kernel_cmdline(&mut self, s: &str) {
+        self.vmm
+            .kernel_cmdline
+            .insert_str(s)
+            .unwrap_or_else(|e| log::error!("failed to append '{s}' to cmdline: {e}"));
     }
 }
 
@@ -217,6 +270,9 @@ pub trait DeviceManager<'a>: sealed::Sealed + Send + 'a {
         event_manager: &mut EventManager,
         shm_manager: &ShmManager,
         intc: IrqChip,
+        #[cfg(target_os = "macos")] map_sender: Option<
+            crossbeam_channel::Sender<utils::worker_message::WorkerMessage>,
+        >,
     ) -> Result<(), DetailedError>;
 }
 
@@ -259,9 +315,20 @@ impl<'a> DeviceManager<'a> for MmioDeviceManager<'a> {
         event_manager: &mut EventManager,
         shm_manager: &ShmManager,
         intc: IrqChip,
+        #[cfg(target_os = "macos")] map_sender: Option<
+            crossbeam_channel::Sender<utils::worker_message::WorkerMessage>,
+        >,
     ) -> Result<(), DetailedError> {
         for (i, device) in self.devices.into_iter().enumerate() {
-            let mut ctx = AttachContext::new_mmio(vmm, event_manager, shm_manager, intc.clone(), i);
+            let mut ctx = AttachContext::new_mmio(
+                vmm,
+                event_manager,
+                shm_manager,
+                intc.clone(),
+                i,
+                #[cfg(target_os = "macos")]
+                map_sender.clone(),
+            );
             device.attach(&mut ctx)?;
         }
         Ok(())
@@ -324,6 +391,7 @@ impl<'a> AttachDevice<'a> for FsDevice<'a> {
             // Wire exit code from VMM into the fs device
             fs.set_exit_code(ctx.exit_code().clone());
             // Set up SHM region if allocated
+            #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
             if let Some(region) = ctx.resolved_shm_region() {
                 fs.set_shm_region(region.into());
             }
@@ -470,9 +538,7 @@ impl ConsoleBuilder<'_> {
             Error::BadFd
         })?);
 
-        let file_check = unsafe { std::fs::File::from_raw_fd(raw_fd) };
-        let is_term = file_check.is_terminal();
-        std::mem::forget(file_check);
+        let is_term = tty_fd.is_terminal();
         let terminal: Option<Box<dyn devices::virtio::port_io::PortTerminalProperties>> = if is_term
         {
             Some(port_io::term_fd(raw_fd).map_err(|e| {
@@ -581,5 +647,214 @@ impl<'a> AttachDevice<'a> for RngDevice {
     fn attach(self: Box<Self>, ctx: &mut AttachContext) -> Result<(), DetailedError> {
         ctx.subscribe_events(self.inner.clone())?;
         ctx.register("rng", self.inner)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VsockDevice
+// ---------------------------------------------------------------------------
+
+pub struct VsockDevice {
+    pub(crate) inner: Arc<Mutex<devices::virtio::Vsock>>,
+    pub(crate) tsi_flags: devices::virtio::TsiFlags,
+}
+
+impl VsockDevice {
+    pub fn new(
+        cid: u64,
+        host_port_map: Option<std::collections::HashMap<u16, u16>>,
+        unix_ipc_port_map: Option<std::collections::HashMap<u32, (std::path::PathBuf, bool)>>,
+        tsi_flags: devices::virtio::TsiFlags,
+    ) -> Result<Self, Error> {
+        let vsock = devices::virtio::Vsock::new(cid, host_port_map, unix_ipc_port_map, tsi_flags)
+            .map_err(|e| {
+            log::error!("vsock: {e:?}");
+            Error::Internal
+        })?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(vsock)),
+            tsi_flags,
+        })
+    }
+}
+
+impl<'a> AttachDevice<'a> for VsockDevice {
+    fn attach(self: Box<Self>, ctx: &mut AttachContext) -> Result<(), DetailedError> {
+        ctx.subscribe_events(self.inner.clone())?;
+
+        let id = self.inner.lock().unwrap().id().to_string();
+        ctx.register(&id, self.inner)?;
+
+        // Insert TSI kernel cmdline flags
+        if self
+            .tsi_flags
+            .contains(devices::virtio::TsiFlags::HIJACK_INET)
+        {
+            ctx.append_kernel_cmdline("tsi_hijack");
+        }
+        if self
+            .tsi_flags
+            .contains(devices::virtio::TsiFlags::HIJACK_UNIX)
+        {
+            ctx.append_kernel_cmdline("tsi_hijack_unix");
+        }
+
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NetDevice
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "net")]
+pub struct NetDevice {
+    pub(crate) inner: Arc<Mutex<devices::virtio::Net>>,
+}
+
+#[cfg(feature = "net")]
+impl NetDevice {
+    pub fn new(
+        id: &str,
+        backend: devices::virtio::net::device::VirtioNetBackend,
+        mac: [u8; 6],
+        features: u32,
+    ) -> Result<Self, Error> {
+        let net =
+            devices::virtio::Net::new(id.to_string(), backend, mac, features).map_err(|e| {
+                log::error!("net: {e:?}");
+                Error::Internal
+            })?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(net)),
+        })
+    }
+}
+
+#[cfg(feature = "net")]
+impl<'a> AttachDevice<'a> for NetDevice {
+    fn attach(self: Box<Self>, ctx: &mut AttachContext) -> Result<(), DetailedError> {
+        let id = self.inner.lock().unwrap().id().to_string();
+        ctx.register(&id, self.inner)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BlockDevice
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "blk")]
+pub struct BlockDevice {
+    pub(crate) inner: Arc<Mutex<devices::virtio::Block>>,
+}
+
+#[cfg(feature = "blk")]
+impl BlockDevice {
+    pub fn new(id: &str, disk_image_path: &str, is_read_only: bool) -> Result<Self, Error> {
+        use devices::virtio::block::device::{ImageType, SyncMode};
+        let block = devices::virtio::Block::new(
+            id.to_string(),
+            None, // partuuid
+            devices::virtio::CacheType::Writeback,
+            disk_image_path.to_string(),
+            ImageType::Raw,
+            is_read_only,
+            false, // direct_io
+            SyncMode::Dsync,
+        )
+        .map_err(|e| {
+            log::error!("block: {e}");
+            Error::Internal
+        })?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(block)),
+        })
+    }
+}
+
+#[cfg(feature = "blk")]
+impl<'a> AttachDevice<'a> for BlockDevice {
+    fn attach(self: Box<Self>, ctx: &mut AttachContext) -> Result<(), DetailedError> {
+        let id = self.inner.lock().unwrap().id().to_string();
+        ctx.register(&id, self.inner)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GpuDevice
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "gpu")]
+pub struct GpuDevice {
+    pub(crate) inner: Arc<Mutex<devices::virtio::Gpu>>,
+    pub(crate) virgl_flags: u32,
+    pub(crate) shm_size: usize,
+}
+
+#[cfg(feature = "gpu")]
+impl GpuDevice {
+    /// Default GPU SHM size: 8 GiB.
+    const DEFAULT_SHM_SIZE: usize = 1 << 33;
+
+    pub fn new(
+        virgl_flags: u32,
+        displays: Box<[devices::virtio::gpu::display::DisplayInfo]>,
+        display_backend: krun_display::DisplayBackend<'static>,
+        #[cfg(target_os = "macos")] map_sender: crossbeam_channel::Sender<
+            utils::worker_message::WorkerMessage,
+        >,
+    ) -> Result<Self, Error> {
+        let gpu = devices::virtio::Gpu::new(
+            virgl_flags,
+            displays,
+            display_backend,
+            #[cfg(target_os = "macos")]
+            map_sender,
+        )
+        .map_err(|e| {
+            log::error!("gpu: {e:?}");
+            Error::Internal
+        })?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(gpu)),
+            virgl_flags,
+            shm_size: Self::DEFAULT_SHM_SIZE,
+        })
+    }
+
+    pub fn set_shm_size(&mut self, size: usize) {
+        self.shm_size = size;
+    }
+
+    /// Set the export table for cross-device fd sharing (with virtiofs).
+    pub fn set_export_table(&mut self, table: devices::virtio::fs::ExportTable) {
+        self.inner.lock().unwrap().set_export_table(table);
+    }
+}
+
+#[cfg(feature = "gpu")]
+impl<'a> AttachDevice<'a> for GpuDevice {
+    fn requirements(&self) -> DeviceRequirements {
+        DeviceRequirements {
+            shm_size: None,
+            gpu_shm: Some(GpuShmRequirement {
+                virgl_flags: self.virgl_flags,
+                shm_size: self.shm_size,
+            }),
+        }
+    }
+
+    fn attach(self: Box<Self>, ctx: &mut AttachContext) -> Result<(), DetailedError> {
+        // Set up GPU SHM region
+        if let Some(region) = ctx.resolved_gpu_shm_region() {
+            self.inner.lock().unwrap().set_shm_region(VirtioShmRegion {
+                host_addr: region.host_addr,
+                guest_addr: region.guest_addr,
+                size: region.size,
+            });
+        }
+
+        let id = self.inner.lock().unwrap().id().to_string();
+        ctx.register(&id, self.inner)
     }
 }

@@ -1,25 +1,2 @@
-#[macro_export]
-macro_rules! krun_call {
-    ($func_call:expr_2021) => {{
-        let result = $func_call;
-        if result < 0 {
-            let err = std::io::Error::from_raw_os_error(-result);
-            Err(anyhow::anyhow!("`{}`: {}", stringify!($func_call), err))
-        } else {
-            Ok::<(), anyhow::Error>(())
-        }
-    }};
-}
-
-#[macro_export]
-macro_rules! krun_call_u32 {
-    ($func_call:expr_2021) => {{
-        let result = $func_call;
-        if result < 0 {
-            let err = std::io::Error::from_raw_os_error(-result);
-            Err(anyhow::anyhow!("`{}`: {}", stringify!($func_call), err))
-        } else {
-            Ok::<u32, anyhow::Error>(result as u32)
-        }
-    }};
-}
+// This module previously contained C FFI helper macros (krun_call!, krun_call_u32!).
+// With the v2 Rust API, these are no longer needed — the API uses Result types directly.

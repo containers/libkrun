@@ -1,8 +1,12 @@
 #!/bin/sh
 
-# This script has to be run with the working directory being "test"
-# This runs the tests on the libkrun instance found by pkg-config.
-# Specify PKG_CONFIG_PATH env variable to test a non-system installation of libkurn.
+# Usage: run.sh [test [--test-case NAME] [--keep-all] ...]
+#
+# Environment variables:
+#   KRUN_TEST_CDYLIB=1       - Test via cdylib (libkrun.so) instead of native static linking
+#   KRUN_TEST_BASE_DIR=path  - Override artifact directory
+#   KRUN_NO_UNSHARE=1        - Skip network namespace (e.g. when already in one)
+#   LIBKRUN_LIB_PATH=path    - Library search path for cdylib mode
 
 set -e
 
@@ -21,6 +25,13 @@ if [ -n "${LIBKRUN_LIB_PATH}" ]; then
 		export LD_LIBRARY_PATH="${LIBKRUN_LIB_PATH}:${LD_LIBRARY_PATH}"
 	fi
 fi 
+
+# Choose host feature: native (static) or cdylib (shared library)
+if [ "${KRUN_TEST_CDYLIB}" = "1" ]; then
+	HOST_FEATURES="cdylib"
+else
+	HOST_FEATURES="host"
+fi
 
 GUEST_TARGET="${ARCH}-unknown-linux-musl"
 
@@ -50,7 +61,11 @@ if [ "$OS" = "Darwin" ]; then
 fi
 
 cargo build --target=$GUEST_TARGET -p guest-agent
-cargo build -p runner
+if [ "${KRUN_TEST_CDYLIB}" = "1" ]; then
+	cargo build -p runner --no-default-features --features cdylib
+else
+	cargo build -p runner
+fi
 
 # On macOS, the runner needs entitlements to use Hypervisor.framework
 if [ "$OS" = "Darwin" ]; then

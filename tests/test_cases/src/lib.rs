@@ -194,10 +194,10 @@ use macros::{guest, host};
 #[host]
 use std::path::PathBuf;
 
-#[cfg(all(feature = "guest", feature = "host"))]
-compile_error!("Cannot enable both guest and host in the same binary!");
+#[cfg(all(feature = "guest", any(feature = "host", feature = "cdylib")))]
+compile_error!("Cannot enable both guest and host/cdylib in the same binary!");
 
-#[cfg(feature = "host")]
+#[cfg(any(feature = "host", feature = "cdylib"))]
 mod common;
 
 #[cfg(feature = "host")]
