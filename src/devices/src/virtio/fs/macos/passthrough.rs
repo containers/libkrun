@@ -52,6 +52,7 @@ struct InodeData {
     dev: i32,
     refcount: AtomicU64,
     unlinked_fd: AtomicI64,
+    dir_gen: AtomicU64,
 }
 
 enum InodeHandle {
@@ -68,6 +69,7 @@ struct CachedDirEntry {
 struct DirStream {
     entries: Vec<CachedDirEntry>,
     ready: bool,
+    gen: u64,
 }
 
 impl DirStream {
@@ -75,6 +77,7 @@ impl DirStream {
         Self {
             entries: Vec::new(),
             ready: false,
+            gen: 0,
         }
     }
 
@@ -700,17 +703,26 @@ impl PassthroughFs {
 
         let mut ds = data.dirstream.lock().unwrap();
 
-        if !ds.ready {
-            // Fill the cache on first call
-            if let Err(e) = ds.fill_from_fd(data.file.write().unwrap().as_raw_fd()) {
+        let current_gen = self
+            .inodes
+            .read()
+            .unwrap()
+            .get(&inode)
+            .map(|d| d.dir_gen.load(Ordering::Relaxed))
+            .unwrap_or(0);
+
+        if !ds.ready || ds.gen != current_gen {
+            let fd = data.file.write().unwrap().as_raw_fd();
+            unsafe { libc::lseek(fd, 0, libc::SEEK_SET) };
+            ds.entries.clear();
+            ds.ready = false;
+            if let Err(e) = ds.fill_from_fd(fd) {
                 if ds.entries.is_empty() {
                     return Err(e);
                 }
-                // If we got some valid entries before error happened,
-                // treat this partial read as success and just log
-                // the error.
                 warn!("virtio-fs: error in readdir {}: {:?}", inode, e);
             }
+            ds.gen = current_gen;
             ds.ready = true;
         }
 
@@ -736,6 +748,12 @@ impl PassthroughFs {
         }
 
         Ok(())
+    }
+
+    fn bump_dir_gen(&self, inode: Inode) {
+        if let Some(data) = self.inodes.read().unwrap().get(&inode) {
+            data.dir_gen.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     fn do_open(
@@ -889,6 +907,7 @@ impl PassthroughFs {
                     warn!("Couldn't store unlinked fd \"{}\": {err}", unlinked_fd);
                 }
             }
+            self.bump_dir_gen(parent);
             Ok(())
         } else {
             if let Some(unlinked_fd) = unlinked_fd {
@@ -1082,6 +1101,7 @@ impl FileSystem for PassthroughFs {
                 dev: st.st_dev,
                 refcount: AtomicU64::new(2),
                 unlinked_fd: AtomicI64::new(-1),
+                dir_gen: AtomicU64::new(0),
             }),
         );
 
@@ -1175,6 +1195,7 @@ impl FileSystem for PassthroughFs {
                     dev: st.st_dev,
                     refcount: AtomicU64::new(1),
                     unlinked_fd: AtomicI64::new(-1),
+                    dir_gen: AtomicU64::new(0),
                 }),
             );
 
@@ -1250,7 +1271,9 @@ impl FileSystem for PassthroughFs {
                 Some((ctx.uid, ctx.gid)),
                 Some(mode & !umask),
             )?;
-            self.lookup(ctx, parent, name)
+            let entry = self.lookup(ctx, parent, name)?;
+            self.bump_dir_gen(parent);
+            Ok(entry)
         } else {
             Err(linux_error(io::Error::last_os_error()))
         }
@@ -1385,6 +1408,7 @@ impl FileSystem for PassthroughFs {
         let file = RwLock::new(unsafe { File::from_raw_fd(fd) });
 
         let entry = self.lookup(ctx, parent, name)?;
+        self.bump_dir_gen(parent);
 
         let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
         let data = HandleData {
@@ -1686,6 +1710,10 @@ impl FileSystem for PassthroughFs {
             let entry = self.lookup(ctx, newdir, newname)?;
             self.forget(ctx, entry.inode, 1);
 
+            self.bump_dir_gen(olddir);
+            if newdir != olddir {
+                self.bump_dir_gen(newdir);
+            }
             Ok(())
         } else {
             Err(linux_error(io::Error::last_os_error()))
@@ -1732,7 +1760,9 @@ impl FileSystem for PassthroughFs {
             }
 
             unsafe { libc::close(fd) };
-            self.lookup(ctx, parent, name)
+            let entry = self.lookup(ctx, parent, name)?;
+            self.bump_dir_gen(parent);
+            Ok(entry)
         }
     }
 
@@ -1752,7 +1782,9 @@ impl FileSystem for PassthroughFs {
         // Safe because this doesn't modify any memory and we check the return value.
         let res = unsafe { libc::link(orig_c_path.as_ptr(), link_c_path.as_ptr()) };
         if res == 0 {
-            self.lookup(ctx, newparent, newname)
+            let entry = self.lookup(ctx, newparent, newname)?;
+            self.bump_dir_gen(newparent);
+            Ok(entry)
         } else {
             Err(linux_error(io::Error::last_os_error()))
         }
@@ -1779,6 +1811,7 @@ impl FileSystem for PassthroughFs {
             };
 
             let mut entry = self.lookup(ctx, parent, name)?;
+            self.bump_dir_gen(parent);
             let mode = libc::S_IFLNK | 0o777;
             set_xattr_stat(&ihandle, None, Some((ctx.uid, ctx.gid)), Some(mode as u32))?;
             entry.attr.st_uid = ctx.uid;
