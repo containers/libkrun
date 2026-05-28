@@ -73,6 +73,8 @@ mod guest {
     use super::*;
     use crate::Test;
 
+    use std::collections::HashSet;
+    use std::ffi::{CStr, CString};
     use std::fs;
     use std::io::{Read, Seek, SeekFrom, Write};
     use std::os::unix::fs::MetadataExt;
@@ -80,6 +82,7 @@ mod guest {
     use std::panic::catch_unwind;
 
     use nix::fcntl::{FallocateFlags, fallocate};
+    use nix::libc;
 
     fn run_subtests(tests: &[(&str, fn())]) {
         let mut failed = Vec::new();
@@ -215,6 +218,253 @@ mod guest {
         assert!(ret.is_err(), "PUNCH_HOLE without KEEP_SIZE should fail");
     }
 
+    /// Read all entry names from `dir` (excluding "." and "..").
+    unsafe fn read_entries(dir: *mut libc::DIR) -> HashSet<String> {
+        let mut names = HashSet::new();
+        loop {
+            let ent = unsafe { libc::readdir(dir) };
+            if ent.is_null() {
+                break;
+            }
+            let name = unsafe {
+                CStr::from_ptr((*ent).d_name.as_ptr())
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            if name != "." && name != ".." {
+                names.insert(name);
+            }
+        }
+        names
+    }
+
+    /// Test that files created after an initial readdir are visible after rewinddir.
+    fn test_dirstream_create() {
+        let dir = "/test_dirstream_create";
+        fs::create_dir(dir).expect("mkdir");
+        fs::write(format!("{dir}/before"), b"").expect("write before");
+
+        let c_dir = CString::new(dir).unwrap();
+        unsafe {
+            let dp = libc::opendir(c_dir.as_ptr());
+            assert!(!dp.is_null(), "opendir failed");
+
+            let entries1 = read_entries(dp);
+            assert!(entries1.contains("before"), "should see 'before' initially");
+            assert!(!entries1.contains("after1"), "should not see 'after1' yet");
+
+            fs::write(format!("{dir}/after1"), b"").expect("write after1");
+            fs::write(format!("{dir}/after2"), b"").expect("write after2");
+
+            libc::rewinddir(dp);
+            let entries2 = read_entries(dp);
+            assert!(entries2.contains("before"), "should still see 'before'");
+            assert!(
+                entries2.contains("after1"),
+                "should see 'after1' after rewinddir"
+            );
+            assert!(
+                entries2.contains("after2"),
+                "should see 'after2' after rewinddir"
+            );
+
+            libc::closedir(dp);
+        }
+    }
+
+    /// Test that unlinked files disappear from readdir after rewinddir.
+    fn test_dirstream_unlink() {
+        let dir = "/test_dirstream_unlink";
+        fs::create_dir(dir).expect("mkdir");
+        fs::write(format!("{dir}/keep"), b"").expect("write keep");
+        fs::write(format!("{dir}/remove_me"), b"").expect("write remove_me");
+
+        let c_dir = CString::new(dir).unwrap();
+        unsafe {
+            let dp = libc::opendir(c_dir.as_ptr());
+            assert!(!dp.is_null(), "opendir failed");
+
+            let entries1 = read_entries(dp);
+            assert!(
+                entries1.contains("remove_me"),
+                "should see 'remove_me' initially"
+            );
+
+            fs::remove_file(format!("{dir}/remove_me")).expect("unlink");
+
+            libc::rewinddir(dp);
+            let entries2 = read_entries(dp);
+            assert!(entries2.contains("keep"), "should still see 'keep'");
+            assert!(
+                !entries2.contains("remove_me"),
+                "should not see 'remove_me' after unlink"
+            );
+
+            libc::closedir(dp);
+        }
+    }
+
+    /// Test that mkdir/rmdir are reflected in readdir after rewinddir.
+    fn test_dirstream_mkdir_rmdir() {
+        let dir = "/test_dirstream_mkdir";
+        fs::create_dir(dir).expect("mkdir");
+
+        let c_dir = CString::new(dir).unwrap();
+        unsafe {
+            let dp = libc::opendir(c_dir.as_ptr());
+            assert!(!dp.is_null(), "opendir failed");
+
+            let entries1 = read_entries(dp);
+            assert!(entries1.is_empty(), "dir should start empty");
+
+            fs::create_dir(format!("{dir}/subdir")).expect("mkdir subdir");
+
+            libc::rewinddir(dp);
+            let entries2 = read_entries(dp);
+            assert!(
+                entries2.contains("subdir"),
+                "should see 'subdir' after mkdir"
+            );
+
+            fs::remove_dir(format!("{dir}/subdir")).expect("rmdir subdir");
+
+            libc::rewinddir(dp);
+            let entries3 = read_entries(dp);
+            assert!(
+                !entries3.contains("subdir"),
+                "should not see 'subdir' after rmdir"
+            );
+
+            libc::closedir(dp);
+        }
+    }
+
+    /// Test that symlink creation is reflected in readdir after rewinddir.
+    fn test_dirstream_symlink() {
+        let dir = "/test_dirstream_symlink";
+        fs::create_dir(dir).expect("mkdir");
+        fs::write("/symlink_target", b"target").expect("write target");
+
+        let c_dir = CString::new(dir).unwrap();
+        unsafe {
+            let dp = libc::opendir(c_dir.as_ptr());
+            assert!(!dp.is_null(), "opendir failed");
+
+            let entries1 = read_entries(dp);
+            assert!(entries1.is_empty(), "dir should start empty");
+
+            std::os::unix::fs::symlink("/symlink_target", format!("{dir}/link")).expect("symlink");
+
+            libc::rewinddir(dp);
+            let entries2 = read_entries(dp);
+            assert!(entries2.contains("link"), "should see symlink 'link'");
+
+            libc::closedir(dp);
+        }
+    }
+
+    /// Test that hard link creation is reflected in readdir after rewinddir.
+    fn test_dirstream_link() {
+        let dir = "/test_dirstream_link";
+        fs::create_dir(dir).expect("mkdir");
+        fs::write(format!("{dir}/original"), b"data").expect("write original");
+
+        let c_dir = CString::new(dir).unwrap();
+        unsafe {
+            let dp = libc::opendir(c_dir.as_ptr());
+            assert!(!dp.is_null(), "opendir failed");
+
+            let entries1 = read_entries(dp);
+            assert_eq!(entries1.len(), 1, "should have 1 entry initially");
+
+            fs::hard_link(format!("{dir}/original"), format!("{dir}/hardlink")).expect("hard_link");
+
+            libc::rewinddir(dp);
+            let entries2 = read_entries(dp);
+            assert!(entries2.contains("hardlink"), "should see 'hardlink'");
+
+            libc::closedir(dp);
+        }
+    }
+
+    /// Test that rename is reflected in readdir after rewinddir.
+    fn test_dirstream_rename() {
+        let dir = "/test_dirstream_rename";
+        fs::create_dir(dir).expect("mkdir");
+        fs::write(format!("{dir}/old_name"), b"data").expect("write old_name");
+
+        let c_dir = CString::new(dir).unwrap();
+        unsafe {
+            let dp = libc::opendir(c_dir.as_ptr());
+            assert!(!dp.is_null(), "opendir failed");
+
+            let entries1 = read_entries(dp);
+            assert!(
+                entries1.contains("old_name"),
+                "should see 'old_name' initially"
+            );
+
+            fs::rename(format!("{dir}/old_name"), format!("{dir}/new_name")).expect("rename");
+
+            libc::rewinddir(dp);
+            let entries2 = read_entries(dp);
+            assert!(
+                !entries2.contains("old_name"),
+                "should not see 'old_name' after rename"
+            );
+            assert!(
+                entries2.contains("new_name"),
+                "should see 'new_name' after rename"
+            );
+
+            libc::closedir(dp);
+        }
+    }
+
+    /// Test rename across directories: both source and dest handles should reflect it.
+    fn test_dirstream_rename_cross_dir() {
+        let src_dir = "/test_dirstream_rename_src";
+        let dst_dir = "/test_dirstream_rename_dst";
+        fs::create_dir(src_dir).expect("mkdir src");
+        fs::create_dir(dst_dir).expect("mkdir dst");
+        fs::write(format!("{src_dir}/moved_file"), b"data").expect("write");
+
+        let c_src = CString::new(src_dir).unwrap();
+        let c_dst = CString::new(dst_dir).unwrap();
+        unsafe {
+            let dp_src = libc::opendir(c_src.as_ptr());
+            let dp_dst = libc::opendir(c_dst.as_ptr());
+            assert!(!dp_src.is_null() && !dp_dst.is_null(), "opendir failed");
+
+            // Populate caches.
+            let _ = read_entries(dp_src);
+            let _ = read_entries(dp_dst);
+
+            fs::rename(
+                format!("{src_dir}/moved_file"),
+                format!("{dst_dir}/moved_file"),
+            )
+            .expect("rename cross-dir");
+
+            libc::rewinddir(dp_src);
+            libc::rewinddir(dp_dst);
+            let src_entries = read_entries(dp_src);
+            let dst_entries = read_entries(dp_dst);
+
+            assert!(
+                !src_entries.contains("moved_file"),
+                "source should not contain 'moved_file'"
+            );
+            assert!(
+                dst_entries.contains("moved_file"),
+                "dest should contain 'moved_file'"
+            );
+
+            libc::closedir(dp_src);
+            libc::closedir(dp_dst);
+        }
+    }
+
     impl Test for TestVirtioFsMisc {
         fn in_guest(self: Box<Self>) {
             run_subtests(&[
@@ -224,6 +474,16 @@ mod guest {
                 (
                     "fallocate_punch_hole_requires_keep_size",
                     test_fallocate_punch_hole_requires_keep_size,
+                ),
+                ("dirstream_create", test_dirstream_create),
+                ("dirstream_unlink", test_dirstream_unlink),
+                ("dirstream_mkdir_rmdir", test_dirstream_mkdir_rmdir),
+                ("dirstream_symlink", test_dirstream_symlink),
+                ("dirstream_link", test_dirstream_link),
+                ("dirstream_rename", test_dirstream_rename),
+                (
+                    "dirstream_rename_cross_dir",
+                    test_dirstream_rename_cross_dir,
                 ),
             ]);
         }
