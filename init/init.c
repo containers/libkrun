@@ -1369,7 +1369,7 @@ static int enable_dummy_interface()
     }
 
     addr->sin_family = AF_INET;
-    if (inet_pton(AF_INET, "10.0.0.1", &addr->sin_addr) <= 0) {
+    if (inet_pton(AF_INET, "203.0.113.1", &addr->sin_addr) <= 0) {
         printf("inet_pton address conversion failed\n");
         goto close_socket;
     }
@@ -1379,7 +1379,7 @@ static int enable_dummy_interface()
     }
 
     netmask->sin_family = AF_INET;
-    if (inet_pton(AF_INET, "255.0.0.0", &netmask->sin_addr) <= 0) {
+    if (inet_pton(AF_INET, "255.255.255.0", &netmask->sin_addr) <= 0) {
         printf("inet_pton netmask conversion failed\n");
         goto close_socket;
     }
