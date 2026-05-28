@@ -7,6 +7,8 @@ use std::os::fd::AsRawFd;
 use std::ptr;
 
 #[cfg(target_os = "linux")]
+use nix::errno::Errno;
+#[cfg(target_os = "linux")]
 use nix::sys::socket::{self, AddressFamily, SockFlag, SockType};
 
 #[cfg(target_os = "linux")]
@@ -60,6 +62,81 @@ fn setup_dhcp(iface: &str, sock: i32) {
         }
         if let Err(e) = crate::dhcp::do_dhcp(iface) {
             eprintln!("Warning: DHCP configuration for {iface} failed: {e}");
+        }
+    }
+}
+
+/// Returns true if `tsi_hijack` appears in the kernel command line before any
+/// `--` delimiter. Mirrors `tsi_enabled()` in init.c.
+#[cfg(target_os = "linux")]
+pub fn tsi_enabled() -> bool {
+    let Ok(cmdline) = std::fs::read_to_string("/proc/cmdline") else {
+        return false;
+    };
+    cmdline
+        .split_whitespace()
+        .take_while(|tok| *tok != "--")
+        .any(|tok| tok == "tsi_hijack")
+}
+
+/// Brings up `dummy0` and assigns it 203.0.113.1/24 (IANA TEST-NET-3) so
+/// that applications probing for network availability see a configured
+/// interface when TSI is in use. Silently succeeds when the dummy driver is
+/// absent.
+/// Mirrors `enable_dummy_interface()` in init.c.
+#[cfg(target_os = "linux")]
+pub fn enable_dummy_interface() {
+    use std::net::Ipv4Addr;
+
+    let Ok(sock) = socket::socket(
+        AddressFamily::Inet,
+        SockType::Datagram,
+        SockFlag::empty(),
+        None,
+    ) else {
+        eprintln!("Warning: dummy interface socket failed");
+        return;
+    };
+
+    let mut ifr: libc::ifreq = unsafe { mem::zeroed() };
+    let name = c"dummy0";
+    unsafe {
+        ptr::copy_nonoverlapping(
+            name.as_ptr(),
+            ifr.ifr_name.as_mut_ptr(),
+            name.to_bytes_with_nul().len(),
+        );
+        ifr.ifr_ifru.ifru_flags = libc::IFF_UP as libc::c_short;
+    }
+
+    let ret = unsafe { libc::ioctl(sock.as_raw_fd(), libc::SIOCSIFFLAGS as _, &ifr) };
+    if ret < 0 {
+        if Errno::last() != Errno::ENODEV {
+            eprintln!("Warning: dummy interface up failed");
+        }
+        return;
+    }
+
+    // Set IP address to 203.0.113.1 (IANA TEST-NET-3).
+    let mut sin: libc::sockaddr_in = unsafe { mem::zeroed() };
+    sin.sin_family = libc::AF_INET as libc::sa_family_t;
+    sin.sin_addr.s_addr = u32::from_ne_bytes(Ipv4Addr::new(203, 0, 113, 1).octets());
+    unsafe {
+        ifr.ifr_ifru.ifru_addr = *(&sin as *const libc::sockaddr_in as *const libc::sockaddr);
+        if libc::ioctl(sock.as_raw_fd(), libc::SIOCSIFADDR as _, &ifr) < 0 {
+            eprintln!("Warning: dummy interface address failed");
+            return;
+        }
+    }
+
+    // Set netmask to 255.255.255.0.
+    let mut sin: libc::sockaddr_in = unsafe { mem::zeroed() };
+    sin.sin_family = libc::AF_INET as libc::sa_family_t;
+    sin.sin_addr.s_addr = u32::from_ne_bytes(Ipv4Addr::new(255, 255, 255, 0).octets());
+    unsafe {
+        ifr.ifr_ifru.ifru_netmask = *(&sin as *const libc::sockaddr_in as *const libc::sockaddr);
+        if libc::ioctl(sock.as_raw_fd(), libc::SIOCSIFNETMASK as _, &ifr) < 0 {
+            eprintln!("Warning: dummy interface mask failed");
         }
     }
 }
