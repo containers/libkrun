@@ -8,8 +8,6 @@ use nix::errno::Errno;
 use nix::mount::{self, MsFlags};
 use nix::unistd;
 
-const KRUN_REMOVE_ROOT_DIR_IOCTL: libc::c_ulong = 0x7603;
-
 /// Mount, treating EBUSY (already mounted) as success.
 fn mount_or_busy(
     src: Option<&str>,
@@ -165,13 +163,6 @@ pub fn mount_block_root_device() -> anyhow::Result<()> {
     )?;
 
     unistd::chdir("/newroot").context("chdir /newroot")?;
-
-    // Ask the virtiofs device to tear down the temporary root directory.
-    let fd = unsafe { libc::open(c"/".as_ptr().cast(), libc::O_RDONLY) };
-    if fd >= 0 {
-        unsafe { libc::ioctl(fd, KRUN_REMOVE_ROOT_DIR_IOCTL as _) };
-        unsafe { libc::close(fd) };
-    }
 
     mount::mount(Some("."), "/", None::<&str>, MsFlags::MS_MOVE, None::<&str>)
         .context("pivot root MS_MOVE")?;
