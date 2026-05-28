@@ -40,6 +40,11 @@ fn main() -> anyhow::Result<()> {
         "eth0",
     );
 
+    #[cfg(target_os = "linux")]
+    if env::tsi_enabled() {
+        env::enable_dummy_interface();
+    }
+
     #[cfg(target_os = "freebsd")]
     let iso_mounted = std::env::var("KRUN_CONFIG").is_err() && freebsd::mount_config_iso();
 
