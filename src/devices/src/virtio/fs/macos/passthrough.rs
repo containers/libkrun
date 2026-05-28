@@ -711,7 +711,14 @@ impl PassthroughFs {
             .map(|d| d.dir_gen.load(Ordering::Relaxed))
             .unwrap_or(0);
 
-        if !ds.ready || ds.gen != current_gen {
+        // Only rebuild the cache at the start of a stream (offset == 0, i.e. a
+        // fresh opendir or after rewinddir). Rebuilding mid-iteration would
+        // reorder the entries Vec while the guest is still indexing into it by
+        // offset, which can shift already-returned entries to higher offsets and
+        // make them reappear as duplicates. POSIX leaves readdir unspecified when
+        // the directory is mutated during iteration, so serving the stale snapshot
+        // for the rest of the stream is correct and matches Linux getdents64.
+        if !ds.ready || (ds.gen != current_gen && offset == 0) {
             let fd = data.file.write().unwrap().as_raw_fd();
             unsafe { libc::lseek(fd, 0, libc::SEEK_SET) };
             ds.entries.clear();
