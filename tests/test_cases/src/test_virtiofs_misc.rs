@@ -77,8 +77,27 @@ mod guest {
     use std::io::{Read, Seek, SeekFrom, Write};
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::io::AsRawFd;
+    use std::panic::catch_unwind;
 
     use nix::fcntl::{FallocateFlags, fallocate};
+
+    fn run_subtests(tests: &[(&str, fn())]) {
+        let mut failed = Vec::new();
+        for (name, f) in tests {
+            if catch_unwind(f).is_err() {
+                eprintln!("FAIL: {name}");
+                failed.push(*name);
+            } else {
+                eprintln!("PASS: {name}");
+            }
+        }
+
+        if failed.is_empty() {
+            println!("OK");
+        } else {
+            println!("FAILED: {}", failed.join(", "));
+        }
+    }
 
     fn test_fallocate_basic() {
         let path = "/test_fallocate_basic";
@@ -198,12 +217,15 @@ mod guest {
 
     impl Test for TestVirtioFsMisc {
         fn in_guest(self: Box<Self>) {
-            test_fallocate_basic();
-            test_fallocate_keep_size();
-            test_fallocate_punch_hole();
-            test_fallocate_punch_hole_requires_keep_size();
-
-            println!("OK");
+            run_subtests(&[
+                ("fallocate_basic", test_fallocate_basic),
+                ("fallocate_keep_size", test_fallocate_keep_size),
+                ("fallocate_punch_hole", test_fallocate_punch_hole),
+                (
+                    "fallocate_punch_hole_requires_keep_size",
+                    test_fallocate_punch_hole_requires_keep_size,
+                ),
+            ]);
         }
     }
 }
