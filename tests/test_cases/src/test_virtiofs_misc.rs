@@ -463,6 +463,106 @@ mod guest {
         }
     }
 
+    /// Test that creating files mid-iteration does not cause duplicates.
+    ///
+    /// POSIX says readdir behavior is unspecified when the directory is modified
+    /// during iteration. In practice (verified on ext4, btrfs, and tmpfs),
+    /// entries already returned are not repeated.
+    ///
+    /// Creates files named `m_*`, reads a few, then inserts `aaa_*` which are
+    /// have been observed to land before the already-returned entries in
+    /// the directory ordering — maximizing the chance of exposing duplicate entries.
+    fn test_dirstream_no_duplicates_on_mid_iteration_create() {
+        let dir = "/test_dirstream_mid_iter";
+        fs::create_dir(dir).expect("mkdir");
+
+        // Pre-populate with files that sort late so the our instert lands before them.
+        for i in 0..10 {
+            fs::write(format!("{dir}/m_{i:02}"), b"").expect("write");
+        }
+
+        let c_dir = CString::new(dir).unwrap();
+        unsafe {
+            let dp = libc::opendir(c_dir.as_ptr());
+            assert!(!dp.is_null(), "opendir failed");
+
+            // Read a few entries (not all). We ask for 7 readdir calls to
+            // get past "." and ".." and read ~5 real entries.
+            let mut seen = Vec::new();
+            for _ in 0..7 {
+                let ent = libc::readdir(dp);
+                if ent.is_null() {
+                    break;
+                }
+                let name = CStr::from_ptr((*ent).d_name.as_ptr())
+                    .to_string_lossy()
+                    .into_owned();
+                if name != "." && name != ".." {
+                    seen.push(name);
+                }
+            }
+
+            let before_mutation = seen.clone();
+
+            // Insert files that should sort BEFORE everything we already read.
+            // These shift all existing entries to the right in the rebuilt cache.
+            for i in 0..3 {
+                fs::write(format!("{dir}/aaa_{i:02}"), b"").expect("write aaa");
+            }
+
+            // Continue reading the rest.
+            let mark = seen.len();
+            loop {
+                let ent = libc::readdir(dp);
+                if ent.is_null() {
+                    break;
+                }
+                let name = CStr::from_ptr((*ent).d_name.as_ptr())
+                    .to_string_lossy()
+                    .into_owned();
+                if name != "." && name != ".." {
+                    seen.push(name);
+                }
+            }
+
+            let after_mutation: Vec<_> = seen[mark..].to_vec();
+
+            // Find duplicates.
+            let mut dups = Vec::new();
+            for (i, a) in seen.iter().enumerate() {
+                for b in &seen[..i] {
+                    if a == b {
+                        dups.push(a.clone());
+                        break;
+                    }
+                }
+            }
+
+            let unique: HashSet<&str> = seen.iter().map(|s| s.as_str()).collect();
+            assert!(
+                dups.is_empty(),
+                "readdir returned {} duplicates: {dups:?}\n\
+                 before mutation: {before_mutation:?}\n\
+                 after mutation: {after_mutation:?}\n\
+                 all seen ({} total): {seen:?}",
+                dups.len(),
+                seen.len(),
+            );
+
+            // All original files should be present (they existed before iteration
+            // started and were never removed).
+            for i in 0..10 {
+                let name = format!("m_{i:02}");
+                assert!(
+                    unique.contains(name.as_str()),
+                    "original file {name} missing from readdir results: {seen:?}"
+                );
+            }
+
+            libc::closedir(dp);
+        }
+    }
+
     impl Test for TestVirtioFsMisc {
         fn in_guest(self: Box<Self>) {
             run_subtests(&[
@@ -482,6 +582,10 @@ mod guest {
                 (
                     "dirstream_rename_cross_dir",
                     test_dirstream_rename_cross_dir,
+                ),
+                (
+                    "dirstream_no_duplicates_mid_iter",
+                    test_dirstream_no_duplicates_on_mid_iteration_create,
                 ),
             ]);
         }
