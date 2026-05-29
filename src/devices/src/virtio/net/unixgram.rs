@@ -6,6 +6,8 @@ use nix::sys::socket::{
 use nix::unistd::unlink;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::path::PathBuf;
+use std::process;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::backend::{ConnectError, NetBackend, ReadError, WriteError};
 use super::write_virtio_net_hdr;
@@ -13,6 +15,15 @@ use super::write_virtio_net_hdr;
 use super::{MAX_BUFFER_SIZE, VNET_HDR_LEN};
 
 const VFKIT_MAGIC: [u8; 4] = *b"VFKT";
+
+/// Per-process counter to generate unique local unixgram socket filenames.
+///
+/// The local socket is placed in the same directory as the peer using a short
+/// PID+counter name. The peer filename always contains the machine name, so it
+/// is longer than our fixed-format name for any reasonably-named machine, keeping
+/// the local path within macOS's 104-byte unix socket limit.
+static NET_SOCK_COUNTER: AtomicU32 = AtomicU32::new(0);
+
 const DEFAULT_SOCKET_BUF_SIZE: usize = 7 * 1024 * 1024;
 
 // On macOS, with UNIX datagram sockets the send buffer is not used for queuing;
@@ -76,8 +87,13 @@ impl Unixgram {
         )
         .map_err(ConnectError::CreateSocket)?;
         let peer_addr = UnixAddr::new(&path).map_err(ConnectError::InvalidAddress)?;
-        let local_addr = UnixAddr::new(&PathBuf::from(format!("{}-krun.sock", path.display())))
-            .map_err(ConnectError::InvalidAddress)?;
+        let socket_name = format!(
+            "krun-net-{}-{}.sock",
+            process::id(),
+            NET_SOCK_COUNTER.fetch_add(1, Ordering::Relaxed),
+        );
+        let local_path = std::env::temp_dir().join(&socket_name);
+        let local_addr = UnixAddr::new(&local_path).map_err(ConnectError::InvalidAddress)?;
         if let Some(path) = local_addr.path() {
             _ = unlink(path);
         }
