@@ -825,17 +825,31 @@ impl PassthroughFs {
         Ok(fd)
     }
 
-    fn store_unlinked_fd(&self, unlinked_fd: RawFd) -> io::Result<()> {
+    fn store_unlinked_fd(&self, unlinked_fd: RawFd) -> io::Result<bool> {
         let st = fstat(unlinked_fd, true)?;
         let altkey = InodeAltKey {
             ino: st.st_ino,
             dev: st.st_dev,
         };
-        if let Some(data) = self.inodes.read().unwrap().get_alt(&altkey).cloned() {
-            data.unlinked_fd
-                .store(unlinked_fd as i64, Ordering::Release);
+        // Hold the read lock across the swap: dropping it earlier would let a
+        // concurrent `forget` remove this inode (closing its then-`-1`
+        // `unlinked_fd`) between our lookup and swap, leaking the fd we store.
+        let inodes = self.inodes.read().unwrap();
+        if let Some(data) = inodes.get_alt(&altkey) {
+            // Swap rather than store so that if this inode already had a
+            // preserved fd (e.g. another hard link was unlinked/overwritten
+            // earlier), we recover and close it instead of leaking it.
+            let old_fd = data.unlinked_fd.swap(unlinked_fd as i64, Ordering::AcqRel);
+            if old_fd >= 0 {
+                unsafe { libc::close(old_fd as RawFd) };
+            }
+            // The tracked inode now owns `unlinked_fd` (closed in `forget_one`).
+            Ok(true)
+        } else {
+            // No tracked inode for this (dev, ino): the caller keeps ownership
+            // of `unlinked_fd` and must close it to avoid a leak.
+            Ok(false)
         }
-        Ok(())
     }
 
     fn do_unlink(
@@ -884,9 +898,17 @@ impl PassthroughFs {
 
         if res == 0 {
             if let Some(unlinked_fd) = unlinked_fd {
-                if let Err(err) = self.store_unlinked_fd(unlinked_fd) {
-                    unsafe { libc::close(unlinked_fd) };
-                    warn!("Couldn't store unlinked fd \"{}\": {err}", unlinked_fd);
+                match self.store_unlinked_fd(unlinked_fd) {
+                    // The tracked inode took ownership of the fd.
+                    Ok(true) => {}
+                    // No tracked inode: we still own the fd and must close it.
+                    Ok(false) => unsafe {
+                        libc::close(unlinked_fd);
+                    },
+                    Err(err) => {
+                        unsafe { libc::close(unlinked_fd) };
+                        warn!("Couldn't store unlinked fd \"{}\": {err}", unlinked_fd);
+                    }
                 }
             }
             Ok(())
@@ -1659,8 +1681,58 @@ impl FileSystem for PassthroughFs {
         let old_cpath = self.name_to_path(olddir, oldname)?;
         let new_cpath = self.name_to_path(newdir, newname)?;
 
+        // macOS addresses inodes by their volfs path ("/.vol/{dev}/{ino}"),
+        // which only resolves while the inode still has a directory entry. A
+        // rename that REPLACES an existing target drops that target's last
+        // link, so any inode the guest still holds open there would afterwards
+        // resolve to a dangling volfs path and fail path-based ops
+        // (getattr/open/setattr/...) with ENOENT (e.g. apt/dpkg's atomic
+        // rewrite of /var/lib/dpkg/status, surfaced as
+        // "close (2: No such file or directory)"). `do_unlink` already guards
+        // the unlink case by stashing an fd to the doomed inode in
+        // `InodeData.unlinked_fd`; mirror that for the overwritten target. Grab
+        // it *before* the rename, while its entry still exists. RENAME_SWAP
+        // keeps both inodes linked and RENAME_EXCL never overwrites, so skip
+        // those; best-effort otherwise (a non-overwriting rename finds nothing).
+        let doomed_fd = if (flags as i32)
+            & (bindings::LINUX_RENAME_EXCHANGE | bindings::LINUX_RENAME_NOREPLACE)
+            == 0
+        {
+            match self.inode_to_handle(newdir, true) {
+                Ok(InodeHandle::Path(newdir_cpath)) => {
+                    let newdir_fd = unsafe {
+                        libc::open(newdir_cpath.as_ptr(), libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                    };
+                    if newdir_fd < 0 {
+                        None
+                    } else {
+                        let grabbed = self.grab_unlinked_fd(newdir_fd, newname).ok();
+                        unsafe { libc::close(newdir_fd) };
+                        grabbed
+                    }
+                }
+                Ok(InodeHandle::Fd(newdir_fd)) => self.grab_unlinked_fd(newdir_fd, newname).ok(),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
         let res = unsafe { libc::renamex_np(old_cpath.as_ptr(), new_cpath.as_ptr(), mflags) };
         if res == 0 {
+            // If the rename overwrote a tracked inode, hand its preserved fd to
+            // the inode store so later ops resolve by fd, not the vanished path.
+            // `store_unlinked_fd` takes ownership only when that inode is
+            // tracked; close the fd ourselves otherwise so it is never leaked.
+            if let Some(fd) = doomed_fd {
+                match self.store_unlinked_fd(fd) {
+                    Ok(true) => {}
+                    Ok(false) | Err(_) => unsafe {
+                        libc::close(fd);
+                    },
+                }
+            }
+
             if ((flags as i32) & bindings::LINUX_RENAME_WHITEOUT) != 0 {
                 let fd = unsafe {
                     libc::open(
@@ -1688,6 +1760,10 @@ impl FileSystem for PassthroughFs {
 
             Ok(())
         } else {
+            if let Some(fd) = doomed_fd {
+                // The rename failed; nothing was overwritten. Drop the fd.
+                unsafe { libc::close(fd) };
+            }
             Err(linux_error(io::Error::last_os_error()))
         }
     }
