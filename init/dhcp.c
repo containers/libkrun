@@ -293,6 +293,9 @@ static unsigned char get_dhcp_msg_type(const unsigned char *response,
 static int handle_dhcp_ack(int nl_sock, int iface_index,
                            const unsigned char *response, ssize_t len)
 {
+    FILE *resolv = NULL;
+    bool tried_opening_resolv = false;
+
     /* Need at least 240 bytes (DHCP header + magic cookie) + 1 for options */
     if (len < 241) {
         printf("DHCPACK too short (%zd bytes)\n", len);
@@ -313,11 +316,6 @@ static int handle_dhcp_ack(int nl_sock, int iface_index,
     struct in_addr router = {.s_addr = INADDR_ANY};
     /* Clamp MTU to passt's limit */
     uint16_t mtu = 65520;
-
-    FILE *resolv = fopen("/etc/resolv.conf", "w");
-    if (!resolv) {
-        perror("Failed to open /etc/resolv.conf");
-    }
 
     /* Parse DHCP options (start at offset 240 after magic cookie) */
     size_t p = 240;
@@ -353,6 +351,14 @@ static int handle_dhcp_ack(int nl_sock, int iface_index,
             memcpy(&router.s_addr, &response[p], sizeof(router.s_addr));
         } else if (opt == 6 && opt_len >= 4) {
             /* Option 6: Domain Name Server */
+            if (!resolv && !tried_opening_resolv) {
+                tried_opening_resolv = true;
+                resolv = fopen("/etc/resolv.conf", "w");
+                if (!resolv) {
+                    perror("Failed to open /etc/resolv.conf");
+                }
+            }
+
             if (resolv) {
                 for (int dns_p = p; dns_p + 4 <= p + opt_len; dns_p += 4) {
                     fprintf(resolv, "nameserver %d.%d.%d.%d\n", response[dns_p],
