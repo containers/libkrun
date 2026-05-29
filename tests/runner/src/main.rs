@@ -142,6 +142,7 @@ fn run_single_test(
     };
     let use_buildah_unshare = cfg!(target_os = "linux")
         && std::env::var_os("KRUN_NO_UNSHARE").is_none()
+        && !test_case.needs_host_network()
         && has_cmd("buildah")
         && has_cmd("unshare");
 
