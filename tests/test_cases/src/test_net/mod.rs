@@ -78,6 +78,20 @@ impl TestNet {
             cleanup: None,
         }
     }
+
+    /// Gvproxy backend variant with a socket path ≥ 96 bytes, triggering the
+    /// ENAMETOOLONG bug when the local socket was derived from the peer path.
+    pub fn new_gvproxy_long_path() -> Self {
+        Self {
+            tcp_tester: TcpTester::new([192, 168, 127, 254].into(), 9004),
+            #[cfg(feature = "host")]
+            should_run: gvproxy::should_run,
+            #[cfg(feature = "host")]
+            setup_backend: gvproxy::setup_backend_long_path,
+            #[cfg(feature = "host")]
+            cleanup: None,
+        }
+    }
 }
 
 #[host]

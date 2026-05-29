@@ -76,13 +76,18 @@ pub(crate) fn should_run() -> ShouldRun {
     }
 }
 
-pub(crate) fn setup_backend(ctx: u32, test_setup: &TestSetup) -> anyhow::Result<()> {
+fn setup_backend_with_socket(
+    ctx: u32,
+    test_setup: &TestSetup,
+    socket_name: &str,
+    log_name: &str,
+) -> anyhow::Result<()> {
     let tmp_dir = test_setup
         .tmp_dir
         .canonicalize()
         .unwrap_or_else(|_| test_setup.tmp_dir.clone());
-    let socket_path = tmp_dir.join("gvproxy.sock");
-    let gvproxy_log = tmp_dir.join("gvproxy.log");
+    let socket_path = tmp_dir.join(socket_name);
+    let gvproxy_log = tmp_dir.join(log_name);
 
     let socket_path_str = socket_path
         .to_str()
@@ -109,4 +114,34 @@ pub(crate) fn setup_backend(ctx: u32, test_setup: &TestSetup) -> anyhow::Result<
         ))?;
     }
     Ok(())
+}
+
+pub(crate) fn setup_backend(ctx: u32, test_setup: &TestSetup) -> anyhow::Result<()> {
+    setup_backend_with_socket(ctx, test_setup, "gvproxy.sock", "gvproxy.log")
+}
+
+/// Backend setup with a peer socket path long enough to have previously
+/// triggered ENAMETOOLONG on macOS when the local bind address was derived
+/// from the peer path by appending a suffix.
+pub(crate) fn setup_backend_long_path(ctx: u32, test_setup: &TestSetup) -> anyhow::Result<()> {
+    // Build a peer socket filename so that the full path approaches the
+    // 104-byte macOS unix socket limit. Use base_len measured at runtime so
+    // the padding is correct regardless of the exact tmp_dir length.
+    // tmp_dir is typically "/tmp/libkrun-tests.XXXXXXXX" (~27 chars), or
+    // "/private/tmp/libkrun-tests.XXXXXXXX" (~35 chars) after canonicalize on macOS.
+    let tmp_dir = test_setup
+        .tmp_dir
+        .canonicalize()
+        .unwrap_or_else(|_| test_setup.tmp_dir.clone());
+    let base_len = tmp_dir.to_str().map(|s| s.len()).unwrap_or(0);
+    const TARGET_PATH_LEN: usize = 96;
+    let prefix = "gvp-";
+    let suffix = ".sock";
+    let name_needed = TARGET_PATH_LEN.saturating_sub(base_len + 1);
+    let pad_len = name_needed
+        .saturating_sub(prefix.len() + suffix.len())
+        .max(1);
+    let socket_name = format!("{}{}{}", prefix, "x".repeat(pad_len), suffix);
+
+    setup_backend_with_socket(ctx, test_setup, &socket_name, "gvproxy-long-path.log")
 }
