@@ -105,6 +105,10 @@ pub fn test_cases() -> Vec<TestCase> {
         TestCase::new("net-passt", Box::new(TestNet::new_passt())),
         TestCase::new("net-tap", Box::new(TestNet::new_tap())),
         TestCase::new("net-gvproxy", Box::new(TestNet::new_gvproxy())),
+        TestCase::new(
+            "net-gvproxy-long-path",
+            Box::new(TestNet::new_gvproxy_long_path()),
+        ),
         TestCase::new("net-vmnet-helper", Box::new(TestNet::new_vmnet_helper())),
         TestCase::new("multiport-console", Box::new(TestMultiportConsole)),
         #[cfg(any(feature = "host", target_os = "linux"))]
