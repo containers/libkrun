@@ -231,7 +231,7 @@ impl FsWorker {
                 .map_err(FsError::QueueWriter)
                 .unwrap();
 
-            if let Err(e) = self.server.handle_message(
+            let len = match self.server.handle_message(
                 reader,
                 writer,
                 &self.shm_region,
@@ -239,10 +239,14 @@ impl FsWorker {
                 #[cfg(target_os = "macos")]
                 &self.map_sender,
             ) {
-                error!("error handling message: {e:?}");
-            }
+                Ok(len) => len,
+                Err(e) => {
+                    error!("error handling message: {e:?}");
+                    0
+                }
+            };
 
-            if let Err(e) = queue.add_used(&self.mem, head.index, 0) {
+            if let Err(e) = queue.add_used(&self.mem, head.index, len as u32) {
                 error!("failed to add used elements to the queue: {e:?}");
             }
 
