@@ -720,7 +720,9 @@ impl PassthroughFs {
         // for the rest of the stream is correct and matches Linux getdents64.
         if !ds.ready || (ds.gen != current_gen && offset == 0) {
             let fd = data.file.write().unwrap().as_raw_fd();
-            unsafe { libc::lseek(fd, 0, libc::SEEK_SET) };
+            if unsafe { libc::lseek(fd, 0, libc::SEEK_SET) } < 0 {
+                return Err(linux_error(io::Error::last_os_error()));
+            }
             ds.entries.clear();
             ds.ready = false;
             if let Err(e) = ds.fill_from_fd(fd) {
