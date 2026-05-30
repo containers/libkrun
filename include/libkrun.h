@@ -8,6 +8,7 @@ extern "C" {
 #include <inttypes.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 /**
@@ -391,10 +392,10 @@ int32_t krun_add_virtiofs3(uint32_t ctx_id,
  * Arguments:
  *  "ctx_id"   - the configuration context ID.
  *  "c_path"   - a null-terminated string representing the path
- *               for the unixstream socket where the userspace
+ *               for the Unix domain stream socket where the userspace
  *               network proxy is listening. Must be NULL if "fd"
  *               is not -1.
- *  "fd"       - a file descriptor for an already open unixstream
+ *  "fd"       - a file descriptor for an already open Unix domain stream
  *               connection to the userspace network proxy. Must
  *               be -1 if "c_path" is not NULL.
  *  "c_mac"    - MAC address as an array of 6 uint8_t entries.
@@ -433,10 +434,10 @@ int32_t krun_add_net_unixstream(uint32_t ctx_id,
  * Arguments:
  *  "ctx_id"   - the configuration context ID.
  *  "c_path"   - a null-terminated string representing the path
- *               for the unixstream socket where the userspace
+ *               for the Unix domain datagram socket where the userspace
  *               network proxy is listening. Must be NULL if "fd"
  *               is not -1.
- *  "fd"       - a file descriptor for an already open unixstream
+ *  "fd"       - a file descriptor for an already open Unix domain datagram
  *               connection to the userspace network proxy. Must
  *               be -1 if "c_path" is not NULL.
  *  "c_mac"    - MAC address as an array of 6 uint8_t entries.
@@ -520,7 +521,7 @@ int32_t krun_set_passt_fd(uint32_t ctx_id, int fd);
  * Arguments:
  *  "ctx_id"  - the configuration context ID.
  *  "c_path"  - a null-terminated string representing the path for
- *              gvproxy's listen-vfkit unixdgram socket.
+ *              gvproxy's listen-vfkit Unix domain datagram socket.
  *
  * Notes:
  * If you never call this function, networking uses the TSI backend.

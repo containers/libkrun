@@ -1,7 +1,7 @@
 <picture>
    <source media="(prefers-color-scheme: dark)" srcset="docs/images/libkrun_logo_horizontal_darkmode.png">
    <source media="(prefers-color-scheme: light)" srcset="docs/images/libkrun_logo_horizontal.png">
-   <img alt="libkrun logo" src="docs/images/libkrun_logo_horizontal_200.png">
+   <img alt="libkrun logo" src="docs/images/libkrun_logo_horizontal.png">
 </picture>
 
 # libkrun
@@ -80,7 +80,7 @@ A conventional virtual interface that allows the guest to communicate with the o
 
 #### Enabling virtio-net
 
-Use `krun_add_net_unixstream` and/or `krun_add_net_unixdgram` to add a virtio-net interface connected to the userspace network proxy.
+Use `krun_add_net_unixstream` and/or `krun_add_net_unixgram` to add a virtio-net interface connected to the userspace network proxy.
 
 ## Security model
 
@@ -216,7 +216,7 @@ This is a simple example providing ```chroot```-like functionality using ```libk
 
 #### Building chroot_vm
 
-To be able to ```chroot_vm```, you need need to build libkrun with the `virtio-block` and `virtio-net` optional features:
+To be able to ```chroot_vm```, you need to build libkrun with the `virtio-block` and `virtio-net` optional features:
 
 ```
 make BLK=1 NET=1
