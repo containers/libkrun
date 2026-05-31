@@ -93,11 +93,15 @@ impl Balloon {
                     "balloon: should release guest_addr={:?} host_addr={:p} len={}",
                     desc.addr, host_addr, desc.len
                 );
+                #[cfg(target_os = "linux")]
+                let advice = libc::MADV_DONTNEED;
+                #[cfg(target_os = "macos")]
+                let advice = libc::MADV_FREE;
                 unsafe {
                     libc::madvise(
                         host_addr as *mut libc::c_void,
                         desc.len.try_into().unwrap(),
-                        libc::MADV_DONTNEED,
+                        advice,
                     )
                 };
             }
