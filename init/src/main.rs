@@ -88,6 +88,17 @@ fn main() -> anyhow::Result<()> {
         v
     } else if proc_args.len() > 1 {
         // No KRUN_INIT and no config: treat proc_args[1..] as the command.
+        //
+        // Intentional divergence from the C init: the C init substituted
+        // argv[0] with "/bin/sh" and forwarded the remaining args as shell
+        // arguments ("/bin/sh arg1 arg2 ...").  That made sense when krun
+        // callers relied on the shell to interpret cmdline tokens, but it
+        // means proc_args[1] is treated as a script path rather than a binary.
+        //
+        // The Rust init treats proc_args[1] as the executable directly.  The
+        // typical krun caller that omits both KRUN_INIT and a config file
+        // intends the cmdline argument to be the command, not a shell script,
+        // so this behaviour is more useful and less surprising.
         proc_args.into_iter().skip(1).collect()
     } else {
         vec!["/bin/sh".to_string()]
