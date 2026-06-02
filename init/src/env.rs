@@ -192,24 +192,65 @@ pub fn apply_rlimits() {
     let Ok(rlimits) = env::var("KRUN_RLIMITS") else {
         return;
     };
-    for item in rlimits.split(',') {
-        let Some((id_s, rest)) = item.split_once('=') else {
-            continue;
-        };
-        let Some((cur_s, max_s)) = rest.split_once(':') else {
-            continue;
-        };
-        let (Ok(id), Ok(cur), Ok(max)) = (
-            id_s.parse::<u32>(),
-            cur_s.parse::<libc::rlim_t>(),
-            max_s.parse::<libc::rlim_t>(),
-        ) else {
-            continue;
-        };
-        let rlim = libc::rlimit {
-            rlim_cur: cur,
-            rlim_max: max,
-        };
-        unsafe { libc::setrlimit(id as _, &rlim) };
+    // krun_set_rlimits() wraps the value in outer double-quotes; strip them.
+    let s = rlimits.trim_matches('"');
+    for item in s.split(',') {
+        if let Some((id, cur, max)) = parse_rlimit_entry(item) {
+            let rlim = libc::rlimit {
+                rlim_cur: cur,
+                rlim_max: max,
+            };
+            unsafe { libc::setrlimit(id as _, &rlim) };
+        }
+    }
+}
+
+// Accept both "ID=CUR:MAX" (Rust format) and "ID:CUR:MAX" (C format) by
+// splitting on the first two occurrences of either '=' or ':'.
+fn parse_rlimit_entry(item: &str) -> Option<(u32, libc::rlim_t, libc::rlim_t)> {
+    let item = item.trim_matches('"');
+    let parts: Vec<&str> = item.splitn(3, ['=', ':']).collect();
+    let [id, cur, max] = parts.as_slice() else {
+        return None;
+    };
+    let id = id.parse::<u32>().ok()?;
+    let cur = cur.parse::<libc::rlim_t>().ok()?;
+    let max = max.parse::<libc::rlim_t>().ok()?;
+    Some((id, cur, max))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rlimit_equals_format() {
+        assert_eq!(parse_rlimit_entry("7=1024:4096"), Some((7, 1024, 4096)));
+    }
+
+    #[test]
+    fn rlimit_colon_format() {
+        assert_eq!(parse_rlimit_entry("7:1024:4096"), Some((7, 1024, 4096)));
+    }
+
+    #[test]
+    fn rlimit_outer_quotes_stripped() {
+        assert_eq!(parse_rlimit_entry("\"7=1024:4096\""), Some((7, 1024, 4096)));
+    }
+
+    #[test]
+    fn rlimit_trailing_quote_stripped() {
+        // Last item in a quoted list has a trailing '"'.
+        assert_eq!(parse_rlimit_entry("11=512:1024\""), Some((11, 512, 1024)));
+    }
+
+    #[test]
+    fn rlimit_too_few_parts_is_none() {
+        assert_eq!(parse_rlimit_entry("7:1024"), None);
+    }
+
+    #[test]
+    fn rlimit_non_numeric_is_none() {
+        assert_eq!(parse_rlimit_entry("invalid"), None);
     }
 }
