@@ -31,7 +31,8 @@ const VIRTIOFS_MAGIC: libc::c_long = 0x6573_5546;
 #[cfg(target_os = "linux")]
 pub fn setup_redirects() {
     let Ok(ports_dir) = fs::read_dir("/sys/class/virtio-ports") else {
-        return;
+        eprintln!("Unable to open virtio-ports directory");
+        process::exit(125);
     };
     for entry in ports_dir.flatten() {
         let name_path = entry.path().join("name");
