@@ -80,7 +80,10 @@ pub fn set_exit_code(code: i32) {
 pub fn set_exit_code(_code: i32) {}
 
 pub fn run_workload(argv: &[String]) -> ! {
-    if env::var("KRUN_INIT_PID1") == Ok("1".to_owned()) {
+    // Match the C init which checked *env_init_pid1 == '1' (first-byte prefix),
+    // accepting "1", "10", "1\n", etc.  Exact equality with "1" would reject
+    // values that arrive with a trailing newline.
+    if env::var("KRUN_INIT_PID1").is_ok_and(|v| v.starts_with('1')) {
         exec_workload(argv);
     }
 
