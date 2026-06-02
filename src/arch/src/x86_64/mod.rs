@@ -17,20 +17,25 @@ pub mod msr;
 /// Logic for configuring x86_64 registers.
 pub mod regs;
 
+#[cfg(target_os = "linux")]
+pub mod linux;
+#[cfg(target_os = "windows")]
+pub mod windows;
+
 use crate::x86_64::layout::{EBDA_START, FIRST_ADDR_PAST_32BITS, MMIO_MEM_START};
 #[cfg(feature = "tee")]
 use crate::x86_64::layout::{FIRMWARE_SIZE, FIRMWARE_START};
 use crate::{ArchMemoryInfo, InitrdConfig};
-#[cfg(not(feature = "tee"))]
+#[cfg(all(not(feature = "tee"), target_os = "linux"))]
 use arch_gen::x86::bootparam::E820_RESERVED;
 use arch_gen::x86::bootparam::{E820_RAM, boot_params};
 use vm_memory::Bytes;
 use vm_memory::{Address, ByteValued, GuestAddress, GuestMemoryMmap};
 use vmm_sys_util::align_upwards;
 
-#[cfg(not(feature = "tee"))]
+#[cfg(all(not(feature = "tee"), target_os = "linux"))]
 use linux_loader::configurator::{BootConfigurator, BootParams, pvh::PvhBootConfigurator};
-#[cfg(not(feature = "tee"))]
+#[cfg(all(not(feature = "tee"), target_os = "linux"))]
 use linux_loader::loader::elf::start_info::{
     hvm_memmap_table_entry, hvm_modlist_entry, hvm_start_info,
 };
@@ -55,7 +60,7 @@ pub enum Error {
     #[cfg(not(feature = "tee"))]
     MpTableSetup(mptable::Error),
     /// Error writing hvm_start_info to guest memory.
-    #[cfg(not(feature = "tee"))]
+    #[cfg(all(not(feature = "tee"), target_os = "linux"))]
     StartInfoSetup,
     /// Error writing the zero page of guest memory.
     ZeroPageSetup,
@@ -273,7 +278,7 @@ pub fn configure_system(
     mptable::setup_mptable(guest_mem, num_cpus).map_err(Error::MpTableSetup)?;
 
     if pvh {
-        #[cfg(not(feature = "tee"))]
+        #[cfg(all(not(feature = "tee"), target_os = "linux"))]
         configure_pvh(guest_mem, arch_memory_info, cmdline_addr, initrd)?;
     } else {
         configure_64bit_boot(
@@ -288,7 +293,7 @@ pub fn configure_system(
     Ok(())
 }
 
-#[cfg(not(feature = "tee"))]
+#[cfg(all(not(feature = "tee"), target_os = "linux"))]
 fn configure_pvh(
     guest_mem: &GuestMemoryMmap,
     arch_memory_info: &ArchMemoryInfo,
@@ -359,7 +364,7 @@ fn configure_pvh(
         .map_err(|_| Error::StartInfoSetup)
 }
 
-#[cfg(not(feature = "tee"))]
+#[cfg(all(not(feature = "tee"), target_os = "linux"))]
 fn add_memmap_entry(memmap: &mut Vec<hvm_memmap_table_entry>, addr: u64, size: u64, mem_type: u32) {
     memmap.push(hvm_memmap_table_entry {
         addr,
