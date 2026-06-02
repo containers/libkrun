@@ -1,14 +1,14 @@
 use std::env;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::mem;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::os::fd::AsRawFd;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::ptr;
 
 #[cfg(target_os = "linux")]
 use nix::errno::Errno;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use nix::sys::socket::{self, AddressFamily, SockFlag, SockType};
 
 #[cfg(target_os = "linux")]
@@ -36,7 +36,40 @@ pub fn setup_network(iface: &str) {
     setup_dhcp(iface, sock.as_raw_fd());
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "freebsd")]
+pub fn setup_network() {
+    // Bring up the loopback interface on FreeBSD.
+    //
+    // libc does not export SIOCSIFFLAGS for FreeBSD targets; the ioctl number
+    // is _IOW('i', 16, struct ifreq) = 0x80206910 on both aarch64 and x86_64
+    // (sizeof(struct ifreq) == 32 on both).
+    const SIOCSIFFLAGS: libc::c_ulong = 0x80206910;
+
+    let Ok(sock) = socket::socket(
+        AddressFamily::Inet,
+        SockType::Datagram,
+        SockFlag::empty(),
+        None,
+    ) else {
+        return;
+    };
+    let mut ifr: libc::ifreq = unsafe { mem::zeroed() };
+    let lo = c"lo";
+    unsafe {
+        ptr::copy_nonoverlapping(
+            lo.as_ptr(),
+            ifr.ifr_name.as_mut_ptr(),
+            lo.to_bytes_with_nul().len(),
+        );
+        // On FreeBSD, ifru_flags is [c_short; 2]; index 0 holds the flags value.
+        ifr.ifr_ifru.ifru_flags[0] |= libc::IFF_UP as libc::c_short;
+        libc::ioctl(sock.as_raw_fd(), SIOCSIFFLAGS as _, &ifr);
+    }
+}
+
+// On macOS host builds and other non-Linux, non-FreeBSD platforms the
+// loopback interface is already configured by the OS.
+#[cfg(all(not(target_os = "linux"), not(target_os = "freebsd")))]
 pub fn setup_network() {}
 
 #[cfg(target_os = "linux")]
