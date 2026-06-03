@@ -465,6 +465,68 @@ mod guest {
         }
     }
 
+    /// Test rename-overwrite with open file descriptors (PR #700 regression test).
+    ///
+    /// This verifies the fix for a macOS-specific fd leak when renaming over
+    /// an existing file. The macOS virtio-fs implementation uses volfs paths
+    /// (/.vol/{dev}/{ino}) which become invalid when the inode's last link is
+    /// removed. When rename() replaces a file, the old target loses its link,
+    /// breaking operations on still-open fds.
+    ///
+    /// This pattern broke apt/dpkg atomic writes:
+    /// "Problem closing the file /var/lib/dpkg/status - close (2: No such file or directory)"
+    fn test_rename_overwrite_fchmod() {
+        let target_path = "/test_rename_fstat_target";
+        let temp_path = "/test_rename_fstat_temp";
+
+        // Create target with initial content
+        let mut target_file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(target_path)
+            .unwrap();
+
+        target_file.write_all(b"data1\n").unwrap();
+        target_file.flush().unwrap();
+
+        // Keep the target file open
+        let open_target = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(target_path)
+            .unwrap();
+
+        // Create temp file
+        let mut temp_file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(temp_path)
+            .unwrap();
+
+        temp_file.write_all(b"data2\n").unwrap();
+        temp_file.flush().unwrap();
+        drop(temp_file);
+
+        // Rename temp over target
+        fs::rename(temp_path, target_path).expect("rename failed");
+
+        // Try to get file stats via the still-open file descriptor.
+        // Before PR #700, this would fail with ENOENT on macOS.
+        open_target
+            .metadata()
+            .expect("fstat on open fd after rename failed - PR #700 regression!");
+
+        // Try to change permission bits via the still-open file descriptor.
+        use nix::sys::stat::{Mode, fchmod};
+        fchmod(
+            open_target.as_raw_fd(),
+            Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP,
+        )
+        .expect("fchmod on open fd after rename failed - PR #700 regression!");
+    }
+
     /// Test that creating files mid-iteration does not cause duplicates.
     ///
     /// POSIX says readdir behavior is unspecified when the directory is modified
@@ -575,6 +637,7 @@ mod guest {
                     "fallocate_punch_hole_requires_keep_size",
                     test_fallocate_punch_hole_requires_keep_size,
                 ),
+                ("rename_overwrite_fchmod", test_rename_overwrite_fchmod),
                 ("dirstream_create", test_dirstream_create),
                 ("dirstream_unlink", test_dirstream_unlink),
                 ("dirstream_mkdir_rmdir", test_dirstream_mkdir_rmdir),
