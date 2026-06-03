@@ -446,7 +446,9 @@ fn handle_dhcp_ack(nl_sock: libc::c_int, iface_index: i32, response: &[u8]) -> a
         }
     }
 
-    if let Err(e) = std::fs::write("/etc/resolv.conf", &resolv_conf) {
+    if !resolv_conf.is_empty()
+        && let Err(e) = std::fs::write("/etc/resolv.conf", &resolv_conf)
+    {
         eprintln!("Warning: couldn't write /etc/resolv.conf: {e}");
     }
 
