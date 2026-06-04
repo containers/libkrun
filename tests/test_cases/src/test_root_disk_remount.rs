@@ -102,9 +102,6 @@ mod host {
                 let ctx = krun_call_u32!(krun_create_ctx())?;
                 krun_call!(krun_set_vm_config(ctx, 1, 512))?;
 
-                // Disable implicit init — we inject explicitly below.
-                krun_call!(krun_disable_implicit_init(ctx))?;
-
                 // Add a block device with the ext4 image.
                 krun_call!(krun_add_disk(
                     ctx,
