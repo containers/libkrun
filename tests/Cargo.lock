@@ -183,7 +183,7 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 [[package]]
 name = "ffier"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=8b06dc3#8b06dc3b86fd66dd11030b7bfd5bacbd026387e8"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
 dependencies = [
  "ffier-annotations",
  "ffier-builtins",
@@ -193,7 +193,7 @@ dependencies = [
 [[package]]
 name = "ffier-annotations"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=8b06dc3#8b06dc3b86fd66dd11030b7bfd5bacbd026387e8"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
 dependencies = [
  "ffier-meta",
  "proc-macro2",
@@ -204,7 +204,7 @@ dependencies = [
 [[package]]
 name = "ffier-builtins"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=8b06dc3#8b06dc3b86fd66dd11030b7bfd5bacbd026387e8"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
 dependencies = [
  "ffier-annotations",
  "ffier-rt",
@@ -213,7 +213,7 @@ dependencies = [
 [[package]]
 name = "ffier-meta"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=8b06dc3#8b06dc3b86fd66dd11030b7bfd5bacbd026387e8"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -223,7 +223,7 @@ dependencies = [
 [[package]]
 name = "ffier-rt"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=8b06dc3#8b06dc3b86fd66dd11030b7bfd5bacbd026387e8"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
 
 [[package]]
 name = "fuchsia-cprng"
