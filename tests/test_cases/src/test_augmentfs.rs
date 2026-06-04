@@ -17,9 +17,9 @@ fn make_test_payload() -> Vec<u8> {
 mod host {
     use super::*;
 
+    use crate::krun_init;
     use crate::{Test, TestSetup};
     use crate::{krun_call, krun_call_u32};
-    use crate::krun_init;
     use krun_sys::*;
     use std::ffi::CString;
     use std::os::fd::AsRawFd;

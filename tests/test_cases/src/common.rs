@@ -7,7 +7,7 @@ use std::fs::create_dir;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use crate::{krun_call, krun_init, TestSetup};
+use crate::{TestSetup, krun_call, krun_init};
 use krun_sys::*;
 
 fn copy_guest_agent(dir: &Path) -> anyhow::Result<()> {
