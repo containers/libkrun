@@ -67,6 +67,16 @@ use krun_input::{InputConfigBackend, InputEventProviderBackend};
 
 // Value returned on success. We use libc's errors otherwise.
 const KRUN_SUCCESS: i32 = 0;
+
+/// Extend a reference's lifetime to `'static`.
+///
+/// # Safety
+///
+/// The caller must guarantee that the referenced data outlives all uses
+/// of the returned reference.
+unsafe fn extend_lifetime<T: ?Sized>(r: &T) -> &'static T {
+    unsafe { core::mem::transmute(r) }
+}
 // Maximum number of arguments/environment variables we allow
 const MAX_ARGS: usize = 4096;
 /// Maximum number of virtqueues allowed by virtio spec (16-bit queue index: 0-65535)
@@ -2534,6 +2544,91 @@ fn fs_add_overlay_entry(ctx_id: u32, fs_tag: &str, path: &str, entry: VirtualEnt
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
+    KRUN_SUCCESS
+}
+
+// ---------------------------------------------------------------------------
+// libkrun-init interop: inject GuestFile handles from libkrun-init.so
+//
+// ---------------------------------------------------------------------------
+// libkrun-init interop: inject init config handles from libkrun-init.so
+// ---------------------------------------------------------------------------
+
+use krun_init_blob_via_cdylib_weak as krun_init;
+
+/// Inject all guest files from a `KrunInitConfig` handle (from libkrun-init.so)
+/// into a virtiofs device as overlay files.
+///
+/// The `config_handle` is an opaque pointer obtained from
+/// `krun_init_config_builder_build()`. This function calls into
+/// libkrun-init.so via dlsym to iterate the guest files and inject each
+/// one into the specified virtiofs device.
+///
+/// Returns `-ENOSYS` if libkrun-init.so is not loaded.
+#[allow(clippy::missing_safety_doc)]
+#[unsafe(no_mangle)]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+pub unsafe extern "C" fn krun_inject_init(
+    ctx_id: u32,
+    c_fs_tag: *const c_char,
+    config_handle: *mut c_void,
+) -> i32 {
+    use krun_init::Symbol;
+
+    if krun_init::require(&[
+        Symbol::KrunInitConfigGuestFiles,
+        Symbol::KrunInitGuestFilePath,
+        Symbol::KrunInitGuestFileData,
+        Symbol::KrunInitGuestFileMode,
+        Symbol::KrunInitGuestFileOneShot,
+    ])
+    .is_err()
+    {
+        return -libc::ENOSYS;
+    }
+
+    if c_fs_tag.is_null() || config_handle.is_null() {
+        return -libc::EINVAL;
+    }
+
+    let fs_tag = match unsafe { CStr::from_ptr(c_fs_tag).to_str() } {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    use core::mem::ManuallyDrop;
+    let config = ManuallyDrop::new(krun_init::Config::__from_raw(config_handle));
+    let files = config.guest_files();
+
+    for file in files.iter() {
+        let path = file.path();
+        let mode = file.mode();
+        let one_shot = file.one_shot();
+        // SAFETY: The data is borrowed from the Config handle. The caller
+        // must keep the Config alive for the VM lifetime.
+        let data = unsafe { extend_lifetime(file.data()) };
+
+        let ret = fs_add_overlay_entry(
+            ctx_id,
+            fs_tag,
+            path,
+            VirtualEntry {
+                mode,
+                one_shot,
+                content: VirtualEntryContent::File { data },
+            },
+        );
+        if ret != KRUN_SUCCESS {
+            return ret;
+        }
+    }
+
+    // Disable implicit init injection — we just did it explicitly.
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => ctx_cfg.get_mut().disable_implicit_init = true,
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
     KRUN_SUCCESS
 }
 

@@ -24,6 +24,7 @@ timesync = ["devices/timesync", "init-blob/timesync"]
 [dependencies]
 crossbeam-channel = ">=0.5.15"
 env_logger = "0.11"
+krun-init-blob-via-cdylib-weak = { path = "../../init/init-blob-via-cdylib-weak" }
 libc = ">=0.2.39"
 libloading = "0.8"
 log = "0.4.0"

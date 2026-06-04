@@ -1034,6 +1034,7 @@ dependencies = [
  "krun-devices",
  "krun-display",
  "krun-hvf",
+ "krun-init-blob-via-cdylib-weak",
  "krun-input",
  "krun-polly",
  "krun-utils",
