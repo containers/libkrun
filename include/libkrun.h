@@ -715,18 +715,6 @@ int32_t krun_add_vhost_user_device(uint32_t ctx_id,
                                    const uint16_t *queue_sizes);
 
 /**
- * Configures a map of rlimits to be set in the guest before starting the isolated binary.
- *
- * Arguments:
- *  "ctx_id"  - the configuration context ID.
- *  "rlimits" - an array of string pointers with format "RESOURCE=RLIM_CUR:RLIM_MAX".
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_rlimits(uint32_t ctx_id, const char *const rlimits[]);
-
-/**
  * Sets the SMBIOS OEM Strings.
  *
  * Arguments:
@@ -737,39 +725,6 @@ int32_t krun_set_rlimits(uint32_t ctx_id, const char *const rlimits[]);
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_set_smbios_oem_strings(uint32_t ctx_id, const char *const oem_strings[]);
-
-/**
- * Sets the working directory for the executable to be run inside the microVM.
- *
- * Arguments:
- *  "ctx_id"        - the configuration context ID.
- *  "workdir_path"  - the path to the working directory, relative to the root filesystem.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_workdir(uint32_t ctx_id,
-                         const char *workdir_path);
-
-/**
- * Sets the path to the executable to be run inside the microVM, the arguments to be passed to the
- * executable, and the environment variables to be configured in the context of the executable.
- *
- * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "exec_path" - the path to the executable, relative to the root filesystem.
- *  "argv"      - an array of string pointers to be passed as arguments.
- *  "envp"      - an array of string pointers to be injected as environment variables into the
- *                context of the executable. If NULL, it will auto-generate an array collecting the
- *                the variables currently present in the environment.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_exec(uint32_t ctx_id,
-                      const char *exec_path,
-                      const char *const argv[],
-                      const char *const envp[]);
 
 /**
  * Sets the path to the firmware to be loaded into the microVM.
@@ -808,20 +763,6 @@ int32_t krun_set_kernel(uint32_t ctx_id,
                         uint32_t kernel_format,
                         const char *initramfs,
                         const char *cmdline);
-
-/**
- * Sets environment variables to be configured in the context of the executable.
- *
- * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "envp"      - an array of string pointers to be injected as environment variables into the
- *                context of the executable. If NULL, it will auto-generate an array collecting the
- *                the variables currently present in the environment.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_env(uint32_t ctx_id, const char *const envp[]);
 
 /**
  * Sets the file path to the TEE configuration file. Only available in libkrun-sev.
