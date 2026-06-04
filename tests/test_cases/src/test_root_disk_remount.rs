@@ -13,13 +13,12 @@ pub struct TestRootDiskRemount;
 mod host {
     use super::*;
 
-    use crate::{ShouldRun, krun_call, krun_call_u32};
+    use crate::{krun_call, krun_call_u32, ShouldRun};
     use crate::{Test, TestSetup};
     use krun_sys::*;
     use nix::libc;
     use std::ffi::CString;
     use std::process::Command;
-    use std::ptr::null;
 
     type KrunAddDiskFn = unsafe extern "C" fn(
         ctx_id: u32,
@@ -102,8 +101,8 @@ mod host {
                 let ctx = krun_call_u32!(krun_create_ctx())?;
                 krun_call!(krun_set_vm_config(ctx, 1, 512))?;
 
-                let argv = [test_case.as_ptr(), null()];
-                let envp = [null()];
+                let argv = [test_case.as_ptr(), std::ptr::null()];
+                let envp = [std::ptr::null()];
                 krun_call!(krun_set_exec(
                     ctx,
                     c"/guest-agent".as_ptr(),
