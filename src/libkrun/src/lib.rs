@@ -3137,7 +3137,7 @@ mod test_disable_implicit_init {
         let ctx = unsafe { krun_create_ctx() } as u32;
         unsafe {
             krun_disable_implicit_init(ctx);
-            krun_set_root(ctx, c"/tmp".as_ptr());
+            krun_add_virtiofs3(ctx, c"/dev/root".as_ptr(), c"/tmp".as_ptr(), 0, false);
         }
 
         let ctx_map = CTX_MAP.lock().unwrap();

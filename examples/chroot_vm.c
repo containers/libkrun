@@ -405,7 +405,7 @@ int main(int argc, char *const argv[])
     rlim.rlim_cur = rlim.rlim_max;
     setrlimit(RLIMIT_NOFILE, &rlim);
 
-    if (err = krun_set_root(ctx_id, cmdline.new_root)) {
+    if (err = krun_add_virtiofs3(ctx_id, KRUN_FS_ROOT_TAG, cmdline.new_root, 0, false)) {
         errno = -err;
         perror("Error configuring root path");
         return -1;

@@ -6,17 +6,17 @@ use gtk_display::{
 };
 
 use krun_sys::{
-    KRUN_LOG_LEVEL_TRACE, KRUN_LOG_LEVEL_WARN, KRUN_LOG_STYLE_ALWAYS, KRUN_LOG_TARGET_DEFAULT,
-    VIRGLRENDERER_RENDER_SERVER, VIRGLRENDERER_THREAD_SYNC, VIRGLRENDERER_USE_ASYNC_FENCE_CB,
-    VIRGLRENDERER_USE_EGL, VIRGLRENDERER_VENUS, krun_add_display, krun_add_input_device,
-    krun_add_input_device_fd, krun_create_ctx, krun_display_set_dpi,
+    krun_add_display, krun_add_input_device, krun_add_input_device_fd,
+    krun_add_virtio_console_default, krun_add_virtiofs3, krun_create_ctx, krun_display_set_dpi,
     krun_display_set_physical_size, krun_display_set_refresh_rate, krun_init_log,
-    krun_set_display_backend, krun_set_exec, krun_set_gpu_options2, krun_set_root,
-    krun_set_vm_config, krun_start_enter,
+    krun_set_display_backend, krun_set_exec, krun_set_gpu_options2, krun_set_vm_config,
+    krun_start_enter, KRUN_LOG_LEVEL_TRACE, KRUN_LOG_LEVEL_WARN, KRUN_LOG_STYLE_ALWAYS,
+    KRUN_LOG_TARGET_DEFAULT, VIRGLRENDERER_RENDER_SERVER, VIRGLRENDERER_THREAD_SYNC,
+    VIRGLRENDERER_USE_ASYNC_FENCE_CB, VIRGLRENDERER_USE_EGL, VIRGLRENDERER_VENUS,
 };
 use log::LevelFilter;
 use regex::{Captures, Regex};
-use std::ffi::{CString, c_void};
+use std::ffi::{c_void, CString};
 use std::fmt::Display;
 use std::fs::{File, OpenOptions};
 use std::mem::size_of_val;
@@ -160,7 +160,13 @@ fn krun_thread(
             4096
         ))?;
 
-        krun_call!(krun_set_root(ctx, args.root_dir.as_ptr()))?;
+        krun_call!(krun_add_virtiofs3(
+            ctx,
+            c"/dev/root".as_ptr(),
+            args.root_dir.as_ptr(),
+            0,
+            false
+        ))?;
 
         let executable = args.executable.as_ref().unwrap().as_ptr();
         let argv: Vec<_> = args.argv.iter().map(|a| a.as_ptr()).collect();

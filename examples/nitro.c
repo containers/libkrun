@@ -210,7 +210,7 @@ int main(int argc, char *const argv[])
     }
 
     // Configure the enclave's rootfs.
-    if (err = krun_set_root(ctx_id, cmdline.new_root)) {
+    if (err = krun_add_virtiofs3(ctx_id, KRUN_FS_ROOT_TAG, cmdline.new_root, 0, false)) {
         errno = -err;
         perror("Error configuring enclave rootfs");
         return -1;
