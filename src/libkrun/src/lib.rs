@@ -547,44 +547,6 @@ pub extern "C" fn krun_set_vm_config(ctx_id: u32, num_vcpus: u8, ram_mib: u32) -
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) -> i32 {
-    unsafe {
-        let root_path = match CStr::from_ptr(c_root_path).to_str() {
-            Ok(root) => root,
-            Err(_) => return -libc::EINVAL,
-        };
-
-        let fs_id = "/dev/root".to_string();
-        let shared_dir = root_path.to_string();
-
-        match CTX_MAP.lock().unwrap().entry(ctx_id) {
-            Entry::Occupied(mut ctx_cfg) => {
-                let cfg = ctx_cfg.get_mut();
-                cfg.vmr.add_fs_device(FsDeviceConfig {
-                    fs_id,
-                    shared_dir: Some(shared_dir),
-                    // Default to a conservative 512 MB window.
-                    shm_size: Some(1 << 29),
-                    read_only: false,
-                    virtual_entries: {
-                        let mut v = Vec::new();
-                        if !cfg.disable_implicit_init {
-                            v.push(init_virtual_entry());
-                        }
-                        v
-                    },
-                });
-            }
-            Entry::Vacant(_) => return -libc::ENOENT,
-        }
-
-        KRUN_SUCCESS
-    }
-}
-
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
-#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 pub unsafe extern "C" fn krun_add_virtiofs(
     ctx_id: u32,
     c_tag: *const c_char,
