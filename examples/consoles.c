@@ -189,9 +189,9 @@ int main(int argc, char *const argv[])
         return 1;
     }
 
-    if ((err = krun_set_root(ctx_id, root_dir))) {
+    if ((err = krun_add_virtiofs3(ctx_id, KRUN_FS_ROOT_TAG, root_dir, 0, false))) {
         errno = -err;
-        perror("krun_set_root");
+        perror("krun_add_virtiofs3");
         return 1;
     }
 
