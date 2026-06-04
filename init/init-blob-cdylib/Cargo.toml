@@ -1,0 +1,25 @@
+[package]
+name = "krun-init-blob-cdylib"
+version = "0.1.0-1.18.1"
+edition = "2021"
+description = "FFI bridge for libkrun-init (init binary + config builder)"
+license = "Apache-2.0"
+repository = "https://github.com/containers/libkrun"
+
+[lib]
+name = "krun_init"
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "krun-init-blob-gen"
+path = "src/gen.rs"
+
+[dependencies]
+init-blob = { path = "../init-blob" }
+ffier = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "9e36967" }
+ffier-bridge = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "9e36967" }
+ffier-bridge-macros = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "9e36967" }
+ffier-gen-c-header = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "9e36967" }
+ffier-gen-rust-client = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "9e36967" }
+ffier-schema = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "9e36967" }
+serde_json = "1"

@@ -1,0 +1,1345 @@
+#![allow(
+    dead_code,
+    unused_unsafe,
+    clippy::missing_safety_doc,
+    clippy::needless_lifetimes
+)]
+/// Marker trait for types exported as opaque C handles.
+pub trait FfiHandle {
+    const C_HANDLE_NAME: &'static str;
+    const TYPE_TAG: u32;
+    unsafe fn as_handle(&self) -> *mut core::ffi::c_void;
+    fn __from_raw(handle: *mut core::ffi::c_void) -> Self;
+}
+
+/// Maps Rust types to C-compatible representations.
+pub trait FfiType {
+    type CRepr;
+    const C_TYPE_NAME: &'static str;
+    const IS_HANDLE: bool = false;
+    fn into_c(self) -> Self::CRepr;
+    unsafe fn from_c(repr: Self::CRepr) -> Self;
+}
+
+macro_rules! impl_ffi_identity {
+    ($($t:ty => $n:expr),* $(,)?) => { $(
+        impl FfiType for $t {
+            type CRepr = $t; const C_TYPE_NAME: &'static str = $n; const IS_HANDLE: bool = false;
+            fn into_c(self) -> Self { self } unsafe fn from_c(r: Self) -> Self { r }
+        }
+    )* };
+}
+impl_ffi_identity! {
+    i8 => "int8_t", i16 => "int16_t", i32 => "int32_t", i64 => "int64_t",
+    u8 => "uint8_t", u16 => "uint16_t", u32 => "uint32_t", u64 => "uint64_t",
+    isize => "ssize_t", usize => "size_t", bool => "bool",
+}
+
+impl FfiType for &str {
+    type CRepr = ffier::FfierBytes;
+    const C_TYPE_NAME: &'static str = "FfierStr";
+    const IS_HANDLE: bool = false;
+    fn into_c(self) -> ffier::FfierBytes {
+        unsafe { ffier::FfierBytes::from_str(self) }
+    }
+    unsafe fn from_c(repr: ffier::FfierBytes) -> Self {
+        unsafe {
+            let b = core::slice::from_raw_parts(repr.data, repr.len);
+            core::str::from_utf8_unchecked(b)
+        }
+    }
+}
+
+impl<'a> FfiType for Option<&'a str> {
+    type CRepr = ffier::FfierBytes;
+    const C_TYPE_NAME: &'static str = "FfierStr";
+    const IS_HANDLE: bool = false;
+    fn into_c(self) -> ffier::FfierBytes {
+        match self {
+            Some(s) => unsafe { ffier::FfierBytes::from_str(s) },
+            None => ffier::FfierBytes::EMPTY,
+        }
+    }
+    unsafe fn from_c(repr: ffier::FfierBytes) -> Self {
+        if repr.data.is_null() {
+            None
+        } else {
+            unsafe {
+                Some(core::str::from_utf8_unchecked(core::slice::from_raw_parts(
+                    repr.data, repr.len,
+                )))
+            }
+        }
+    }
+}
+
+impl FfiType for Box<str> {
+    type CRepr = ffier::FfierBytes;
+    const C_TYPE_NAME: &'static str = "FfierStr";
+    const IS_HANDLE: bool = false;
+    fn into_c(self) -> ffier::FfierBytes {
+        let leaked: &mut str = Box::leak(self);
+        ffier::FfierBytes {
+            data: leaked.as_mut_ptr() as *const u8,
+            len: leaked.len(),
+        }
+    }
+    unsafe fn from_c(repr: ffier::FfierBytes) -> Self {
+        unsafe {
+            let slice = core::slice::from_raw_parts_mut(repr.data as *mut u8, repr.len);
+            Box::from_raw(core::str::from_utf8_unchecked_mut(slice))
+        }
+    }
+}
+
+impl FfiType for &[u8] {
+    type CRepr = ffier::FfierBytes;
+    const C_TYPE_NAME: &'static str = "FfierBytes";
+    const IS_HANDLE: bool = false;
+    fn into_c(self) -> ffier::FfierBytes {
+        unsafe { ffier::FfierBytes::from_bytes(self) }
+    }
+    unsafe fn from_c(repr: ffier::FfierBytes) -> Self {
+        unsafe {
+            if repr.data.is_null() {
+                &[]
+            } else {
+                core::slice::from_raw_parts(repr.data, repr.len)
+            }
+        }
+    }
+}
+
+impl<T: FfiHandle + 'static> FfiType for &T {
+    type CRepr = *mut core::ffi::c_void;
+    const C_TYPE_NAME: &'static str = T::C_HANDLE_NAME;
+    const IS_HANDLE: bool = true;
+    fn into_c(self) -> *mut core::ffi::c_void {
+        unsafe { self.as_handle() }
+    }
+    unsafe fn from_c(_: *mut core::ffi::c_void) -> Self {
+        unimplemented!("client-side &T from_c")
+    }
+}
+impl<T: FfiHandle + 'static> FfiType for &mut T {
+    type CRepr = *mut core::ffi::c_void;
+    const C_TYPE_NAME: &'static str = T::C_HANDLE_NAME;
+    const IS_HANDLE: bool = true;
+    fn into_c(self) -> *mut core::ffi::c_void {
+        unsafe { self.as_handle() }
+    }
+    unsafe fn from_c(_: *mut core::ffi::c_void) -> Self {
+        unimplemented!("client-side &mut T from_c")
+    }
+}
+
+/// Borrowed slice of handles returned from FFI methods.
+/// Elements are borrowed — do NOT destroy them individually.
+/// Derefs to `&[T]`, so indexing, iteration, `len()`, etc. all work.
+/// Dropping this type frees the backing array.
+pub struct ForeignSlice<T> {
+    raw: ffier::FfierObjectArray,
+    elements: Box<[core::mem::ManuallyDrop<T>]>,
+}
+
+impl<T: FfiHandle> ForeignSlice<T> {
+    fn from_raw(raw: ffier::FfierObjectArray) -> Self {
+        let elements: Box<[core::mem::ManuallyDrop<T>]> = (0..raw.len)
+            .map(|i| {
+                core::mem::ManuallyDrop::new(T::__from_raw(unsafe {
+                    ffier::ffier_object_array_get(raw, i)
+                }))
+            })
+            .collect();
+        Self { raw, elements }
+    }
+}
+
+impl<T> core::ops::Deref for ForeignSlice<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        // SAFETY: ManuallyDrop<T> is #[repr(transparent)] over T.
+        unsafe { core::mem::transmute::<&[core::mem::ManuallyDrop<T>], &[T]>(&self.elements) }
+    }
+}
+
+impl<T> Drop for ForeignSlice<T> {
+    fn drop(&mut self) {
+        unsafe { ffier::ffier_object_array_free(self.raw) };
+    }
+}
+
+static KRUN_INIT_ERROR_PAYLOAD: std::sync::OnceLock<
+    unsafe extern "C" fn(*const core::ffi::c_void, *mut core::ffi::c_void, usize),
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+unsafe fn krun_init_error_payload(
+    handle: *const core::ffi::c_void,
+    out_buf: *mut core::ffi::c_void,
+    buf_size: usize,
+) {
+    unsafe {
+        (KRUN_INIT_ERROR_PAYLOAD
+            .get()
+            .expect("symbol `krun_init_error_payload` not loaded; call require() first"))(
+            handle, out_buf, buf_size,
+        )
+    }
+}
+
+pub struct ConfigErrorErrorHandle(*mut core::ffi::c_void);
+impl ConfigErrorErrorHandle {
+    fn handle(&self) -> *mut core::ffi::c_void {
+        self.0
+    }
+}
+impl Drop for ConfigErrorErrorHandle {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe { krun_init_error_destroy(self.0) }
+        }
+    }
+}
+impl std::fmt::Debug for ConfigErrorErrorHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ErrorHandle({:?})", self.0)
+    }
+}
+
+pub struct ConfigErrorInvalidJsonData(ConfigErrorErrorHandle);
+impl ConfigErrorInvalidJsonData {
+    pub fn field_0(&self) -> &str {
+        let mut __buf = std::mem::MaybeUninit::<ffier::FfierBytes>::uninit();
+        unsafe {
+            krun_init_error_payload(
+                self.0.handle() as *const core::ffi::c_void,
+                __buf.as_mut_ptr() as *mut core::ffi::c_void,
+                core::mem::size_of::<ffier::FfierBytes>(),
+            )
+        };
+        unsafe { <&str as FfiType>::from_c(__buf.assume_init()) }
+    }
+}
+impl std::fmt::Debug for ConfigErrorInvalidJsonData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "InvalidJson(...)")
+    }
+}
+
+#[derive(Debug)]
+pub enum ConfigError {
+    InvalidJson(ConfigErrorInvalidJsonData),
+}
+
+impl ConfigError {
+    pub fn from_ffi(r: ffier::FfierResult, err_handle: *mut core::ffi::c_void) -> Self {
+        let code = ffier::ffier_result_code(r);
+        let handle = ConfigErrorErrorHandle(err_handle);
+        match code {
+            1u32 => Self::InvalidJson(ConfigErrorInvalidJsonData(handle)),
+            other => panic!("unknown {} error code {}", "ConfigError", other),
+        }
+    }
+    fn handle_ptr(&self) -> *mut core::ffi::c_void {
+        match self {
+            Self::InvalidJson(d) => d.0.handle(),
+        }
+    }
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        struct FmtWriter(*mut core::ffi::c_void);
+        impl PushStr for FmtWriter {
+            fn push(&mut self, s: &str) -> bool {
+                unsafe {
+                    (&mut *(self.0 as *mut std::fmt::Formatter<'_>))
+                        .write_str(s)
+                        .is_ok()
+                }
+            }
+        }
+        let mut __writer = FmtWriter(f as *mut std::fmt::Formatter<'_> as *mut core::ffi::c_void);
+        let __vtable: &'static PushStrVtable = FmtWriter::__ffier_vtable();
+        let mut __temp = ffier::FfierHandle {
+            type_tag: 33554433u32,
+            metadata: 0,
+            value: ffier::VtableHandle {
+                vtable_ptr: __vtable as *const PushStrVtable as *const core::ffi::c_void,
+                user_data: &mut __writer as *mut FmtWriter as *const core::ffi::c_void,
+                vtable_size: core::mem::size_of::<PushStrVtable>() as u16,
+            },
+        };
+        let __writer_handle =
+            &mut __temp as *mut ffier::FfierHandle<ffier::VtableHandle> as *mut core::ffi::c_void;
+        unsafe { krun_init_error_message(self.handle_ptr(), __writer_handle) };
+        Ok(())
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+static KRUN_INIT_GUEST_FILE_DESTROY: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void),
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_guest_file_destroy(handle: *mut core::ffi::c_void) {
+    unsafe {
+        (KRUN_INIT_GUEST_FILE_DESTROY
+            .get()
+            .expect("symbol `krun_init_guest_file_destroy` not loaded; call require() first"))(
+            handle,
+        )
+    }
+}
+
+static KRUN_INIT_GUEST_FILE_PATH: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void) -> <&'static str as FfiType>::CRepr,
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_guest_file_path(
+    handle: *mut core::ffi::c_void,
+) -> <&'static str as FfiType>::CRepr {
+    unsafe {
+        (KRUN_INIT_GUEST_FILE_PATH
+            .get()
+            .expect("symbol `krun_init_guest_file_path` not loaded; call require() first"))(
+            handle
+        )
+    }
+}
+
+static KRUN_INIT_GUEST_FILE_DATA: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void) -> <&'static [u8] as FfiType>::CRepr,
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_guest_file_data(
+    handle: *mut core::ffi::c_void,
+) -> <&'static [u8] as FfiType>::CRepr {
+    unsafe {
+        (KRUN_INIT_GUEST_FILE_DATA
+            .get()
+            .expect("symbol `krun_init_guest_file_data` not loaded; call require() first"))(
+            handle
+        )
+    }
+}
+
+static KRUN_INIT_GUEST_FILE_MODE: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void) -> <u32 as FfiType>::CRepr,
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_guest_file_mode(handle: *mut core::ffi::c_void) -> <u32 as FfiType>::CRepr {
+    unsafe {
+        (KRUN_INIT_GUEST_FILE_MODE
+            .get()
+            .expect("symbol `krun_init_guest_file_mode` not loaded; call require() first"))(
+            handle
+        )
+    }
+}
+
+static KRUN_INIT_GUEST_FILE_ONE_SHOT: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void) -> <bool as FfiType>::CRepr,
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_guest_file_one_shot(
+    handle: *mut core::ffi::c_void,
+) -> <bool as FfiType>::CRepr {
+    unsafe {
+        (KRUN_INIT_GUEST_FILE_ONE_SHOT
+            .get()
+            .expect("symbol `krun_init_guest_file_one_shot` not loaded; call require() first"))(
+            handle,
+        )
+    }
+}
+
+pub struct GuestFile(*mut core::ffi::c_void);
+
+impl GuestFile {
+    #[doc(hidden)]
+    pub fn __from_raw(ptr: *mut core::ffi::c_void) -> Self {
+        Self(ptr)
+    }
+    #[doc(hidden)]
+    pub fn __into_raw(self) -> *mut core::ffi::c_void {
+        let this = std::mem::ManuallyDrop::new(self);
+        this.0
+    }
+}
+
+impl FfiHandle for GuestFile {
+    const C_HANDLE_NAME: &'static str = "GuestFile";
+    const TYPE_TAG: u32 = 33554436u32;
+    unsafe fn as_handle(&self) -> *mut core::ffi::c_void {
+        self.0
+    }
+    fn __from_raw(handle: *mut core::ffi::c_void) -> Self {
+        Self(handle)
+    }
+}
+
+impl FfiType for GuestFile {
+    type CRepr = *mut core::ffi::c_void;
+    const C_TYPE_NAME: &'static str = "GuestFile";
+    fn into_c(self) -> *mut core::ffi::c_void {
+        self.__into_raw()
+    }
+    unsafe fn from_c(repr: *mut core::ffi::c_void) -> Self {
+        Self::__from_raw(repr)
+    }
+}
+
+impl std::fmt::Debug for GuestFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("GuestFile").field(&self.0).finish()
+    }
+}
+
+impl GuestFile {
+    #[doc = " Path on the guest root filesystem (e.g. `\"/init.krun\"`)."]
+    pub fn path(&self) -> &str {
+        let __raw = unsafe { krun_init_guest_file_path(self.0) };
+        unsafe { <&str as FfiType>::from_c(__raw) }
+    }
+    #[doc = " File contents."]
+    pub fn data(&self) -> &[u8] {
+        let __raw = unsafe { krun_init_guest_file_data(self.0) };
+        unsafe { <&[u8] as FfiType>::from_c(__raw) }
+    }
+    #[doc = " Permission mode bits (e.g. `0o755`)."]
+    pub fn mode(&self) -> u32 {
+        let __raw = unsafe { krun_init_guest_file_mode(self.0) };
+        unsafe { <u32 as FfiType>::from_c(__raw) }
+    }
+    #[doc = " Whether this file is one-shot (removed after first lookup)."]
+    pub fn one_shot(&self) -> bool {
+        let __raw = unsafe { krun_init_guest_file_one_shot(self.0) };
+        unsafe { <bool as FfiType>::from_c(__raw) }
+    }
+}
+
+impl Drop for GuestFile {
+    fn drop(&mut self) {
+        unsafe { krun_init_guest_file_destroy(self.0) }
+    }
+}
+
+static KRUN_INIT_CONFIG_DESTROY: std::sync::OnceLock<unsafe extern "C" fn(*mut core::ffi::c_void)> =
+    std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_config_destroy(handle: *mut core::ffi::c_void) {
+    unsafe {
+        (KRUN_INIT_CONFIG_DESTROY
+            .get()
+            .expect("symbol `krun_init_config_destroy` not loaded; call require() first"))(
+            handle
+        )
+    }
+}
+
+static KRUN_INIT_CONFIG_BUILDER: std::sync::OnceLock<
+    unsafe extern "C" fn() -> <ConfigBuilder as FfiType>::CRepr,
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_config_builder() -> <ConfigBuilder as FfiType>::CRepr {
+    unsafe {
+        (KRUN_INIT_CONFIG_BUILDER
+            .get()
+            .expect("symbol `krun_init_config_builder` not loaded; call require() first"))()
+    }
+}
+
+static KRUN_INIT_CONFIG_FROM_OCI_CONFIG_JSON: std::sync::OnceLock<
+    unsafe extern "C" fn(
+        <&'static str as FfiType>::CRepr,
+        *mut *mut core::ffi::c_void,
+    ) -> *mut core::ffi::c_void,
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_config_from_oci_config_json(
+    json: <&'static str as FfiType>::CRepr,
+    err_out: *mut *mut core::ffi::c_void,
+) -> *mut core::ffi::c_void {
+    unsafe {
+        (KRUN_INIT_CONFIG_FROM_OCI_CONFIG_JSON.get().expect(
+            "symbol `krun_init_config_from_oci_config_json` not loaded; call require() first",
+        ))(json, err_out)
+    }
+}
+
+static KRUN_INIT_CONFIG_KERNEL_INIT_ARG: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void) -> <&'static str as FfiType>::CRepr,
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_config_kernel_init_arg(
+    handle: *mut core::ffi::c_void,
+) -> <&'static str as FfiType>::CRepr {
+    unsafe {
+        (KRUN_INIT_CONFIG_KERNEL_INIT_ARG
+            .get()
+            .expect("symbol `krun_init_config_kernel_init_arg` not loaded; call require() first"))(
+            handle,
+        )
+    }
+}
+
+static KRUN_INIT_CONFIG_GUEST_FILES: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void) -> ffier::FfierObjectArray,
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_config_guest_files(
+    handle: *mut core::ffi::c_void,
+) -> ffier::FfierObjectArray {
+    unsafe {
+        (KRUN_INIT_CONFIG_GUEST_FILES
+            .get()
+            .expect("symbol `krun_init_config_guest_files` not loaded; call require() first"))(
+            handle,
+        )
+    }
+}
+
+pub struct Config(*mut core::ffi::c_void);
+
+impl Config {
+    #[doc(hidden)]
+    pub fn __from_raw(ptr: *mut core::ffi::c_void) -> Self {
+        Self(ptr)
+    }
+    #[doc(hidden)]
+    pub fn __into_raw(self) -> *mut core::ffi::c_void {
+        let this = std::mem::ManuallyDrop::new(self);
+        this.0
+    }
+}
+
+impl FfiHandle for Config {
+    const C_HANDLE_NAME: &'static str = "Config";
+    const TYPE_TAG: u32 = 33554437u32;
+    unsafe fn as_handle(&self) -> *mut core::ffi::c_void {
+        self.0
+    }
+    fn __from_raw(handle: *mut core::ffi::c_void) -> Self {
+        Self(handle)
+    }
+}
+
+impl FfiType for Config {
+    type CRepr = *mut core::ffi::c_void;
+    const C_TYPE_NAME: &'static str = "Config";
+    fn into_c(self) -> *mut core::ffi::c_void {
+        self.__into_raw()
+    }
+    unsafe fn from_c(repr: *mut core::ffi::c_void) -> Self {
+        Self::__from_raw(repr)
+    }
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Config").field(&self.0).finish()
+    }
+}
+
+impl Config {
+    #[doc = " Start building a new init configuration."]
+    pub fn builder() -> ConfigBuilder {
+        let __raw = unsafe { krun_init_config_builder() };
+        unsafe { <ConfigBuilder as FfiType>::from_c(__raw) }
+    }
+    #[doc = " Construct from an OCI runtime-spec config.json string."]
+    #[doc = ""]
+    #[doc = " The JSON is expected to use the OCI runtime-spec layout:"]
+    #[doc = " `{\"process\": {\"args\": [...], \"env\": [...], \"cwd\": \"...\"}, \"mounts\": [...]}`."]
+    #[doc = ""]
+    #[doc = " # Errors"]
+    #[doc = ""]
+    #[doc = " Returns `Err` if the JSON is syntactically invalid or contains"]
+    #[doc = " unexpected types."]
+    pub fn from_oci_config_json(json: &str) -> Result<Config, ConfigError> {
+        let mut __err: *mut core::ffi::c_void = core::ptr::null_mut();
+        let __raw = unsafe {
+            krun_init_config_from_oci_config_json(
+                <&str as FfiType>::into_c(json),
+                &mut __err as *mut *mut core::ffi::c_void,
+            )
+        };
+        if !__raw.is_null() {
+            Ok(unsafe { <Config as FfiType>::from_c(__raw) })
+        } else {
+            let __r = unsafe { krun_init_error_result(__err) };
+            Err(ConfigError::from_ffi(__r, __err))
+        }
+    }
+    #[doc = " Returns the kernel cmdline argument needed to boot with this init"]
+    #[doc = " (e.g. `\"init=/init.krun\"`). Pass this to `krun_set_kernel_args`."]
+    pub fn kernel_init_arg(&self) -> &str {
+        let __raw = unsafe { krun_init_config_kernel_init_arg(self.0) };
+        unsafe { <&str as FfiType>::from_c(__raw) }
+    }
+    #[doc = " Returns the guest files that need to be injected into the guest"]
+    #[doc = " root filesystem."]
+    pub fn guest_files(&self) -> ForeignSlice<GuestFile> {
+        ForeignSlice::from_raw(unsafe { krun_init_config_guest_files(self.0) })
+    }
+}
+
+impl Drop for Config {
+    fn drop(&mut self) {
+        unsafe { krun_init_config_destroy(self.0) }
+    }
+}
+
+static KRUN_INIT_CONFIG_BUILDER_DESTROY: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void),
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_config_builder_destroy(handle: *mut core::ffi::c_void) {
+    unsafe {
+        (KRUN_INIT_CONFIG_BUILDER_DESTROY
+            .get()
+            .expect("symbol `krun_init_config_builder_destroy` not loaded; call require() first"))(
+            handle,
+        )
+    }
+}
+
+static KRUN_INIT_CONFIG_BUILDER_ARGS: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void, *const ffier::FfierBytes, usize),
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_config_builder_args(
+    handle: *mut core::ffi::c_void,
+    argv: *const ffier::FfierBytes,
+    argv_len: usize,
+) {
+    unsafe {
+        (KRUN_INIT_CONFIG_BUILDER_ARGS
+            .get()
+            .expect("symbol `krun_init_config_builder_args` not loaded; call require() first"))(
+            handle, argv, argv_len,
+        )
+    }
+}
+
+static KRUN_INIT_CONFIG_BUILDER_ENV: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void, *const ffier::FfierBytes, usize),
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_config_builder_env(
+    handle: *mut core::ffi::c_void,
+    vars: *const ffier::FfierBytes,
+    vars_len: usize,
+) {
+    unsafe {
+        (KRUN_INIT_CONFIG_BUILDER_ENV
+            .get()
+            .expect("symbol `krun_init_config_builder_env` not loaded; call require() first"))(
+            handle, vars, vars_len,
+        )
+    }
+}
+
+static KRUN_INIT_CONFIG_BUILDER_WORKDIR: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void, <&'static str as FfiType>::CRepr),
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_config_builder_workdir(
+    handle: *mut core::ffi::c_void,
+    dir: <&'static str as FfiType>::CRepr,
+) {
+    unsafe {
+        (KRUN_INIT_CONFIG_BUILDER_WORKDIR
+            .get()
+            .expect("symbol `krun_init_config_builder_workdir` not loaded; call require() first"))(
+            handle, dir,
+        )
+    }
+}
+
+static KRUN_INIT_CONFIG_BUILDER_MOUNT: std::sync::OnceLock<
+    unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        <&'static str as FfiType>::CRepr,
+        <&'static str as FfiType>::CRepr,
+        <&'static str as FfiType>::CRepr,
+    ),
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_config_builder_mount(
+    handle: *mut core::ffi::c_void,
+    destination: <&'static str as FfiType>::CRepr,
+    fs_type: <&'static str as FfiType>::CRepr,
+    source: <&'static str as FfiType>::CRepr,
+) {
+    unsafe {
+        (KRUN_INIT_CONFIG_BUILDER_MOUNT
+            .get()
+            .expect("symbol `krun_init_config_builder_mount` not loaded; call require() first"))(
+            handle,
+            destination,
+            fs_type,
+            source,
+        )
+    }
+}
+
+static KRUN_INIT_CONFIG_BUILDER_RLIMITS: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void, *const ffier::FfierBytes, usize),
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_config_builder_rlimits(
+    handle: *mut core::ffi::c_void,
+    limits: *const ffier::FfierBytes,
+    limits_len: usize,
+) {
+    unsafe {
+        (KRUN_INIT_CONFIG_BUILDER_RLIMITS
+            .get()
+            .expect("symbol `krun_init_config_builder_rlimits` not loaded; call require() first"))(
+            handle, limits, limits_len,
+        )
+    }
+}
+
+static KRUN_INIT_CONFIG_BUILDER_BUILD: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void) -> <Config as FfiType>::CRepr,
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_config_builder_build(
+    handle: *mut core::ffi::c_void,
+) -> <Config as FfiType>::CRepr {
+    unsafe {
+        (KRUN_INIT_CONFIG_BUILDER_BUILD
+            .get()
+            .expect("symbol `krun_init_config_builder_build` not loaded; call require() first"))(
+            handle,
+        )
+    }
+}
+
+pub struct ConfigBuilder(*mut core::ffi::c_void);
+
+impl ConfigBuilder {
+    #[doc(hidden)]
+    pub fn __from_raw(ptr: *mut core::ffi::c_void) -> Self {
+        Self(ptr)
+    }
+    #[doc(hidden)]
+    pub fn __into_raw(self) -> *mut core::ffi::c_void {
+        let this = std::mem::ManuallyDrop::new(self);
+        this.0
+    }
+}
+
+impl FfiHandle for ConfigBuilder {
+    const C_HANDLE_NAME: &'static str = "ConfigBuilder";
+    const TYPE_TAG: u32 = 33554438u32;
+    unsafe fn as_handle(&self) -> *mut core::ffi::c_void {
+        self.0
+    }
+    fn __from_raw(handle: *mut core::ffi::c_void) -> Self {
+        Self(handle)
+    }
+}
+
+impl FfiType for ConfigBuilder {
+    type CRepr = *mut core::ffi::c_void;
+    const C_TYPE_NAME: &'static str = "ConfigBuilder";
+    fn into_c(self) -> *mut core::ffi::c_void {
+        self.__into_raw()
+    }
+    unsafe fn from_c(repr: *mut core::ffi::c_void) -> Self {
+        Self::__from_raw(repr)
+    }
+}
+
+impl std::fmt::Debug for ConfigBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ConfigBuilder").field(&self.0).finish()
+    }
+}
+
+impl ConfigBuilder {
+    #[doc = " Set the full argv: `args[0]` is the executable, `args[1..]` are arguments."]
+    pub fn args(self, argv: &[&str]) -> Self {
+        let mut __handle = {
+            let this = std::mem::ManuallyDrop::new(self);
+            this.0
+        };
+        let __ffi_argv: Vec<ffier::FfierBytes> = argv
+            .iter()
+            .map(|s| unsafe { ffier::FfierBytes::from_str(s) })
+            .collect();
+        unsafe {
+            krun_init_config_builder_args(
+                &mut __handle as *mut *mut core::ffi::c_void as *mut core::ffi::c_void,
+                __ffi_argv.as_ptr(),
+                __ffi_argv.len(),
+            )
+        };
+        Self(__handle)
+    }
+    #[doc = " Set environment variables. Each entry should be `\"KEY=value\"`."]
+    pub fn env(self, vars: &[&str]) -> Self {
+        let mut __handle = {
+            let this = std::mem::ManuallyDrop::new(self);
+            this.0
+        };
+        let __ffi_vars: Vec<ffier::FfierBytes> = vars
+            .iter()
+            .map(|s| unsafe { ffier::FfierBytes::from_str(s) })
+            .collect();
+        unsafe {
+            krun_init_config_builder_env(
+                &mut __handle as *mut *mut core::ffi::c_void as *mut core::ffi::c_void,
+                __ffi_vars.as_ptr(),
+                __ffi_vars.len(),
+            )
+        };
+        Self(__handle)
+    }
+    #[doc = " Set the guest working directory."]
+    pub fn workdir(self, dir: &str) -> Self {
+        let mut __handle = {
+            let this = std::mem::ManuallyDrop::new(self);
+            this.0
+        };
+        unsafe {
+            krun_init_config_builder_workdir(
+                &mut __handle as *mut *mut core::ffi::c_void as *mut core::ffi::c_void,
+                <&str as FfiType>::into_c(dir),
+            )
+        };
+        Self(__handle)
+    }
+    #[doc = " Add a mount specification."]
+    pub fn mount(self, destination: &str, fs_type: &str, source: &str) -> Self {
+        let mut __handle = {
+            let this = std::mem::ManuallyDrop::new(self);
+            this.0
+        };
+        unsafe {
+            krun_init_config_builder_mount(
+                &mut __handle as *mut *mut core::ffi::c_void as *mut core::ffi::c_void,
+                <&str as FfiType>::into_c(destination),
+                <&str as FfiType>::into_c(fs_type),
+                <&str as FfiType>::into_c(source),
+            )
+        };
+        Self(__handle)
+    }
+    #[doc = " Set resource limits. Each entry should be `\"id=cur:max\"` (e.g. `\"7=0:0\"`)."]
+    pub fn rlimits(self, limits: &[&str]) -> Self {
+        let mut __handle = {
+            let this = std::mem::ManuallyDrop::new(self);
+            this.0
+        };
+        let __ffi_limits: Vec<ffier::FfierBytes> = limits
+            .iter()
+            .map(|s| unsafe { ffier::FfierBytes::from_str(s) })
+            .collect();
+        unsafe {
+            krun_init_config_builder_rlimits(
+                &mut __handle as *mut *mut core::ffi::c_void as *mut core::ffi::c_void,
+                __ffi_limits.as_ptr(),
+                __ffi_limits.len(),
+            )
+        };
+        Self(__handle)
+    }
+    #[doc = " Consume the builder, serialize the config, and return the"]
+    #[doc = " finished [`Config`]."]
+    pub fn build(self) -> Config {
+        let mut __handle = {
+            let this = std::mem::ManuallyDrop::new(self);
+            this.0
+        };
+        let __raw = unsafe {
+            krun_init_config_builder_build(
+                &mut __handle as *mut *mut core::ffi::c_void as *mut core::ffi::c_void,
+            )
+        };
+        unsafe { <Config as FfiType>::from_c(__raw) }
+    }
+}
+
+impl Drop for ConfigBuilder {
+    fn drop(&mut self) {
+        unsafe { krun_init_config_builder_destroy(self.0) }
+    }
+}
+
+pub trait PushStr {
+    fn push(&mut self, s: &str) -> bool;
+    #[doc(hidden)]
+    fn __ffier_vtable() -> &'static PushStrVtable
+    where
+        Self: Sized,
+    {
+        &PushStrVtable {
+            drop: Some({
+                unsafe extern "C" fn __drop_trampoline<__T>(__ud: *mut core::ffi::c_void) {
+                    unsafe { drop(Box::from_raw(__ud as *mut __T)) };
+                }
+                __drop_trampoline::<Self>
+            }),
+            push: Some({
+                unsafe extern "C" fn __trampoline<__T: PushStr>(
+                    __ud: *mut core::ffi::c_void,
+                    s: <&'static str as FfiType>::CRepr,
+                ) -> <bool as FfiType>::CRepr {
+                    let __val = unsafe { &mut *(__ud as *mut __T) };
+                    let __result = __val.push(unsafe { <&str as FfiType>::from_c(s) });
+                    <bool as FfiType>::into_c(__result)
+                }
+                __trampoline::<Self>
+            }),
+        }
+    }
+    #[doc(hidden)]
+    fn __into_raw_handle(self) -> *mut core::ffi::c_void
+    where
+        Self: Sized,
+    {
+        let __vtable: &'static PushStrVtable = Self::__ffier_vtable();
+        let __user_data = Box::into_raw(Box::new(self));
+        let vtable_size: u16 = core::mem::size_of::<PushStrVtable>()
+            .try_into()
+            .expect("vtable_size exceeds u16::MAX");
+        ffier::ffier_handle_new_with_metadata(
+            33554433u32,
+            0,
+            ffier::VtableHandle {
+                vtable_ptr: __vtable as *const PushStrVtable as *const core::ffi::c_void,
+                user_data: __user_data as *const core::ffi::c_void,
+                vtable_size,
+            },
+        )
+    }
+}
+
+#[repr(C)]
+pub struct PushStrVtable {
+    pub drop: Option<unsafe extern "C" fn(*mut core::ffi::c_void)>,
+    pub push: Option<
+        unsafe extern "C" fn(
+            *mut core::ffi::c_void,
+            <&'static str as FfiType>::CRepr,
+        ) -> <bool as FfiType>::CRepr,
+    >,
+}
+
+pub struct VtablePushStr(*mut core::ffi::c_void);
+
+impl VtablePushStr {
+    #[doc(hidden)]
+    pub fn __into_raw(self) -> *mut core::ffi::c_void {
+        let this = std::mem::ManuallyDrop::new(self);
+        this.0
+    }
+}
+
+impl Drop for VtablePushStr {
+    fn drop(&mut self) {}
+}
+
+static KRUN_INIT_ERROR_CODE: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void) -> <u32 as FfiType>::CRepr,
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_error_code(handle: *mut core::ffi::c_void) -> <u32 as FfiType>::CRepr {
+    unsafe {
+        (KRUN_INIT_ERROR_CODE
+            .get()
+            .expect("symbol `krun_init_error_code` not loaded; call require() first"))(
+            handle
+        )
+    }
+}
+
+static KRUN_INIT_ERROR_MESSAGE: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void),
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_error_message(
+    handle: *mut core::ffi::c_void,
+    writer: *mut core::ffi::c_void,
+) {
+    unsafe {
+        (KRUN_INIT_ERROR_MESSAGE
+            .get()
+            .expect("symbol `krun_init_error_message` not loaded; call require() first"))(
+            handle, writer,
+        )
+    }
+}
+
+static KRUN_INIT_ERROR_RESULT: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void) -> <u64 as FfiType>::CRepr,
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_error_result(handle: *mut core::ffi::c_void) -> <u64 as FfiType>::CRepr {
+    unsafe {
+        (KRUN_INIT_ERROR_RESULT
+            .get()
+            .expect("symbol `krun_init_error_result` not loaded; call require() first"))(
+            handle
+        )
+    }
+}
+
+static KRUN_INIT_ERROR_DESTROY: std::sync::OnceLock<unsafe extern "C" fn(*mut core::ffi::c_void)> =
+    std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_error_destroy(handle: *mut core::ffi::c_void) {
+    unsafe {
+        (KRUN_INIT_ERROR_DESTROY
+            .get()
+            .expect("symbol `krun_init_error_destroy` not loaded; call require() first"))(
+            handle
+        )
+    }
+}
+
+/// FFI symbols that can be loaded at runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Symbol {
+    /// `krun_init_error_payload`
+    KrunInitErrorPayload,
+    /// `krun_init_guest_file_destroy`
+    KrunInitGuestFileDestroy,
+    /// `krun_init_guest_file_path`
+    KrunInitGuestFilePath,
+    /// `krun_init_guest_file_data`
+    KrunInitGuestFileData,
+    /// `krun_init_guest_file_mode`
+    KrunInitGuestFileMode,
+    /// `krun_init_guest_file_one_shot`
+    KrunInitGuestFileOneShot,
+    /// `krun_init_config_destroy`
+    KrunInitConfigDestroy,
+    /// `krun_init_config_builder`
+    KrunInitConfigBuilder,
+    /// `krun_init_config_from_oci_config_json`
+    KrunInitConfigFromOciConfigJson,
+    /// `krun_init_config_kernel_init_arg`
+    KrunInitConfigKernelInitArg,
+    /// `krun_init_config_guest_files`
+    KrunInitConfigGuestFiles,
+    /// `krun_init_config_builder_destroy`
+    KrunInitConfigBuilderDestroy,
+    /// `krun_init_config_builder_args`
+    KrunInitConfigBuilderArgs,
+    /// `krun_init_config_builder_env`
+    KrunInitConfigBuilderEnv,
+    /// `krun_init_config_builder_workdir`
+    KrunInitConfigBuilderWorkdir,
+    /// `krun_init_config_builder_mount`
+    KrunInitConfigBuilderMount,
+    /// `krun_init_config_builder_rlimits`
+    KrunInitConfigBuilderRlimits,
+    /// `krun_init_config_builder_build`
+    KrunInitConfigBuilderBuild,
+    /// `krun_init_error_code`
+    KrunInitErrorCode,
+    /// `krun_init_error_message`
+    KrunInitErrorMessage,
+    /// `krun_init_error_result`
+    KrunInitErrorResult,
+    /// `krun_init_error_destroy`
+    KrunInitErrorDestroy,
+}
+
+impl Symbol {
+    /// The C symbol name for dlsym lookup.
+    pub fn c_name(self) -> &'static str {
+        match self {
+            Symbol::KrunInitErrorPayload => "krun_init_error_payload",
+            Symbol::KrunInitGuestFileDestroy => "krun_init_guest_file_destroy",
+            Symbol::KrunInitGuestFilePath => "krun_init_guest_file_path",
+            Symbol::KrunInitGuestFileData => "krun_init_guest_file_data",
+            Symbol::KrunInitGuestFileMode => "krun_init_guest_file_mode",
+            Symbol::KrunInitGuestFileOneShot => "krun_init_guest_file_one_shot",
+            Symbol::KrunInitConfigDestroy => "krun_init_config_destroy",
+            Symbol::KrunInitConfigBuilder => "krun_init_config_builder",
+            Symbol::KrunInitConfigFromOciConfigJson => "krun_init_config_from_oci_config_json",
+            Symbol::KrunInitConfigKernelInitArg => "krun_init_config_kernel_init_arg",
+            Symbol::KrunInitConfigGuestFiles => "krun_init_config_guest_files",
+            Symbol::KrunInitConfigBuilderDestroy => "krun_init_config_builder_destroy",
+            Symbol::KrunInitConfigBuilderArgs => "krun_init_config_builder_args",
+            Symbol::KrunInitConfigBuilderEnv => "krun_init_config_builder_env",
+            Symbol::KrunInitConfigBuilderWorkdir => "krun_init_config_builder_workdir",
+            Symbol::KrunInitConfigBuilderMount => "krun_init_config_builder_mount",
+            Symbol::KrunInitConfigBuilderRlimits => "krun_init_config_builder_rlimits",
+            Symbol::KrunInitConfigBuilderBuild => "krun_init_config_builder_build",
+            Symbol::KrunInitErrorCode => "krun_init_error_code",
+            Symbol::KrunInitErrorMessage => "krun_init_error_message",
+            Symbol::KrunInitErrorResult => "krun_init_error_result",
+            Symbol::KrunInitErrorDestroy => "krun_init_error_destroy",
+        }
+    }
+
+    /// Check whether this symbol is available in the current process
+    /// (i.e. the library version is new enough). Does NOT load the symbol.
+    pub fn is_available(self) -> bool {
+        unsafe {
+            let lib = libloading::os::unix::Library::this();
+            lib.get::<*const ()>(self.c_name().as_bytes()).is_ok()
+        }
+    }
+}
+
+/// Load the given symbols via dlsym. Returns `Ok(())` if all symbols
+/// are loaded successfully. Already-loaded symbols are skipped.
+/// Fails on the first symbol that cannot be found.
+pub fn require(symbols: &[Symbol]) -> Result<(), libloading::Error> {
+    let lib = unsafe { libloading::os::unix::Library::this() };
+    for &sym in symbols {
+        match sym {
+            Symbol::KrunInitErrorPayload => {
+                if KRUN_INIT_ERROR_PAYLOAD.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(
+                            *const core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                            usize,
+                        )>(b"krun_init_error_payload\0")?
+                    };
+                    let _ = KRUN_INIT_ERROR_PAYLOAD.set(f);
+                }
+            }
+            Symbol::KrunInitGuestFileDestroy => {
+                if KRUN_INIT_GUEST_FILE_DESTROY.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(*mut core::ffi::c_void)>(
+                            b"krun_init_guest_file_destroy\0",
+                        )?
+                    };
+                    let _ = KRUN_INIT_GUEST_FILE_DESTROY.set(f);
+                }
+            }
+            Symbol::KrunInitGuestFilePath => {
+                if KRUN_INIT_GUEST_FILE_PATH.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(
+                            *mut core::ffi::c_void,
+                        )
+                            -> <&'static str as FfiType>::CRepr>(
+                            b"krun_init_guest_file_path\0"
+                        )?
+                    };
+                    let _ = KRUN_INIT_GUEST_FILE_PATH.set(f);
+                }
+            }
+            Symbol::KrunInitGuestFileData => {
+                if KRUN_INIT_GUEST_FILE_DATA.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(
+                            *mut core::ffi::c_void,
+                        )
+                            -> <&'static [u8] as FfiType>::CRepr>(
+                            b"krun_init_guest_file_data\0"
+                        )?
+                    };
+                    let _ = KRUN_INIT_GUEST_FILE_DATA.set(f);
+                }
+            }
+            Symbol::KrunInitGuestFileMode => {
+                if KRUN_INIT_GUEST_FILE_MODE.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(*mut core::ffi::c_void) -> <u32 as FfiType>::CRepr>(b"krun_init_guest_file_mode\0")?
+                    };
+                    let _ = KRUN_INIT_GUEST_FILE_MODE.set(f);
+                }
+            }
+            Symbol::KrunInitGuestFileOneShot => {
+                if KRUN_INIT_GUEST_FILE_ONE_SHOT.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(
+                            *mut core::ffi::c_void,
+                        )
+                            -> <bool as FfiType>::CRepr>(
+                            b"krun_init_guest_file_one_shot\0"
+                        )?
+                    };
+                    let _ = KRUN_INIT_GUEST_FILE_ONE_SHOT.set(f);
+                }
+            }
+            Symbol::KrunInitConfigDestroy => {
+                if KRUN_INIT_CONFIG_DESTROY.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(*mut core::ffi::c_void)>(
+                            b"krun_init_config_destroy\0",
+                        )?
+                    };
+                    let _ = KRUN_INIT_CONFIG_DESTROY.set(f);
+                }
+            }
+            Symbol::KrunInitConfigBuilder => {
+                if KRUN_INIT_CONFIG_BUILDER.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn() -> <ConfigBuilder as FfiType>::CRepr>(
+                            b"krun_init_config_builder\0",
+                        )?
+                    };
+                    let _ = KRUN_INIT_CONFIG_BUILDER.set(f);
+                }
+            }
+            Symbol::KrunInitConfigFromOciConfigJson => {
+                if KRUN_INIT_CONFIG_FROM_OCI_CONFIG_JSON.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(
+                            <&'static str as FfiType>::CRepr,
+                            *mut *mut core::ffi::c_void,
+                        ) -> *mut core::ffi::c_void>(
+                            b"krun_init_config_from_oci_config_json\0"
+                        )?
+                    };
+                    let _ = KRUN_INIT_CONFIG_FROM_OCI_CONFIG_JSON.set(f);
+                }
+            }
+            Symbol::KrunInitConfigKernelInitArg => {
+                if KRUN_INIT_CONFIG_KERNEL_INIT_ARG.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(
+                            *mut core::ffi::c_void,
+                        )
+                            -> <&'static str as FfiType>::CRepr>(
+                            b"krun_init_config_kernel_init_arg\0",
+                        )?
+                    };
+                    let _ = KRUN_INIT_CONFIG_KERNEL_INIT_ARG.set(f);
+                }
+            }
+            Symbol::KrunInitConfigGuestFiles => {
+                if KRUN_INIT_CONFIG_GUEST_FILES.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(*mut core::ffi::c_void) -> ffier::FfierObjectArray>(b"krun_init_config_guest_files\0")?
+                    };
+                    let _ = KRUN_INIT_CONFIG_GUEST_FILES.set(f);
+                }
+            }
+            Symbol::KrunInitConfigBuilderDestroy => {
+                if KRUN_INIT_CONFIG_BUILDER_DESTROY.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(*mut core::ffi::c_void)>(
+                            b"krun_init_config_builder_destroy\0",
+                        )?
+                    };
+                    let _ = KRUN_INIT_CONFIG_BUILDER_DESTROY.set(f);
+                }
+            }
+            Symbol::KrunInitConfigBuilderArgs => {
+                if KRUN_INIT_CONFIG_BUILDER_ARGS.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(
+                            *mut core::ffi::c_void,
+                            *const ffier::FfierBytes,
+                            usize,
+                        )>(b"krun_init_config_builder_args\0")?
+                    };
+                    let _ = KRUN_INIT_CONFIG_BUILDER_ARGS.set(f);
+                }
+            }
+            Symbol::KrunInitConfigBuilderEnv => {
+                if KRUN_INIT_CONFIG_BUILDER_ENV.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(
+                            *mut core::ffi::c_void,
+                            *const ffier::FfierBytes,
+                            usize,
+                        )>(b"krun_init_config_builder_env\0")?
+                    };
+                    let _ = KRUN_INIT_CONFIG_BUILDER_ENV.set(f);
+                }
+            }
+            Symbol::KrunInitConfigBuilderWorkdir => {
+                if KRUN_INIT_CONFIG_BUILDER_WORKDIR.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(
+                            *mut core::ffi::c_void,
+                            <&'static str as FfiType>::CRepr,
+                        )>(b"krun_init_config_builder_workdir\0")?
+                    };
+                    let _ = KRUN_INIT_CONFIG_BUILDER_WORKDIR.set(f);
+                }
+            }
+            Symbol::KrunInitConfigBuilderMount => {
+                if KRUN_INIT_CONFIG_BUILDER_MOUNT.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(
+                            *mut core::ffi::c_void,
+                            <&'static str as FfiType>::CRepr,
+                            <&'static str as FfiType>::CRepr,
+                            <&'static str as FfiType>::CRepr,
+                        )>(b"krun_init_config_builder_mount\0")?
+                    };
+                    let _ = KRUN_INIT_CONFIG_BUILDER_MOUNT.set(f);
+                }
+            }
+            Symbol::KrunInitConfigBuilderRlimits => {
+                if KRUN_INIT_CONFIG_BUILDER_RLIMITS.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(
+                            *mut core::ffi::c_void,
+                            *const ffier::FfierBytes,
+                            usize,
+                        )>(b"krun_init_config_builder_rlimits\0")?
+                    };
+                    let _ = KRUN_INIT_CONFIG_BUILDER_RLIMITS.set(f);
+                }
+            }
+            Symbol::KrunInitConfigBuilderBuild => {
+                if KRUN_INIT_CONFIG_BUILDER_BUILD.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(
+                            *mut core::ffi::c_void,
+                        )
+                            -> <Config as FfiType>::CRepr>(
+                            b"krun_init_config_builder_build\0"
+                        )?
+                    };
+                    let _ = KRUN_INIT_CONFIG_BUILDER_BUILD.set(f);
+                }
+            }
+            Symbol::KrunInitErrorCode => {
+                if KRUN_INIT_ERROR_CODE.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(*mut core::ffi::c_void) -> <u32 as FfiType>::CRepr>(b"krun_init_error_code\0")?
+                    };
+                    let _ = KRUN_INIT_ERROR_CODE.set(f);
+                }
+            }
+            Symbol::KrunInitErrorMessage => {
+                if KRUN_INIT_ERROR_MESSAGE.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void)>(b"krun_init_error_message\0")?
+                    };
+                    let _ = KRUN_INIT_ERROR_MESSAGE.set(f);
+                }
+            }
+            Symbol::KrunInitErrorResult => {
+                if KRUN_INIT_ERROR_RESULT.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(*mut core::ffi::c_void) -> <u64 as FfiType>::CRepr>(b"krun_init_error_result\0")?
+                    };
+                    let _ = KRUN_INIT_ERROR_RESULT.set(f);
+                }
+            }
+            Symbol::KrunInitErrorDestroy => {
+                if KRUN_INIT_ERROR_DESTROY.get().is_none() {
+                    let f = unsafe {
+                        *lib.get::<unsafe extern "C" fn(*mut core::ffi::c_void)>(
+                            b"krun_init_error_destroy\0",
+                        )?
+                    };
+                    let _ = KRUN_INIT_ERROR_DESTROY.set(f);
+                }
+            }
+        }
+    }
+    Ok(())
+}

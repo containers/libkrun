@@ -383,6 +383,99 @@ dependencies = [
 ]
 
 [[package]]
+name = "ffier"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+dependencies = [
+ "ffier-annotations",
+ "ffier-builtins",
+ "ffier-rt",
+]
+
+[[package]]
+name = "ffier-annotations"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+dependencies = [
+ "ffier-meta",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "ffier-bridge"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+dependencies = [
+ "ffier-meta",
+ "ffier-schema",
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn",
+]
+
+[[package]]
+name = "ffier-bridge-macros"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+dependencies = [
+ "ffier-bridge",
+]
+
+[[package]]
+name = "ffier-builtins"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+dependencies = [
+ "ffier-annotations",
+ "ffier-rt",
+]
+
+[[package]]
+name = "ffier-gen-c-header"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+dependencies = [
+ "ffier-schema",
+ "serde_json",
+]
+
+[[package]]
+name = "ffier-gen-rust-client"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+dependencies = [
+ "ffier-schema",
+ "serde_json",
+]
+
+[[package]]
+name = "ffier-meta"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "ffier-rt"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+
+[[package]]
+name = "ffier-schema"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "filetime"
 version = "0.2.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -553,6 +646,13 @@ dependencies = [
 [[package]]
 name = "init-blob"
 version = "0.1.0-1.18.1"
+dependencies = [
+ "ffier",
+ "ffier-builtins",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "iocuddle"
@@ -750,6 +850,35 @@ dependencies = [
  "nix 0.30.1",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "krun-init-blob-cdylib"
+version = "0.1.0-1.18.1"
+dependencies = [
+ "ffier",
+ "ffier-bridge",
+ "ffier-bridge-macros",
+ "ffier-gen-c-header",
+ "ffier-gen-rust-client",
+ "ffier-schema",
+ "init-blob",
+ "serde_json",
+]
+
+[[package]]
+name = "krun-init-blob-via-cdylib"
+version = "0.1.0-1.18.1"
+dependencies = [
+ "ffier",
+]
+
+[[package]]
+name = "krun-init-blob-via-cdylib-weak"
+version = "0.1.0-1.18.1"
+dependencies = [
+ "ffier",
+ "libloading",
 ]
 
 [[package]]
