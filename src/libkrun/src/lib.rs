@@ -194,6 +194,9 @@ struct ContextConfig {
     vmm_gid: Option<libc::gid_t>,
     #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
     disable_implicit_init: bool,
+    /// Kernel init arg set by `krun_inject_init` (e.g. `"init=/init.krun"`).
+    #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+    kernel_init_arg: Option<String>,
 }
 
 impl ContextConfig {
@@ -2576,6 +2579,7 @@ pub unsafe extern "C" fn krun_inject_init(
     use krun_init::Symbol;
 
     if krun_init::require(&[
+        Symbol::KrunInitConfigKernelInitArg,
         Symbol::KrunInitConfigGuestFiles,
         Symbol::KrunInitGuestFilePath,
         Symbol::KrunInitGuestFileData,
@@ -2623,9 +2627,14 @@ pub unsafe extern "C" fn krun_inject_init(
         }
     }
 
-    // Disable implicit init injection — we just did it explicitly.
+    // Store the kernel init arg and disable implicit init injection.
+    let kernel_init_arg = config.kernel_init_arg().to_string();
     match CTX_MAP.lock().unwrap().entry(ctx_id) {
-        Entry::Occupied(mut ctx_cfg) => ctx_cfg.get_mut().disable_implicit_init = true,
+        Entry::Occupied(mut ctx_cfg) => {
+            let cfg = ctx_cfg.get_mut();
+            cfg.disable_implicit_init = true;
+            cfg.kernel_init_arg = Some(kernel_init_arg);
+        }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
 
@@ -3025,8 +3034,18 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         return -libc::EINVAL;
     }
 
+    #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+    let default_init_arg = format!("init={INIT_PATH}");
+    #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+    let init_arg = ctx_cfg
+        .kernel_init_arg
+        .as_deref()
+        .unwrap_or(&default_init_arg);
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
+    let init_arg = format!("init={INIT_PATH}");
+
     let kernel_cmdline = KernelCmdlineConfig {
-        prolog: Some(format!("{DEFAULT_KERNEL_CMDLINE} init={INIT_PATH}")),
+        prolog: Some(format!("{DEFAULT_KERNEL_CMDLINE} {init_arg}")),
         krun_env: Some(format!(
             " {} {} {} {} {}",
             ctx_cfg.get_exec_path(),
