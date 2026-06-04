@@ -1,0 +1,5 @@
+# Auto-generated files (collapsed in GitHub PR diffs).
+# Regenerate with: make gen-init-blob-bindings
+include/libkrun_init.h linguist-generated=true
+init/init-blob-via-cdylib/src/lib.rs linguist-generated=true
+init/init-blob-via-cdylib-weak/src/lib.rs linguist-generated=true
