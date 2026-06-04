@@ -1058,6 +1058,29 @@ int32_t krun_fs_add_overlay_file(uint32_t ctx_id, const char *fs_tag,
                                  size_t data_len, uint32_t mode, bool one_shot);
 
 /**
+ * Inject all guest files from a KrunInitConfig handle (from libkrun-init.so)
+ * into a virtiofs device as overlay files.
+ *
+ * The config_handle is an opaque pointer obtained from
+ * krun_init_config_builder_build(). This function calls into
+ * libkrun-init.so via dlsym to iterate the guest files and inject each one.
+ *
+ * Arguments:
+ *  "ctx_id"        - the configuration context ID.
+ *  "lib_handle"    - handle from dlopen("libkrun_init.so") for symbol lookup.
+ *                    Pass NULL to search the global symbol namespace (requires
+ *                    that libkrun_init.so was linked or dlopen'd with RTLD_GLOBAL).
+ *  "fs_tag"        - tag of the virtiofs device (e.g. "/dev/root").
+ *  "config_handle" - opaque KrunInitConfig handle from libkrun-init.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ *  -ENOSYS if libkrun-init.so symbols cannot be found.
+ */
+int32_t krun_inject_init(uint32_t ctx_id, void *lib_handle,
+                         const char *fs_tag, void *config_handle);
+
+/**
  * Add a virtual overlay directory to a virtiofs device.
  *
  * The directory is empty and read-only, useful as a mount point.
