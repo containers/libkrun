@@ -7,6 +7,32 @@
 #include <errno.h>
 #include <getopt.h>
 #include <libkrun.h>
+#include <libkrun_init.h>
+
+static bool push_to_stderr(void *userdata, KrunStr s)
+{
+    (void)userdata;
+    fwrite(s.data, 1, s.len, stderr);
+    return true;
+}
+
+static KrunVtableHandle stderr_writer = KRUN_VTABLE_HANDLE(
+    KRUN_INIT_PUSH_STR_TYPE_TAG,
+    ((KrunInitPushStrVtable){ .drop = NULL, .push = push_to_stderr }),
+    NULL);
+
+#define TRY(call)                                                              \
+    err = NULL;                                                                \
+    call;                                                                      \
+    if (err) {                                                                 \
+        flockfile(stderr);                                                     \
+        fprintf(stderr, "%s failed: ", #call);                                 \
+        krun_init_error_message(err, &stderr_writer);                          \
+        fputc('\n', stderr);                                                   \
+        funlockfile(stderr);                                                   \
+        krun_init_error_destroy(err);                                          \
+        return -1;                                                             \
+    }
 #include <linux/vm_sockets.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -216,12 +242,19 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    // Configure the enclave's execution environment.
-    if (err = krun_set_exec(ctx_id, default_argv[0], default_argv,
-                            default_envp)) {
-        errno = -err;
-        perror("Error configuring enclave execution path");
-        return -1;
+    // Configure the enclave's execution environment via init-blob.
+    {
+        KrunInitError err;
+        KrunInitBuilder builder = krun_init_config_builder();
+
+        for (int i = 0; default_argv[i]; i++)
+            krun_init_builder_arg(&builder, KRUN_STR(default_argv[i]));
+        for (int i = 0; default_envp[i]; i++)
+            krun_init_builder_env_var(&builder, KRUN_STR(default_envp[i]));
+
+        KrunInitConfig config = krun_init_builder_build(&builder);
+        TRY(krun_init_config_apply(config, NULL, ctx_id,
+                                   KRUN_STR("/dev/root"), &err));
     }
 
     if (cmdline.net) {

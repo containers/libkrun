@@ -264,6 +264,51 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
+name = "ffier"
+version = "0.1.0"
+source = "git+https://github.com/mtjhrc/ffier.git?rev=feb6c2c#feb6c2c266fc1a8ed608f2c7fdf3f1d78d7e1041"
+dependencies = [
+ "ffier-annotations",
+ "ffier-builtins",
+ "ffier-rt",
+]
+
+[[package]]
+name = "ffier-annotations"
+version = "0.1.0"
+source = "git+https://github.com/mtjhrc/ffier.git?rev=feb6c2c#feb6c2c266fc1a8ed608f2c7fdf3f1d78d7e1041"
+dependencies = [
+ "ffier-meta",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "ffier-builtins"
+version = "0.1.0"
+source = "git+https://github.com/mtjhrc/ffier.git?rev=feb6c2c#feb6c2c266fc1a8ed608f2c7fdf3f1d78d7e1041"
+dependencies = [
+ "ffier-annotations",
+ "ffier-rt",
+]
+
+[[package]]
+name = "ffier-meta"
+version = "0.1.0"
+source = "git+https://github.com/mtjhrc/ffier.git?rev=feb6c2c#feb6c2c266fc1a8ed608f2c7fdf3f1d78d7e1041"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "ffier-rt"
+version = "0.1.0"
+source = "git+https://github.com/mtjhrc/ffier.git?rev=feb6c2c#feb6c2c266fc1a8ed608f2c7fdf3f1d78d7e1041"
+
+[[package]]
 name = "field-offset"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -612,6 +657,7 @@ dependencies = [
  "clap_derive",
  "env_logger",
  "gtk_display",
+ "krun-init-blob-via-cdylib",
  "krun-input",
  "krun-sys",
  "log",
@@ -679,6 +725,13 @@ dependencies = [
  "log",
  "static_assertions",
  "thiserror",
+]
+
+[[package]]
+name = "krun-init-blob-via-cdylib"
+version = "0.1.0-1.18.1"
+dependencies = [
+ "ffier",
 ]
 
 [[package]]
