@@ -147,10 +147,15 @@ enum LegacyNetworkConfig {
 struct ContextConfig {
     krunfw: Option<KrunfwBindings>,
     vmr: VmResources,
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     workdir: Option<String>,
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     exec_path: Option<String>,
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     env: Option<String>,
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     args: Option<String>,
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     rlimits: Option<String>,
     #[cfg(feature = "net")]
     legacy_net_cfg: Option<LegacyNetworkConfig>,
@@ -182,10 +187,12 @@ struct ContextConfig {
 }
 
 impl ContextConfig {
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn set_workdir(&mut self, workdir: String) {
         self.workdir = Some(workdir);
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn get_workdir(&self) -> String {
         match &self.workdir {
             Some(workdir) => format!("KRUN_WORKDIR={workdir}"),
@@ -193,10 +200,12 @@ impl ContextConfig {
         }
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn set_exec_path(&mut self, exec_path: String) {
         self.exec_path = Some(exec_path);
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn get_exec_path(&self) -> String {
         match &self.exec_path {
             Some(exec_path) => format!("KRUN_INIT={exec_path}"),
@@ -232,10 +241,12 @@ impl ContextConfig {
         "".to_string()
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn set_env(&mut self, env: String) {
         self.env = Some(env);
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn get_env(&self) -> String {
         match &self.env {
             Some(env) => env.clone(),
@@ -243,10 +254,12 @@ impl ContextConfig {
         }
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn set_args(&mut self, args: String) {
         self.args = Some(args);
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn get_args(&self) -> String {
         match &self.args {
             Some(args) => args.clone(),
@@ -254,10 +267,12 @@ impl ContextConfig {
         }
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn set_rlimits(&mut self, rlimits: String) {
         self.rlimits = Some(rlimits);
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn get_rlimits(&self) -> String {
         match &self.rlimits {
             Some(rlimits) => format!("KRUN_RLIMITS={rlimits}"),
@@ -1271,6 +1286,7 @@ pub unsafe extern "C" fn krun_set_port_map(ctx_id: u32, c_port_map: *const *cons
 
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
+#[cfg(any(feature = "tee", feature = "aws-nitro"))]
 pub unsafe extern "C" fn krun_set_rlimits(ctx_id: u32, c_rlimits: *const *const c_char) -> i32 {
     unsafe {
         let rlimits = if c_rlimits.is_null() {
@@ -1307,6 +1323,7 @@ pub unsafe extern "C" fn krun_set_rlimits(ctx_id: u32, c_rlimits: *const *const 
 
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
+#[cfg(any(feature = "tee", feature = "aws-nitro"))]
 pub unsafe extern "C" fn krun_set_workdir(ctx_id: u32, c_workdir_path: *const c_char) -> i32 {
     unsafe {
         let workdir_path = match CStr::from_ptr(c_workdir_path).to_str() {
@@ -1325,6 +1342,7 @@ pub unsafe extern "C" fn krun_set_workdir(ctx_id: u32, c_workdir_path: *const c_
     }
 }
 
+#[cfg(any(feature = "tee", feature = "aws-nitro"))]
 unsafe fn collapse_str_array(array: &[*const c_char]) -> Result<String, std::str::Utf8Error> {
     unsafe {
         let mut strvec = Vec::new();
@@ -1345,6 +1363,7 @@ unsafe fn collapse_str_array(array: &[*const c_char]) -> Result<String, std::str
 #[allow(clippy::format_collect)]
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
+#[cfg(any(feature = "tee", feature = "aws-nitro"))]
 pub unsafe extern "C" fn krun_set_exec(
     ctx_id: u32,
     c_exec_path: *const c_char,
@@ -1405,6 +1424,7 @@ pub unsafe extern "C" fn krun_set_exec(
 #[allow(clippy::format_collect)]
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
+#[cfg(any(feature = "tee", feature = "aws-nitro"))]
 pub unsafe extern "C" fn krun_set_env(ctx_id: u32, c_envp: *const *const c_char) -> i32 {
     unsafe {
         let env = if !c_envp.is_null() {
@@ -2986,6 +3006,16 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
     #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     let init_arg = format!(" init={INIT_PATH}");
 
+    #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+    let kernel_cmdline = KernelCmdlineConfig {
+        prolog: Some(format!(
+            "{DEFAULT_KERNEL_CMDLINE}{init_arg} {}",
+            ctx_cfg.get_block_root(),
+        )),
+        krun_env: None,
+        epilog: None,
+    };
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     let kernel_cmdline = KernelCmdlineConfig {
         prolog: Some(format!("{DEFAULT_KERNEL_CMDLINE}{init_arg}")),
         krun_env: Some(format!(
