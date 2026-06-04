@@ -17,14 +17,13 @@ mod host {
     use super::*;
 
     use crate::common::setup_rootfs;
-    use crate::{Test, TestSetup};
     use crate::{krun_call, krun_call_u32};
+    use crate::{Test, TestSetup};
     use krun_sys::*;
     use std::ffi::CString;
     use std::fs;
     use std::os::fd::AsRawFd;
     use std::os::unix::ffi::OsStrExt;
-    use std::ptr::null;
 
     impl Test for TestVirtiofsRootRo {
         fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()> {
@@ -39,8 +38,6 @@ mod host {
             fs::write(root_dir.join(TEST_FILE), TEST_CONTENT)?;
             let root_path = CString::new(root_dir.as_os_str().as_bytes())?;
             let test_case = CString::new(test_setup.test_case)?;
-            let argv = [test_case.as_ptr(), null()];
-            let envp = [null()];
 
             unsafe {
                 krun_call!(krun_init_log(
@@ -67,13 +64,11 @@ mod host {
                     true,
                 ))?;
 
-                krun_call!(krun_set_workdir(ctx, c"/".as_ptr()))?;
-                krun_call!(krun_set_exec(
-                    ctx,
-                    c"/guest-agent".as_ptr(),
-                    argv.as_ptr(),
-                    envp.as_ptr(),
-                ))?;
+                let init_config =
+                    crate::common::build_init_config(test_case.to_str().unwrap(), &[]);
+                init_config
+                    .apply(std::ptr::null_mut(), ctx, "/dev/root")
+                    .expect("apply init config");
                 krun_call!(krun_start_enter(ctx))?;
             }
             Ok(())
@@ -87,12 +82,12 @@ mod guest {
     use crate::Test;
     use nix::errno::Errno;
     use nix::libc;
-    use nix::sys::stat::{Mode, SFlag, mknod, stat};
+    use nix::sys::stat::{mknod, stat, Mode, SFlag};
     use nix::unistd::{mkfifo, truncate};
     use std::fs;
     use std::fs::Permissions;
     use std::io::ErrorKind;
-    use std::os::unix::fs::{PermissionsExt, chown, symlink};
+    use std::os::unix::fs::{chown, symlink, PermissionsExt};
     use std::os::unix::net::UnixListener;
     use std::path::Path;
 
