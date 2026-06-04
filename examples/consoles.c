@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 
 #include <libkrun.h>
+#include <libkrun_init.h>
 
 static int cmd_output(char *output, size_t output_size, const char *prog, ...)
 {
@@ -201,10 +202,27 @@ int main(int argc, char *const argv[])
         return 1;
     }
 
-    if ((err = krun_set_exec(ctx_id, command, command_args, envp))) {
-        errno = -err;
-        perror("krun_set_exec");
-        return 1;
+    // Build init configuration.
+    {
+        KrunInitConfigBuilder builder = krun_init_config_builder();
+
+        // Build full argv: command + command_args (null-terminated).
+        int argc_guest = 1;
+        if (command_args) {
+            while (command_args[argc_guest - 1]) argc_guest++;
+        }
+        KrunStr args[argc_guest];
+        args[0] = KRUN_STR(command);
+        for (int i = 1; i < argc_guest; i++)
+            args[i] = KRUN_STR(command_args[i - 1]);
+        krun_init_config_builder_args(&builder, args, argc_guest);
+
+        KrunInitConfig config = krun_init_config_builder_build(&builder);
+        if ((err = krun_inject_init(ctx_id, "/dev/root", config))) {
+            errno = -err;
+            perror("krun_inject_init");
+            return 1;
+        }
     }
 
     if ((err = krun_start_enter(ctx_id))) {
