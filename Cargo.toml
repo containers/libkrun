@@ -3,6 +3,8 @@ members = [
     "init/init-binary",
     "src/libkrun",
     "init/init-blob",
+    "init/init-blob-cdylib",
+    "init/init-blob-via-cdylib",
     "src/input",
     "src/display",
     "src/utils",
