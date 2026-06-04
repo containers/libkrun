@@ -1027,7 +1027,6 @@ dependencies = [
  "krun-devices",
  "krun-display",
  "krun-hvf",
- "krun-init-blob",
  "krun-input",
  "krun-polly",
  "krun-utils",

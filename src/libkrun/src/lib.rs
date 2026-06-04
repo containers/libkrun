@@ -67,6 +67,7 @@ use krun_input::{InputConfigBackend, InputEventProviderBackend};
 
 // Value returned on success. We use libc's errors otherwise.
 const KRUN_SUCCESS: i32 = 0;
+
 // Maximum number of arguments/environment variables we allow
 const MAX_ARGS: usize = 4096;
 /// Maximum number of virtqueues allowed by virtio spec (16-bit queue index: 0-65535)
@@ -2222,7 +2223,8 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 }
 
                 // Boot from a block device: the virtiofs root only needs to
-                // serve init.krun and provide mount points for /dev, /proc, /sys.
+                // provide mount points for /dev, /proc, /sys. The init binary
+                // and config are applied separately via Config::apply().
                 // Use a NullFs (no host directory) with the inode overlay.
                 let mut virtual_entries = Vec::new();
                 if !ctx_cfg.disable_implicit_init {
@@ -2325,6 +2327,7 @@ fn fs_add_overlay_entry(ctx_id: u32, fs_tag: &str, path: &str, entry: VirtualEnt
     }
     KRUN_SUCCESS
 }
+
 
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
