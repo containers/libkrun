@@ -5,6 +5,7 @@
  * Virtual Machine created and managed by libkrun.
  */
 
+#include <alloca.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -15,6 +16,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <libkrun.h>
+#include <libkrun_init.h>
 #include <getopt.h>
 #include <stdbool.h>
 #include <assert.h>
@@ -458,25 +460,42 @@ int main(int argc, char *const argv[])
         }
     }
 
-    // Configure the rlimits that will be set in the guest
-    if (err = krun_set_rlimits(ctx_id, &rlimits[0])) {
-        errno = -err;
-        perror("Error configuring rlimits");
-        return -1;
-    }
+    // Build the init configuration (executable, args, env, workdir, rlimits).
+    {
+        KrunInitConfigBuilder builder = krun_init_config_builder();
 
-    // Set the working directory to "/", just for the sake of completeness.
-    if (err = krun_set_workdir(ctx_id, "/")) {
-        errno = -err;
-        perror("Error configuring \"/\" as working directory");
-        return -1;
-    }
+        // Count and convert guest_argv to KrunStr array.
+        int argc_guest = 0;
+        while (cmdline.guest_argv[argc_guest]) argc_guest++;
+        KrunStr *args = alloca(argc_guest * sizeof(KrunStr));
+        for (int i = 0; i < argc_guest; i++)
+            args[i] = KRUN_STR(cmdline.guest_argv[i]);
+        krun_init_config_builder_args(&builder, args, argc_guest);
 
-    // Specify the path of the binary to be executed in the isolated context, relative to the root path.
-    if (err = krun_set_exec(ctx_id, cmdline.guest_argv[0], (const char* const*) &cmdline.guest_argv[1], &envp[0])) {
-        errno = -err;
-        perror("Error configuring the parameters for the executable to be run");
-        return -1;
+        // Convert envp to KrunStr array.
+        int envc = 0;
+        while (envp[envc]) envc++;
+        KrunStr *env_strs = alloca(envc * sizeof(KrunStr));
+        for (int i = 0; i < envc; i++)
+            env_strs[i] = KRUN_STR(envp[i]);
+        krun_init_config_builder_env(&builder, env_strs, envc);
+
+        krun_init_config_builder_workdir(&builder, KRUN_STR("/"));
+
+        // Convert rlimits to KrunStr array.
+        int rlimitc = 0;
+        while (rlimits[rlimitc]) rlimitc++;
+        KrunStr *rlimit_strs = alloca(rlimitc * sizeof(KrunStr));
+        for (int i = 0; i < rlimitc; i++)
+            rlimit_strs[i] = KRUN_STR(rlimits[i]);
+        krun_init_config_builder_rlimits(&builder, rlimit_strs, rlimitc);
+
+        KrunInitConfig config = krun_init_config_builder_build(&builder);
+        if (err = krun_inject_init(ctx_id, NULL, "/dev/root", config)) {
+            errno = -err;
+            perror("Error injecting init configuration");
+            return -1;
+        }
     }
 
     if (err = krun_split_irqchip(ctx_id, false)) {
