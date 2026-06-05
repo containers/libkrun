@@ -521,6 +521,16 @@ static int mount_filesystems()
         return -1;
     }
 
+    /*
+     * Best effort loosen /dev/kvm permissions to allow nested virtualization by
+     * unprivileged processes inside the microVM (usually a single purpose
+     * environment). Log errors but don't log ENOENT since the guest kernel may
+     * not support KVM or nested virtualization might not be enabled.
+     */
+    if (chmod("/dev/kvm", 0666) < 0 && errno != ENOENT) {
+        perror("chmod(/dev/kvm)");
+    }
+
     if (mount("proc", "/proc", "proc",
               MS_NODEV | MS_NOEXEC | MS_NOSUID | MS_RELATIME, NULL) < 0 &&
         errno != EBUSY) {
