@@ -218,7 +218,7 @@ int main(int argc, char *const argv[])
         krun_init_config_builder_args(&builder, args, argc_guest);
 
         KrunInitConfig config = krun_init_config_builder_build(&builder);
-        if ((err = krun_inject_init(ctx_id, "/dev/root", config))) {
+        if ((err = krun_inject_init(ctx_id, NULL, "/dev/root", config))) {
             errno = -err;
             perror("krun_inject_init");
             return 1;

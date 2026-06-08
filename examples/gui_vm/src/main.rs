@@ -175,6 +175,7 @@ fn krun_thread(
         let config = krun_init::Config::builder().args(&full_argv).build();
         krun_call!(krun_inject_init(
             ctx,
+            std::ptr::null_mut(),
             c"/dev/root".as_ptr(),
             config.__into_raw(),
         ))?;

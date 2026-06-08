@@ -75,6 +75,7 @@ mod host {
                 // Inject init binary + config via libkrun-init.
                 krun_call!(krun_inject_init(
                     ctx,
+                    std::ptr::null_mut(),
                     c"/dev/root".as_ptr(),
                     init_config.__into_raw(),
                 ))?;

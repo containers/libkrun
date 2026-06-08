@@ -1126,15 +1126,18 @@ int32_t krun_fs_add_overlay_file(uint32_t ctx_id, const char *fs_tag,
  *
  * Arguments:
  *  "ctx_id"        - the configuration context ID.
+ *  "lib_handle"    - handle from dlopen("libkrun_init.so") for symbol lookup.
+ *                    Pass NULL to search the global symbol namespace (requires
+ *                    that libkrun_init.so was linked or dlopen'd with RTLD_GLOBAL).
  *  "fs_tag"        - tag of the virtiofs device (e.g. "/dev/root").
  *  "config_handle" - opaque KrunInitConfig handle from libkrun-init.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
- *  -ENOSYS if libkrun-init.so is not loaded.
+ *  -ENOSYS if libkrun-init.so symbols cannot be found.
  */
-int32_t krun_inject_init(uint32_t ctx_id, const char *fs_tag,
-                         void *config_handle);
+int32_t krun_inject_init(uint32_t ctx_id, void *lib_handle,
+                         const char *fs_tag, void *config_handle);
 
 /**
  * Add a virtual overlay directory to a virtiofs device.

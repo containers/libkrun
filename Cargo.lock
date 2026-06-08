@@ -385,7 +385,7 @@ dependencies = [
 [[package]]
 name = "ffier"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
 dependencies = [
  "ffier-annotations",
  "ffier-builtins",
@@ -395,7 +395,7 @@ dependencies = [
 [[package]]
 name = "ffier-annotations"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
 dependencies = [
  "ffier-meta",
  "proc-macro2",
@@ -406,7 +406,7 @@ dependencies = [
 [[package]]
 name = "ffier-bridge"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
 dependencies = [
  "ffier-meta",
  "ffier-schema",
@@ -419,7 +419,7 @@ dependencies = [
 [[package]]
 name = "ffier-bridge-macros"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
 dependencies = [
  "ffier-bridge",
 ]
@@ -427,7 +427,7 @@ dependencies = [
 [[package]]
 name = "ffier-builtins"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
 dependencies = [
  "ffier-annotations",
  "ffier-rt",
@@ -436,7 +436,7 @@ dependencies = [
 [[package]]
 name = "ffier-gen-c-header"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
 dependencies = [
  "ffier-schema",
  "serde_json",
@@ -445,7 +445,7 @@ dependencies = [
 [[package]]
 name = "ffier-gen-rust-client"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
 dependencies = [
  "ffier-schema",
  "serde_json",
@@ -454,7 +454,7 @@ dependencies = [
 [[package]]
 name = "ffier-meta"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -464,12 +464,12 @@ dependencies = [
 [[package]]
 name = "ffier-rt"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
 
 [[package]]
 name = "ffier-schema"
 version = "0.1.0"
-source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=9e36967#9e36967ad64ae94f540e1e8b84dccbfd397b6fd9"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
 dependencies = [
  "serde",
  "serde_json",

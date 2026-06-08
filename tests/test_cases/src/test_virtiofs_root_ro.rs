@@ -17,8 +17,8 @@ mod host {
     use super::*;
 
     use crate::common::setup_rootfs;
-    use crate::{Test, TestSetup};
     use crate::{krun_call, krun_call_u32};
+    use crate::{Test, TestSetup};
     use krun_sys::*;
     use std::ffi::CString;
     use std::fs;
@@ -56,6 +56,7 @@ mod host {
                     crate::common::build_init_config(test_case.to_str().unwrap(), &[]);
                 krun_call!(krun_inject_init(
                     ctx,
+                    std::ptr::null_mut(),
                     c"/dev/root".as_ptr(),
                     init_config.__into_raw(),
                 ))?;
@@ -72,12 +73,12 @@ mod guest {
     use crate::Test;
     use nix::errno::Errno;
     use nix::libc;
-    use nix::sys::stat::{Mode, SFlag, mknod, stat};
+    use nix::sys::stat::{mknod, stat, Mode, SFlag};
     use nix::unistd::{mkfifo, truncate};
     use std::fs;
     use std::fs::Permissions;
     use std::io::ErrorKind;
-    use std::os::unix::fs::{PermissionsExt, chown, symlink};
+    use std::os::unix::fs::{chown, symlink, PermissionsExt};
     use std::os::unix::net::UnixListener;
     use std::path::Path;
 

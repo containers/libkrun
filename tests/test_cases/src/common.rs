@@ -7,7 +7,7 @@ use std::fs::create_dir;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use crate::{TestSetup, krun_call, krun_init};
+use crate::{krun_call, krun_init, TestSetup};
 use krun_sys::*;
 
 fn copy_guest_agent(dir: &Path) -> anyhow::Result<()> {
@@ -72,6 +72,7 @@ pub fn setup_fs_and_enter_with_env(
         ))?;
         krun_call!(krun_inject_init(
             ctx,
+            std::ptr::null_mut(),
             c"/dev/root".as_ptr(),
             init_config.__into_raw(),
         ))?;

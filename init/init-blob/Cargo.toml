@@ -13,8 +13,8 @@ tdx = []
 timesync = []
 
 [dependencies]
-ffier = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "9e36967" }
-ffier-builtins = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "9e36967" }
+ffier = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "be3aadd" }
+ffier-builtins = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "be3aadd" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

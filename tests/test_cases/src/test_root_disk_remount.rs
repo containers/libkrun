@@ -14,7 +14,7 @@ mod host {
     use super::*;
 
     use crate::common;
-    use crate::{ShouldRun, krun_call, krun_call_u32, krun_init};
+    use crate::{krun_call, krun_call_u32, krun_init, ShouldRun};
     use crate::{Test, TestSetup};
     use krun_sys::*;
     use nix::libc;
@@ -122,6 +122,7 @@ mod host {
                 let init_config = common::build_init_config(test_case.to_str().unwrap(), &[]);
                 krun_call!(krun_inject_init(
                     ctx,
+                    std::ptr::null_mut(),
                     c"/dev/root".as_ptr(),
                     init_config.__into_raw(),
                 ))?;

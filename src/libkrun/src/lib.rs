@@ -2555,12 +2555,15 @@ use krun_init_blob_via_cdylib_weak as krun_init;
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 pub unsafe extern "C" fn krun_inject_init(
     ctx_id: u32,
+    lib_handle: *mut c_void,
     c_fs_tag: *const c_char,
     config_handle: *mut c_void,
 ) -> i32 {
     use krun_init::Symbol;
 
-    if krun_init::require(&[
+    let lib = core::ptr::NonNull::new(lib_handle);
+
+    if krun_init::require(lib, &[
         Symbol::KrunInitConfigKernelInitArg,
         Symbol::KrunInitConfigGuestFiles,
         Symbol::KrunInitGuestFilePath,

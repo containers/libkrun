@@ -483,7 +483,7 @@ int main(int argc, char *const argv[])
         krun_init_config_builder_rlimits(&builder, rlimit_strs, rlimitc);
 
         KrunInitConfig config = krun_init_config_builder_build(&builder);
-        if (err = krun_inject_init(ctx_id, "/dev/root", config)) {
+        if (err = krun_inject_init(ctx_id, NULL, "/dev/root", config)) {
             errno = -err;
             perror("Error injecting init configuration");
             return -1;

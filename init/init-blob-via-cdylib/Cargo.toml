@@ -8,4 +8,4 @@ repository = "https://github.com/containers/libkrun"
 build = "build.rs"
 
 [dependencies]
-ffier = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "9e36967" }
+ffier = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "be3aadd" }
