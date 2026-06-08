@@ -1310,18 +1310,28 @@ int32_t krun_set_kernel_console(uint32_t ctx_id, const char *console_id);
  * the stdin/stdout/stderr of the application in the guest appropriately.
  *
  * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "input_fd"  - file descriptor to use as input for console.
- *  "output_fd" - file descriptor to use as output for console.
- *  "err_fd"    - file descriptor to use as err for console.
+ *  "ctx_id"       - the configuration context ID.
+ *  "input_fd"     - file descriptor to use as input for console (Unix).
+ *  "input_handle" - HANDLE to use as input for console (Windows).
+ *  "output_fd"     - file descriptor to use as output for console (Unix).
+ *  "output_handle" - HANDLE to use as output for console (Windows).
+ *  "err_fd"        - file descriptor to use as err for console (Unix).
+ *  "err_handle"    - HANDLE to use as err for console (Windows).
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_add_virtio_console_default(uint32_t ctx_id,
-                                      int input_fd,
-                                      int output_fd,
-                                      int err_fd);
+#ifdef _WIN32
+                                        void *input_handle,
+                                        void *output_handle,
+                                        void *err_handle
+#else
+                                        int input_fd,
+                                        int output_fd,
+                                        int err_fd
+#endif
+                                        );
 
 /*
  * Adds a legacy serial device to the guest.
@@ -1333,16 +1343,24 @@ int32_t krun_add_virtio_console_default(uint32_t ctx_id,
  * the first console created with the function will occupy the "ttyS1" ID.
  *
  * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "input_fd"  - file descriptor to use as input for console.
- *  "output_fd" - file descriptor to use as output for console.
+ *  "ctx_id"       - the configuration context ID.
+ *  "input_fd"     - file descriptor to use as input for console (Unix).
+ *  "input_handle" - HANDLE to use as input for console (Windows).
+ *  "output_fd"     - file descriptor to use as output for console (Unix).
+ *  "output_handle" - HANDLE to use as output for console (Windows).
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_add_serial_console_default(uint32_t ctx_id,
-                                      int input_fd,
-                                      int output_fd);
+#ifdef _WIN32
+                                        void *input_handle,
+                                        void *output_handle
+#else
+                                        int input_fd,
+                                        int output_fd
+#endif
+                                        );
 
 /*
  * Adds a multi-port virtio-console device to the guest with explicitly configured ports.
@@ -1375,15 +1393,21 @@ int32_t krun_add_virtio_console_multiport(uint32_t ctx_id);
  *  "ctx_id"     - the configuration context ID
  *  "console_id" - the console ID returned by krun_add_virtio_console_multiport()
  *  "name"       - the name of the port for identifying the port in the guest, can be empty ("")
- *  "tty_fd"     - file descriptor for the TTY to use for both input, output, and determining terminal size
+ *  "tty_fd"     - file descriptor for the TTY to use for both input, output, and determining terminal size (Unix).
+ *  "tty_handle" - HANDLE for the TTY to use for both input, output, and determining terminal size (Windows).
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_add_console_port_tty(uint32_t ctx_id,
-                                   uint32_t console_id,
-                                   const char *name,
-                                   int tty_fd);
+                                  uint32_t console_id,
+                                  const char *name,
+#ifdef _WIN32
+                                  void *tty_handle
+#else
+                                  int tty_fd
+#endif
+                                  );
 
 /*
  * Adds a generic I/O port to a multi-port virtio-console device, suitable for arbitrary bidirectional 
@@ -1396,17 +1420,25 @@ int32_t krun_add_console_port_tty(uint32_t ctx_id,
  *  "ctx_id"     - the configuration context ID
  *  "console_id" - the console ID returned by krun_add_virtio_console_multiport()
  *  "name"       - the name of the port for identifying the port in the guest, can be empty ("")
- *  "input_fd"   - file descriptor to use for input (host writes, guest reads)
- *  "output_fd"  - file descriptor to use for output (guest writes, host reads)
+ *  "input_fd"     - file descriptor to use for input (host writes, guest reads) (Unix).
+ *  "input_handle" - HANDLE to use for input (host writes, guest reads) (Windows).
+ *  "output_fd"     - file descriptor to use for output (guest writes, host reads) (Unix).
+ *  "output_handle" - HANDLE to use for output (guest writes, host reads) (Windows).
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_add_console_port_inout(uint32_t ctx_id,
-                                     uint32_t console_id,
-                                     const char *name,
-                                     int input_fd,
-                                     int output_fd);
+                                    uint32_t console_id,
+                                    const char *name,
+#ifdef _WIN32
+                                    void *input_handle,
+                                    void *output_handle
+#else
+                                    int input_fd,
+                                    int output_fd
+#endif
+                                    );
 
 /**
  * Configure block device to be used as root filesystem.
