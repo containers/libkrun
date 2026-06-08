@@ -1,10 +1,26 @@
+#[cfg(unix)]
 use nix::sys::termios::{LocalFlags, SetArg, Termios, cfmakeraw, tcgetattr, tcsetattr};
+#[cfg(unix)]
 use std::os::fd::BorrowedFd;
 
+#[cfg(windows)]
+use std::io;
+#[cfg(windows)]
+use utils::windows::SendHandle;
+#[cfg(windows)]
+use windows_sys::Win32::System::Console::{
+    CONSOLE_MODE, ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT,
+    ENABLE_VIRTUAL_TERMINAL_INPUT, GetConsoleMode, SetConsoleMode,
+};
 #[must_use]
+#[cfg(unix)]
 pub struct TerminalMode(Termios);
 
-// Enable raw mode for the terminal and return the old state to be restored
+#[must_use]
+#[cfg(windows)]
+pub struct TerminalMode(CONSOLE_MODE);
+
+#[cfg(unix)]
 pub fn term_set_raw_mode(
     term: BorrowedFd,
     handle_signals_by_terminal: bool,
@@ -22,6 +38,50 @@ pub fn term_set_raw_mode(
     Ok(TerminalMode(old_state))
 }
 
+#[cfg(unix)]
 pub fn term_restore_mode(term: BorrowedFd, restore: &TerminalMode) -> Result<(), nix::Error> {
     tcsetattr(term, SetArg::TCSANOW, &restore.0)
+}
+
+#[cfg(windows)]
+pub fn term_set_raw_mode(
+    term: SendHandle,
+    handle_signals_by_terminal: bool,
+) -> Result<TerminalMode, io::Error> {
+    let handle = term.as_raw_handle();
+    let mut mode: CONSOLE_MODE = 0;
+
+    let ret = unsafe { GetConsoleMode(handle, &mut mode) };
+    if ret == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let old_state = mode;
+
+    mode &= !(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT);
+
+    if handle_signals_by_terminal {
+        mode |= ENABLE_PROCESSED_INPUT;
+    } else {
+        mode &= !ENABLE_PROCESSED_INPUT;
+    }
+
+    mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
+
+    let ret = unsafe { SetConsoleMode(handle, mode) };
+    if ret == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    Ok(TerminalMode(old_state))
+}
+
+#[cfg(windows)]
+pub fn term_restore_mode(term: SendHandle, restore: &TerminalMode) -> Result<(), io::Error> {
+    let handle = term.as_raw_handle();
+    let ret = unsafe { SetConsoleMode(handle, restore.0) };
+    if ret == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }

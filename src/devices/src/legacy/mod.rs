@@ -84,8 +84,14 @@ pub use self::vcpu::VcpuList;
 // which is a composition of the desired bounds. In this case, io::Read and AsRawFd.
 // Run `rustc --explain E0225` for more details.
 /// Trait that composes the `std::io::Read` and `std::os::unix::io::AsRawFd` traits.
+#[cfg(unix)]
 pub trait ReadableFd: std::io::Read + std::os::fd::AsRawFd {}
+#[cfg(unix)]
+impl ReadableFd for std::fs::File {}
 
+#[cfg(windows)]
+pub trait ReadableFd: std::io::Read + Send {}
+#[cfg(windows)]
 impl ReadableFd for std::fs::File {}
 
 #[cfg(target_os = "linux")]
