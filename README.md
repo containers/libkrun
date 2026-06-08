@@ -116,7 +116,7 @@ When TSI is enabled, the VMM acts as a proxy for AF_INET, AF_INET6 and AF_UNIX s
 On Debian/Ubuntu that might look something like this:
 
 ```sh
-apt install patchelf build-essential clang libc6-dev
+apt install patchelf build-essential clang libclang-dev libc6-dev
 ```
 
 #### Optional features
