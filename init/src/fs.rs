@@ -1,7 +1,7 @@
 use std::env;
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
-use std::os::unix::fs as unix_fs;
+use std::fs::{self, File, Permissions};
+use std::io::{self, BufRead, BufReader};
+use std::os::unix::fs::{self as unix_fs, PermissionsExt};
 
 use anyhow::{Context, bail};
 use nix::errno::Errno;
@@ -34,6 +34,12 @@ pub fn mount_filesystems() -> anyhow::Result<()> {
         Some("devtmpfs"),
         MsFlags::MS_RELATIME,
     )?;
+
+    // Best-effort: allow nested virtualization by unprivileged processes.
+    match fs::set_permissions("/dev/kvm", Permissions::from_mode(0o666)) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => eprintln!("chmod(/dev/kvm): {e}"),
+        _ => {}
+    }
 
     mount_or_busy(
         Some("proc"),
