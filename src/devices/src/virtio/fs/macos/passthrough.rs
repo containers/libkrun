@@ -700,6 +700,16 @@ impl PassthroughFs {
 
         let mut ds = data.dirstream.lock().unwrap();
 
+        // We use offset == 0 as an indicator of this being either a fresh directory
+        // stream or a stream that has been rewound. If that's the case, make sure
+        // the cache will be refreshed.
+        if offset == 0 && ds.ready {
+            let fd = data.file.write().unwrap().as_raw_fd();
+            unsafe { libc::lseek(fd, 0, libc::SEEK_SET) };
+            ds.entries.clear();
+            ds.ready = false;
+        }
+
         if !ds.ready {
             // Fill the cache on first call
             if let Err(e) = ds.fill_from_fd(data.file.write().unwrap().as_raw_fd()) {
