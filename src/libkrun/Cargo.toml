@@ -46,6 +46,11 @@ aws-nitro = { package = "krun-aws-nitro", version = "=0.1.0-1.18.0", path = "../
 nitro-enclaves = { version = "0.5.0", optional = true }
 vm-memory = { version = "0.17", features = ["backend-mmap"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_System_Console",
+] }
+
 [lib]
 name = "krun"
 crate-type = ["cdylib", "lib"]

@@ -497,9 +497,9 @@ checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
 
 [[package]]
 name = "imago"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e8e4b92aa0dd860579cfba776dbf0918a3a7ac5cb601af7d3fc835e71592a5b"
+checksum = "ae7cfee876c698a1a2ed9c705ab18f21acbed82110f19b51cc458de73426fe2c"
 dependencies = [
  "async-trait",
  "bincode",
@@ -692,6 +692,7 @@ dependencies = [
  "vm-fdt",
  "vm-memory",
  "vmm-sys-util 0.15.0",
+ "windows-sys",
  "zerocopy",
 ]
 
@@ -814,6 +815,7 @@ dependencies = [
  "tdx",
  "vm-memory",
  "vmm-sys-util 0.14.0",
+ "windows-sys",
  "zstd",
 ]
 
@@ -881,6 +883,7 @@ dependencies = [
  "nitro-enclaves 0.5.0",
  "once_cell",
  "vm-memory",
+ "windows-sys",
 ]
 
 [[package]]
