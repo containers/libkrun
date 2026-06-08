@@ -89,7 +89,7 @@ LIBRARY_DEBUG_Linux = target/debug/$(KRUN_BINARY_Linux)
 LIBRARY_RELEASE_Darwin = target/release/$(KRUN_BINARY_Darwin)
 LIBRARY_DEBUG_Darwin = target/debug/$(KRUN_BINARY_Darwin)
 
-LIBDIR_Linux = lib64
+LIBDIR_Linux = $(shell if [ -e /etc/debian_version ]; then printf 'lib/$(ARCH)-linux-gnu'; else printf lib64; fi)
 LIBDIR_Darwin = lib
 
 ifeq ($(PREFIX),)
