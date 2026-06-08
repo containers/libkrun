@@ -117,9 +117,6 @@ On Debian/Ubuntu that might look something like this:
 
 ```sh
 apt install patchelf build-essential clang libc6-dev
-
-# and/or for musl instead glibc
-apt install musl-tools musl-dev
 ```
 
 #### Optional features
