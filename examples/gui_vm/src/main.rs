@@ -9,9 +9,9 @@ use krun_sys::{
     KRUN_LOG_LEVEL_TRACE, KRUN_LOG_LEVEL_WARN, KRUN_LOG_STYLE_ALWAYS, KRUN_LOG_TARGET_DEFAULT,
     VIRGLRENDERER_RENDER_SERVER, VIRGLRENDERER_THREAD_SYNC, VIRGLRENDERER_USE_ASYNC_FENCE_CB,
     VIRGLRENDERER_USE_EGL, VIRGLRENDERER_VENUS, krun_add_display, krun_add_input_device,
-    krun_add_input_device_fd, krun_create_ctx, krun_display_set_dpi,
-    krun_display_set_physical_size, krun_display_set_refresh_rate, krun_init_log,
-    krun_set_display_backend, krun_set_exec, krun_set_gpu_options2, krun_set_root,
+    krun_add_input_device_fd, krun_add_virtio_console_default, krun_add_virtiofs3, krun_create_ctx,
+    krun_display_set_dpi, krun_display_set_physical_size, krun_display_set_refresh_rate,
+    krun_init_log, krun_set_display_backend, krun_set_exec, krun_set_gpu_options2,
     krun_set_vm_config, krun_start_enter,
 };
 use log::LevelFilter;
@@ -22,7 +22,7 @@ use std::fs::{File, OpenOptions};
 use std::mem::size_of_val;
 
 use anyhow::Context;
-use std::os::fd::IntoRawFd;
+use std::os::fd::{AsRawFd, IntoRawFd};
 use std::path::PathBuf;
 use std::process::exit;
 use std::ptr::null;
@@ -150,6 +150,13 @@ fn krun_thread(
 
         krun_call!(krun_set_vm_config(ctx, 4, 4096))?;
 
+        krun_call!(krun_add_virtio_console_default(
+            ctx,
+            std::io::stdin().as_raw_fd(),
+            std::io::stdout().as_raw_fd(),
+            std::io::stderr().as_raw_fd(),
+        ))?;
+
         krun_call!(krun_set_gpu_options2(
             ctx,
             VIRGLRENDERER_USE_EGL
@@ -160,7 +167,13 @@ fn krun_thread(
             4096
         ))?;
 
-        krun_call!(krun_set_root(ctx, args.root_dir.as_ptr()))?;
+        krun_call!(krun_add_virtiofs3(
+            ctx,
+            c"/dev/root".as_ptr(),
+            args.root_dir.as_ptr(),
+            0,
+            false
+        ))?;
 
         let executable = args.executable.as_ref().unwrap().as_ptr();
         let argv: Vec<_> = args.argv.iter().map(|a| a.as_ptr()).collect();

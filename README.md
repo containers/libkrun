@@ -65,7 +65,7 @@ This is a novel technique called **Transparent Socket Impersonation** which allo
 
 #### Enabling TSI
 
-TSI for AF_INET and AF_INET6 is automatically enabled when no network interface is added to the VM. TSI for AF_UNIX is enabled when, in addition to the previous condition, `krun_set_root` has been used to set `/` as root filesystem.
+TSI for AF_INET and AF_INET6 is automatically enabled when no network interface is added to the VM. TSI for AF_UNIX is enabled when, in addition to the previous condition, the root filesystem has been configured with `/` as the shared directory.
 
 #### Known limitations
 
@@ -92,7 +92,7 @@ While most virtio devices allow the guest to access resources from the host, two
 
 ### virtio-fs
 
-When exposing a directory in a filesystem from the host to the guest through virtio-fs devices configured with `krun_set_root` and/or `krun_add_virtiofs`, libkrun **does not** provide any protection against the guest attempting to access other directories in the same filesystem, or even other filesystems in the host.
+When exposing a directory in a filesystem from the host to the guest through virtio-fs devices configured with `krun_add_virtiofs*`, libkrun **does not** provide any protection against the guest attempting to access other directories in the same filesystem, or even other filesystems in the host.
 
 A mount point isolation mechanism from the host should be used in combination with virtio-fs.
 

@@ -18,6 +18,7 @@ mod host {
     use krun_sys::*;
     use nix::libc;
     use std::ffi::CString;
+    use std::os::fd::AsRawFd;
     use std::process::Command;
     use std::ptr::null;
 
@@ -98,9 +99,20 @@ mod host {
             let test_case = CString::new(test_setup.test_case)?;
 
             unsafe {
-                krun_call!(krun_set_log_level(KRUN_LOG_LEVEL_TRACE))?;
+                krun_call!(krun_init_log(
+                    KRUN_LOG_TARGET_DEFAULT,
+                    KRUN_LOG_LEVEL_TRACE,
+                    KRUN_LOG_STYLE_AUTO,
+                    0
+                ))?;
                 let ctx = krun_call_u32!(krun_create_ctx())?;
                 krun_call!(krun_set_vm_config(ctx, 1, 512))?;
+                krun_call!(krun_add_virtio_console_default(
+                    ctx,
+                    std::io::stdin().as_raw_fd(),
+                    std::io::stdout().as_raw_fd(),
+                    std::io::stderr().as_raw_fd(),
+                ))?;
 
                 let argv = [test_case.as_ptr(), null()];
                 let envp = [null()];

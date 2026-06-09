@@ -45,7 +45,7 @@ int main(int argc, char *const argv[])
     }
 
     // Set the log level to "error".
-    err = krun_set_log_level(1);
+    err = krun_init_log(KRUN_LOG_TARGET_DEFAULT, KRUN_LOG_LEVEL_ERROR, KRUN_LOG_STYLE_AUTO, 0);
     if (err) {
         errno = -err;
         perror("Error configuring log level");
@@ -67,8 +67,14 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
+    if (err = krun_add_virtio_console_default(ctx_id, STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO)) {
+        errno = -err;
+        perror("Error configuring console");
+        return -1;
+    }
+
     // Use the first command line argument as the disk image containing the root fs.
-    if (err = krun_set_root_disk(ctx_id, argv[1])) {
+    if (err = krun_add_disk(ctx_id, "root", argv[1], false)) {
         errno = -err;
         perror("Error configuring root disk image");
         return -1;
@@ -114,7 +120,7 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    if (err = krun_set_data_disk(ctx_id, argv[3])) {
+    if (err = krun_add_disk(ctx_id, "data", argv[3], false)) {
         errno = -err;
         perror("Error configuring the TEE config data disk");
         return -1;

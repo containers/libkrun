@@ -52,7 +52,13 @@ pub fn setup_fs_and_enter_with_env(
         .collect();
     envp.push(null());
     unsafe {
-        krun_call!(krun_set_root(ctx, path_str.as_ptr()))?;
+        krun_call!(krun_add_virtiofs3(
+            ctx,
+            c"/dev/root".as_ptr(),
+            path_str.as_ptr(),
+            0,
+            false,
+        ))?;
         krun_call!(krun_set_workdir(ctx, c"/".as_ptr()))?;
         let test_case_cstr = CString::new(test_setup.test_case).context("CString::new")?;
         let argv = [test_case_cstr.as_ptr(), null()];

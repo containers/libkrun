@@ -10,24 +10,6 @@ extern "C" {
 #include <stdbool.h>
 #include <unistd.h>
 
-/**
- * Sets the log level for the library.
- *
- * Arguments:
- *  "level" can be one of the following values:
- *    0: Off
- *    1: Error
- *    2: Warn
- *    3: Info
- *    4: Debug
- *    5: Trace
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_log_level(uint32_t level);
-
-
 #define KRUN_LOG_TARGET_DEFAULT -1
 
 #define KRUN_LOG_LEVEL_OFF 0
@@ -103,59 +85,11 @@ int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus, uint32_t ram_mib)
  */
 #define KRUN_FS_ROOT_TAG "/dev/root"
 
-/**
- * Sets the path to be use as root for the microVM. Not available in libkrun-SEV.
- *
- * For more control over the root filesystem (e.g. read-only, DAX window size),
- * use krun_add_virtiofs3() with KRUN_FS_ROOT_TAG instead.
- *
- * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "root_path" - a null-terminated string representing the path to be used as root.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
 
-/**
- * DEPRECATED. Use krun_add_disk instead.
- *
- * Sets the path to the disk image that contains the file-system to be used as root for the microVM.
- * The only supported image format is "raw".
- *
- * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "disk_path" - a null-terminated string representing the path leading to the disk image that
- *                contains the root file-system.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_root_disk(uint32_t ctx_id, const char *disk_path);
-
-/**
- * DEPRECATED. Use krun_add_disk instead.
- *
- * Sets the path to the disk image that contains the file-system to be used as
- * a data partition for the microVM.  The only supported image format is "raw".
- *
- * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "disk_path" - a null-terminated string representing the path leading to the disk image that
- *                contains the root file-system.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_data_disk(uint32_t ctx_id, const char *disk_path);
 
 /**
  * Adds a disk image to be used as a general partition for the microVM. The only supported image
  * format is "raw".
- *
- * This API is mutually exclusive with the deprecated krun_set_root_disk and
- * krun_set_data_disk methods and must not be used together.
  *
  * This function deliberately only handles images in the Raw format, because it doesn't allow
  * specifying an image format, and probing an image's format is dangerous. For more information,
@@ -182,9 +116,6 @@ int32_t krun_add_disk(uint32_t ctx_id, const char *block_id, const char *disk_pa
 /**
  * Adds a disk image to be used as a general partition for the microVM. The supported
  * image formats are: "raw" and "qcow2".
- *
- * This API is mutually exclusive with the deprecated krun_set_root_disk and
- * krun_set_data_disk methods and must not be used together.
  *
  * SECURITY NOTE:
  * Non-Raw images can reference other files, which libkrun will automatically open, and to which the
@@ -254,9 +185,6 @@ int32_t krun_add_disk2(uint32_t ctx_id,
 /**
  * Adds a disk image to be used as a general partition for the microVM.
  *
- * This API is mutually exclusive with the deprecated krun_set_root_disk and
- * krun_set_data_disk methods and must not be used together.
- *
  * SECURITY NOTE:
  * See the security note for `krun_add_disk2`.
  *
@@ -282,22 +210,6 @@ int32_t krun_add_disk2(uint32_t ctx_id,
                        bool read_only,
                        bool direct_io,
                        uint32_t sync_mode);
-
-/**
- * NO LONGER SUPPORTED. DO NOT USE.
- *
- * Configures the mapped volumes for the microVM. Only supported on macOS, on Linux use
- * user_namespaces and bind-mounts instead. Not available in libkrun-SEV.
- *
- * Arguments:
- *  "ctx_id"         - the configuration context ID.
- *  "mapped_volumes" - an array of string pointers with format "host_path:guest_path" representing
- *                     the volumes to be mapped inside the microVM
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_mapped_volumes(uint32_t ctx_id, const char *const mapped_volumes[]);
 
 /**
  * Adds an independent virtio-fs device pointing to a host's directory with a tag.
@@ -371,7 +283,7 @@ int32_t krun_add_virtiofs3(uint32_t ctx_id,
 #define NET_FEATURE_HOST_TSO6 1 << 12
 #define NET_FEATURE_HOST_UFO 1 << 14
 
-/* These are the features enabled by krun_set_passt_fd and krun_set_gvproxy_path. */
+/* These are the default features used by krun_add_net_unixstream and krun_add_net_unixgram. */
 #define COMPAT_NET_FEATURES NET_FEATURE_CSUM | NET_FEATURE_GUEST_CSUM | \
                             NET_FEATURE_GUEST_TSO4 | NET_FEATURE_GUEST_UFO | \
                             NET_FEATURE_HOST_TSO4 | NET_FEATURE_HOST_UFO
@@ -493,57 +405,6 @@ int32_t krun_add_net_tap(uint32_t ctx_id,
                          uint32_t flags);
 
 /**
- * DEPRECATED. Use krun_add_net_unixstream instead.
- *
- * Configures the networking to use passt.
- * Call to this function disables TSI backend to use passt instead.
- *
- * Arguments:
- *  "ctx_id"         - the configuration context ID.
- *  "fd"             - a file descriptor to communicate with passt
- *
- * Notes:
- * If you never call this function, networking uses the TSI backend.
- * This function should be called before krun_set_port_map.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_passt_fd(uint32_t ctx_id, int fd);
-
-/**
- * DEPRECATED. Use krun_add_net_unixgram instead.
- *
- * Configures the networking to use gvproxy in vfkit mode.
- * Call to this function disables TSI backend to use gvproxy instead.
- *
- * Arguments:
- *  "ctx_id"  - the configuration context ID.
- *  "c_path"  - a null-terminated string representing the path for
- *              gvproxy's listen-vfkit unixdgram socket.
- *
- * Notes:
- * If you never call this function, networking uses the TSI backend.
- * This function should be called before krun_set_port_map.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_gvproxy_path(uint32_t ctx_id, char *c_path);
-
-/**
- * Sets the MAC address for the virtio-net device when using the passt backend.
- *
- * Arguments:
- *  "ctx_id"         - the configuration context ID.
- *  "mac"            - MAC address as an array of 6 uint8_t entries.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_net_mac(uint32_t ctx_id, uint8_t *const c_mac);
-
-/**
  * Configures a map of host to guest TCP ports for the microVM.
  *
  * Arguments:
@@ -565,8 +426,9 @@ int32_t krun_set_net_mac(uint32_t ctx_id, uint8_t *const c_mac);
  *  means that for a map such as "8080:80", applications running inside the guest will also
  *  need to access the service through the "8080" port.
  *
- * If past networking mode is used (krun_set_passt_fd was called), port mapping is not supported
- * as an API of libkrun (but you can still do port mapping using command line arguments of passt)
+ * If passt networking mode is used, port mapping is not supported as an API
+ * of libkrun (but you can still do port mapping using command line arguments
+ * of passt)
  */
 int32_t krun_set_port_map(uint32_t ctx_id, const char *const port_map[]);
 
@@ -881,8 +743,7 @@ int32_t krun_set_smbios_oem_strings(uint32_t ctx_id, const char *const oem_strin
  *
  * Arguments:
  *  "ctx_id"        - the configuration context ID.
- *  "workdir_path"  - the path to the working directory, relative to the root configured with
- *                    "krun_set_root".
+ *  "workdir_path"  - the path to the working directory, relative to the root filesystem.
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
@@ -896,7 +757,7 @@ int32_t krun_set_workdir(uint32_t ctx_id,
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
- *  "exec_path" - the path to the executable, relative to the root configured with "krun_set_root".
+ *  "exec_path" - the path to the executable, relative to the root filesystem.
  *  "argv"      - an array of string pointers to be passed as arguments.
  *  "envp"      - an array of string pointers to be injected as environment variables into the
  *                context of the executable. If NULL, it will auto-generate an array collecting the
@@ -1005,10 +866,6 @@ int32_t krun_add_vsock_port2(uint32_t ctx_id,
 /**
  * Add a vsock device with specified TSI features.
  *
- * By default, libkrun creates a vsock device implicitly with TSI hijacking
- * enabled based on heuristics. To use this function, you must first call
- * krun_disable_implicit_vsock() to disable the implicit vsock device.
- *
  * Currently only one vsock device is supported. Calling this function
  * multiple times will return an error.
  *
@@ -1033,22 +890,6 @@ int32_t krun_add_vsock(uint32_t ctx_id, uint32_t tsi_features);
  *  The eventfd file descriptor or a negative error number on failure.
  */
 int32_t krun_get_shutdown_eventfd(uint32_t ctx_id);
-
-/**
- * Configures the console device to ignore stdin and write the output to "c_filepath".
- *
- * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "filepath"  - a null-terminated string representing the path of the file to write the
- *                console output.
- *
- * Notes:
- *  This API only applies to the implicitly created console. If the implicit console is
- *  disabled via `krun_disable_implicit_console` the operation is a NOOP. Additionally,
- *  this API does not have any effect on consoles created via the `krun_add_*_console_default`
- *  APIs.
- */
-int32_t krun_set_console_output(uint32_t ctx_id, const char *c_filepath);
 
 /**
  * Configures uid which is set right before the microVM is started.
@@ -1153,30 +994,9 @@ int32_t krun_get_max_vcpus(void);
 */
 int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
 
-/*
- * NOTE: Implicit resource creation is a legacy convenience. The 2.0 API
- * (see https://github.com/containers/libkrun/issues/634) will not create
- * any implicit resources. Callers should start using the
- * krun_disable_implicit_* functions now to ease migration.
- */
-
-/*
- * Do not create an implicit console device in the guest. By using this API,
- * libkrun will create zero console devices on behalf of the user. Any
- * console devices needed by the user must be added manually via other API
- * calls.
- *
- * Arguments:
- *  "ctx_id" - the configuration context ID.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_disable_implicit_console(uint32_t ctx_id);
-
 /**
  * Do not inject the default init binary (/init.krun) into the root
- * filesystem. Must be called before krun_set_root().
+ * filesystem. Must be called before configuring the root filesystem.
  *
  * Arguments:
  *  "ctx_id" - the configuration context ID.
@@ -1262,20 +1082,6 @@ int32_t krun_fs_add_overlay_file(uint32_t ctx_id, const char *fs_tag,
 int32_t krun_fs_add_overlay_dir(uint32_t ctx_id, const char *fs_tag,
                                 const char *path, uint32_t mode);
 
-/**
- * Disable the implicit vsock device.
- *
- * By default, libkrun creates a vsock device automatically. This function
- * disables that behavior entirely - no vsock device will be created.
- *
- * Arguments:
- *  "ctx_id" - the configuration context ID.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_disable_implicit_vsock(uint32_t ctx_id);
-
 /*
  * Specify the value of `console=` in the kernel commandline.
  *
@@ -1293,9 +1099,7 @@ int32_t krun_set_kernel_console(uint32_t ctx_id, const char *console_id);
  *
  * The function can be called multiple times for adding multiple virtio-console devices.
  * In the guest, the consoles will appear in the same order as they are added (that is,
- * the first added console will be "hvc0", the second "hvc1", ...). However, if the
- * implicit console is not disabled via `krun_disable_implicit_console`, the first
- * console created with the function will occupy the "hvc1" ID.
+ * the first added console will be "hvc0", the second "hvc1", ...).
  *
  * This function attaches a multi port virtio-console to the guest. If the input, output and error
  * file descriptors are TTYs, the device will be created with just a single console port (`err_fd`
@@ -1323,9 +1127,7 @@ int32_t krun_add_virtio_console_default(uint32_t ctx_id,
  *
  * The function can be called multiple times for adding multiple serial devices.
  * In the guest, the consoles will appear in the same order as they are added (that is,
- * the first added console will be "ttyS0", the second "ttyS1", ...). However, if the
- * implicit console is not disabled via `krun_disable_implicit_console` on aarch64 or macOS,
- * the first console created with the function will occupy the "ttyS1" ID.
+ * the first added console will be "ttyS0", the second "ttyS1", ...).
  *
  * Arguments:
  *  "ctx_id"    - the configuration context ID.
@@ -1348,8 +1150,7 @@ int32_t krun_add_serial_console_default(uint32_t ctx_id,
  *
  * The function can be called multiple times for adding multiple virtio-console devices.
  * Each device appears in the guest with port 0 accessible as /dev/hvcN (hvc0, hvc1, etc.) in the order
- * devices are added. If the implicit console is not disabled via `krun_disable_implicit_console`,
- * the first explicitly added device will occupy the "hvc1" ID. Additional ports within each device
+ * devices are added. Additional ports within each device
  * (port 1, 2, ...) appear as /dev/vportNpM character devices.
  *
  * Arguments:

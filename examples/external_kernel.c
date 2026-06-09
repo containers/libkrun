@@ -218,7 +218,7 @@ int main(int argc, char *const argv[])
     }
 
     // Set the log level to "off".
-    err = krun_set_log_level(0);
+    err = krun_init_log(KRUN_LOG_TARGET_DEFAULT, KRUN_LOG_LEVEL_OFF, KRUN_LOG_STYLE_AUTO, 0);
     if (err)
     {
         errno = -err;
@@ -240,6 +240,13 @@ int main(int argc, char *const argv[])
     {
         errno = -err;
         perror("Error configuring the number of vCPUs and/or the amount of RAM");
+        return -1;
+    }
+
+    if (err = krun_add_virtio_console_default(ctx_id, STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO))
+    {
+        errno = -err;
+        perror("Error configuring console");
         return -1;
     }
 

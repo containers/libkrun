@@ -169,7 +169,7 @@ int main(int argc, char *const argv[])
     }
 
     // Set the log level to "off".
-    err = krun_set_log_level(0);
+    err = krun_init_log(KRUN_LOG_TARGET_DEFAULT, KRUN_LOG_LEVEL_OFF, KRUN_LOG_STYLE_AUTO, 0);
     if (err) {
         errno = -err;
         perror("Error configuring log level");
@@ -191,13 +191,19 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
+    if (err = krun_add_virtio_console_default(ctx_id, STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO)) {
+        errno = -err;
+        perror("Error configuring console");
+        return -1;
+    }
+
     if (err = krun_set_firmware(ctx_id, cmdline.efi_fw)) {
         errno = -err;
         perror("Error configuring EFI FW path");
         return -1;
     }
 
-    if (err = krun_set_root_disk(ctx_id, cmdline.disk_image)) {
+    if (err = krun_add_disk(ctx_id, "root", cmdline.disk_image, false)) {
         errno = -err;
         perror("Error configuring disk image");
         return -1;
