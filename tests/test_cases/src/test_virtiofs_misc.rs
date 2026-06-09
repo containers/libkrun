@@ -79,7 +79,7 @@ mod guest {
     use std::os::unix::io::AsRawFd;
     use std::panic::catch_unwind;
 
-    use nix::fcntl::{FallocateFlags, fallocate};
+    use nix::fcntl::{fallocate, FallocateFlags};
     use nix::libc;
 
     fn run_subtests(tests: &[(&str, fn())]) {
@@ -517,7 +517,7 @@ mod guest {
             .expect("fstat on open fd after rename failed - PR #700 regression!");
 
         // Try to change permission bits via the still-open file descriptor.
-        use nix::sys::stat::{Mode, fchmod};
+        use nix::sys::stat::{fchmod, Mode};
         fchmod(
             open_target.as_raw_fd(),
             Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP,
