@@ -46,6 +46,9 @@ ifeq ($(NET),)
         NET := 1
     endif
 endif
+ifeq ($(INIT_BLOB),0)
+    FEATURE_FLAGS += --no-default-features
+endif
 ifeq ($(BLK),1)
     FEATURE_FLAGS += --features blk
 endif
