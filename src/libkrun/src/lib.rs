@@ -1941,6 +1941,7 @@ const KRUN_FEATURE_AMD_SEV: u64 = 7;
 const KRUN_FEATURE_INTEL_TDX: u64 = 8;
 const KRUN_FEATURE_AWS_NITRO: u64 = 9;
 const KRUN_FEATURE_VIRGL_RESOURCE_MAP2: u64 = 10;
+const KRUN_FEATURE_INIT_BLOB: u64 = 11;
 
 #[no_mangle]
 pub extern "C" fn krun_has_feature(feature: u64) -> c_int {
@@ -1956,6 +1957,7 @@ pub extern "C" fn krun_has_feature(feature: u64) -> c_int {
         KRUN_FEATURE_INTEL_TDX => cfg!(feature = "tdx"),
         KRUN_FEATURE_AWS_NITRO => cfg!(feature = "aws-nitro"),
         KRUN_FEATURE_VIRGL_RESOURCE_MAP2 => cfg!(feature = "virgl_resource_map2"),
+        KRUN_FEATURE_INIT_BLOB => cfg!(feature = "init-blob"),
         _ => return -libc::EINVAL,
     };
 
