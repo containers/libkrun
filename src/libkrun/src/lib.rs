@@ -2,12 +2,12 @@
 extern crate log;
 
 use crossbeam_channel::unbounded;
+#[cfg(feature = "gpu")]
+use devices::display::DisplayInfo;
 #[cfg(feature = "blk")]
 use devices::virtio::CacheType;
 #[cfg(feature = "blk")]
 use devices::virtio::block::{ImageType, SyncMode};
-#[cfg(feature = "gpu")]
-use devices::virtio::gpu::display::DisplayInfo;
 #[cfg(feature = "net")]
 use devices::virtio::net::device::VirtioNetBackend;
 use env_logger::{Env, Target};
@@ -61,7 +61,7 @@ use vmm::vmm_config::vsock::VsockDeviceConfig;
 use aws_nitro::enclave::NitroEnclave;
 
 #[cfg(feature = "gpu")]
-use devices::virtio::display::{DisplayInfoEdid, MAX_DISPLAYS, PhysicalSize};
+use devices::display::{DisplayInfoEdid, MAX_DISPLAYS, PhysicalSize};
 #[cfg(feature = "input")]
 use krun_input::{InputConfigBackend, InputEventProviderBackend};
 

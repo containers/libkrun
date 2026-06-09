@@ -22,7 +22,7 @@ use super::protocol::{
     GpuCommand, GpuResponse, VirtioGpuResult, virtio_gpu_ctrl_hdr, virtio_gpu_mem_entry,
 };
 use super::virtio_gpu::VirtioGpu;
-use crate::virtio::display::DisplayInfo;
+use crate::display::DisplayInfo;
 use crate::virtio::fs::ExportTable;
 use crate::virtio::gpu::protocol::{VIRTIO_GPU_FLAG_FENCE, VIRTIO_GPU_FLAG_INFO_RING_IDX};
 use crate::virtio::gpu::virtio_gpu::VirtioGpuRing;

@@ -29,7 +29,7 @@ use crate::vmm_config::net::{NetBuilder, NetworkInterfaceConfig, NetworkInterfac
 use crate::vmm_config::vsock::*;
 use crate::vstate::VcpuConfig;
 #[cfg(feature = "gpu")]
-use devices::virtio::display::DisplayInfo;
+use devices::display::DisplayInfo;
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
 #[cfg(feature = "gpu")]

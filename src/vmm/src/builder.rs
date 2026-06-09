@@ -71,9 +71,9 @@ use crate::vstate::{Error as VstateError, Vcpu, VcpuConfig, Vm};
 use arch::{ArchMemoryInfo, InitrdConfig};
 use device_manager::shm::ShmManager;
 #[cfg(feature = "gpu")]
-use devices::virtio::display::DisplayInfo;
+use devices::display::DisplayInfo;
 #[cfg(feature = "gpu")]
-use devices::virtio::display::NoopDisplayBackend;
+use devices::display::NoopDisplayBackend;
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 use devices::virtio::{VirtioShmRegion, fs::ExportTable};
 use flate2::read::GzDecoder;
