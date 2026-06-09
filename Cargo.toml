@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "src/libkrun",
-    "src/init-blob",
+    "src/init_blob",
     "src/input",
     "src/display",
     "src/utils",
