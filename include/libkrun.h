@@ -1075,6 +1075,9 @@ int32_t krun_disable_implicit_console(uint32_t ctx_id);
  * Do not inject the default init binary (/init.krun) into the root
  * filesystem. Must be called before krun_set_root().
  *
+ * No-op when libkrun is built without the "init-blob" feature (there is no
+ * implicit init to disable).
+ *
  * Arguments:
  *  "ctx_id" - the configuration context ID.
  *
@@ -1099,7 +1102,8 @@ int32_t krun_disable_implicit_init(uint32_t ctx_id);
  *
  * Returns:
  *  Zero on success or a negative error number on failure.
- *  -EINVAL  - data_out or len_out is NULL
+ *  -EINVAL   - data_out or len_out is NULL
+ *  -ENOTSUP  - libkrun was built without the "init-blob" feature
  */
 int32_t krun_get_default_init(const uint8_t **data_out, size_t *len_out);
 
