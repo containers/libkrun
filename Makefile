@@ -33,6 +33,9 @@ endif
 ifeq ($(VIRGL_RESOURCE_MAP2),1)
 	FEATURE_FLAGS += --features virgl_resource_map2
 endif
+ifeq ($(INIT_BLOB),0)
+    FEATURE_FLAGS += --no-default-features
+endif
 ifeq ($(BLK),1)
     FEATURE_FLAGS += --features blk
 endif
