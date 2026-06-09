@@ -17,10 +17,12 @@ fn make_test_payload() -> Vec<u8> {
 mod host {
     use super::*;
 
+    use crate::krun_init;
     use crate::{Test, TestSetup};
     use crate::{krun_call, krun_call_u32};
     use krun_sys::*;
     use std::ffi::CString;
+    use std::os::fd::AsRawFd;
     use std::ptr::null_mut;
 
     impl Test for TestAugmentFs {
@@ -34,12 +36,11 @@ mod host {
             let guest_agent_bytes: &'static [u8] =
                 Vec::leak(std::fs::read(&guest_agent_path).expect("Failed to read guest-agent"));
 
-            // Build JSON config: exec the guest-agent with our test name.
-            let json = format!(
-                r#"{{"args": ["/guest-agent", "{}"], "cwd": "/"}}"#,
-                test_case.to_str().unwrap()
-            );
-            let json_bytes: &'static [u8] = Vec::leak(json.into_bytes());
+            // Build init config via libkrun-init.
+            let init_config = krun_init::Config::builder()
+                .args(&["/guest-agent", test_case.to_str().unwrap()])
+                .workdir("/")
+                .build();
 
             // Deterministic test payload for range-read tests.
             let payload: &'static [u8] = Vec::leak(make_test_payload());
@@ -51,14 +52,6 @@ mod host {
                 krun_call!(krun_set_log_level(KRUN_LOG_LEVEL_TRACE))?;
                 let ctx = krun_call_u32!(krun_create_ctx())?;
                 krun_call!(krun_set_vm_config(ctx, 1, 512))?;
-
-                // Disable the implicit init — we'll inject it ourselves.
-                krun_call!(krun_disable_implicit_init(ctx))?;
-
-                // Get the default init binary.
-                let mut init_data: *const u8 = null_mut();
-                let mut init_len: usize = 0;
-                krun_call!(krun_get_default_init(&mut init_data, &mut init_len))?;
 
                 // Set up root with NO host directory (NullFs).
                 krun_call!(krun_add_virtiofs3(
@@ -79,15 +72,12 @@ mod host {
                     ))?;
                 }
 
-                // Overlay init.krun (one-shot, executable).
-                krun_call!(krun_fs_add_overlay_file(
+                // Inject init binary + config via libkrun-init.
+                krun_call!(krun_inject_init(
                     ctx,
+                    std::ptr::null_mut(),
                     c"/dev/root".as_ptr(),
-                    c"init.krun".as_ptr(),
-                    init_data,
-                    init_len,
-                    0o100_755,
-                    true,
+                    init_config.__into_raw(),
                 ))?;
 
                 // Overlay guest-agent (one-shot, executable). After init
@@ -99,17 +89,6 @@ mod host {
                     guest_agent_bytes.as_ptr(),
                     guest_agent_bytes.len(),
                     0o100_755,
-                    true,
-                ))?;
-
-                // Overlay .krun_config.json (one-shot).
-                krun_call!(krun_fs_add_overlay_file(
-                    ctx,
-                    c"/dev/root".as_ptr(),
-                    c".krun_config.json".as_ptr(),
-                    json_bytes.as_ptr(),
-                    json_bytes.len(),
-                    0o100_644,
                     true,
                 ))?;
 
@@ -160,7 +139,6 @@ mod host {
                     false,
                 ))?;
 
-                krun_call!(krun_set_workdir(ctx, c"/".as_ptr()))?;
                 krun_call!(krun_start_enter(ctx))?;
             }
             Ok(())

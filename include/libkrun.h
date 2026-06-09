@@ -103,36 +103,7 @@ int32_t krun_set_vm_config(uint32_t ctx_id, uint8_t num_vcpus, uint32_t ram_mib)
  */
 #define KRUN_FS_ROOT_TAG "/dev/root"
 
-/**
- * Sets the path to be use as root for the microVM. Not available in libkrun-SEV.
- *
- * For more control over the root filesystem (e.g. read-only, DAX window size),
- * use krun_add_virtiofs3() with KRUN_FS_ROOT_TAG instead.
- *
- * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "root_path" - a null-terminated string representing the path to be used as root.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_root(uint32_t ctx_id, const char *root_path);
 
-/**
- * DEPRECATED. Use krun_add_disk instead.
- *
- * Sets the path to the disk image that contains the file-system to be used as root for the microVM.
- * The only supported image format is "raw".
- *
- * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "disk_path" - a null-terminated string representing the path leading to the disk image that
- *                contains the root file-system.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_root_disk(uint32_t ctx_id, const char *disk_path);
 
 /**
  * DEPRECATED. Use krun_add_disk instead.
@@ -853,18 +824,6 @@ int32_t krun_add_vhost_user_device(uint32_t ctx_id,
                                    const uint16_t *queue_sizes);
 
 /**
- * Configures a map of rlimits to be set in the guest before starting the isolated binary.
- *
- * Arguments:
- *  "ctx_id"  - the configuration context ID.
- *  "rlimits" - an array of string pointers with format "RESOURCE=RLIM_CUR:RLIM_MAX".
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_rlimits(uint32_t ctx_id, const char *const rlimits[]);
-
-/**
  * Sets the SMBIOS OEM Strings.
  *
  * Arguments:
@@ -875,40 +834,6 @@ int32_t krun_set_rlimits(uint32_t ctx_id, const char *const rlimits[]);
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_set_smbios_oem_strings(uint32_t ctx_id, const char *const oem_strings[]);
-
-/**
- * Sets the working directory for the executable to be run inside the microVM.
- *
- * Arguments:
- *  "ctx_id"        - the configuration context ID.
- *  "workdir_path"  - the path to the working directory, relative to the root configured with
- *                    "krun_set_root".
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_workdir(uint32_t ctx_id,
-                         const char *workdir_path);
-
-/**
- * Sets the path to the executable to be run inside the microVM, the arguments to be passed to the
- * executable, and the environment variables to be configured in the context of the executable.
- *
- * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "exec_path" - the path to the executable, relative to the root configured with "krun_set_root".
- *  "argv"      - an array of string pointers to be passed as arguments.
- *  "envp"      - an array of string pointers to be injected as environment variables into the
- *                context of the executable. If NULL, it will auto-generate an array collecting the
- *                the variables currently present in the environment.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_exec(uint32_t ctx_id,
-                      const char *exec_path,
-                      const char *const argv[],
-                      const char *const envp[]);
 
 /**
  * Sets the path to the firmware to be loaded into the microVM.
@@ -947,20 +872,6 @@ int32_t krun_set_kernel(uint32_t ctx_id,
                         uint32_t kernel_format,
                         const char *initramfs,
                         const char *cmdline);
-
-/**
- * Sets environment variables to be configured in the context of the executable.
- *
- * Arguments:
- *  "ctx_id"    - the configuration context ID.
- *  "envp"      - an array of string pointers to be injected as environment variables into the
- *                context of the executable. If NULL, it will auto-generate an array collecting the
- *                the variables currently present in the environment.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_set_env(uint32_t ctx_id, const char *const envp[]);
 
 /**
  * Sets the file path to the TEE configuration file. Only available in libkrun-sev.
@@ -1175,38 +1086,6 @@ int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
 int32_t krun_disable_implicit_console(uint32_t ctx_id);
 
 /**
- * Do not inject the default init binary (/init.krun) into the root
- * filesystem. Must be called before krun_set_root().
- *
- * Arguments:
- *  "ctx_id" - the configuration context ID.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_disable_implicit_init(uint32_t ctx_id);
-
-/**
- * Get a pointer to the built-in default init binary.
- *
- * This is the same binary that libkrun injects as /init.krun by default.
- * Callers that use krun_disable_implicit_init() can use this to inject the
- * init binary themselves (e.g. via krun_fs_add_overlay_file with custom
- * settings).
- *
- * The returned pointer is valid for the lifetime of the process (static data).
- *
- * Arguments:
- *  "data_out" - receives a pointer to the init binary bytes.
- *  "len_out"  - receives the length in bytes.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- *  -EINVAL  - data_out or len_out is NULL
- */
-int32_t krun_get_default_init(const uint8_t **data_out, size_t *len_out);
-
-/**
  * Add a virtual overlay file to a virtiofs device.
  *
  * The file is backed entirely by host memory (no host file). The data
@@ -1236,6 +1115,29 @@ int32_t krun_get_default_init(const uint8_t **data_out, size_t *len_out);
 int32_t krun_fs_add_overlay_file(uint32_t ctx_id, const char *fs_tag,
                                  const char *path, const uint8_t *data,
                                  size_t data_len, uint32_t mode, bool one_shot);
+
+/**
+ * Inject all guest files from a KrunInitConfig handle (from libkrun-init.so)
+ * into a virtiofs device as overlay files.
+ *
+ * The config_handle is an opaque pointer obtained from
+ * krun_init_config_builder_build(). This function calls into
+ * libkrun-init.so via dlsym to iterate the guest files and inject each one.
+ *
+ * Arguments:
+ *  "ctx_id"        - the configuration context ID.
+ *  "lib_handle"    - handle from dlopen("libkrun_init.so") for symbol lookup.
+ *                    Pass NULL to search the global symbol namespace (requires
+ *                    that libkrun_init.so was linked or dlopen'd with RTLD_GLOBAL).
+ *  "fs_tag"        - tag of the virtiofs device (e.g. "/dev/root").
+ *  "config_handle" - opaque KrunInitConfig handle from libkrun-init.
+ *
+ * Returns:
+ *  Zero on success or a negative error number on failure.
+ *  -ENOSYS if libkrun-init.so symbols cannot be found.
+ */
+int32_t krun_inject_init(uint32_t ctx_id, void *lib_handle,
+                         const char *fs_tag, void *config_handle);
 
 /**
  * Add a virtual overlay directory to a virtiofs device.

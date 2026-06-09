@@ -1,0 +1,11 @@
+[package]
+name = "krun-init-blob-via-cdylib-weak"
+version = "0.1.0-1.18.1"
+edition = "2021"
+description = "Weak (dlsym) Rust client for libkrun-init"
+license = "Apache-2.0"
+repository = "https://github.com/containers/libkrun"
+
+[dependencies]
+ffier = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "be3aadd" }
+libloading = "0.8"

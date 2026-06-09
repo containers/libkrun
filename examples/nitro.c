@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <getopt.h>
 #include <libkrun.h>
+#include <libkrun_init.h>
 #include <linux/vm_sockets.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -210,18 +211,38 @@ int main(int argc, char *const argv[])
     }
 
     // Configure the enclave's rootfs.
-    if (err = krun_set_root(ctx_id, cmdline.new_root)) {
+    if (err = krun_add_virtiofs3(ctx_id, KRUN_FS_ROOT_TAG, cmdline.new_root, 0, false)) {
         errno = -err;
         perror("Error configuring enclave rootfs");
         return -1;
     }
 
-    // Configure the enclave's execution environment.
-    if (err = krun_set_exec(ctx_id, default_argv[0], default_argv,
-                            default_envp)) {
-        errno = -err;
-        perror("Error configuring enclave execution path");
-        return -1;
+    // Configure the enclave's execution environment via init-blob.
+    {
+        KrunInitConfigBuilder builder = krun_init_config_builder();
+
+        // Count default_argv entries (null-terminated).
+        int argc_guest = 0;
+        while (default_argv[argc_guest]) argc_guest++;
+        KrunStr args[argc_guest];
+        for (int i = 0; i < argc_guest; i++)
+            args[i] = KRUN_STR(default_argv[i]);
+        krun_init_config_builder_args(&builder, args, argc_guest);
+
+        // Count default_envp entries (null-terminated).
+        int envc = 0;
+        while (default_envp[envc]) envc++;
+        KrunStr env_strs[envc];
+        for (int i = 0; i < envc; i++)
+            env_strs[i] = KRUN_STR(default_envp[i]);
+        krun_init_config_builder_env(&builder, env_strs, envc);
+
+        KrunInitConfig config = krun_init_config_builder_build(&builder);
+        if (err = krun_inject_init(ctx_id, NULL, "/dev/root", config)) {
+            errno = -err;
+            perror("Error injecting init configuration");
+            return -1;
+        }
     }
 
     if (cmdline.net) {

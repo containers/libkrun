@@ -181,6 +181,51 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
+name = "ffier"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
+dependencies = [
+ "ffier-annotations",
+ "ffier-builtins",
+ "ffier-rt",
+]
+
+[[package]]
+name = "ffier-annotations"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
+dependencies = [
+ "ffier-meta",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "ffier-builtins"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
+dependencies = [
+ "ffier-annotations",
+ "ffier-rt",
+]
+
+[[package]]
+name = "ffier-meta"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "ffier-rt"
+version = "0.1.0"
+source = "git+file:///home/mhrica/Dev2/ffier/ffier.git?rev=be3aadd#be3aadd2935bd6917e41580b153c4f97cdcdb9d8"
+
+[[package]]
 name = "fuchsia-cprng"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -226,6 +271,13 @@ name = "itoa"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
+
+[[package]]
+name = "krun-init-blob-via-cdylib"
+version = "0.1.0-1.18.1"
+dependencies = [
+ "ffier",
+]
 
 [[package]]
 name = "krun-sys"
@@ -497,6 +549,7 @@ name = "test_cases"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "krun-init-blob-via-cdylib",
  "krun-sys",
  "macros",
  "nix",

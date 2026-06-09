@@ -13,13 +13,13 @@ pub struct TestRootDiskRemount;
 mod host {
     use super::*;
 
-    use crate::{ShouldRun, krun_call, krun_call_u32};
+    use crate::common;
+    use crate::{krun_call, krun_call_u32, krun_init, ShouldRun};
     use crate::{Test, TestSetup};
     use krun_sys::*;
     use nix::libc;
     use std::ffi::CString;
     use std::process::Command;
-    use std::ptr::null;
 
     type KrunAddDiskFn = unsafe extern "C" fn(
         ctx_id: u32,
@@ -102,17 +102,6 @@ mod host {
                 let ctx = krun_call_u32!(krun_create_ctx())?;
                 krun_call!(krun_set_vm_config(ctx, 1, 512))?;
 
-                let argv = [test_case.as_ptr(), null()];
-                let envp = [null()];
-                krun_call!(krun_set_exec(
-                    ctx,
-                    c"/guest-agent".as_ptr(),
-                    argv.as_ptr(),
-                    envp.as_ptr(),
-                ))?;
-
-                krun_call!(krun_set_workdir(ctx, c"/".as_ptr()))?;
-
                 // Add a block device with the ext4 image.
                 krun_call!(krun_add_disk(
                     ctx,
@@ -127,6 +116,15 @@ mod host {
                     c"/dev/vda".as_ptr(),
                     c"ext4".as_ptr(),
                     std::ptr::null(),
+                ))?;
+
+                // Inject init config into the NullFs root.
+                let init_config = common::build_init_config(test_case.to_str().unwrap(), &[]);
+                krun_call!(krun_inject_init(
+                    ctx,
+                    std::ptr::null_mut(),
+                    c"/dev/root".as_ptr(),
+                    init_config.__into_raw(),
                 ))?;
 
                 krun_call!(krun_start_enter(ctx))?;

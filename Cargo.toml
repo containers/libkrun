@@ -1,7 +1,11 @@
 [workspace]
 members = [
+    "init/init-binary",
     "src/libkrun",
-    "src/init-blob",
+    "init/init-blob",
+    "init/init-blob-cdylib",
+    "init/init-blob-via-cdylib",
+    "init/init-blob-via-cdylib-weak",
     "src/input",
     "src/display",
     "src/utils",

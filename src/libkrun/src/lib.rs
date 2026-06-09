@@ -67,6 +67,16 @@ use krun_input::{InputConfigBackend, InputEventProviderBackend};
 
 // Value returned on success. We use libc's errors otherwise.
 const KRUN_SUCCESS: i32 = 0;
+
+/// Extend a reference's lifetime to `'static`.
+///
+/// # Safety
+///
+/// The caller must guarantee that the referenced data outlives all uses
+/// of the returned reference.
+unsafe fn extend_lifetime<T: ?Sized>(r: &T) -> &'static T {
+    unsafe { core::mem::transmute(r) }
+}
 // Maximum number of arguments/environment variables we allow
 const MAX_ARGS: usize = 4096;
 /// Maximum number of virtqueues allowed by virtio spec (16-bit queue index: 0-65535)
@@ -86,25 +96,9 @@ const KRUNFW_NAME: &str = "libkrunfw.5.dylib";
 #[cfg(feature = "aws-nitro")]
 static KRUN_NITRO_DEBUG: Mutex<bool> = Mutex::new(false);
 
-// Path to the init binary to be executed inside the VM.
+// Path to the init binary to be executed inside the VM (used in TEE kernel cmdline).
+#[cfg(any(feature = "tee", feature = "aws-nitro"))]
 const INIT_PATH: &str = "/init.krun";
-
-#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-const DEFAULT_INIT_PAYLOAD: &[u8] = init_blob::INIT_BINARY;
-
-#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-fn init_virtual_entry() -> VirtualDirEntry {
-    VirtualDirEntry {
-        name: CString::new("init.krun").unwrap(),
-        entry: VirtualEntry {
-            mode: 0o755,
-            one_shot: true,
-            content: VirtualEntryContent::File {
-                data: DEFAULT_INIT_PAYLOAD,
-            },
-        },
-    }
-}
 
 static KRUNFW: LazyLock<Option<libloading::Library>> =
     LazyLock::new(|| unsafe { libloading::Library::new(KRUNFW_NAME).ok() });
@@ -153,10 +147,15 @@ enum LegacyNetworkConfig {
 struct ContextConfig {
     krunfw: Option<KrunfwBindings>,
     vmr: VmResources,
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     workdir: Option<String>,
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     exec_path: Option<String>,
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     env: Option<String>,
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     args: Option<String>,
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     rlimits: Option<String>,
     #[cfg(feature = "net")]
     legacy_net_cfg: Option<LegacyNetworkConfig>,
@@ -182,15 +181,18 @@ struct ContextConfig {
     console_output: Option<PathBuf>,
     vmm_uid: Option<libc::uid_t>,
     vmm_gid: Option<libc::gid_t>,
+    /// Kernel init arg set by `krun_inject_init` (e.g. `"init=/init.krun"`).
     #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-    disable_implicit_init: bool,
+    kernel_init_arg: Option<String>,
 }
 
 impl ContextConfig {
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn set_workdir(&mut self, workdir: String) {
         self.workdir = Some(workdir);
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn get_workdir(&self) -> String {
         match &self.workdir {
             Some(workdir) => format!("KRUN_WORKDIR={workdir}"),
@@ -198,10 +200,12 @@ impl ContextConfig {
         }
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn set_exec_path(&mut self, exec_path: String) {
         self.exec_path = Some(exec_path);
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn get_exec_path(&self) -> String {
         match &self.exec_path {
             Some(exec_path) => format!("KRUN_INIT={exec_path}"),
@@ -237,10 +241,12 @@ impl ContextConfig {
         "".to_string()
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn set_env(&mut self, env: String) {
         self.env = Some(env);
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn get_env(&self) -> String {
         match &self.env {
             Some(env) => env.clone(),
@@ -248,10 +254,12 @@ impl ContextConfig {
         }
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn set_args(&mut self, args: String) {
         self.args = Some(args);
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn get_args(&self) -> String {
         match &self.args {
             Some(args) => args.clone(),
@@ -259,10 +267,12 @@ impl ContextConfig {
         }
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn set_rlimits(&mut self, rlimits: String) {
         self.rlimits = Some(rlimits);
     }
 
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
     fn get_rlimits(&self) -> String {
         match &self.rlimits {
             Some(rlimits) => format!("KRUN_RLIMITS={rlimits}"),
@@ -599,44 +609,6 @@ pub extern "C" fn krun_set_vm_config(ctx_id: u32, num_vcpus: u8, ram_mib: u32) -
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-pub unsafe extern "C" fn krun_set_root(ctx_id: u32, c_root_path: *const c_char) -> i32 {
-    unsafe {
-        let root_path = match CStr::from_ptr(c_root_path).to_str() {
-            Ok(root) => root,
-            Err(_) => return -libc::EINVAL,
-        };
-
-        let fs_id = "/dev/root".to_string();
-        let shared_dir = root_path.to_string();
-
-        match CTX_MAP.lock().unwrap().entry(ctx_id) {
-            Entry::Occupied(mut ctx_cfg) => {
-                let cfg = ctx_cfg.get_mut();
-                cfg.vmr.add_fs_device(FsDeviceConfig {
-                    fs_id,
-                    shared_dir: Some(shared_dir),
-                    // Default to a conservative 512 MB window.
-                    shm_size: Some(1 << 29),
-                    read_only: false,
-                    virtual_entries: {
-                        let mut v = Vec::new();
-                        if !cfg.disable_implicit_init {
-                            v.push(init_virtual_entry());
-                        }
-                        v
-                    },
-                });
-            }
-            Entry::Vacant(_) => return -libc::ENOENT,
-        }
-
-        KRUN_SUCCESS
-    }
-}
-
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
-#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 pub unsafe extern "C" fn krun_add_virtiofs(
     ctx_id: u32,
     c_tag: *const c_char,
@@ -698,17 +670,12 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
 
         match CTX_MAP.lock().unwrap().entry(ctx_id) {
             Entry::Occupied(mut ctx_cfg) => {
-                let cfg = ctx_cfg.get_mut();
-                let mut virtual_entries = Vec::new();
-                if tag == "/dev/root" && !cfg.disable_implicit_init {
-                    virtual_entries.push(init_virtual_entry());
-                }
-                cfg.vmr.add_fs_device(FsDeviceConfig {
+                ctx_cfg.get_mut().vmr.add_fs_device(FsDeviceConfig {
                     fs_id: tag.to_string(),
                     shared_dir: path.map(|p| p.to_string()),
                     shm_size: shm,
                     read_only,
-                    virtual_entries,
+                    virtual_entries: Vec::new(),
                 });
             }
             Entry::Vacant(_) => return -libc::ENOENT,
@@ -1319,6 +1286,7 @@ pub unsafe extern "C" fn krun_set_port_map(ctx_id: u32, c_port_map: *const *cons
 
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
+#[cfg(any(feature = "tee", feature = "aws-nitro"))]
 pub unsafe extern "C" fn krun_set_rlimits(ctx_id: u32, c_rlimits: *const *const c_char) -> i32 {
     unsafe {
         let rlimits = if c_rlimits.is_null() {
@@ -1355,6 +1323,7 @@ pub unsafe extern "C" fn krun_set_rlimits(ctx_id: u32, c_rlimits: *const *const 
 
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
+#[cfg(any(feature = "tee", feature = "aws-nitro"))]
 pub unsafe extern "C" fn krun_set_workdir(ctx_id: u32, c_workdir_path: *const c_char) -> i32 {
     unsafe {
         let workdir_path = match CStr::from_ptr(c_workdir_path).to_str() {
@@ -1373,6 +1342,7 @@ pub unsafe extern "C" fn krun_set_workdir(ctx_id: u32, c_workdir_path: *const c_
     }
 }
 
+#[cfg(any(feature = "tee", feature = "aws-nitro"))]
 unsafe fn collapse_str_array(array: &[*const c_char]) -> Result<String, std::str::Utf8Error> {
     unsafe {
         let mut strvec = Vec::new();
@@ -1393,6 +1363,7 @@ unsafe fn collapse_str_array(array: &[*const c_char]) -> Result<String, std::str
 #[allow(clippy::format_collect)]
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
+#[cfg(any(feature = "tee", feature = "aws-nitro"))]
 pub unsafe extern "C" fn krun_set_exec(
     ctx_id: u32,
     c_exec_path: *const c_char,
@@ -1453,6 +1424,7 @@ pub unsafe extern "C" fn krun_set_exec(
 #[allow(clippy::format_collect)]
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
+#[cfg(any(feature = "tee", feature = "aws-nitro"))]
 pub unsafe extern "C" fn krun_set_env(ctx_id: u32, c_envp: *const *const c_char) -> i32 {
     unsafe {
         let env = if !c_envp.is_null() {
@@ -2471,13 +2443,11 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 }
 
                 // Boot from a block device: the virtiofs root only needs to
-                // serve init.krun and provide mount points for /dev, /proc, /sys.
+                // provide mount points for /dev, /proc, /sys. The init binary
+                // and config are injected separately via krun_inject_init().
                 // Use a NullFs (no host directory) with the inode overlay.
                 let mut virtual_entries = Vec::new();
-                if !ctx_cfg.disable_implicit_init {
-                    virtual_entries.push(init_virtual_entry());
-                }
-                // init.c needs these directories as mount points before
+                // The init binary needs these directories as mount points before
                 // pivoting to the block device root.
                 for name in ["dev", "proc", "sys", "newroot"] {
                     virtual_entries.push(VirtualDirEntry {
@@ -2508,19 +2478,6 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
 
         KRUN_SUCCESS
     }
-}
-
-#[unsafe(no_mangle)]
-#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-pub extern "C" fn krun_disable_implicit_init(ctx_id: u32) -> i32 {
-    match CTX_MAP.lock().unwrap().entry(ctx_id) {
-        Entry::Occupied(mut ctx_cfg) => {
-            ctx_cfg.get_mut().disable_implicit_init = true;
-        }
-        Entry::Vacant(_) => return -libc::ENOENT,
-    }
-
-    KRUN_SUCCESS
 }
 
 /// Resolve a path like "a/b/c" into parent directory children + leaf name.
@@ -2572,6 +2529,98 @@ fn fs_add_overlay_entry(ctx_id: u32, fs_tag: &str, path: &str, entry: VirtualEnt
         }
         Entry::Vacant(_) => return -libc::ENOENT,
     }
+    KRUN_SUCCESS
+}
+
+// ---------------------------------------------------------------------------
+// libkrun-init interop: inject GuestFile handles from libkrun-init.so
+//
+// ---------------------------------------------------------------------------
+// libkrun-init interop: inject init config handles from libkrun-init.so
+// ---------------------------------------------------------------------------
+
+use krun_init_blob_via_cdylib_weak as krun_init;
+
+/// Inject all guest files from a `KrunInitConfig` handle (from libkrun-init.so)
+/// into a virtiofs device as overlay files.
+///
+/// The `config_handle` is an opaque pointer obtained from
+/// `krun_init_config_builder_build()`. This function calls into
+/// libkrun-init.so via dlsym to iterate the guest files and inject each
+/// one into the specified virtiofs device.
+///
+/// Returns `-ENOSYS` if libkrun-init.so is not loaded.
+#[allow(clippy::missing_safety_doc)]
+#[unsafe(no_mangle)]
+#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+pub unsafe extern "C" fn krun_inject_init(
+    ctx_id: u32,
+    lib_handle: *mut c_void,
+    c_fs_tag: *const c_char,
+    config_handle: *mut c_void,
+) -> i32 {
+    use krun_init::Symbol;
+
+    let lib = core::ptr::NonNull::new(lib_handle);
+
+    if krun_init::require(lib, &[
+        Symbol::KrunInitConfigKernelInitArg,
+        Symbol::KrunInitConfigGuestFiles,
+        Symbol::KrunInitGuestFilePath,
+        Symbol::KrunInitGuestFileData,
+        Symbol::KrunInitGuestFileMode,
+        Symbol::KrunInitGuestFileOneShot,
+    ])
+    .is_err()
+    {
+        return -libc::ENOSYS;
+    }
+
+    if c_fs_tag.is_null() || config_handle.is_null() {
+        return -libc::EINVAL;
+    }
+
+    let fs_tag = match unsafe { CStr::from_ptr(c_fs_tag).to_str() } {
+        Ok(s) => s,
+        Err(_) => return -libc::EINVAL,
+    };
+
+    use core::mem::ManuallyDrop;
+    let config = ManuallyDrop::new(krun_init::Config::__from_raw(config_handle));
+    let files = config.guest_files();
+
+    for file in files.iter() {
+        let path = file.path();
+        let mode = file.mode();
+        let one_shot = file.one_shot();
+        // SAFETY: The data is borrowed from the Config handle. The caller
+        // must keep the Config alive for the VM lifetime.
+        let data = unsafe { extend_lifetime(file.data()) };
+
+        let ret = fs_add_overlay_entry(
+            ctx_id,
+            fs_tag,
+            path,
+            VirtualEntry {
+                mode,
+                one_shot,
+                content: VirtualEntryContent::File { data },
+            },
+        );
+        if ret != KRUN_SUCCESS {
+            return ret;
+        }
+    }
+
+    // Store the kernel init arg for krun_start_enter.
+    let kernel_init_arg = config.kernel_init_arg().to_string();
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            ctx_cfg.get_mut().kernel_init_arg = Some(kernel_init_arg);
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
     KRUN_SUCCESS
 }
 
@@ -2656,23 +2705,6 @@ pub unsafe extern "C" fn krun_fs_add_overlay_dir(
             },
         },
     )
-}
-
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
-#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-pub unsafe extern "C" fn krun_get_default_init(
-    data_out: *mut *const u8,
-    len_out: *mut size_t,
-) -> i32 {
-    if data_out.is_null() || len_out.is_null() {
-        return -libc::EINVAL;
-    }
-    unsafe {
-        *data_out = DEFAULT_INIT_PAYLOAD.as_ptr();
-        *len_out = DEFAULT_INIT_PAYLOAD.len();
-    }
-    KRUN_SUCCESS
 }
 
 #[unsafe(no_mangle)]
@@ -2968,8 +3000,27 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         return -libc::EINVAL;
     }
 
+    #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
+    let init_arg = ctx_cfg
+        .kernel_init_arg
+        .as_deref()
+        .map(|a| format!(" {a}"))
+        .unwrap_or_default();
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
+    let init_arg = format!(" init={INIT_PATH}");
+
+    #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
     let kernel_cmdline = KernelCmdlineConfig {
-        prolog: Some(format!("{DEFAULT_KERNEL_CMDLINE} init={INIT_PATH}")),
+        prolog: Some(format!(
+            "{DEFAULT_KERNEL_CMDLINE}{init_arg} {}",
+            ctx_cfg.get_block_root(),
+        )),
+        krun_env: None,
+        epilog: None,
+    };
+    #[cfg(any(feature = "tee", feature = "aws-nitro"))]
+    let kernel_cmdline = KernelCmdlineConfig {
+        prolog: Some(format!("{DEFAULT_KERNEL_CMDLINE}{init_arg}")),
         krun_env: Some(format!(
             " {} {} {} {} {}",
             ctx_cfg.get_exec_path(),
@@ -3125,30 +3176,5 @@ fn krun_start_enter_nitro(ctx_id: u32) -> i32 {
 
             -libc::EINVAL
         }
-    }
-}
-
-#[cfg(all(test, not(feature = "tee")))]
-mod test_disable_implicit_init {
-    use super::*;
-
-    #[test]
-    fn test_disable_implicit_init() {
-        let ctx = unsafe { krun_create_ctx() } as u32;
-        unsafe {
-            krun_disable_implicit_init(ctx);
-            krun_set_root(ctx, c"/tmp".as_ptr());
-        }
-
-        let ctx_map = CTX_MAP.lock().unwrap();
-        let cfg = ctx_map.get(&ctx).unwrap();
-        assert_eq!(cfg.vmr.fs.len(), 1);
-        assert!(
-            cfg.vmr.fs[0].virtual_entries.is_empty(),
-            "root virtiofs should not inject init.krun after krun_disable_implicit_init()"
-        );
-        drop(ctx_map);
-
-        assert_eq!(krun_free_ctx(ctx), KRUN_SUCCESS);
     }
 }
