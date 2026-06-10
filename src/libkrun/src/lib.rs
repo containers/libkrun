@@ -46,6 +46,8 @@ use vmm::vmm_config::block::{BlockDeviceConfig, BlockRootConfig};
 use vmm::vmm_config::external_kernel::{ExternalKernel, KernelFormat};
 #[cfg(not(feature = "tee"))]
 use vmm::vmm_config::firmware::FirmwareConfig;
+#[cfg(feature = "tdx")]
+use vmm::vmm_config::firmware::{TeeFirmwareConfig, TeeFirmwareType};
 #[cfg(not(feature = "tee"))]
 use vmm::vmm_config::fs::FsDeviceConfig;
 use vmm::vmm_config::kernel_bundle::KernelBundle;
@@ -181,6 +183,8 @@ struct ContextConfig {
     block_root: Option<BlockRootConfig>,
     #[cfg(feature = "tee")]
     tee_config_file: Option<PathBuf>,
+    #[cfg(feature = "tdx")]
+    tee_firmware_config: Option<TeeFirmwareConfig>,
     unix_ipc_port_map: Option<HashMap<u32, (PathBuf, bool)>>,
     shutdown_efd: Option<EventFd>,
     gpu_virgl_flags: Option<u32>,
@@ -333,6 +337,16 @@ impl ContextConfig {
     #[cfg(feature = "tee")]
     fn get_tee_config_file(&self) -> Option<PathBuf> {
         self.tee_config_file.clone()
+    }
+
+    #[cfg(feature = "tdx")]
+    fn set_tee_firmware_config(&mut self, config: TeeFirmwareConfig) {
+        self.tee_firmware_config = Some(config);
+    }
+
+    #[cfg(feature = "tdx")]
+    fn get_tee_firmware_config(&self) -> Option<TeeFirmwareConfig> {
+        self.tee_firmware_config.clone()
     }
 
     fn add_vsock_port(&mut self, port: u32, filepath: PathBuf, listen: bool) {
@@ -1515,6 +1529,47 @@ pub unsafe extern "C" fn krun_set_tee_config_file(ctx_id: u32, c_filepath: *cons
 
         KRUN_SUCCESS
     }
+}
+
+#[allow(clippy::missing_safety_doc)]
+#[unsafe(no_mangle)]
+#[cfg(feature = "tdx")]
+pub unsafe extern "C" fn krun_set_tee_firmware(
+    ctx_id: u32,
+    fw_type: u32,
+    c_fw_path: *const c_char,
+) -> i32 {
+    let fw_type = match fw_type {
+        0 => TeeFirmwareType::TdShim,
+        _ => {
+            error!("Unknown TEE firmware type: {fw_type}");
+            return -libc::EINVAL;
+        }
+    };
+
+    if c_fw_path.is_null() {
+        error!("c_fw_path is null");
+        return -libc::EINVAL;
+    }
+
+    let path = match unsafe { CStr::from_ptr(c_fw_path).to_str() } {
+        Ok(p) => PathBuf::from(p),
+        Err(e) => {
+            error!("Error parsing fw_path: {e:?}");
+            return -libc::EINVAL;
+        }
+    };
+
+    match CTX_MAP.lock().unwrap().entry(ctx_id) {
+        Entry::Occupied(mut ctx_cfg) => {
+            ctx_cfg
+                .get_mut()
+                .set_tee_firmware_config(TeeFirmwareConfig { fw_type, path });
+        }
+        Entry::Vacant(_) => return -libc::ENOENT,
+    }
+
+    KRUN_SUCCESS
 }
 
 #[allow(clippy::missing_safety_doc)]
@@ -3012,17 +3067,43 @@ pub extern "C" fn krun_start_enter(ctx_id: u32) -> i32 {
         return -libc::EINVAL;
     }
 
+    #[cfg(feature = "tdx")]
+    if let Some(tee_fw_config) = ctx_cfg.get_tee_firmware_config() {
+        ctx_cfg.vmr.set_tee_firmware_config(tee_fw_config);
+    }
+
+    // In the TD-Shim path, init.krun reads its exec config from the TEE config on
+    // the data disk (vdb), not from the kernel cmdline.  Including krun_env and the
+    // " -- " epilog here would cause init.krun to take the non-TEE vsock code path
+    // and block waiting for a host-side exec command that never arrives.
+    #[cfg(feature = "tdx")]
+    let is_tdshim = ctx_cfg
+        .vmr
+        .tee_firmware_config
+        .as_ref()
+        .is_some_and(|cfg| matches!(cfg.fw_type, TeeFirmwareType::TdShim));
+    #[cfg(not(feature = "tdx"))]
+    let is_tdshim = false;
+
     let kernel_cmdline = KernelCmdlineConfig {
         prolog: Some(format!("{DEFAULT_KERNEL_CMDLINE} init={INIT_PATH}")),
-        krun_env: Some(format!(
-            " {} {} {} {} {}",
-            ctx_cfg.get_exec_path(),
-            ctx_cfg.get_workdir(),
-            ctx_cfg.get_block_root(),
-            ctx_cfg.get_rlimits(),
-            ctx_cfg.get_env(),
-        )),
-        epilog: Some(format!(" -- {}", ctx_cfg.get_args())),
+        krun_env: if is_tdshim {
+            None
+        } else {
+            Some(format!(
+                " {} {} {} {} {}",
+                ctx_cfg.get_exec_path(),
+                ctx_cfg.get_workdir(),
+                ctx_cfg.get_block_root(),
+                ctx_cfg.get_rlimits(),
+                ctx_cfg.get_env(),
+            ))
+        },
+        epilog: if is_tdshim {
+            None
+        } else {
+            Some(format!(" -- {}", ctx_cfg.get_args()))
+        },
     };
 
     if ctx_cfg.vmr.set_kernel_cmdline(kernel_cmdline).is_err() {
