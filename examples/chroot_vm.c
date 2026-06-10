@@ -42,6 +42,7 @@ static void print_help(char *const name)
         "              --vhost-user-rng=PATH Use vhost-user RNG backend at socket PATH\n"
         "              --vhost-user-rtc=PATH Use vhost-user RTC backend at socket PATH\n"
         "              --vhost-user-input=PATH Use vhost-user input backend at socket PATH\n"
+        "              --vhost-user-gpu=PATH Use vhost-user GPU backend at socket PATH\n"
         "              --vhost-user-snd=PATH Use vhost-user sound backend at socket PATH\n"
         "              --vhost-user-vsock=PATH Use vhost-user vsock backend at socket PATH\n"
         "              --vhost-user-can=PATH Use vhost-user CAN backend at socket PATH\n"
@@ -74,6 +75,7 @@ static const struct option long_options[] = {
     { "vhost-user-rng", required_argument, NULL, 'V' },
     { "vhost-user-rtc", required_argument, NULL, 'R' },
     { "vhost-user-input", required_argument, NULL, 'I' },
+    { "vhost-user-gpu", required_argument, NULL, 'G' },
     { "vhost-user-snd", required_argument, NULL, 'S' },
     { "vhost-user-vsock", required_argument, NULL, 'K' },
     { "vhost-user-can", required_argument, NULL, 'A' },
@@ -90,6 +92,7 @@ struct cmdline {
     char const *vhost_user_rng_socket;
     char const *vhost_user_rtc_socket;
     char const *vhost_user_input_socket;
+    char const *vhost_user_gpu_socket;
     char const *vhost_user_snd_socket;
     char const *vhost_user_vsock_socket;
     char const *vhost_user_can_socket;
@@ -123,6 +126,7 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
         .vhost_user_rng_socket = NULL,
         .vhost_user_rtc_socket = NULL,
         .vhost_user_input_socket = NULL,
+        .vhost_user_gpu_socket = NULL,
         .vhost_user_snd_socket = NULL,
         .vhost_user_vsock_socket = NULL,
         .vhost_user_can_socket = NULL,
@@ -170,6 +174,9 @@ bool parse_cmdline(int argc, char *const argv[], struct cmdline *cmdline)
             break;
         case 'I':
             cmdline->vhost_user_input_socket = optarg;
+            break;
+        case 'G':
+            cmdline->vhost_user_gpu_socket = optarg;
             break;
         case 'S':
             cmdline->vhost_user_snd_socket = optarg;
@@ -345,6 +352,18 @@ int main(int argc, char *const argv[])
         printf("Using vhost-user input backend at %s\n", cmdline.vhost_user_input_socket);
     }
 
+    // Configure vhost-user GPU if requested
+    if (cmdline.vhost_user_gpu_socket != NULL) {
+        if (!check_krun_error(krun_add_vhost_user_device(ctx_id, KRUN_VIRTIO_DEVICE_GPU,
+                                                          cmdline.vhost_user_gpu_socket, NULL,
+                                                          KRUN_VHOST_USER_GPU_NUM_QUEUES,
+                                                          KRUN_VHOST_USER_GPU_QUEUE_SIZES),
+                              "Error adding vhost-user GPU device")) {
+            return -1;
+        }
+        printf("Using vhost-user GPU backend at %s (built-in GPU disabled)\n", cmdline.vhost_user_gpu_socket);
+    }
+
     // Configure vhost-user sound if requested
     if (cmdline.vhost_user_snd_socket != NULL) {
         if (!check_krun_error(krun_add_vhost_user_device(ctx_id, KRUN_VIRTIO_DEVICE_SND,
@@ -411,12 +430,15 @@ int main(int argc, char *const argv[])
         return -1;
     }
 
-    uint32_t virgl_flags = VIRGLRENDERER_USE_EGL | VIRGLRENDERER_DRM |
-	    VIRGLRENDERER_THREAD_SYNC | VIRGLRENDERER_USE_ASYNC_FENCE_CB;
-    if (err = krun_set_gpu_options(ctx_id, virgl_flags)) {
-        errno = -err;
-        perror("Error configuring gpu");
-        return -1;
+    // Only enable built-in GPU if not using vhost-user GPU
+    if (cmdline.vhost_user_gpu_socket == NULL) {
+        uint32_t virgl_flags = VIRGLRENDERER_USE_EGL | VIRGLRENDERER_DRM |
+            VIRGLRENDERER_THREAD_SYNC | VIRGLRENDERER_USE_ASYNC_FENCE_CB;
+        if (err = krun_set_gpu_options(ctx_id, virgl_flags)) {
+            errno = -err;
+            perror("Error configuring gpu");
+            return -1;
+        }
     }
 
     // Map port 18000 in the host to 8000 in the guest (if networking uses TSI)
