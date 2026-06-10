@@ -9,13 +9,13 @@ use std::sync::{Arc, Mutex};
 
 use devices::legacy::IrqChip;
 use devices::virtio::fs::virtual_entry::{VirtualDirEntry, VirtualEntry, VirtualEntryContent};
-use devices::virtio::{port_io, PortDescription, VirtioDevice, VirtioShmRegion, VmmExitObserver};
+use devices::virtio::{PortDescription, VirtioDevice, VirtioShmRegion, VmmExitObserver, port_io};
 use init_blob::GuestFile;
 use polly::event_manager::{EventManager, Subscriber};
 use vm_memory::{Address, GuestMemory, GuestMemoryMmap};
+use vmm::Vmm;
 use vmm::builder::{attach_mmio_device, setup_terminal_raw_mode};
 use vmm::device_manager::shm::ShmManager;
-use vmm::Vmm;
 
 use super::error::{DetailedError, Error};
 
@@ -390,11 +390,42 @@ impl<'a> FsDevice<'a> {
 
     /// Create a virtiofs device with no host directory (NullFs).
     ///
-    /// The guest sees an empty filesystem. Use [`inject`](Self::inject)
-    /// and [`add_overlay_dir`](Self::add_overlay_dir) to populate it
+    /// The guest sees an empty filesystem. Use
+    /// [`add_overlay_dir`](Self::add_overlay_dir) and
+    /// [`add_overlay_file`](Self::add_overlay_file) to populate it
     /// with virtual entries.
     pub fn new_null(tag: &str) -> Result<Self, Error> {
         Self::new_inner(tag, None, false)
+    }
+
+    /// Add a virtual directory overlay entry.
+    ///
+    /// `path` may contain `/` separators for nested entries (e.g.
+    /// `"etc/nested"`). Intermediate directories must already exist.
+    pub fn add_overlay_dir(&mut self, path: &str, mode: u32) {
+        let entry = VirtualEntry {
+            mode,
+            one_shot: false,
+            content: VirtualEntryContent::Dir {
+                children: Vec::new(),
+            },
+        };
+        self.add_overlay_at_path(path, entry);
+    }
+
+    /// Add a virtual file overlay entry.
+    ///
+    /// `path` may contain `/` separators for nested entries (e.g.
+    /// `"etc/nested/deep.txt"`). Intermediate directories must already
+    /// exist.
+    pub fn add_overlay_file(&mut self, path: &str, data: &[u8], mode: u32, one_shot: bool) {
+        let data: &'static [u8] = Box::leak(data.to_vec().into_boxed_slice());
+        let entry = VirtualEntry {
+            mode,
+            one_shot,
+            content: VirtualEntryContent::File { data },
+        };
+        self.add_overlay_at_path(path, entry);
     }
 }
 
@@ -429,7 +460,7 @@ impl<'a> FsDevice<'a> {
     ///
     /// Typically used with [`InitConfig::guest_files()`](init_blob::InitConfig::guest_files)
     /// to inject the init binary and config JSON into the rootfs.
-    pub fn inject(&mut self, files: &[GuestFile]) {
+    pub(crate) fn inject(&mut self, files: &[GuestFile]) {
         let mut fs = self.inner.lock().unwrap();
         for gf in files {
             let file_name = std::path::Path::new(gf.path)
@@ -448,36 +479,6 @@ impl<'a> FsDevice<'a> {
                 },
             });
         }
-    }
-
-    /// Add a virtual directory overlay entry.
-    ///
-    /// `path` may contain `/` separators for nested entries (e.g.
-    /// `"etc/nested"`). Intermediate directories must already exist.
-    pub fn add_overlay_dir(&mut self, path: &str, mode: u32) {
-        let entry = VirtualEntry {
-            mode,
-            one_shot: false,
-            content: VirtualEntryContent::Dir {
-                children: Vec::new(),
-            },
-        };
-        self.add_overlay_at_path(path, entry);
-    }
-
-    /// Add a virtual file overlay entry.
-    ///
-    /// `path` may contain `/` separators for nested entries (e.g.
-    /// `"etc/nested/deep.txt"`). Intermediate directories must already
-    /// exist.
-    pub fn add_overlay_file(&mut self, path: &str, data: &[u8], mode: u32, one_shot: bool) {
-        let data: &'static [u8] = Box::leak(data.to_vec().into_boxed_slice());
-        let entry = VirtualEntry {
-            mode,
-            one_shot,
-            content: VirtualEntryContent::File { data },
-        };
-        self.add_overlay_at_path(path, entry);
     }
 
     fn add_overlay_at_path(&mut self, path: &str, entry: VirtualEntry) {
@@ -633,24 +634,27 @@ impl<'a> ConsoleBuilder<'a> {
     /// - Otherwise, port 0 gets log output and named redirect ports
     ///   (`krun-stdin`, `krun-stdout`, `krun-stderr`) are added.
     ///
-    /// Pass `None` to skip a stream.
-    #[ffier(skip)]
+    /// Pass -1 to skip a stream.
     pub fn add_default_console(
         &mut self,
-        stdin: Option<BorrowedFd<'a>>,
-        stdout: Option<BorrowedFd<'a>>,
-        stderr: Option<BorrowedFd<'a>>,
+        stdin: RawFd,
+        stdout: RawFd,
+        stderr: RawFd,
     ) -> Result<(), Error> {
-        let stdin_is_tty = stdin.as_ref().map_or(false, |fd| fd.is_terminal());
-        let stdout_is_tty = stdout.as_ref().map_or(false, |fd| fd.is_terminal());
-        let stderr_is_tty = stderr.as_ref().map_or(false, |fd| fd.is_terminal());
+        let stdin_fd = (stdin >= 0).then(|| unsafe { BorrowedFd::borrow_raw(stdin) });
+        let stdout_fd = (stdout >= 0).then(|| unsafe { BorrowedFd::borrow_raw(stdout) });
+        let stderr_fd = (stderr >= 0).then(|| unsafe { BorrowedFd::borrow_raw(stderr) });
+
+        let stdin_is_tty = stdin_fd.as_ref().map_or(false, |fd| fd.is_terminal());
+        let stdout_is_tty = stdout_fd.as_ref().map_or(false, |fd| fd.is_terminal());
+        let stderr_is_tty = stderr_fd.as_ref().map_or(false, |fd| fd.is_terminal());
 
         let term_fd = if stdin_is_tty {
-            stdin.as_ref()
+            stdin_fd.as_ref()
         } else if stdout_is_tty {
-            stdout.as_ref()
+            stdout_fd.as_ref()
         } else if stderr_is_tty {
-            stderr.as_ref()
+            stderr_fd.as_ref()
         } else {
             None
         };
@@ -669,14 +673,14 @@ impl<'a> ConsoleBuilder<'a> {
         }
 
         // Named redirect ports for non-terminal fds
-        if let Some(fd) = stdin.filter(|_| !stdin_is_tty) {
-            self.add_io_port("krun-stdin", Some(fd.as_raw_fd()), None)?;
+        if stdin >= 0 && !stdin_is_tty {
+            self.add_io_port("krun-stdin", Some(stdin), None)?;
         }
-        if let Some(fd) = stdout.filter(|_| !stdout_is_tty) {
-            self.add_io_port("krun-stdout", None, Some(fd.as_raw_fd()))?;
+        if stdout >= 0 && !stdout_is_tty {
+            self.add_io_port("krun-stdout", None, Some(stdout))?;
         }
-        if let Some(fd) = stderr.filter(|_| !stderr_is_tty) {
-            self.add_io_port("krun-stderr", None, Some(fd.as_raw_fd()))?;
+        if stderr >= 0 && !stderr_is_tty {
+            self.add_io_port("krun-stderr", None, Some(stderr))?;
         }
 
         Ok(())

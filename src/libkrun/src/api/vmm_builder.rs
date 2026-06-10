@@ -7,14 +7,14 @@ use devices::legacy::{IrqChip, IrqChipDevice};
 use kernel::cmdline::Cmdline;
 use polly::event_manager::EventManager;
 use utils::eventfd::EventFd;
+use vmm::Vmm as InnerVmm;
 use vmm::builder::{self, create_guest_memory, load_cmdline};
 use vmm::device_manager::mmio::MMIODeviceManager;
 use vmm::vstate::VcpuConfig;
-use vmm::Vmm as InnerVmm;
 
 use super::devices::{DeviceManager, MmioDeviceManager};
 use super::error::{DetailedError, Error};
-use super::payload::{KrunPayload, Payload};
+use super::payload::Payload;
 
 // ---------------------------------------------------------------------------
 // VmmBuilder
@@ -55,7 +55,7 @@ use super::payload::{KrunPayload, Payload};
 pub struct VmmBuilder<'a> {
     vcpus: Option<u8>,
     ram_mib: Option<u32>,
-    payload: Option<Box<dyn KrunPayload>>,
+    kernel: Option<Payload>,
     device_manager: Option<Box<dyn DeviceManager<'a> + 'a>>,
     /// Optional raw fd to use as serial console (COM1) input.
     /// Ownership of the fd is transferred to the VM on build.
@@ -69,7 +69,7 @@ impl<'a> VmmBuilder<'a> {
         VmmBuilder {
             vcpus: None,
             ram_mib: None,
-            payload: None,
+            kernel: None,
             device_manager: None,
             serial_input_fd: None,
         }
@@ -93,12 +93,13 @@ impl<'a> VmmBuilder<'a> {
         Ok(self)
     }
 
-    /// Set the payload to run inside the VM.
+    /// Set the kernel to boot.
     ///
-    /// Currently the only payload type is `Init`, which runs a process
-    /// as PID 1 inside the guest using the built-in krun init.
-    pub fn payload(mut self, payload: impl Payload) -> Self {
-        self.payload = Some(payload.into_payload());
+    /// Pass a [`Payload`] obtained from
+    /// [`Payload::load_krunfw()`] or
+    /// [`Payload::load_external()`].
+    pub fn kernel(mut self, kernel: Payload) -> Self {
+        self.kernel = Some(kernel);
         self
     }
 
@@ -112,7 +113,7 @@ impl<'a> VmmBuilder<'a> {
     }
 
     /// Build the VM, creating guest memory, attaching devices, and starting
-    /// vCPUs. All required fields (`vcpus`, `ram_mib`, `payload`, `devices`)
+    /// vCPUs. All required fields (`vcpus`, `ram_mib`, `kernel`, `devices`)
     /// must have been set.
     pub fn build(self) -> Result<Vmm<'a>, Error> {
         build_vm(self).map_err(|e| {
@@ -178,9 +179,6 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
     let ram_mib = builder_cfg
         .ram_mib
         .ok_or_else(|| DetailedError::new(Error::MissingConfig(), "ram_mib not set"))?;
-    let payload = builder_cfg
-        .payload
-        .ok_or_else(|| DetailedError::new(Error::MissingConfig(), "payload not set"))?;
     let device_manager = builder_cfg.device_manager.ok_or_else(|| {
         DetailedError::new(
             Error::MissingConfig(),
@@ -189,8 +187,13 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
     })?;
     let serial_input_fd = builder_cfg.serial_input_fd;
 
-    // 1. Load kernel + choose payload type (handles both krunfw and external kernels)
-    let (kernel_bundle, payload_type) = payload.load_kernel_and_choose_payload()?;
+    // 1. Extract kernel, payload type, and cmdline from Payload
+    let loaded_kernel = builder_cfg
+        .kernel
+        .ok_or_else(|| DetailedError::new(Error::MissingConfig(), "kernel not set"))?;
+    let kernel_bundle = loaded_kernel.bundle;
+    let payload_type = loaded_kernel.payload;
+    let kernel_cmdline_str = loaded_kernel.cmdline;
 
     // 3. Collect shm sizes from device manager requirements
     let requirements = device_manager.requirements();
@@ -224,13 +227,18 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
     )
     .map_err(|e| DetailedError::new(Error::BootError(), format!("{e:?}")))?;
 
-    // 5. Build kernel command line (payload-specific base + env vars)
+    // 5. Build kernel command line
     let mut kernel_cmdline = Cmdline::new(arch::CMDLINE_MAX_SIZE);
 
     if let Some(cmdline) = payload_config.kernel_cmdline {
+        // TEE/firmware payloads provide their own cmdline via create_guest_memory
         kernel_cmdline.insert_str(cmdline.as_str()).unwrap();
     } else {
-        payload.configure_cmdline(&mut kernel_cmdline)?;
+        // Normal path: use the cmdline from Payload (already includes
+        // base params + any init config extras appended by the caller)
+        kernel_cmdline
+            .insert_str(&kernel_cmdline_str)
+            .map_err(|e| DetailedError::new(Error::Internal(), format!("cmdline: {e:?}")))?;
     }
 
     log::info!("kernel cmdline: {}", kernel_cmdline.as_str());
@@ -434,6 +442,10 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
     let (worker_sender, worker_receiver) = crossbeam_channel::unbounded();
 
     // 12. Attach all devices via the device manager
+    // TODO: MMIO device registration appends "virtio_mmio.device=..." params
+    // directly to vmm.kernel_cmdline during attach. Ideally the device manager
+    // would return these params and we'd append them here, keeping all cmdline
+    // assembly in one place.
     device_manager.attach_all(
         &mut vmm,
         &mut event_manager,
@@ -442,16 +454,6 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
         #[cfg(target_os = "macos")]
         Some(worker_sender.clone()),
     )?;
-
-    // 12. Append "-- args" epilog (must come after device attachment,
-    //     because MMIO device params are appended to the cmdline during
-    //     registration and must come BEFORE "--").
-    let epilog = payload.cmdline_epilog();
-    if !epilog.is_empty() {
-        vmm.kernel_cmdline
-            .insert_str(&format!(" -- {epilog}"))
-            .unwrap();
-    }
 
     log::info!("final cmdline: {}", vmm.kernel_cmdline.as_str());
 

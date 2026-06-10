@@ -353,9 +353,9 @@ RUN dnf install -y iperf3 && dnf clean all
 
             let net_device = (self.setup_backend)(&test_setup)?;
 
-            let (mut vm_config, payload) = VmConfig::new(1, 512, &test_setup)?;
+            let mut vm_config = VmConfig::new(1, 512, &test_setup)?;
             vm_config.devices.add(net_device);
-            vm_config.build_and_run(payload)
+            vm_config.build_and_run()
         }
 
         fn check(self: Box<Self>, stdout: Vec<u8>, _test_setup: TestSetup) -> TestOutcome {

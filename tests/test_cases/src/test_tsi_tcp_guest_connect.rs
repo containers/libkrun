@@ -32,9 +32,9 @@ mod host {
 
             let vsock = VsockDevice::new(3, None, None, TsiFlags::HIJACK_INET)?;
 
-            let (mut vm_config, payload) = VmConfig::new(1, 512, &test_setup)?;
+            let mut vm_config = VmConfig::new(1, 512, &test_setup)?;
             vm_config.devices.add(vsock);
-            vm_config.build_and_run(payload)
+            vm_config.build_and_run()
         }
     }
 }

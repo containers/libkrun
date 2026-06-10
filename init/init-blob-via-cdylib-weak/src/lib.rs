@@ -474,17 +474,17 @@ pub unsafe fn krun_init_config_from_oci_config_json(
     }
 }
 
-static KRUN_INIT_CONFIG_KERNEL_INIT_ARG: std::sync::OnceLock<
+static KRUN_INIT_CONFIG_KERNEL_CMDLINE: std::sync::OnceLock<
     unsafe extern "C" fn(*mut core::ffi::c_void) -> <&'static str as FfiType>::CRepr,
 > = std::sync::OnceLock::new();
 #[allow(non_snake_case)]
-pub unsafe fn krun_init_config_kernel_init_arg(
+pub unsafe fn krun_init_config_kernel_cmdline(
     handle: *mut core::ffi::c_void,
 ) -> <&'static str as FfiType>::CRepr {
     unsafe {
-        (KRUN_INIT_CONFIG_KERNEL_INIT_ARG
+        (KRUN_INIT_CONFIG_KERNEL_CMDLINE
             .get()
-            .expect("symbol `krun_init_config_kernel_init_arg` not loaded; call require() first"))(
+            .expect("symbol `krun_init_config_kernel_cmdline` not loaded; call require() first"))(
             handle,
         )
     }
@@ -578,10 +578,13 @@ impl Config {
             Err(ConfigError::from_ffi(__r, __err))
         }
     }
-    #[doc = " Returns the kernel cmdline argument needed to boot with this init"]
-    #[doc = " (e.g. `\"init=/init.krun\"`). Pass this to `krun_set_kernel_args`."]
-    pub fn kernel_init_arg(&self) -> &str {
-        let __raw = unsafe { krun_init_config_kernel_init_arg(self.0) };
+    #[doc = " Returns the kernel cmdline fragments needed by this init config"]
+    #[doc = " (e.g. `\"init=/init.krun KRUN_DHCP=1\"`)."]
+    #[doc = ""]
+    #[doc = " Pass to [`LoadedKernel::apply_init_config()`] or"]
+    #[doc = " [`LoadedKernel::append_cmdline()`]."]
+    pub fn kernel_cmdline(&self) -> &str {
+        let __raw = unsafe { krun_init_config_kernel_cmdline(self.0) };
         unsafe { <&str as FfiType>::from_c(__raw) }
     }
     #[doc = " Returns the guest files that need to be injected into the guest"]
@@ -706,6 +709,45 @@ pub unsafe fn krun_init_config_builder_rlimits(
             .expect("symbol `krun_init_config_builder_rlimits` not loaded; call require() first"))(
             handle, limits, limits_len,
         )
+    }
+}
+
+static KRUN_INIT_CONFIG_BUILDER_DHCP: std::sync::OnceLock<
+    unsafe extern "C" fn(*mut core::ffi::c_void, <bool as FfiType>::CRepr),
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_config_builder_dhcp(
+    handle: *mut core::ffi::c_void,
+    enable: <bool as FfiType>::CRepr,
+) {
+    unsafe {
+        (KRUN_INIT_CONFIG_BUILDER_DHCP
+            .get()
+            .expect("symbol `krun_init_config_builder_dhcp` not loaded; call require() first"))(
+            handle, enable,
+        )
+    }
+}
+
+static KRUN_INIT_CONFIG_BUILDER_BLOCK_ROOT: std::sync::OnceLock<
+    unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        <&'static str as FfiType>::CRepr,
+        <Option<&'static str> as FfiType>::CRepr,
+        <Option<&'static str> as FfiType>::CRepr,
+    ),
+> = std::sync::OnceLock::new();
+#[allow(non_snake_case)]
+pub unsafe fn krun_init_config_builder_block_root(
+    handle: *mut core::ffi::c_void,
+    device: <&'static str as FfiType>::CRepr,
+    fstype: <Option<&'static str> as FfiType>::CRepr,
+    options: <Option<&'static str> as FfiType>::CRepr,
+) {
+    unsafe {
+        (KRUN_INIT_CONFIG_BUILDER_BLOCK_ROOT.get().expect(
+            "symbol `krun_init_config_builder_block_root` not loaded; call require() first",
+        ))(handle, device, fstype, options)
     }
 }
 
@@ -851,6 +893,45 @@ impl ConfigBuilder {
                 &mut __handle as *mut *mut core::ffi::c_void as *mut core::ffi::c_void,
                 __ffi_limits.as_ptr(),
                 __ffi_limits.len(),
+            )
+        };
+        Self(__handle)
+    }
+    #[doc = " Enable the in-guest DHCP client for network autoconfiguration."]
+    #[doc = ""]
+    #[doc = " Passes `KRUN_DHCP=1` on the kernel cmdline so that the init"]
+    #[doc = " binary runs udhcpc after boot."]
+    pub fn dhcp(self, enable: bool) -> Self {
+        let mut __handle = {
+            let this = std::mem::ManuallyDrop::new(self);
+            this.0
+        };
+        unsafe {
+            krun_init_config_builder_dhcp(
+                &mut __handle as *mut *mut core::ffi::c_void as *mut core::ffi::c_void,
+                <bool as FfiType>::into_c(enable),
+            )
+        };
+        Self(__handle)
+    }
+    #[doc = " Configure the init to pivot from the initial root to a block"]
+    #[doc = " device after boot."]
+    #[doc = ""]
+    #[doc = " The init process will mount `device` as `fstype` and pivot_root"]
+    #[doc = " to it. Passes `KRUN_BLOCK_ROOT_DEVICE=...` (and optionally"]
+    #[doc = " `KRUN_BLOCK_ROOT_FSTYPE` / `KRUN_BLOCK_ROOT_OPTIONS`) on the"]
+    #[doc = " kernel cmdline."]
+    pub fn block_root(self, device: &str, fstype: Option<&str>, options: Option<&str>) -> Self {
+        let mut __handle = {
+            let this = std::mem::ManuallyDrop::new(self);
+            this.0
+        };
+        unsafe {
+            krun_init_config_builder_block_root(
+                &mut __handle as *mut *mut core::ffi::c_void as *mut core::ffi::c_void,
+                <&str as FfiType>::into_c(device),
+                <Option<&str> as FfiType>::into_c(fstype),
+                <Option<&str> as FfiType>::into_c(options),
             )
         };
         Self(__handle)
@@ -1030,8 +1111,8 @@ pub enum Symbol {
     KrunInitConfigBuilder,
     /// `krun_init_config_from_oci_config_json`
     KrunInitConfigFromOciConfigJson,
-    /// `krun_init_config_kernel_init_arg`
-    KrunInitConfigKernelInitArg,
+    /// `krun_init_config_kernel_cmdline`
+    KrunInitConfigKernelCmdline,
     /// `krun_init_config_guest_files`
     KrunInitConfigGuestFiles,
     /// `krun_init_config_builder_destroy`
@@ -1046,6 +1127,10 @@ pub enum Symbol {
     KrunInitConfigBuilderMount,
     /// `krun_init_config_builder_rlimits`
     KrunInitConfigBuilderRlimits,
+    /// `krun_init_config_builder_dhcp`
+    KrunInitConfigBuilderDhcp,
+    /// `krun_init_config_builder_block_root`
+    KrunInitConfigBuilderBlockRoot,
     /// `krun_init_config_builder_build`
     KrunInitConfigBuilderBuild,
     /// `krun_init_error_code`
@@ -1071,7 +1156,7 @@ impl Symbol {
             Symbol::KrunInitConfigDestroy => "krun_init_config_destroy",
             Symbol::KrunInitConfigBuilder => "krun_init_config_builder",
             Symbol::KrunInitConfigFromOciConfigJson => "krun_init_config_from_oci_config_json",
-            Symbol::KrunInitConfigKernelInitArg => "krun_init_config_kernel_init_arg",
+            Symbol::KrunInitConfigKernelCmdline => "krun_init_config_kernel_cmdline",
             Symbol::KrunInitConfigGuestFiles => "krun_init_config_guest_files",
             Symbol::KrunInitConfigBuilderDestroy => "krun_init_config_builder_destroy",
             Symbol::KrunInitConfigBuilderArgs => "krun_init_config_builder_args",
@@ -1079,6 +1164,8 @@ impl Symbol {
             Symbol::KrunInitConfigBuilderWorkdir => "krun_init_config_builder_workdir",
             Symbol::KrunInitConfigBuilderMount => "krun_init_config_builder_mount",
             Symbol::KrunInitConfigBuilderRlimits => "krun_init_config_builder_rlimits",
+            Symbol::KrunInitConfigBuilderDhcp => "krun_init_config_builder_dhcp",
+            Symbol::KrunInitConfigBuilderBlockRoot => "krun_init_config_builder_block_root",
             Symbol::KrunInitConfigBuilderBuild => "krun_init_config_builder_build",
             Symbol::KrunInitErrorCode => "krun_init_error_code",
             Symbol::KrunInitErrorMessage => "krun_init_error_message",
@@ -1231,17 +1318,17 @@ pub fn require(
                         let _ = KRUN_INIT_CONFIG_FROM_OCI_CONFIG_JSON.set(f);
                     }
                 }
-                Symbol::KrunInitConfigKernelInitArg => {
-                    if KRUN_INIT_CONFIG_KERNEL_INIT_ARG.get().is_none() {
+                Symbol::KrunInitConfigKernelCmdline => {
+                    if KRUN_INIT_CONFIG_KERNEL_CMDLINE.get().is_none() {
                         let f = unsafe {
                             *lib.get::<unsafe extern "C" fn(
                                 *mut core::ffi::c_void,
                             )
                                 -> <&'static str as FfiType>::CRepr>(
-                                b"krun_init_config_kernel_init_arg\0",
+                                b"krun_init_config_kernel_cmdline\0",
                             )?
                         };
-                        let _ = KRUN_INIT_CONFIG_KERNEL_INIT_ARG.set(f);
+                        let _ = KRUN_INIT_CONFIG_KERNEL_CMDLINE.set(f);
                     }
                 }
                 Symbol::KrunInitConfigGuestFiles => {
@@ -1329,6 +1416,32 @@ pub fn require(
                             )?
                         };
                         let _ = KRUN_INIT_CONFIG_BUILDER_RLIMITS.set(f);
+                    }
+                }
+                Symbol::KrunInitConfigBuilderDhcp => {
+                    if KRUN_INIT_CONFIG_BUILDER_DHCP.get().is_none() {
+                        let f = unsafe {
+                            *lib.get::<unsafe extern "C" fn(
+                                *mut core::ffi::c_void,
+                                <bool as FfiType>::CRepr,
+                            )>(b"krun_init_config_builder_dhcp\0")?
+                        };
+                        let _ = KRUN_INIT_CONFIG_BUILDER_DHCP.set(f);
+                    }
+                }
+                Symbol::KrunInitConfigBuilderBlockRoot => {
+                    if KRUN_INIT_CONFIG_BUILDER_BLOCK_ROOT.get().is_none() {
+                        let f = unsafe {
+                            *lib.get::<unsafe extern "C" fn(
+                                *mut core::ffi::c_void,
+                                <&'static str as FfiType>::CRepr,
+                                <Option<&'static str> as FfiType>::CRepr,
+                                <Option<&'static str> as FfiType>::CRepr,
+                            )>(
+                                b"krun_init_config_builder_block_root\0"
+                            )?
+                        };
+                        let _ = KRUN_INIT_CONFIG_BUILDER_BLOCK_ROOT.set(f);
                     }
                 }
                 Symbol::KrunInitConfigBuilderBuild => {

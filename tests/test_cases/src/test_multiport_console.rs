@@ -10,7 +10,7 @@ mod host {
     use crate::{Test, TestSetup};
     use anyhow::Context;
     use krun::{
-        BalloonDevice, ConsoleDevice, FsDevice, InitConfig, Krunfw, MmioDeviceManager, RngDevice,
+        BalloonDevice, ConsoleDevice, FsDevice, InitConfig, MmioDeviceManager, RngDevice,
         VmmBuilder,
     };
     use std::io::{BufRead, BufReader, Write};
@@ -56,7 +56,8 @@ mod host {
                 .args(&["/guest-agent", &test_setup.test_case])
                 .workdir("/")
                 .build();
-            rootfs.inject(&config.guest_files());
+            let mut kernel = krun::Payload::load_krunfw().expect("load krunfw");
+            krun::apply_init_config(&config, &mut rootfs, &mut kernel);
 
             // Single console device with:
             //   - init stdio redirect ports
@@ -77,8 +78,6 @@ mod host {
             add_ping_pong_port(&mut console_builder, "test-port-gamma")?;
             let console = console_builder.build().context("build console")?;
 
-            let payload = Krunfw::load();
-
             let mut devices = MmioDeviceManager::new();
             devices.add(rootfs);
             devices.add(console);
@@ -90,7 +89,7 @@ mod host {
                 .context("vcpus")?
                 .ram_mib(1024)
                 .context("ram")?
-                .payload(payload)
+                .kernel(kernel)
                 .devices(devices)
                 .build()
                 .context("build vmm")?;

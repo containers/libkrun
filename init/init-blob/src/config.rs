@@ -154,6 +154,7 @@ impl ProcessConfig {
 /// valid for the lifetime of this value.
 pub struct Config {
     files: Vec<GuestFile>,
+    kernel_cmdline: String,
 }
 
 #[ffier::exportable]
@@ -175,13 +176,16 @@ impl Config {
     pub fn from_oci_config_json(json: &str) -> Result<Self, ConfigError> {
         let parsed: ConfigJson = serde_json::from_str(json)
             .map_err(|e| ConfigError::InvalidJson(e.to_string().into()))?;
-        Ok(Self::from_config_json(parsed))
+        Ok(Self::from_config_json(parsed, String::new()))
     }
 
-    /// Returns the kernel cmdline argument needed to boot with this init
-    /// (e.g. `"init=/init.krun"`). Pass this to `krun_set_kernel_args`.
-    pub fn kernel_init_arg(&self) -> &str {
-        KERNEL_INIT_ARG
+    /// Returns the kernel cmdline fragments needed by this init config
+    /// (e.g. `"init=/init.krun KRUN_DHCP=1"`).
+    ///
+    /// Pass to [`LoadedKernel::apply_init_config()`] or
+    /// [`LoadedKernel::append_cmdline()`].
+    pub fn kernel_cmdline(&self) -> &str {
+        &self.kernel_cmdline
     }
 
     /// Returns the guest files that need to be injected into the guest
@@ -192,7 +196,7 @@ impl Config {
 }
 
 impl Config {
-    fn from_config_json(config: ConfigJson) -> Self {
+    fn from_config_json(config: ConfigJson, extras: String) -> Self {
         let config_json =
             serde_json::to_vec(&config).expect("ConfigJson serialization cannot fail");
         Self {
@@ -210,6 +214,11 @@ impl Config {
                     one_shot: true,
                 },
             ],
+            kernel_cmdline: if extras.is_empty() {
+                KERNEL_INIT_ARG.to_string()
+            } else {
+                format!("{KERNEL_INIT_ARG} {extras}")
+            },
         }
     }
 }
@@ -219,6 +228,15 @@ impl Config {
 pub struct ConfigBuilder {
     inner: ConfigJson,
     rlimits: Vec<String>,
+    dhcp: bool,
+    block_root: Option<BlockRootConfig>,
+}
+
+#[derive(Clone, Debug)]
+struct BlockRootConfig {
+    device: String,
+    fstype: Option<String>,
+    options: Option<String>,
 }
 
 #[ffier::exportable]
@@ -257,6 +275,31 @@ impl ConfigBuilder {
         self
     }
 
+    /// Enable the in-guest DHCP client for network autoconfiguration.
+    ///
+    /// Passes `KRUN_DHCP=1` on the kernel cmdline so that the init
+    /// binary runs udhcpc after boot.
+    pub fn dhcp(mut self, enable: bool) -> Self {
+        self.dhcp = enable;
+        self
+    }
+
+    /// Configure the init to pivot from the initial root to a block
+    /// device after boot.
+    ///
+    /// The init process will mount `device` as `fstype` and pivot_root
+    /// to it. Passes `KRUN_BLOCK_ROOT_DEVICE=...` (and optionally
+    /// `KRUN_BLOCK_ROOT_FSTYPE` / `KRUN_BLOCK_ROOT_OPTIONS`) on the
+    /// kernel cmdline.
+    pub fn block_root(mut self, device: &str, fstype: Option<&str>, options: Option<&str>) -> Self {
+        self.block_root = Some(BlockRootConfig {
+            device: device.to_string(),
+            fstype: fstype.map(|s| s.to_string()),
+            options: options.map(|s| s.to_string()),
+        });
+        self
+    }
+
     /// Consume the builder, serialize the config, and return the
     /// finished [`Config`].
     pub fn build(mut self) -> Config {
@@ -270,7 +313,25 @@ impl ConfigBuilder {
             self.inner.process.env.push(format!("KRUN_RLIMITS={value}"));
         }
 
-        Config::from_config_json(self.inner)
+        // Build kernel cmdline extras.
+        let mut extras = String::new();
+        if self.dhcp {
+            extras.push_str("KRUN_DHCP=1");
+        }
+        if let Some(br) = &self.block_root {
+            if !extras.is_empty() {
+                extras.push(' ');
+            }
+            extras.push_str(&format!("KRUN_BLOCK_ROOT_DEVICE={}", br.device));
+            if let Some(fstype) = &br.fstype {
+                extras.push_str(&format!(" KRUN_BLOCK_ROOT_FSTYPE={fstype}"));
+            }
+            if let Some(options) = &br.options {
+                extras.push_str(&format!(" KRUN_BLOCK_ROOT_OPTIONS={options}"));
+            }
+        }
+
+        Config::from_config_json(self.inner, extras)
     }
 }
 

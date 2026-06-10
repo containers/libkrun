@@ -5,7 +5,7 @@
 //! The image tag is derived from the hash of the Containerfile content (`krun-test-<hash>`),
 //! so podman's layer cache makes rebuilds fast when the Containerfile hasn't changed.
 
-use anyhow::{Context, bail};
+use anyhow::{bail, Context};
 use std::fs;
 use std::io::Write;
 use std::path::Path;

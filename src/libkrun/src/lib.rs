@@ -6,10 +6,10 @@ pub use api::*;
 // isn't shadowed.
 #[doc(hidden)]
 pub mod reexports {
+    pub use devices::virtio::TsiFlags;
     #[cfg(feature = "net")]
     pub use devices::virtio::net::device::VirtioNetBackend;
     pub use devices::virtio::port_io;
-    pub use devices::virtio::TsiFlags;
 }
 
 /// Standard virtio-net features for host-guest networking.

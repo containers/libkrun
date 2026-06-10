@@ -6,10 +6,7 @@ use std::fs::create_dir;
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "native")]
-use krun::{
-    BalloonDevice, ConsoleDevice, FsDevice, InitConfig, Krunfw, MmioDeviceManager, RngDevice,
-    VmmBuilder,
-};
+use krun::{BalloonDevice, ConsoleDevice, FsDevice, InitConfig, MmioDeviceManager, RngDevice};
 // TODO: cdylib support
 // #[cfg(feature = "cdylib")]
 // use krun_cdylib::{ ... };
@@ -43,12 +40,24 @@ pub struct VmConfig<'a> {
     pub vcpus: u8,
     pub ram_mib: u32,
     pub devices: MmioDeviceManager<'a>,
+    kernel: krun::Payload,
 }
 
 impl<'a> VmConfig<'a> {
     /// Create a default VM config with the given vcpus and ram.
     /// Includes rootfs, console, balloon, and rng devices.
-    pub fn new(vcpus: u8, ram_mib: u32, test_setup: &TestSetup) -> anyhow::Result<(Self, Krunfw)> {
+    pub fn new(vcpus: u8, ram_mib: u32, test_setup: &TestSetup) -> anyhow::Result<Self> {
+        Self::new_with_init(vcpus, ram_mib, test_setup, |b| b)
+    }
+
+    /// Like [`new`](Self::new), but allows customizing the init config
+    /// builder (e.g. to enable DHCP).
+    pub fn new_with_init(
+        vcpus: u8,
+        ram_mib: u32,
+        test_setup: &TestSetup,
+        configure_init: impl FnOnce(krun::InitConfigBuilder) -> krun::InitConfigBuilder,
+    ) -> anyhow::Result<Self> {
         krun::init_log(
             krun::LogTarget::Stderr,
             krun::LogLevel::Trace,
@@ -62,18 +71,15 @@ impl<'a> VmConfig<'a> {
         let mut rootfs = FsDevice::new("/dev/root", root_dir.to_str().context("non-UTF8 path")?)
             .context("create rootfs")?;
 
-        let config = InitConfig::builder()
+        let builder = InitConfig::builder()
             .args(&["/guest-agent", &test_setup.test_case])
-            .workdir("/")
-            .build();
-        rootfs.inject(&config.guest_files());
+            .workdir("/");
+        let config = configure_init(builder).build();
+        let mut kernel = krun::Payload::load_krunfw().map_err(|e| anyhow::anyhow!("{e}"))?;
+        krun::apply_init_config(&config, &mut rootfs, &mut kernel);
 
         let mut console_builder = ConsoleDevice::builder();
-        // Port 0: default console (hvc0) with log output — matches
-        // v1 autoconfigure. Init uses this for early boot messages.
         console_builder.add_console_port("", krun::port_io::output_to_log(log::Level::Info));
-        // Named redirect ports — init finds these by name in
-        // /sys/class/virtio-ports/ and redirects guest stdio.
         console_builder
             .add_io_port("krun-stdin", Some(libc::STDIN_FILENO), None)
             .context("add stdin port")?;
@@ -85,33 +91,28 @@ impl<'a> VmConfig<'a> {
             .context("add stderr port")?;
         let console = console_builder.build().context("build console")?;
 
-        let payload = Krunfw::load();
-
         let mut devices = MmioDeviceManager::new();
-        // Order matters: match v1 ordering (balloon, rng, console, fs)
         devices.add(BalloonDevice::new().context("balloon")?);
         devices.add(RngDevice::new().context("rng")?);
         devices.add(console);
         devices.add(rootfs);
 
-        Ok((
-            VmConfig {
-                vcpus,
-                ram_mib,
-                devices,
-            },
-            payload,
-        ))
+        Ok(VmConfig {
+            vcpus,
+            ram_mib,
+            devices,
+            kernel,
+        })
     }
 
     /// Build and run the VM. This call does not return.
-    pub fn build_and_run(self, payload: Krunfw) -> anyhow::Result<()> {
-        let mut vmm = VmmBuilder::new()
+    pub fn build_and_run(self) -> anyhow::Result<()> {
+        let mut vmm = krun::VmmBuilder::new()
             .vcpus(self.vcpus)
             .context("vcpus")?
             .ram_mib(self.ram_mib)
             .context("ram")?
-            .payload(payload)
+            .kernel(self.kernel)
             .devices(self.devices)
             .build()
             .context("build vmm")?;
@@ -123,6 +124,6 @@ impl<'a> VmConfig<'a> {
 /// Common shortcut: set up a VM with defaults and run the guest agent.
 /// This is the v2 equivalent of the old `setup_fs_and_enter`.
 pub fn setup_and_run(vcpus: u8, ram_mib: u32, test_setup: TestSetup) -> anyhow::Result<()> {
-    let (vm_config, payload) = VmConfig::new(vcpus, ram_mib, &test_setup)?;
-    vm_config.build_and_run(payload)
+    let vm_config = VmConfig::new(vcpus, ram_mib, &test_setup)?;
+    vm_config.build_and_run()
 }

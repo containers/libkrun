@@ -1,5 +1,3 @@
-
-
 mod test_vm_config;
 use test_vm_config::TestVmConfig;
 

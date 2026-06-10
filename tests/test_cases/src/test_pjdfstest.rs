@@ -9,7 +9,7 @@ mod host {
     use crate::{ShouldRun, Test, TestOutcome, TestSetup};
     use anyhow::Context;
     use krun::{
-        BalloonDevice, ConsoleDevice, FsDevice, InitConfig, Krunfw, MmioDeviceManager, RngDevice,
+        BalloonDevice, ConsoleDevice, FsDevice, InitConfig, MmioDeviceManager, RngDevice,
         VmmBuilder,
     };
 
@@ -70,7 +70,8 @@ mod host {
                 .env(&[&host_os_env])
                 .workdir("/")
                 .build();
-            rootfs.inject(&config.guest_files());
+            let mut kernel = krun::Payload::load_krunfw().expect("load krunfw");
+            krun::apply_init_config(&config, &mut rootfs, &mut kernel);
 
             let mut console_builder = ConsoleDevice::builder();
             console_builder
@@ -87,8 +88,6 @@ mod host {
                 .context("add stderr port")?;
             let console = console_builder.build().context("build console")?;
 
-            let payload = Krunfw::load();
-
             let mut devices = MmioDeviceManager::new();
             devices.add(rootfs);
             devices.add(console);
@@ -100,7 +99,7 @@ mod host {
                 .context("vcpus")?
                 .ram_mib(1024)
                 .context("ram")?
-                .payload(payload)
+                .kernel(kernel)
                 .devices(devices)
                 .build()
                 .context("build vmm")?;

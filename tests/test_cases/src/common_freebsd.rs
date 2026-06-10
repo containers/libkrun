@@ -9,8 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::test_net::gvproxy::{wait_for_socket, Gvproxy};
 use crate::TestSetup;
 use krun::{
-    BalloonDevice, BlockDevice, ConsoleDevice, FreeBsdKernelFormat, FreeBsdPayload,
-    MmioDeviceManager, NetDevice, RngDevice, VirtioNetBackend, VmmBuilder,
+    BalloonDevice, BlockDevice, ConsoleDevice, KernelFormat, MmioDeviceManager, NetDevice, Payload,
+    RngDevice, VirtioNetBackend, VmmBuilder,
 };
 
 pub struct FreeBsdAssets {
@@ -206,15 +206,17 @@ fn do_setup_and_enter(
 
     // Kernel cmdline: mount vtbd0 as root via cd9660 and hand off to init-freebsd.
     #[cfg(target_arch = "x86_64")]
-    let (kernel_format, cmdline_prefix, flags) = (FreeBsdKernelFormat::Elf, "", "boot_mute=YES");
+    let (kernel_format, cmdline_prefix, flags) = (KernelFormat::Elf, "", "boot_mute=YES");
     #[cfg(not(target_arch = "x86_64"))]
-    let (kernel_format, cmdline_prefix, flags) = (FreeBsdKernelFormat::Raw, "FreeBSD:", "-mq");
+    let (kernel_format, cmdline_prefix, flags) = (KernelFormat::Raw, "FreeBSD:", "-mq");
 
     let cmdline = format!(
         "{cmdline_prefix}vfs.root.mountfrom=cd9660:/dev/vtbd0 {flags} init_path=/init-freebsd"
     );
 
-    let payload = FreeBsdPayload::new(kernel_path.to_path_buf(), kernel_format, cmdline);
+    let kernel_path = kernel_path.to_str().context("kernel path is not UTF-8")?;
+    let kernel = Payload::load_external(kernel_path, kernel_format, &cmdline)
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
 
     // Build console (serial output to stdout — FreeBSD writes guest output there)
     let mut console_builder = ConsoleDevice::builder();
@@ -250,7 +252,7 @@ fn do_setup_and_enter(
         .context("vcpus")?
         .ram_mib(512)
         .context("ram")?
-        .payload(payload)
+        .kernel(kernel)
         .devices(devices)
         .serial_input_fd(serial_read_fd)
         .build()

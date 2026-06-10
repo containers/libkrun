@@ -66,9 +66,9 @@ mod host {
 
             let vsock = VsockDevice::new(3, None, Some(unix_ipc_port_map), TsiFlags::empty())?;
 
-            let (mut vm_config, payload) = VmConfig::new(1, 1024, &test_setup)?;
+            let mut vm_config = VmConfig::new(1, 1024, &test_setup)?;
             vm_config.devices.add(vsock);
-            vm_config.build_and_run(payload)
+            vm_config.build_and_run()
         }
     }
 }

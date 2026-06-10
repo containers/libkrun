@@ -35,7 +35,7 @@ use devices::legacy::{GicV3, HvfGicV3};
 use devices::legacy::{IrqChip, IrqChipDevice};
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 use devices::legacy::{KvmGicV2, KvmGicV3};
-use devices::virtio::{port_io, MmioTransport, PortDescription, VirtioDevice, Vsock};
+use devices::virtio::{MmioTransport, PortDescription, VirtioDevice, Vsock, port_io};
 
 #[cfg(feature = "tee")]
 use kbs_types::Tee;
@@ -62,7 +62,7 @@ use devices::virtio::display::DisplayInfo;
 #[cfg(feature = "gpu")]
 use devices::virtio::display::NoopDisplayBackend;
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-use devices::virtio::{fs::ExportTable, VirtioShmRegion};
+use devices::virtio::{VirtioShmRegion, fs::ExportTable};
 use flate2::read::GzDecoder;
 #[cfg(feature = "gpu")]
 use krun_display::DisplayBackend;
@@ -77,8 +77,6 @@ use nix::unistd::isatty;
 use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
 use utils::worker_message::WorkerMessage;
-#[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
-use vm_memory::mmap::MmapRegion;
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
 use vm_memory::Address;
 use vm_memory::Bytes;
@@ -88,6 +86,8 @@ use vm_memory::FileOffset;
 use vm_memory::GuestMemory;
 #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
 use vm_memory::GuestRegionMmap;
+#[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
+use vm_memory::mmap::MmapRegion;
 use vm_memory::{GuestAddress, GuestMemoryMmap};
 
 /// Errors associated with starting the instance.
@@ -839,36 +839,34 @@ pub fn load_payload(
         Payload::Empty => Ok((guest_mem, GuestAddress(0), None, None)),
         #[cfg(feature = "tee")]
         Payload::Tee => {
-            let (kernel_host_addr, kernel_guest_addr, kernel_size) =
-                if let Some(kb) = kernel_bundle {
-                    (kb.host_addr, kb.guest_addr, kb.size)
-                } else {
-                    return Err(StartMicrovmError::MissingKernelConfig);
-                };
+            let (kernel_host_addr, kernel_guest_addr, kernel_size) = if let Some(kb) = kernel_bundle
+            {
+                (kb.host_addr, kb.guest_addr, kb.size)
+            } else {
+                return Err(StartMicrovmError::MissingKernelConfig);
+            };
             let kernel_data =
                 unsafe { std::slice::from_raw_parts(kernel_host_addr as *mut u8, kernel_size) };
             guest_mem
                 .write(kernel_data, GuestAddress(kernel_guest_addr))
                 .unwrap();
 
-            let (qboot_host_addr, qboot_size) =
-                if let Some(qb) = qboot_bundle {
-                    (qb.host_addr, qb.size)
-                } else {
-                    return Err(StartMicrovmError::MissingKernelConfig);
-                };
+            let (qboot_host_addr, qboot_size) = if let Some(qb) = qboot_bundle {
+                (qb.host_addr, qb.size)
+            } else {
+                return Err(StartMicrovmError::MissingKernelConfig);
+            };
             let qboot_data =
                 unsafe { std::slice::from_raw_parts(qboot_host_addr as *mut u8, qboot_size) };
             guest_mem
                 .write(qboot_data, GuestAddress(arch::FIRMWARE_START))
                 .unwrap();
 
-            let (initrd_host_addr, initrd_size) =
-                if let Some(ib) = initrd_bundle {
-                    (ib.host_addr, ib.size)
-                } else {
-                    return Err(StartMicrovmError::MissingKernelConfig);
-                };
+            let (initrd_host_addr, initrd_size) = if let Some(ib) = initrd_bundle {
+                (ib.host_addr, ib.size)
+            } else {
+                return Err(StartMicrovmError::MissingKernelConfig);
+            };
             let initrd_data =
                 unsafe { std::slice::from_raw_parts(initrd_host_addr as *mut u8, initrd_size) };
             guest_mem
@@ -925,12 +923,11 @@ pub fn create_guest_memory(
     let (arch_mem_info, mut arch_mem_regions) = match payload {
         #[cfg(not(feature = "tee"))]
         Payload::KernelMmap => {
-            let (kernel_guest_addr, kernel_size) =
-                if let Some(kb) = kernel_bundle {
-                    (kb.guest_addr, kb.size)
-                } else {
-                    return Err(StartMicrovmError::MissingKernelConfig);
-                };
+            let (kernel_guest_addr, kernel_size) = if let Some(kb) = kernel_bundle {
+                (kb.guest_addr, kb.size)
+            } else {
+                return Err(StartMicrovmError::MissingKernelConfig);
+            };
             arch::arch_memory_regions(mem_size, Some(kernel_guest_addr), kernel_size, 0, None)
         }
         Payload::ExternalKernel(external_kernel) => arch::arch_memory_regions(
@@ -942,12 +939,11 @@ pub fn create_guest_memory(
         ),
         #[cfg(feature = "tee")]
         Payload::Tee => {
-            let (kernel_guest_addr, kernel_size) =
-                if let Some(kb) = kernel_bundle {
-                    (kb.guest_addr, kb.size)
-                } else {
-                    return Err(StartMicrovmError::MissingKernelConfig);
-                };
+            let (kernel_guest_addr, kernel_size) = if let Some(kb) = kernel_bundle {
+                (kb.guest_addr, kb.size)
+            } else {
+                return Err(StartMicrovmError::MissingKernelConfig);
+            };
             arch::arch_memory_regions(mem_size, Some(kernel_guest_addr), kernel_size, 0, None)
         }
         #[cfg(test)]

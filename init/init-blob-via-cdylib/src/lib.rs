@@ -366,7 +366,7 @@ unsafe extern "C" {
         json: <&'static str as FfiType>::CRepr,
         err_out: *mut *mut core::ffi::c_void,
     ) -> *mut core::ffi::c_void;
-    pub fn krun_init_config_kernel_init_arg(
+    pub fn krun_init_config_kernel_cmdline(
         handle: *mut core::ffi::c_void,
     ) -> <&'static str as FfiType>::CRepr;
     pub fn krun_init_config_guest_files(handle: *mut core::ffi::c_void) -> ffier::FfierObjectArray;
@@ -444,10 +444,13 @@ impl Config {
             Err(ConfigError::from_ffi(__r, __err))
         }
     }
-    #[doc = " Returns the kernel cmdline argument needed to boot with this init"]
-    #[doc = " (e.g. `\"init=/init.krun\"`). Pass this to `krun_set_kernel_args`."]
-    pub fn kernel_init_arg(&self) -> &str {
-        let __raw = unsafe { krun_init_config_kernel_init_arg(self.0) };
+    #[doc = " Returns the kernel cmdline fragments needed by this init config"]
+    #[doc = " (e.g. `\"init=/init.krun KRUN_DHCP=1\"`)."]
+    #[doc = ""]
+    #[doc = " Pass to [`LoadedKernel::apply_init_config()`] or"]
+    #[doc = " [`LoadedKernel::append_cmdline()`]."]
+    pub fn kernel_cmdline(&self) -> &str {
+        let __raw = unsafe { krun_init_config_kernel_cmdline(self.0) };
         unsafe { <&str as FfiType>::from_c(__raw) }
     }
     #[doc = " Returns the guest files that need to be injected into the guest"]
@@ -489,6 +492,16 @@ unsafe extern "C" {
         handle: *mut core::ffi::c_void,
         limits: *const ffier::FfierBytes,
         limits_len: usize,
+    );
+    pub fn krun_init_config_builder_dhcp(
+        handle: *mut core::ffi::c_void,
+        enable: <bool as FfiType>::CRepr,
+    );
+    pub fn krun_init_config_builder_block_root(
+        handle: *mut core::ffi::c_void,
+        device: <&'static str as FfiType>::CRepr,
+        fstype: <Option<&'static str> as FfiType>::CRepr,
+        options: <Option<&'static str> as FfiType>::CRepr,
     );
     pub fn krun_init_config_builder_build(
         handle: *mut core::ffi::c_void,
@@ -621,6 +634,45 @@ impl ConfigBuilder {
                 &mut __handle as *mut *mut core::ffi::c_void as *mut core::ffi::c_void,
                 __ffi_limits.as_ptr(),
                 __ffi_limits.len(),
+            )
+        };
+        Self(__handle)
+    }
+    #[doc = " Enable the in-guest DHCP client for network autoconfiguration."]
+    #[doc = ""]
+    #[doc = " Passes `KRUN_DHCP=1` on the kernel cmdline so that the init"]
+    #[doc = " binary runs udhcpc after boot."]
+    pub fn dhcp(self, enable: bool) -> Self {
+        let mut __handle = {
+            let this = std::mem::ManuallyDrop::new(self);
+            this.0
+        };
+        unsafe {
+            krun_init_config_builder_dhcp(
+                &mut __handle as *mut *mut core::ffi::c_void as *mut core::ffi::c_void,
+                <bool as FfiType>::into_c(enable),
+            )
+        };
+        Self(__handle)
+    }
+    #[doc = " Configure the init to pivot from the initial root to a block"]
+    #[doc = " device after boot."]
+    #[doc = ""]
+    #[doc = " The init process will mount `device` as `fstype` and pivot_root"]
+    #[doc = " to it. Passes `KRUN_BLOCK_ROOT_DEVICE=...` (and optionally"]
+    #[doc = " `KRUN_BLOCK_ROOT_FSTYPE` / `KRUN_BLOCK_ROOT_OPTIONS`) on the"]
+    #[doc = " kernel cmdline."]
+    pub fn block_root(self, device: &str, fstype: Option<&str>, options: Option<&str>) -> Self {
+        let mut __handle = {
+            let this = std::mem::ManuallyDrop::new(self);
+            this.0
+        };
+        unsafe {
+            krun_init_config_builder_block_root(
+                &mut __handle as *mut *mut core::ffi::c_void as *mut core::ffi::c_void,
+                <&str as FfiType>::into_c(device),
+                <Option<&str> as FfiType>::into_c(fstype),
+                <Option<&str> as FfiType>::into_c(options),
             )
         };
         Self(__handle)

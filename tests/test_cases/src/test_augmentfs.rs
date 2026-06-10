@@ -21,7 +21,7 @@ mod host {
     use anyhow::Context;
 
     use krun::{
-        BalloonDevice, ConsoleDevice, FsDevice, InitConfig, Krunfw, MmioDeviceManager, RngDevice,
+        BalloonDevice, ConsoleDevice, FsDevice, InitConfig, MmioDeviceManager, RngDevice,
         VmmBuilder,
     };
 
@@ -47,7 +47,8 @@ mod host {
                 test_setup.test_case,
             );
             let config = InitConfig::from_oci_config_json(&json).context("parse OCI config")?;
-            rootfs.inject(&config.guest_files());
+            let mut kernel = krun::Payload::load_krunfw().context("load krunfw")?;
+            krun::apply_init_config(&config, &mut rootfs, &mut kernel);
 
             // Overlay guest-agent (one-shot, executable).
             rootfs.add_overlay_file("guest-agent", &guest_agent_bytes, 0o100_755, true);
@@ -97,7 +98,7 @@ mod host {
                 .context("vcpus")?
                 .ram_mib(512)
                 .context("ram")?
-                .payload(Krunfw::load())
+                .kernel(kernel)
                 .devices(devices)
                 .build()
                 .context("build vmm")?;

@@ -206,6 +206,28 @@ impl<T> Drop for ForeignSlice<T> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
+pub enum KernelFormat {
+    Elf = 0,
+    Raw = 1,
+}
+
+impl FfiType for KernelFormat {
+    type CRepr = u32;
+    const C_TYPE_NAME: &'static str = "KernelFormat";
+    fn into_c(self) -> u32 {
+        self as u32
+    }
+    unsafe fn from_c(repr: u32) -> Self {
+        match repr {
+            0 => Self::Elf,
+            1 => Self::Raw,
+            unknown => panic!("invalid KernelFormat discriminant: {}", unknown),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
 pub enum LogLevel {
     Off = 0,
     Error = 1,
@@ -503,6 +525,18 @@ unsafe extern "C" {
         tag: <&'static str as FfiType>::CRepr,
         err_out: *mut *mut core::ffi::c_void,
     ) -> *mut core::ffi::c_void;
+    pub fn krun_fs_device_add_overlay_dir(
+        handle: *mut core::ffi::c_void,
+        path: <&'static str as FfiType>::CRepr,
+        mode: <u32 as FfiType>::CRepr,
+    );
+    pub fn krun_fs_device_add_overlay_file(
+        handle: *mut core::ffi::c_void,
+        path: <&'static str as FfiType>::CRepr,
+        data: <&'static [u8] as FfiType>::CRepr,
+        mode: <u32 as FfiType>::CRepr,
+        one_shot: <bool as FfiType>::CRepr,
+    );
 }
 
 pub struct FsDevice<'a>(*mut core::ffi::c_void, std::marker::PhantomData<&'a ()>);
@@ -589,8 +623,9 @@ impl<'a> FsDevice<'a> {
     }
     #[doc = " Create a virtiofs device with no host directory (NullFs)."]
     #[doc = ""]
-    #[doc = " The guest sees an empty filesystem. Use [`inject`](Self::inject)"]
-    #[doc = " and [`add_overlay_dir`](Self::add_overlay_dir) to populate it"]
+    #[doc = " The guest sees an empty filesystem. Use"]
+    #[doc = " [`add_overlay_dir`](Self::add_overlay_dir) and"]
+    #[doc = " [`add_overlay_file`](Self::add_overlay_file) to populate it"]
     #[doc = " with virtual entries."]
     pub fn new_null(tag: &str) -> Result<FsDevice<'a>, Error> {
         let mut __err: *mut core::ffi::c_void = core::ptr::null_mut();
@@ -605,6 +640,35 @@ impl<'a> FsDevice<'a> {
         } else {
             let __r = unsafe { krun_error_result(__err) };
             Err(Error::from_ffi(__r, __err))
+        }
+    }
+    #[doc = " Add a virtual directory overlay entry."]
+    #[doc = ""]
+    #[doc = " `path` may contain `/` separators for nested entries (e.g."]
+    #[doc = " `\"etc/nested\"`). Intermediate directories must already exist."]
+    pub fn add_overlay_dir(&mut self, path: &str, mode: u32) {
+        unsafe {
+            krun_fs_device_add_overlay_dir(
+                self.0,
+                <&str as FfiType>::into_c(path),
+                <u32 as FfiType>::into_c(mode),
+            )
+        }
+    }
+    #[doc = " Add a virtual file overlay entry."]
+    #[doc = ""]
+    #[doc = " `path` may contain `/` separators for nested entries (e.g."]
+    #[doc = " `\"etc/nested/deep.txt\"`). Intermediate directories must already"]
+    #[doc = " exist."]
+    pub fn add_overlay_file(&mut self, path: &str, data: &[u8], mode: u32, one_shot: bool) {
+        unsafe {
+            krun_fs_device_add_overlay_file(
+                self.0,
+                <&str as FfiType>::into_c(path),
+                <&[u8] as FfiType>::into_c(data),
+                <u32 as FfiType>::into_c(mode),
+                <bool as FfiType>::into_c(one_shot),
+            )
         }
     }
 }
@@ -989,13 +1053,26 @@ impl Drop for RngDevice {
 }
 
 unsafe extern "C" {
-    pub fn krun_krunfw_destroy(handle: *mut core::ffi::c_void);
-    pub fn krun_krunfw_load() -> <Krunfw as FfiType>::CRepr;
+    pub fn krun_payload_destroy(handle: *mut core::ffi::c_void);
+    pub fn krun_payload_load_krunfw(err_out: *mut *mut core::ffi::c_void)
+    -> *mut core::ffi::c_void;
+    pub fn krun_payload_load_external(
+        path: <&'static str as FfiType>::CRepr,
+        format: <KernelFormat as FfiType>::CRepr,
+        cmdline: <&'static str as FfiType>::CRepr,
+        err_out: *mut *mut core::ffi::c_void,
+    ) -> *mut core::ffi::c_void;
+    pub fn krun_payload_cmdline(handle: *mut core::ffi::c_void)
+    -> <&'static str as FfiType>::CRepr;
+    pub fn krun_payload_append_cmdline(
+        handle: *mut core::ffi::c_void,
+        extra: <&'static str as FfiType>::CRepr,
+    );
 }
 
-pub struct Krunfw(*mut core::ffi::c_void);
+pub struct Payload(*mut core::ffi::c_void);
 
-impl Krunfw {
+impl Payload {
     #[doc(hidden)]
     pub fn __from_raw(ptr: *mut core::ffi::c_void) -> Self {
         Self(ptr)
@@ -1007,8 +1084,8 @@ impl Krunfw {
     }
 }
 
-impl FfiHandle for Krunfw {
-    const C_HANDLE_NAME: &'static str = "Krunfw";
+impl FfiHandle for Payload {
+    const C_HANDLE_NAME: &'static str = "Payload";
     const TYPE_TAG: u32 = 16777224u32;
     unsafe fn as_handle(&self) -> *mut core::ffi::c_void {
         self.0
@@ -1018,9 +1095,9 @@ impl FfiHandle for Krunfw {
     }
 }
 
-impl FfiType for Krunfw {
+impl FfiType for Payload {
     type CRepr = *mut core::ffi::c_void;
-    const C_TYPE_NAME: &'static str = "Krunfw";
+    const C_TYPE_NAME: &'static str = "Payload";
     fn into_c(self) -> *mut core::ffi::c_void {
         self.__into_raw()
     }
@@ -1029,23 +1106,60 @@ impl FfiType for Krunfw {
     }
 }
 
-impl std::fmt::Debug for Krunfw {
+impl std::fmt::Debug for Payload {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Krunfw").field(&self.0).finish()
+        f.debug_tuple("Payload").field(&self.0).finish()
     }
 }
 
-impl Krunfw {
-    #[doc = " Load the krunfw kernel payload."]
-    pub fn load() -> Krunfw {
-        let __raw = unsafe { krun_krunfw_load() };
-        unsafe { <Krunfw as FfiType>::from_c(__raw) }
+impl Payload {
+    #[doc = " Load the built-in krunfw kernel."]
+    pub fn load_krunfw() -> Result<Payload, Error> {
+        let mut __err: *mut core::ffi::c_void = core::ptr::null_mut();
+        let __raw = unsafe { krun_payload_load_krunfw(&mut __err as *mut *mut core::ffi::c_void) };
+        if !__raw.is_null() {
+            Ok(unsafe { <Payload as FfiType>::from_c(__raw) })
+        } else {
+            let __r = unsafe { krun_error_result(__err) };
+            Err(Error::from_ffi(__r, __err))
+        }
+    }
+    #[doc = " Load an external kernel (Linux, FreeBSD, etc.)."]
+    pub fn load_external(
+        path: &str,
+        format: KernelFormat,
+        cmdline: &str,
+    ) -> Result<Payload, Error> {
+        let mut __err: *mut core::ffi::c_void = core::ptr::null_mut();
+        let __raw = unsafe {
+            krun_payload_load_external(
+                <&str as FfiType>::into_c(path),
+                <KernelFormat as FfiType>::into_c(format),
+                <&str as FfiType>::into_c(cmdline),
+                &mut __err as *mut *mut core::ffi::c_void,
+            )
+        };
+        if !__raw.is_null() {
+            Ok(unsafe { <Payload as FfiType>::from_c(__raw) })
+        } else {
+            let __r = unsafe { krun_error_result(__err) };
+            Err(Error::from_ffi(__r, __err))
+        }
+    }
+    #[doc = " The kernel cmdline (base + any appended fragments)."]
+    pub fn cmdline(&self) -> &str {
+        let __raw = unsafe { krun_payload_cmdline(self.0) };
+        unsafe { <&str as FfiType>::from_c(__raw) }
+    }
+    #[doc = " Append a fragment to the kernel cmdline."]
+    pub fn append_cmdline(&mut self, extra: &str) {
+        unsafe { krun_payload_append_cmdline(self.0, <&str as FfiType>::into_c(extra)) }
     }
 }
 
-impl Drop for Krunfw {
+impl Drop for Payload {
     fn drop(&mut self) {
-        unsafe { krun_krunfw_destroy(self.0) }
+        unsafe { krun_payload_destroy(self.0) }
     }
 }
 
@@ -1062,9 +1176,9 @@ unsafe extern "C" {
         mib: <u32 as FfiType>::CRepr,
         err_out: *mut *mut core::ffi::c_void,
     ) -> ffier::FfierResult;
-    pub fn krun_vmm_builder_payload(
+    pub fn krun_vmm_builder_kernel(
         handle: *mut core::ffi::c_void,
-        payload: *mut core::ffi::c_void,
+        kernel: <Payload as FfiType>::CRepr,
     );
     pub fn krun_vmm_builder_devices(
         handle: *mut core::ffi::c_void,
@@ -1164,19 +1278,20 @@ impl<'a> VmmBuilder<'a> {
             Err(Error::from_ffi(__r, __err))
         }
     }
-    #[doc = " Set the payload to run inside the VM."]
+    #[doc = " Set the kernel to boot."]
     #[doc = ""]
-    #[doc = " Currently the only payload type is `Init`, which runs a process"]
-    #[doc = " as PID 1 inside the guest using the built-in krun init."]
-    pub fn payload(self, payload: impl Payload) -> Self {
+    #[doc = " Pass a [`Payload`] obtained from"]
+    #[doc = " [`Payload::load_krunfw()`] or"]
+    #[doc = " [`Payload::load_external()`]."]
+    pub fn kernel(self, kernel: Payload) -> Self {
         let mut __handle = {
             let this = std::mem::ManuallyDrop::new(self);
             this.0
         };
         unsafe {
-            krun_vmm_builder_payload(
+            krun_vmm_builder_kernel(
                 &mut __handle as *mut *mut core::ffi::c_void as *mut core::ffi::c_void,
-                payload.__into_raw_handle(),
+                <Payload as FfiType>::into_c(kernel),
             )
         };
         Self(__handle, std::marker::PhantomData)
@@ -1199,7 +1314,7 @@ impl<'a> VmmBuilder<'a> {
         Self(__handle, std::marker::PhantomData)
     }
     #[doc = " Build the VM, creating guest memory, attaching devices, and starting"]
-    #[doc = " vCPUs. All required fields (`vcpus`, `ram_mib`, `payload`, `devices`)"]
+    #[doc = " vCPUs. All required fields (`vcpus`, `ram_mib`, `kernel`, `devices`)"]
     #[doc = " must have been set."]
     pub fn build(self) -> Result<Vmm<'a>, Error> {
         let mut __handle = {
@@ -1368,20 +1483,6 @@ unsafe extern "C" {
     pub fn krun_error_message(handle: *mut core::ffi::c_void, writer: *mut core::ffi::c_void);
     pub fn krun_error_result(handle: *mut core::ffi::c_void) -> <u64 as FfiType>::CRepr;
     pub fn krun_error_destroy(handle: *mut core::ffi::c_void);
-}
-
-pub trait Payload {
-    #[doc(hidden)]
-    fn __into_raw_handle(self) -> *mut core::ffi::c_void
-    where
-        Self: Sized;
-}
-
-impl Payload for Krunfw {
-    fn __into_raw_handle(self) -> *mut core::ffi::c_void {
-        let this = std::mem::ManuallyDrop::new(self);
-        this.0
-    }
 }
 
 pub trait AttachDevice<'a> {

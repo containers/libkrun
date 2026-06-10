@@ -130,10 +130,13 @@ KrunInitConfigBuilder krun_init_config_builder();
  */
 KrunInitConfig krun_init_config_from_oci_config_json(KrunStr json, KrunInitError* err_out);
 /**
- * Returns the kernel cmdline argument needed to boot with this init
- * (e.g. `"init=/init.krun"`). Pass this to `krun_set_kernel_args`.
+ * Returns the kernel cmdline fragments needed by this init config
+ * (e.g. `"init=/init.krun KRUN_DHCP=1"`).
+ *
+ * Pass to [`LoadedKernel::apply_init_config()`] or
+ * [`LoadedKernel::append_cmdline()`].
  */
-KrunStr krun_init_config_kernel_init_arg(KrunInitConfig handle);
+KrunStr krun_init_config_kernel_cmdline(KrunInitConfig handle);
 /**
  * Returns the guest files that need to be injected into the guest
  * root filesystem.
@@ -153,6 +156,23 @@ void krun_init_config_builder_workdir(KrunInitConfigBuilder* handle, KrunStr dir
 void krun_init_config_builder_mount(KrunInitConfigBuilder* handle, KrunStr destination, KrunStr fs_type, KrunStr source);
 /** Set resource limits. Each entry should be `"id=cur:max"` (e.g. `"7=0:0"`). */
 void krun_init_config_builder_rlimits(KrunInitConfigBuilder* handle, const KrunStr* limits, size_t limits_len);
+/**
+ * Enable the in-guest DHCP client for network autoconfiguration.
+ *
+ * Passes `KRUN_DHCP=1` on the kernel cmdline so that the init
+ * binary runs udhcpc after boot.
+ */
+void krun_init_config_builder_dhcp(KrunInitConfigBuilder* handle, bool enable);
+/**
+ * Configure the init to pivot from the initial root to a block
+ * device after boot.
+ *
+ * The init process will mount `device` as `fstype` and pivot_root
+ * to it. Passes `KRUN_BLOCK_ROOT_DEVICE=...` (and optionally
+ * `KRUN_BLOCK_ROOT_FSTYPE` / `KRUN_BLOCK_ROOT_OPTIONS`) on the
+ * kernel cmdline.
+ */
+void krun_init_config_builder_block_root(KrunInitConfigBuilder* handle, KrunStr device, KrunStr fstype, KrunStr options);
 /**
  * Consume the builder, serialize the config, and return the
  * finished [`Config`].

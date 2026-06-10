@@ -18,7 +18,7 @@ mod host {
     use std::process::Command;
 
     use krun::{
-        BalloonDevice, BlockDevice, ConsoleDevice, FsDevice, InitConfig, Krunfw, MmioDeviceManager,
+        BalloonDevice, BlockDevice, ConsoleDevice, FsDevice, InitConfig, MmioDeviceManager,
         RngDevice, VmmBuilder,
     };
 
@@ -69,8 +69,10 @@ mod host {
             let config = InitConfig::builder()
                 .args(&["/guest-agent", &test_setup.test_case])
                 .workdir("/")
+                .block_root("/dev/vda", Some("ext4"), None)
                 .build();
-            rootfs.inject(&config.guest_files());
+            let mut kernel = krun::Payload::load_krunfw().context("load krunfw")?;
+            krun::apply_init_config(&config, &mut rootfs, &mut kernel);
 
             let mut console_builder = ConsoleDevice::builder();
             console_builder
@@ -89,9 +91,6 @@ mod host {
 
             let block = BlockDevice::new("vda", &disk_path, false).context("create block")?;
 
-            let mut payload = Krunfw::load();
-            payload.set_block_root("/dev/vda", Some("ext4"), None);
-
             let mut devices = MmioDeviceManager::new();
             devices.add(rootfs);
             devices.add(console);
@@ -104,7 +103,7 @@ mod host {
                 .context("vcpus")?
                 .ram_mib(512)
                 .context("ram")?
-                .payload(payload)
+                .kernel(kernel)
                 .devices(devices)
                 .build()
                 .context("build vmm")?;

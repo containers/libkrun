@@ -129,10 +129,9 @@ mod host {
 
             let net_device = (self.setup_backend)(&test_setup)?;
 
-            let (mut vm_config, mut payload) = VmConfig::new(1, 512, &test_setup)?;
-            payload.enable_dhcp_client();
+            let mut vm_config = VmConfig::new_with_init(1, 512, &test_setup, |b| b.dhcp(true))?;
             vm_config.devices.add(net_device);
-            vm_config.build_and_run(payload)
+            vm_config.build_and_run()
         }
     }
 }
