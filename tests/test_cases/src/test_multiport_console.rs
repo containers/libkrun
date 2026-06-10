@@ -6,11 +6,13 @@ pub struct TestMultiportConsole;
 mod host {
     use super::*;
 
-    use crate::common::setup_fs_and_enter;
+    use crate::common::setup_rootfs;
     use crate::{Test, TestSetup};
-    use crate::{krun_call, krun_call_u32};
-    use krun_sys::*;
-    use std::ffi::CString;
+    use anyhow::Context;
+    use krun::{
+        BalloonDevice, ConsoleDevice, FsDevice, InitConfig, Krunfw, MmioDeviceManager, RngDevice,
+        VmmBuilder,
+    };
     use std::io::{BufRead, BufReader, Write};
     use std::os::fd::AsRawFd;
     use std::os::unix::net::UnixStream;
@@ -30,18 +32,14 @@ mod host {
         });
     }
 
-    fn test_port(ctx: u32, console_id: u32, name: &str) -> anyhow::Result<()> {
+    fn add_ping_pong_port(
+        console_builder: &mut krun::ConsoleBuilder<'_>,
+        name: &str,
+    ) -> anyhow::Result<()> {
         let (guest, host) = UnixStream::pair()?;
-        let name_cstring = CString::new(name)?;
-        unsafe {
-            krun_call!(krun_add_console_port_inout(
-                ctx,
-                console_id,
-                name_cstring.as_ptr(),
-                guest.as_raw_fd(),
-                guest.as_raw_fd()
-            ))?;
-        }
+        console_builder
+            .add_io_port(name, Some(guest.as_raw_fd()), Some(guest.as_raw_fd()))
+            .context("add port")?;
         mem::forget(guest);
         spawn_ping_pong_responder(host);
         Ok(())
@@ -49,32 +47,54 @@ mod host {
 
     impl Test for TestMultiportConsole {
         fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()> {
-            unsafe {
-                krun_call!(krun_init_log(
-                    KRUN_LOG_TARGET_DEFAULT,
-                    KRUN_LOG_LEVEL_TRACE,
-                    KRUN_LOG_STYLE_AUTO,
-                    0
-                ))?;
-                let ctx = krun_call_u32!(krun_create_ctx())?;
+            let root_dir = setup_rootfs(&test_setup)?;
 
-                // Add a default console (as with other tests this uses stdout for writing "OK")
-                krun_call!(krun_add_virtio_console_default(
-                    ctx,
-                    -1,
-                    std::io::stdout().as_raw_fd(),
-                    -1,
-                ))?;
+            let mut rootfs =
+                FsDevice::new("/dev/root", root_dir.to_str().context("non-UTF8 path")?)
+                    .context("create rootfs")?;
+            let config = InitConfig::builder()
+                .args(&["/guest-agent", &test_setup.test_case])
+                .workdir("/")
+                .build();
+            rootfs.inject(&config.guest_files());
 
-                let console_id = krun_call_u32!(krun_add_virtio_console_multiport(ctx))?;
+            // Single console device with:
+            //   - init stdio redirect ports
+            //   - three named ping-pong ports
+            let mut console_builder = ConsoleDevice::builder();
+            console_builder.add_console_port("", krun::port_io::output_to_log(log::Level::Info));
+            console_builder
+                .add_io_port("krun-stdin", Some(libc::STDIN_FILENO), None)
+                .context("add stdin port")?;
+            console_builder
+                .add_io_port("krun-stdout", None, Some(libc::STDOUT_FILENO))
+                .context("add stdout port")?;
+            console_builder
+                .add_io_port("krun-stderr", None, Some(libc::STDERR_FILENO))
+                .context("add stderr port")?;
+            add_ping_pong_port(&mut console_builder, "test-port-alpha")?;
+            add_ping_pong_port(&mut console_builder, "test-port-beta")?;
+            add_ping_pong_port(&mut console_builder, "test-port-gamma")?;
+            let console = console_builder.build().context("build console")?;
 
-                test_port(ctx, console_id, "test-port-alpha")?;
-                test_port(ctx, console_id, "test-port-beta")?;
-                test_port(ctx, console_id, "test-port-gamma")?;
+            let payload = Krunfw::load();
 
-                krun_call!(krun_set_vm_config(ctx, 1, 1024))?;
-                setup_fs_and_enter(ctx, test_setup)?;
-            }
+            let mut devices = MmioDeviceManager::new();
+            devices.add(rootfs);
+            devices.add(console);
+            devices.add(BalloonDevice::new().context("balloon")?);
+            devices.add(RngDevice::new().context("rng")?);
+
+            let mut vmm = VmmBuilder::new()
+                .vcpus(1)
+                .context("vcpus")?
+                .ram_mib(1024)
+                .context("ram")?
+                .payload(payload)
+                .devices(devices)
+                .build()
+                .context("build vmm")?;
+            vmm.run();
             Ok(())
         }
     }
@@ -146,8 +166,9 @@ mod guest {
                 "test-port-gamma not found"
             );
 
-            // We shouldn't have any more than configured here
-            assert_eq!(port_map.len(), 4);
+            // 7 ports: default console + stdin, stdout, stderr + 3 ping-pong
+            // (default console has empty name, won't be in port_map)
+            assert_eq!(port_map.len(), 6);
 
             test_port(&port_map, "test-port-alpha", "PING-ALPHA\n");
             test_port(&port_map, "test-port-beta", "PING-BETA\n");

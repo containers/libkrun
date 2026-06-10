@@ -5,11 +5,13 @@ pub struct TestPjdfstest;
 #[host]
 mod host {
     use super::*;
-    use crate::common::setup_fs_and_enter_with_env;
-    use crate::{ShouldRun, Test, TestOutcome, TestSetup, krun_call, krun_call_u32};
-    use krun_sys::*;
-    use std::ffi::CString;
-    use std::os::fd::AsRawFd;
+
+    use crate::{ShouldRun, Test, TestOutcome, TestSetup};
+    use anyhow::Context;
+    use krun::{
+        BalloonDevice, ConsoleDevice, FsDevice, InitConfig, Krunfw, MmioDeviceManager, RngDevice,
+        VmmBuilder,
+    };
 
     use macros::env_or_default;
 
@@ -51,18 +53,58 @@ mod host {
             } else {
                 "Linux"
             };
-            let host_os_env = CString::new(format!("PJDFSTEST_HOST_OS={host_os}"))?;
-            unsafe {
-                let ctx = krun_call_u32!(krun_create_ctx())?;
-                krun_call!(krun_set_vm_config(ctx, 2, 1024))?;
-                krun_call!(krun_add_virtio_console_default(
-                    ctx,
-                    std::io::stdin().as_raw_fd(),
-                    std::io::stdout().as_raw_fd(),
-                    std::io::stderr().as_raw_fd(),
-                ))?;
-                setup_fs_and_enter_with_env(ctx, test_setup, &[host_os_env.as_c_str()])?;
-            }
+            let host_os_env = format!("PJDFSTEST_HOST_OS={host_os}");
+
+            let root_dir = test_setup.tmp_dir.join("root");
+            std::fs::create_dir(&root_dir).context("Failed to create root directory")?;
+            let agent_src = std::env::var_os("KRUN_TEST_GUEST_AGENT_PATH")
+                .context("KRUN_TEST_GUEST_AGENT_PATH not set")?;
+            std::fs::copy(agent_src, root_dir.join("guest-agent")).context("copy guest-agent")?;
+
+            let mut rootfs =
+                FsDevice::new("/dev/root", root_dir.to_str().context("non-UTF8 path")?)
+                    .context("create rootfs")?;
+
+            let config = InitConfig::builder()
+                .args(&["/guest-agent", &test_setup.test_case])
+                .env(&[&host_os_env])
+                .workdir("/")
+                .build();
+            rootfs.inject(&config.guest_files());
+
+            let mut console_builder = ConsoleDevice::builder();
+            console_builder
+                .add_io_port("", None, Some(libc::STDERR_FILENO))
+                .context("add default console port")?;
+            console_builder
+                .add_io_port("krun-stdin", Some(libc::STDIN_FILENO), None)
+                .context("add stdin port")?;
+            console_builder
+                .add_io_port("krun-stdout", None, Some(libc::STDOUT_FILENO))
+                .context("add stdout port")?;
+            console_builder
+                .add_io_port("krun-stderr", None, Some(libc::STDERR_FILENO))
+                .context("add stderr port")?;
+            let console = console_builder.build().context("build console")?;
+
+            let payload = Krunfw::load();
+
+            let mut devices = MmioDeviceManager::new();
+            devices.add(rootfs);
+            devices.add(console);
+            devices.add(BalloonDevice::new().context("balloon")?);
+            devices.add(RngDevice::new().context("rng")?);
+
+            let mut vmm = VmmBuilder::new()
+                .vcpus(2)
+                .context("vcpus")?
+                .ram_mib(1024)
+                .context("ram")?
+                .payload(payload)
+                .devices(devices)
+                .build()
+                .context("build vmm")?;
+            vmm.run();
             Ok(())
         }
 

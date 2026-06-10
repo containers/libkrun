@@ -19,45 +19,29 @@ impl TestTsiTcpGuestListen {
 #[host]
 mod host {
     use super::*;
-    use crate::common::setup_fs_and_enter;
-    use crate::{Test, TestSetup, krun_call, krun_call_u32};
-    use krun_sys::*;
-    use std::ffi::CString;
-    use std::os::fd::AsRawFd;
-    use std::ptr::null;
+    use crate::common::VmConfig;
+    use crate::{Test, TestSetup};
+    use krun::{TsiFlags, VsockDevice};
+    use std::collections::HashMap;
     use std::thread;
+    use std::time::Duration;
 
     impl Test for TestTsiTcpGuestListen {
         fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()> {
-            unsafe {
-                thread::spawn(move || {
-                    self.tcp_tester.run_client();
-                });
+            thread::spawn(move || {
+                thread::sleep(Duration::from_secs(1));
+                self.tcp_tester.run_client();
+            });
 
-                krun_call!(krun_init_log(
-                    KRUN_LOG_TARGET_DEFAULT,
-                    KRUN_LOG_LEVEL_TRACE,
-                    KRUN_LOG_STYLE_AUTO,
-                    0
-                ))?;
-                let ctx = krun_call_u32!(krun_create_ctx())?;
-                let port_mapping = format!("{PORT}:{PORT}");
-                let port_mapping = CString::new(port_mapping).unwrap();
-                let port_map = [port_mapping.as_ptr(), null()];
+            // Forward host PORT → guest PORT for TSI listen mode
+            let mut host_port_map = HashMap::new();
+            host_port_map.insert(PORT, PORT);
 
-                krun_call!(krun_add_vsock(ctx, KRUN_TSI_HIJACK_INET))?;
-                krun_call!(krun_set_port_map(ctx, port_map.as_ptr()))?;
-                krun_call!(krun_set_vm_config(ctx, 1, 512))?;
-                krun_call!(krun_add_virtio_console_default(
-                    ctx,
-                    std::io::stdin().as_raw_fd(),
-                    std::io::stdout().as_raw_fd(),
-                    std::io::stderr().as_raw_fd(),
-                ))?;
-                setup_fs_and_enter(ctx, test_setup)?;
-                println!("OK");
-            }
-            Ok(())
+            let vsock = VsockDevice::new(3, Some(host_port_map), None, TsiFlags::HIJACK_INET)?;
+
+            let (mut vm_config, payload) = VmConfig::new(1, 512, &test_setup)?;
+            vm_config.devices.add(vsock);
+            vm_config.build_and_run(payload)
         }
     }
 }

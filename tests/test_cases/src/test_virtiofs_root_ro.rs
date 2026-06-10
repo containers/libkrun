@@ -1,5 +1,3 @@
-#![cfg(any(feature = "host", target_os = "linux"))]
-
 // NOTE: This is a smoke test that asserts basic mutation operations fail on a read-only
 // virtiofs root. It is not exhaustive.For a security sensitive test it would also be better
 // to bypass the guest kernel and execute the virtiofs commands directly.
@@ -18,12 +16,13 @@ mod host {
 
     use crate::common::setup_rootfs;
     use crate::{Test, TestSetup};
-    use crate::{krun_call, krun_call_u32};
-    use krun_sys::*;
-    use std::ffi::CString;
+    use anyhow::Context;
     use std::fs;
-    use std::os::fd::AsRawFd;
-    use std::os::unix::ffi::OsStrExt;
+
+    use krun::{
+        BalloonDevice, ConsoleDevice, FsDevice, InitConfig, Krunfw, MmioDeviceManager, RngDevice,
+        VmmBuilder,
+    };
 
     impl Test for TestVirtiofsRootRo {
         fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()> {
@@ -36,44 +35,48 @@ mod host {
             }
             fs::create_dir(root_dir.join(EMPTY_DIR))?;
             fs::write(root_dir.join(TEST_FILE), TEST_CONTENT)?;
-            let root_path = CString::new(root_dir.as_os_str().as_bytes())?;
-            let test_case = CString::new(test_setup.test_case)?;
 
-            unsafe {
-                krun_call!(krun_init_log(
-                    KRUN_LOG_TARGET_DEFAULT,
-                    KRUN_LOG_LEVEL_TRACE,
-                    KRUN_LOG_STYLE_AUTO,
-                    0
-                ))?;
-                let ctx = krun_call_u32!(krun_create_ctx())?;
-                krun_call!(krun_set_vm_config(ctx, 1, 512))?;
-                krun_call!(krun_add_virtio_console_default(
-                    ctx,
-                    std::io::stdin().as_raw_fd(),
-                    std::io::stdout().as_raw_fd(),
-                    std::io::stderr().as_raw_fd(),
-                ))?;
+            let mut rootfs =
+                FsDevice::new_read_only("/dev/root", root_dir.to_str().context("non-UTF8 path")?)
+                    .context("create rootfs")?;
 
-                // Use "/dev/root" tag (KRUN_FS_ROOT_TAG) with read_only=true
-                krun_call!(krun_add_virtiofs3(
-                    ctx,
-                    c"/dev/root".as_ptr(),
-                    root_path.as_ptr(),
-                    0,
-                    true,
-                ))?;
+            let config = InitConfig::builder()
+                .args(&["/guest-agent", &test_setup.test_case])
+                .workdir("/")
+                .build();
+            rootfs.inject(&config.guest_files());
 
-                let init_config =
-                    crate::common::build_init_config(test_case.to_str().unwrap(), &[]);
-                krun_call!(krun_inject_init(
-                    ctx,
-            std::ptr::null_mut(),
-                    c"/dev/root".as_ptr(),
-                    init_config.__into_raw(),
-                ))?;
-                krun_call!(krun_start_enter(ctx))?;
-            }
+            let mut console_builder = ConsoleDevice::builder();
+            console_builder
+                .add_io_port("", None, Some(libc::STDERR_FILENO))
+                .context("add default console port")?;
+            console_builder
+                .add_io_port("krun-stdin", Some(libc::STDIN_FILENO), None)
+                .context("add stdin port")?;
+            console_builder
+                .add_io_port("krun-stdout", None, Some(libc::STDOUT_FILENO))
+                .context("add stdout port")?;
+            console_builder
+                .add_io_port("krun-stderr", None, Some(libc::STDERR_FILENO))
+                .context("add stderr port")?;
+            let console = console_builder.build().context("build console")?;
+
+            let mut devices = MmioDeviceManager::new();
+            devices.add(rootfs);
+            devices.add(console);
+            devices.add(BalloonDevice::new().context("balloon")?);
+            devices.add(RngDevice::new().context("rng")?);
+
+            let mut vmm = VmmBuilder::new()
+                .vcpus(1)
+                .context("vcpus")?
+                .ram_mib(512)
+                .context("ram")?
+                .payload(Krunfw::load())
+                .devices(devices)
+                .build()
+                .context("build vmm")?;
+            vmm.run();
             Ok(())
         }
     }
@@ -85,12 +88,12 @@ mod guest {
     use crate::Test;
     use nix::errno::Errno;
     use nix::libc;
-    use nix::sys::stat::{Mode, SFlag, mknod, stat};
+    use nix::sys::stat::{mknod, stat, Mode, SFlag};
     use nix::unistd::{mkfifo, truncate};
     use std::fs;
     use std::fs::Permissions;
     use std::io::ErrorKind;
-    use std::os::unix::fs::{PermissionsExt, chown, symlink};
+    use std::os::unix::fs::{chown, symlink, PermissionsExt};
     use std::os::unix::net::UnixListener;
     use std::path::Path;
 

@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 
 #[cfg(feature = "native")]
 use krun::{
-    BalloonDevice, ConsoleDevice, FsDevice, Init, MmioDeviceManager, RngDevice, VmmBuilder,
+    BalloonDevice, ConsoleDevice, FsDevice, InitConfig, Krunfw, MmioDeviceManager, RngDevice,
+    VmmBuilder,
 };
-#[cfg(feature = "cdylib")]
-use krun_cdylib::{
-    BalloonDevice, ConsoleDevice, FsDevice, Init, MmioDeviceManager, RngDevice, VmmBuilder,
-};
+// TODO: cdylib support
+// #[cfg(feature = "cdylib")]
+// use krun_cdylib::{ ... };
 
 use crate::TestSetup;
 
@@ -48,29 +48,51 @@ pub struct VmConfig<'a> {
 impl<'a> VmConfig<'a> {
     /// Create a default VM config with the given vcpus and ram.
     /// Includes rootfs, console, balloon, and rng devices.
-    pub fn new(vcpus: u8, ram_mib: u32, test_setup: &TestSetup) -> anyhow::Result<(Self, Init)> {
+    pub fn new(vcpus: u8, ram_mib: u32, test_setup: &TestSetup) -> anyhow::Result<(Self, Krunfw)> {
+        krun::init_log(
+            krun::LogTarget::Stderr,
+            krun::LogLevel::Trace,
+            krun::LogStyle::Auto,
+        );
+
         let root_dir = test_setup.tmp_dir.join("root");
         create_dir(&root_dir).context("Failed to create root directory")?;
         copy_guest_agent(&root_dir)?;
 
-        let rootfs = FsDevice::new("/dev/root", root_dir.to_str().context("non-UTF8 path")?)
+        let mut rootfs = FsDevice::new("/dev/root", root_dir.to_str().context("non-UTF8 path")?)
             .context("create rootfs")?;
 
-        let mut console_builder = ConsoleDevice::builder();
-        let payload = Init::builder(&rootfs, &mut console_builder)
-            .exec("/guest-agent", &[&test_setup.test_case])
-            .context("exec")?
+        let config = InitConfig::builder()
+            .args(&["/guest-agent", &test_setup.test_case])
             .workdir("/")
-            .context("workdir")?
-            .build()
-            .context("build payload")?;
+            .build();
+        rootfs.inject(&config.guest_files());
+
+        let mut console_builder = ConsoleDevice::builder();
+        // Port 0: default console (hvc0) with log output — matches
+        // v1 autoconfigure. Init uses this for early boot messages.
+        console_builder.add_console_port("", krun::port_io::output_to_log(log::Level::Info));
+        // Named redirect ports — init finds these by name in
+        // /sys/class/virtio-ports/ and redirects guest stdio.
+        console_builder
+            .add_io_port("krun-stdin", Some(libc::STDIN_FILENO), None)
+            .context("add stdin port")?;
+        console_builder
+            .add_io_port("krun-stdout", None, Some(libc::STDOUT_FILENO))
+            .context("add stdout port")?;
+        console_builder
+            .add_io_port("krun-stderr", None, Some(libc::STDERR_FILENO))
+            .context("add stderr port")?;
         let console = console_builder.build().context("build console")?;
 
+        let payload = Krunfw::load();
+
         let mut devices = MmioDeviceManager::new();
-        devices.add(rootfs);
-        devices.add(console);
+        // Order matters: match v1 ordering (balloon, rng, console, fs)
         devices.add(BalloonDevice::new().context("balloon")?);
         devices.add(RngDevice::new().context("rng")?);
+        devices.add(console);
+        devices.add(rootfs);
 
         Ok((
             VmConfig {
@@ -83,7 +105,7 @@ impl<'a> VmConfig<'a> {
     }
 
     /// Build and run the VM. This call does not return.
-    pub fn build_and_run(self, payload: Init) -> anyhow::Result<()> {
+    pub fn build_and_run(self, payload: Krunfw) -> anyhow::Result<()> {
         let mut vmm = VmmBuilder::new()
             .vcpus(self.vcpus)
             .context("vcpus")?

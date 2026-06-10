@@ -22,7 +22,7 @@ pub struct TestNetPerf {
     #[cfg(feature = "host")]
     should_run: fn() -> ShouldRun,
     #[cfg(feature = "host")]
-    setup_backend: fn(u32, &TestSetup) -> anyhow::Result<()>,
+    setup_backend: fn(&TestSetup) -> anyhow::Result<krun::NetDevice>,
     #[cfg(feature = "host")]
     cleanup: Option<fn()>,
 }
@@ -152,10 +152,8 @@ impl TestNetPerf {
 #[host]
 mod host {
     use super::*;
-    use crate::common::setup_fs_and_enter;
-    use crate::{Test, TestOutcome, TestSetup, krun_call, krun_call_u32};
-    use krun_sys::*;
-    use std::os::fd::AsRawFd;
+    use crate::common::VmConfig;
+    use crate::{Test, TestOutcome, TestSetup};
     use std::process::{Child, Command, Stdio};
 
     const CONTAINERFILE: &str = "\
@@ -314,8 +312,7 @@ RUN dnf install -y iperf3 && dnf clean all
             if option_env!("IPERF_DURATION").is_none() {
                 return ShouldRun::No("IPERF_DURATION not set");
             }
-            if unsafe { krun_call_u32!(krun_has_feature(KRUN_FEATURE_NET.into())) }.ok() != Some(1)
-            {
+            if !cfg!(feature = "net") {
                 return ShouldRun::No("libkrun compiled without NET");
             }
             let backend_result = (self.should_run)();
@@ -354,22 +351,11 @@ RUN dnf install -y iperf3 && dnf clean all
                 anyhow::bail!("iperf3 server exited early: {status}");
             }
 
-            unsafe {
-                let ctx = krun_call_u32!(krun_create_ctx())?;
-                krun_call!(krun_set_vm_config(ctx, 1, 512))?;
+            let net_device = (self.setup_backend)(&test_setup)?;
 
-                // Backend-specific setup
-                (self.setup_backend)(ctx, &test_setup)?;
-
-                krun_call!(krun_add_virtio_console_default(
-                    ctx,
-                    std::io::stdin().as_raw_fd(),
-                    std::io::stdout().as_raw_fd(),
-                    std::io::stderr().as_raw_fd(),
-                ))?;
-                setup_fs_and_enter(ctx, test_setup)?;
-            }
-            Ok(())
+            let (mut vm_config, payload) = VmConfig::new(1, 512, &test_setup)?;
+            vm_config.devices.add(net_device);
+            vm_config.build_and_run(payload)
         }
 
         fn check(self: Box<Self>, stdout: Vec<u8>, _test_setup: TestSetup) -> TestOutcome {

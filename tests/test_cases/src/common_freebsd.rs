@@ -1,17 +1,17 @@
 //! Host-side utilities for FreeBSD guest tests.
 
 use anyhow::Context;
-use nix::libc;
-use std::ffi::CString;
-use std::os::unix::ffi::OsStrExt;
+use libc;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::test_net::get_krun_add_net_unixgram;
-use crate::test_net::gvproxy::{Gvproxy, wait_for_socket};
-use crate::{TestSetup, krun_call};
-use krun_sys::*;
+use crate::test_net::gvproxy::{wait_for_socket, Gvproxy};
+use crate::TestSetup;
+use krun::{
+    BalloonDevice, BlockDevice, ConsoleDevice, FreeBsdKernelFormat, FreeBsdPayload,
+    MmioDeviceManager, NetDevice, RngDevice, VirtioNetBackend, VmmBuilder,
+};
 
 pub struct FreeBsdAssets {
     pub kernel_path: PathBuf,
@@ -101,16 +101,16 @@ fn random_mac_address() -> [u8; 6] {
     ]
 }
 
-/// Start gvproxy and attach a virtio-net device for a FreeBSD guest.
+/// Start gvproxy and return a `NetDevice` and the net (HTTP-API) unix socket path.
 ///
 /// Mirrors `crate::test_net::gvproxy::setup_backend` but with FreeBSD-specific knobs:
 /// passes `--listen unix://...` so callers can drive the HTTP API
 /// (e.g. `setup_gvproxy_port_forward`), disables gvproxy's default :22 forwarder, and
-/// uses a random MAC + `NET_FLAG_VFKIT` only (guest IP is assigned statically).
+/// uses a random MAC.
 ///
-/// Returns the net (HTTP-API) unix socket path so callers can call
-/// `setup_gvproxy_port_forward` afterwards.
-pub fn setup_gvproxy_backend(ctx: u32, test_setup: &TestSetup) -> anyhow::Result<String> {
+/// Returns `(NetDevice, net_sock_str)` so callers can call
+/// `setup_gvproxy_port_forward` afterwards if needed.
+pub fn setup_gvproxy_backend(test_setup: &TestSetup) -> anyhow::Result<(NetDevice, String)> {
     // Short relative names: macOS `sockaddr_un.sun_path` is 104 bytes (max 103 usable chars),
     // so deep tmp paths plus long socket names can overflow.
     let tmp_dir = test_setup
@@ -140,113 +140,121 @@ pub fn setup_gvproxy_backend(ctx: u32, test_setup: &TestSetup) -> anyhow::Result
         "gvproxy failed to create vfkit socket"
     );
 
-    let vfkit_cstr = CString::new(vfkit_sock.as_os_str().as_bytes())
-        .context("CString::new vfkit socket path")?;
-    let mut mac = random_mac_address();
+    let mac = random_mac_address();
+    let net_device = NetDevice::new(
+        "net0",
+        VirtioNetBackend::UnixgramPath(vfkit_sock, true),
+        mac,
+        krun::COMPAT_NET_FEATURES,
+    )
+    .map_err(|e| anyhow::anyhow!("net device: {e:?}"))?;
 
-    unsafe {
-        krun_call!(get_krun_add_net_unixgram()(
-            ctx,
-            vfkit_cstr.as_ptr(),
-            -1,
-            mac.as_mut_ptr(),
-            COMPAT_NET_FEATURES,
-            NET_FLAG_VFKIT,
-        ))?;
-    }
-
-    Ok(net_sock_str)
+    Ok((net_device, net_sock_str))
 }
 
 /// Boot a FreeBSD guest with `init-freebsd` and enter it.
 ///
-/// Parallel to [`crate::common::setup_fs_and_enter`] for Linux guests:
 /// - boots from a pre-built rootfs ISO (`vtbd0`) containing `init-freebsd` + `guest-agent`
 /// - passes the test-case name via a `KRUN_CONFIG` ISO (`vtbd1`)
 /// - uses a serial console (required by FreeBSD; output reaches the runner via the stdout pipe)
+///
+/// Any extra virtio devices (e.g. net) must be added to `extra_devices` before calling.
 pub fn setup_kernel_and_enter(
-    ctx: u32,
     test_setup: TestSetup,
     assets: FreeBsdAssets,
+    extra_devices: Vec<NetDevice>,
 ) -> anyhow::Result<()> {
     let config_iso = create_config_iso(&test_setup.test_case, &test_setup.tmp_dir)?;
-
-    unsafe { do_setup_and_enter(ctx, &assets.kernel_path, &assets.iso_path, &config_iso) }
+    do_setup_and_enter(
+        &assets.kernel_path,
+        &assets.iso_path,
+        &config_iso,
+        extra_devices,
+    )
 }
 
-/// Shared implementation for entering the guest. Handles serial pipe + krun calls.
-/// Networking, when needed, is added separately by the caller (e.g. via
-/// [`setup_gvproxy_backend`]) before this function is invoked.
-unsafe fn do_setup_and_enter(
-    ctx: u32,
+/// Shared implementation for entering the guest.
+fn do_setup_and_enter(
     kernel_path: &Path,
     rootfs_path: &Path,
     config_iso: &Path,
+    extra_devices: Vec<NetDevice>,
 ) -> anyhow::Result<()> {
-    unsafe {
-        // Create a pipe for serial console input to avoid a kqueue busy-spin on macOS.
-        // When the runner's check() calls wait_with_output(), it closes the subprocess's
-        // stdin (fd 0). On macOS/kqueue a closed-write-end pipe fires EVFILT_READ
-        // continuously, spinning the serial device at ~100% CPU.  Using a fresh pipe
-        // whose write end stays open until _exit() is called prevents that.
-        // libkrun takes ownership of the read fd via File::from_raw_fd(); we only
-        // need to keep the write end alive, which _exit() will close for us.
-        let mut pipe_fds: [libc::c_int; 2] = [-1, -1];
-        if libc::pipe(pipe_fds.as_mut_ptr()) != 0 {
-            anyhow::bail!(
-                "Failed to create serial input pipe: {}",
-                std::io::Error::last_os_error()
-            );
-        }
-        let serial_read_fd = pipe_fds[0];
+    krun::init_log(
+        krun::LogTarget::Stderr,
+        krun::LogLevel::Trace,
+        krun::LogStyle::Auto,
+    );
 
-        // Build CStrings for krun API.
-        let kernel_cstr =
-            CString::new(kernel_path.as_os_str().as_bytes()).context("CString::new")?;
-        let rootfs_cstr =
-            CString::new(rootfs_path.as_os_str().as_bytes()).context("CString::new")?;
-        let config_iso_cstr =
-            CString::new(config_iso.as_os_str().as_bytes()).context("CString::new")?;
-
-        // FreeBSD requires a serial console; virtio console is not supported.
-        krun_call!(krun_add_serial_console_default(ctx, serial_read_fd, 1))?;
-
-        // Kernel cmdline: mount vtbd0 as root via cd9660 and hand off to init-freebsd.
-        #[cfg(target_arch = "x86_64")]
-        let (kernel_format, cmdline_prefix, flags) = (KRUN_KERNEL_FORMAT_ELF, "", "boot_mute=YES");
-        #[cfg(not(target_arch = "x86_64"))]
-        let (kernel_format, cmdline_prefix, flags) = (KRUN_KERNEL_FORMAT_RAW, "FreeBSD:", "-mq");
-
-        let cmdline = format!(
-            "{cmdline_prefix}vfs.root.mountfrom=cd9660:/dev/vtbd0 {flags} init_path=/init-freebsd"
+    // Create a pipe for serial console input to avoid a kqueue busy-spin on macOS.
+    // When the runner's check() calls wait_with_output(), it closes the subprocess's
+    // stdin (fd 0). On macOS/kqueue a closed-write-end pipe fires EVFILT_READ
+    // continuously, spinning the serial device at ~100% CPU.  Using a fresh pipe
+    // whose write end stays open until _exit() is called prevents that.
+    // VmmBuilder takes ownership of the read fd via serial_input_fd(); we only
+    // need to keep the write end alive, which _exit() will close for us.
+    let mut pipe_fds: [libc::c_int; 2] = [-1, -1];
+    let ret = unsafe { libc::pipe(pipe_fds.as_mut_ptr()) };
+    if ret != 0 {
+        anyhow::bail!(
+            "Failed to create serial input pipe: {}",
+            std::io::Error::last_os_error()
         );
-        let cmdline_cstr = CString::new(cmdline).context("CString::new")?;
-
-        krun_call!(krun_set_kernel(
-            ctx,
-            kernel_cstr.as_ptr(),
-            kernel_format,
-            std::ptr::null(),
-            cmdline_cstr.as_ptr(),
-        ))?;
-
-        // vtbd0: rootfs ISO (init-freebsd + guest-agent)
-        krun_call!(krun_add_disk(
-            ctx,
-            c"vtbd0".as_ptr(),
-            rootfs_cstr.as_ptr(),
-            true,
-        ))?;
-
-        // vtbd1: config ISO (init-freebsd finds it by KRUN_CONFIG volume label, not vtbd index)
-        krun_call!(krun_add_disk(
-            ctx,
-            c"vtbd1".as_ptr(),
-            config_iso_cstr.as_ptr(),
-            true,
-        ))?;
-
-        krun_call!(krun_start_enter(ctx))?;
-        unreachable!()
     }
+    let serial_read_fd = pipe_fds[0];
+    // pipe_fds[1] (write end) stays open until process exit — intentional.
+
+    // Kernel cmdline: mount vtbd0 as root via cd9660 and hand off to init-freebsd.
+    #[cfg(target_arch = "x86_64")]
+    let (kernel_format, cmdline_prefix, flags) = (FreeBsdKernelFormat::Elf, "", "boot_mute=YES");
+    #[cfg(not(target_arch = "x86_64"))]
+    let (kernel_format, cmdline_prefix, flags) = (FreeBsdKernelFormat::Raw, "FreeBSD:", "-mq");
+
+    let cmdline = format!(
+        "{cmdline_prefix}vfs.root.mountfrom=cd9660:/dev/vtbd0 {flags} init_path=/init-freebsd"
+    );
+
+    let payload = FreeBsdPayload::new(kernel_path.to_path_buf(), kernel_format, cmdline);
+
+    // Build console (serial output to stdout — FreeBSD writes guest output there)
+    let mut console_builder = ConsoleDevice::builder();
+    console_builder
+        .add_io_port("", None, Some(libc::STDOUT_FILENO))
+        .context("add stdout console port")?;
+    let console = console_builder.build().context("build console")?;
+
+    let mut devices = MmioDeviceManager::new();
+    devices.add(BalloonDevice::new().context("balloon")?);
+    devices.add(RngDevice::new().context("rng")?);
+    devices.add(console);
+
+    // vtbd0: rootfs ISO (init-freebsd + guest-agent)
+    let rootfs_str = rootfs_path
+        .to_str()
+        .context("rootfs path is not valid UTF-8")?;
+    devices.add(BlockDevice::new("vtbd0", rootfs_str, true).context("vtbd0 block device")?);
+
+    // vtbd1: config ISO (init-freebsd finds it by KRUN_CONFIG volume label, not vtbd index)
+    let config_iso_str = config_iso
+        .to_str()
+        .context("config iso path is not valid UTF-8")?;
+    devices.add(BlockDevice::new("vtbd1", config_iso_str, true).context("vtbd1 block device")?);
+
+    // Extra devices (e.g. virtio-net for gvproxy tests)
+    for net in extra_devices {
+        devices.add(net);
+    }
+
+    let mut vmm = VmmBuilder::new()
+        .vcpus(1)
+        .context("vcpus")?
+        .ram_mib(512)
+        .context("ram")?
+        .payload(payload)
+        .devices(devices)
+        .serial_input_fd(serial_read_fd)
+        .build()
+        .context("build vmm")?;
+    vmm.run();
+    Ok(())
 }

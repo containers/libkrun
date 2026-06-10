@@ -29,8 +29,6 @@ mod host {
     };
     use crate::test_net::gvproxy::gvproxy_path;
     use crate::{ShouldRun, Test, TestOutcome, TestSetup};
-    use crate::{krun_call, krun_call_u32};
-    use krun_sys::*;
     use std::thread;
 
     impl Test for TestFreeBsdGvproxyTcpGuestConnect {
@@ -51,19 +49,8 @@ mod host {
             let listener = self.tcp_tester.create_server_socket();
             thread::spawn(move || self.tcp_tester.run_server(listener));
 
-            unsafe {
-                krun_call!(krun_init_log(
-                    KRUN_LOG_TARGET_DEFAULT,
-                    KRUN_LOG_LEVEL_TRACE,
-                    KRUN_LOG_STYLE_AUTO,
-                    0
-                ))?;
-                let ctx = krun_call_u32!(krun_create_ctx())?;
-                krun_call!(krun_set_vm_config(ctx, 1, 512))?;
-                setup_gvproxy_backend(ctx, &test_setup)?;
-                setup_kernel_and_enter(ctx, test_setup, assets)?;
-            }
-            Ok(())
+            let (net_device, _net_sock) = setup_gvproxy_backend(&test_setup)?;
+            setup_kernel_and_enter(test_setup, assets, vec![net_device])
         }
 
         fn check(self: Box<Self>, stdout: Vec<u8>, _test_setup: TestSetup) -> TestOutcome {
@@ -83,8 +70,8 @@ mod host {
 #[guest]
 mod guest {
     use super::*;
-    use crate::Test;
     use crate::freebsd_network::configure_virtio_net_ip;
+    use crate::Test;
 
     impl Test for TestFreeBsdGvproxyTcpGuestConnect {
         fn in_guest(self: Box<Self>) {

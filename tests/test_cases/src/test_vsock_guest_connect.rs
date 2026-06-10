@@ -35,15 +35,12 @@ const VSOCK_PORT: u32 = 1234;
 mod host {
     use super::*;
 
-    use crate::common::setup_fs_and_enter;
-    use crate::{krun_call, krun_call_u32};
+    use crate::common::VmConfig;
     use crate::{Test, TestSetup};
-    use krun_sys::*;
-    use std::ffi::CString;
+    use krun::{TsiFlags, VsockDevice};
+    use std::collections::HashMap;
     use std::io::Write;
-    use std::os::fd::AsRawFd;
     use std::os::unix::net::UnixListener;
-    use std::os::unix::prelude::OsStrExt;
     use std::{mem, thread};
 
     fn server(listener: UnixListener) {
@@ -60,36 +57,18 @@ mod host {
     impl Test for TestVsockGuestConnect {
         fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()> {
             let sock_path = test_setup.tmp_dir.join("test.sock");
-            let sock_path_cstr = CString::new(sock_path.as_os_str().as_bytes())?;
 
             let listener = UnixListener::bind(&sock_path).unwrap();
-
             thread::spawn(move || server(listener));
-            unsafe {
-                krun_call!(krun_init_log(
-                    KRUN_LOG_TARGET_DEFAULT,
-                    KRUN_LOG_LEVEL_TRACE,
-                    KRUN_LOG_STYLE_AUTO,
-                    0
-                ))?;
-                let ctx = krun_call_u32!(krun_create_ctx())?;
-                krun_call!(krun_add_vsock(ctx, 0))?;
-                krun_call!(krun_add_vsock_port2(
-                    ctx,
-                    VSOCK_PORT,
-                    sock_path_cstr.as_ptr(),
-                    false,
-                ))?;
-                krun_call!(krun_set_vm_config(ctx, 1, 1024))?;
-                krun_call!(krun_add_virtio_console_default(
-                    ctx,
-                    std::io::stdin().as_raw_fd(),
-                    std::io::stdout().as_raw_fd(),
-                    std::io::stderr().as_raw_fd(),
-                ))?;
-                setup_fs_and_enter(ctx, test_setup)?;
-            }
-            Ok(())
+
+            let mut unix_ipc_port_map = HashMap::new();
+            unix_ipc_port_map.insert(VSOCK_PORT, (sock_path, false));
+
+            let vsock = VsockDevice::new(3, None, Some(unix_ipc_port_map), TsiFlags::empty())?;
+
+            let (mut vm_config, payload) = VmConfig::new(1, 1024, &test_setup)?;
+            vm_config.devices.add(vsock);
+            vm_config.build_and_run(payload)
         }
     }
 }

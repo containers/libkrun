@@ -18,140 +18,90 @@ mod host {
     use super::*;
 
     use crate::{Test, TestSetup};
-    use crate::{krun_call, krun_call_u32};
-    use crate::krun_init;
-    use krun_sys::*;
-    use std::ffi::CString;
-    use std::os::fd::AsRawFd;
-    use std::ptr::null_mut;
+    use anyhow::Context;
+
+    use krun::{
+        BalloonDevice, ConsoleDevice, FsDevice, InitConfig, Krunfw, MmioDeviceManager, RngDevice,
+        VmmBuilder,
+    };
 
     impl Test for TestAugmentFs {
         fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()> {
-            let test_case = CString::new(test_setup.test_case)?;
-
-            // Read the guest-agent binary into memory. Leaked because
-            // krun_start_enter never returns.
+            // Read the guest-agent binary into memory.
             let guest_agent_path = std::env::var("KRUN_TEST_GUEST_AGENT_PATH")
                 .expect("KRUN_TEST_GUEST_AGENT_PATH not set");
-            let guest_agent_bytes: &'static [u8] =
-                Vec::leak(std::fs::read(&guest_agent_path).expect("Failed to read guest-agent"));
+            let guest_agent_bytes =
+                std::fs::read(&guest_agent_path).expect("Failed to read guest-agent");
 
-            // Build init config via libkrun-init.
-            let init_config = krun_init::Config::builder()
-                .args(&["/guest-agent", test_case.to_str().unwrap()])
-                .workdir("/")
-                .build();
+            // Set up root with NO host directory (NullFs).
+            let mut rootfs = FsDevice::new_null("/dev/root").context("create null rootfs")?;
 
-            // Deterministic test payload for range-read tests.
-            let payload: &'static [u8] = Vec::leak(make_test_payload());
-
-            // A small marker file to test persistent reads.
-            let marker: &'static [u8] = b"virtual-file-marker-content-12345";
-
-            unsafe {
-                krun_call!(krun_init_log(
-                    KRUN_LOG_TARGET_DEFAULT,
-                    KRUN_LOG_LEVEL_TRACE,
-                    KRUN_LOG_STYLE_AUTO,
-                    0
-                ))?;
-                let ctx = krun_call_u32!(krun_create_ctx())?;
-                krun_call!(krun_set_vm_config(ctx, 1, 512))?;
-                krun_call!(krun_add_virtio_console_default(
-                    ctx,
-                    std::io::stdin().as_raw_fd(),
-                    std::io::stdout().as_raw_fd(),
-                    std::io::stderr().as_raw_fd(),
-                ))?;
-
-                // Set up root with NO host directory (NullFs).
-                krun_call!(krun_add_virtiofs3(
-                    ctx,
-                    c"/dev/root".as_ptr(),
-                    std::ptr::null(), // NULL path → NullFs
-                    0,                // no SHM window
-                    false,            // not read-only
-                ))?;
-
-                // Virtual directories needed by init as mount points.
-                for dir in [c"dev", c"proc", c"sys"] {
-                    krun_call!(krun_fs_add_overlay_dir(
-                        ctx,
-                        c"/dev/root".as_ptr(),
-                        dir.as_ptr(),
-                        0o040_755,
-                    ))?;
-                }
-
-                // Inject init binary + config via libkrun-init.
-                krun_call!(krun_inject_init(
-                    ctx,
-            std::ptr::null_mut(),
-                    c"/dev/root".as_ptr(),
-                    init_config.__into_raw(),
-                ))?;
-
-                // Overlay guest-agent (one-shot, executable). After init
-                // execs it, the file should no longer be visible.
-                krun_call!(krun_fs_add_overlay_file(
-                    ctx,
-                    c"/dev/root".as_ptr(),
-                    c"guest-agent".as_ptr(),
-                    guest_agent_bytes.as_ptr(),
-                    guest_agent_bytes.len(),
-                    0o100_755,
-                    true,
-                ))?;
-
-                // Overlay a persistent marker file.
-                krun_call!(krun_fs_add_overlay_file(
-                    ctx,
-                    c"/dev/root".as_ptr(),
-                    c"marker.txt".as_ptr(),
-                    marker.as_ptr(),
-                    marker.len(),
-                    0o100_644,
-                    false,
-                ))?;
-
-                // Overlay a deterministic 8 KiB payload for range-read tests.
-                krun_call!(krun_fs_add_overlay_file(
-                    ctx,
-                    c"/dev/root".as_ptr(),
-                    c"testdata.bin".as_ptr(),
-                    payload.as_ptr(),
-                    payload.len(),
-                    0o100_444,
-                    false,
-                ))?;
-
-                // --- Nested path test (2-level) ---
-                // etc/ -> etc/nested/ -> etc/nested/deep.txt
-                krun_call!(krun_fs_add_overlay_dir(
-                    ctx,
-                    c"/dev/root".as_ptr(),
-                    c"etc".as_ptr(),
-                    0o040_755,
-                ))?;
-                krun_call!(krun_fs_add_overlay_dir(
-                    ctx,
-                    c"/dev/root".as_ptr(),
-                    c"etc/nested".as_ptr(),
-                    0o040_755,
-                ))?;
-                let nested_content: &'static [u8] = b"deep-nested-content";
-                krun_call!(krun_fs_add_overlay_file(
-                    ctx,
-                    c"/dev/root".as_ptr(),
-                    c"etc/nested/deep.txt".as_ptr(),
-                    nested_content.as_ptr(),
-                    nested_content.len(),
-                    0o100_644,
-                    false,
-                ))?;
-
-                krun_call!(krun_start_enter(ctx))?;
+            // Virtual directories needed by init as mount points.
+            for dir in ["dev", "proc", "sys"] {
+                rootfs.add_overlay_dir(dir, 0o040_755);
             }
+
+            // Build init config via OCI JSON and inject into rootfs.
+            let json = format!(
+                r#"{{"process": {{"args": ["/guest-agent", "{}"], "cwd": "/"}}}}"#,
+                test_setup.test_case,
+            );
+            let config = InitConfig::from_oci_config_json(&json).context("parse OCI config")?;
+            rootfs.inject(&config.guest_files());
+
+            // Overlay guest-agent (one-shot, executable).
+            rootfs.add_overlay_file("guest-agent", &guest_agent_bytes, 0o100_755, true);
+
+            // Overlay a persistent marker file.
+            rootfs.add_overlay_file(
+                "marker.txt",
+                b"virtual-file-marker-content-12345",
+                0o100_644,
+                false,
+            );
+
+            // Overlay a deterministic 8 KiB payload for range-read tests.
+            rootfs.add_overlay_file("testdata.bin", &make_test_payload(), 0o100_444, false);
+
+            // Nested path test: etc/ -> etc/nested/ -> etc/nested/deep.txt
+            rootfs.add_overlay_dir("etc", 0o040_755);
+            rootfs.add_overlay_dir("etc/nested", 0o040_755);
+            rootfs.add_overlay_file(
+                "etc/nested/deep.txt",
+                b"deep-nested-content",
+                0o100_644,
+                false,
+            );
+
+            let mut console_builder = ConsoleDevice::builder();
+            console_builder.add_console_port("", krun::port_io::output_to_log(log::Level::Info));
+            console_builder
+                .add_io_port("krun-stdin", Some(libc::STDIN_FILENO), None)
+                .context("add stdin port")?;
+            console_builder
+                .add_io_port("krun-stdout", None, Some(libc::STDOUT_FILENO))
+                .context("add stdout port")?;
+            console_builder
+                .add_io_port("krun-stderr", None, Some(libc::STDERR_FILENO))
+                .context("add stderr port")?;
+            let console = console_builder.build().context("build console")?;
+
+            let mut devices = MmioDeviceManager::new();
+            devices.add(rootfs);
+            devices.add(console);
+            devices.add(BalloonDevice::new().context("balloon")?);
+            devices.add(RngDevice::new().context("rng")?);
+
+            let mut vmm = VmmBuilder::new()
+                .vcpus(1)
+                .context("vcpus")?
+                .ram_mib(512)
+                .context("ram")?
+                .payload(Krunfw::load())
+                .devices(devices)
+                .build()
+                .context("build vmm")?;
+            vmm.run();
             Ok(())
         }
     }

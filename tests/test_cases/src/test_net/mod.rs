@@ -8,12 +8,6 @@ use crate::tcp_tester::TcpTester;
 use macros::{guest, host};
 
 #[host]
-use nix::libc;
-
-#[host]
-use std::ffi::CString;
-
-#[host]
 use crate::{ShouldRun, TestSetup};
 
 #[cfg(feature = "host")]
@@ -31,7 +25,7 @@ pub struct TestNet {
     #[cfg(feature = "host")]
     should_run: fn() -> ShouldRun,
     #[cfg(feature = "host")]
-    setup_backend: fn(u32, &TestSetup) -> anyhow::Result<()>,
+    setup_backend: fn(&TestSetup) -> anyhow::Result<krun::NetDevice>,
     #[cfg(feature = "host")]
     cleanup: Option<fn()>,
 }
@@ -73,18 +67,6 @@ impl TestNet {
         }
     }
 
-    pub fn new_vmnet_helper() -> Self {
-        Self {
-            tcp_tester: TcpTester::new([192, 168, 105, 1].into(), 9003),
-            #[cfg(feature = "host")]
-            should_run: vmnet_helper::should_run,
-            #[cfg(feature = "host")]
-            setup_backend: vmnet_helper::setup_backend,
-            #[cfg(feature = "host")]
-            cleanup: None,
-        }
-    }
-
     /// Gvproxy backend variant with a socket path ≥ 96 bytes, triggering the
     /// ENAMETOOLONG bug when the local socket was derived from the peer path.
     pub fn new_gvproxy_long_path() -> Self {
@@ -98,21 +80,31 @@ impl TestNet {
             cleanup: None,
         }
     }
+
+    pub fn new_vmnet_helper() -> Self {
+        Self {
+            tcp_tester: TcpTester::new([192, 168, 105, 1].into(), 9003),
+            #[cfg(feature = "host")]
+            should_run: vmnet_helper::should_run,
+            #[cfg(feature = "host")]
+            setup_backend: vmnet_helper::setup_backend,
+            #[cfg(feature = "host")]
+            cleanup: None,
+        }
+    }
 }
 
 #[host]
 mod host {
     use super::*;
-    use crate::common::setup_fs_and_enter;
-    use crate::{Test, TestOutcome, TestSetup, krun_call, krun_call_u32};
-    use krun_sys::*;
-    use std::os::fd::AsRawFd;
+    use crate::common::VmConfig;
+    use crate::{Test, TestOutcome, TestSetup};
+    use krun::NetDevice;
     use std::thread;
 
     impl Test for TestNet {
         fn should_run(&self) -> ShouldRun {
-            if unsafe { krun_call_u32!(krun_has_feature(KRUN_FEATURE_NET.into())) }.ok() != Some(1)
-            {
+            if !cfg!(feature = "net") {
                 return ShouldRun::No("libkrun compiled without NET");
             }
             (self.should_run)()
@@ -131,33 +123,16 @@ mod host {
         }
 
         fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()> {
-            // Start TCP server
             let tcp_tester = self.tcp_tester;
             let listener = tcp_tester.create_server_socket();
             thread::spawn(move || tcp_tester.run_server(listener));
 
-            unsafe {
-                krun_call!(krun_init_log(
-                    KRUN_LOG_TARGET_DEFAULT,
-                    KRUN_LOG_LEVEL_TRACE,
-                    KRUN_LOG_STYLE_AUTO,
-                    0
-                ))?;
-                let ctx = krun_call_u32!(krun_create_ctx())?;
-                krun_call!(krun_set_vm_config(ctx, 1, 512))?;
+            let net_device = (self.setup_backend)(&test_setup)?;
 
-                // Backend-specific setup
-                (self.setup_backend)(ctx, &test_setup)?;
-
-                krun_call!(krun_add_virtio_console_default(
-                    ctx,
-                    std::io::stdin().as_raw_fd(),
-                    std::io::stdout().as_raw_fd(),
-                    std::io::stderr().as_raw_fd(),
-                ))?;
-                setup_fs_and_enter(ctx, test_setup)?;
-            }
-            Ok(())
+            let (mut vm_config, mut payload) = VmConfig::new(1, 512, &test_setup)?;
+            payload.enable_dhcp_client();
+            vm_config.devices.add(net_device);
+            vm_config.build_and_run(payload)
         }
     }
 }
@@ -174,22 +149,4 @@ mod guest {
             println!("OK");
         }
     }
-}
-
-#[cfg(feature = "host")]
-type KrunAddNetUnixgramFn = unsafe extern "C" fn(
-    ctx_id: u32,
-    c_path: *const std::ffi::c_char,
-    fd: i32,
-    c_mac: *mut u8,
-    features: u32,
-    flags: u32,
-) -> i32;
-
-#[cfg(feature = "host")]
-pub(crate) fn get_krun_add_net_unixgram() -> KrunAddNetUnixgramFn {
-    let symbol = CString::new("krun_add_net_unixgram").unwrap();
-    let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, symbol.as_ptr()) };
-    assert!(!ptr.is_null(), "krun_add_net_unixgram not found");
-    unsafe { std::mem::transmute(ptr) }
 }

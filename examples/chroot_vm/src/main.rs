@@ -10,11 +10,13 @@
 
 #[cfg(feature = "native")]
 use krun::{
-    BalloonDevice, ConsoleDevice, FsDevice, Init, MmioDeviceManager, RngDevice, VmmBuilder,
+    BalloonDevice, ConsoleDevice, FsDevice, InitConfig, Krunfw, MmioDeviceManager, RngDevice,
+    VmmBuilder,
 };
 #[cfg(feature = "cdylib")]
 use krun_cdylib::{
-    BalloonDevice, ConsoleDevice, FsDevice, Init, MmioDeviceManager, RngDevice, VmmBuilder,
+    BalloonDevice, ConsoleDevice, FsDevice, InitConfig, Krunfw, MmioDeviceManager, RngDevice,
+    VmmBuilder,
 };
 
 use anyhow::{Context, Result};
@@ -46,19 +48,26 @@ fn main() -> Result<()> {
             .init();
     }
 
-    let rootfs = FsDevice::new("/dev/root", new_root).context("create rootfs")?;
+    let mut rootfs = FsDevice::new("/dev/root", new_root).context("create rootfs")?;
+
+    let mut full_args: Vec<&str> = vec![guest_cmd];
+    full_args.extend_from_slice(&guest_args);
+    let config = InitConfig::builder()
+        .args(&full_args)
+        .env(&["HOME=/root", "TERM=xterm-256color"])
+        .workdir("/")
+        .build();
+    rootfs.inject(&config.guest_files());
 
     let mut console_builder = ConsoleDevice::builder();
-    let payload = Init::builder(&rootfs, &mut console_builder)
-        .exec(guest_cmd, &guest_args)
-        .context("exec")?
-        .workdir("/")
-        .context("workdir")?
-        .env(&["HOME=/root", "TERM=xterm-256color"])
-        .context("env")?
-        .build()
-        .context("build payload")?;
+    console_builder
+        .add_tty_port("tty0", unsafe {
+            std::os::fd::BorrowedFd::borrow_raw(libc::STDIN_FILENO)
+        })
+        .context("add tty port")?;
     let console = console_builder.build().context("build console")?;
+
+    let payload = Krunfw::load();
 
     let balloon = BalloonDevice::new().context("create balloon")?;
     let rng = RngDevice::new().context("create rng")?;

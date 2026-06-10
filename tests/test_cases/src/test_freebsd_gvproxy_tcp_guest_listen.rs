@@ -27,8 +27,6 @@ mod host {
     };
     use crate::test_net::gvproxy::{gvproxy_path, setup_gvproxy_port_forward};
     use crate::{ShouldRun, Test, TestOutcome, TestSetup};
-    use crate::{krun_call, krun_call_u32};
-    use krun_sys::*;
     use std::net::Ipv4Addr;
     use std::thread;
 
@@ -49,32 +47,21 @@ mod host {
         fn start_vm(self: Box<Self>, test_setup: TestSetup) -> anyhow::Result<()> {
             let assets = freebsd_assets().expect("freebsd assets must be available");
 
-            unsafe {
-                krun_call!(krun_init_log(
-                    KRUN_LOG_TARGET_DEFAULT,
-                    KRUN_LOG_LEVEL_TRACE,
-                    KRUN_LOG_STYLE_AUTO,
-                    0
-                ))?;
-                let ctx = krun_call_u32!(krun_create_ctx())?;
-                krun_call!(krun_set_vm_config(ctx, 1, 512))?;
-                let net_sock = setup_gvproxy_backend(ctx, &test_setup)?;
+            let (net_device, net_sock) = setup_gvproxy_backend(&test_setup)?;
 
-                // Set up port-forwarding: host :PORT → guest GUEST_IP:PORT.
-                // The guest IP (192.168.127.2) is virtual and not reachable directly from
-                // the host; gvproxy's forwarder bridges the gap.
-                setup_gvproxy_port_forward(&net_sock, PORT, GUEST_IP)?;
+            // Set up port-forwarding: host :PORT → guest GUEST_IP:PORT.
+            // The guest IP (192.168.127.2) is virtual and not reachable directly from
+            // the host; gvproxy's forwarder bridges the gap.
+            setup_gvproxy_port_forward(&net_sock, PORT, GUEST_IP)?;
 
-                // Spawn host-side client. Runs concurrently with the VM; retries
-                // connect+first-read until the guest is listening (see TcpTester::run_client).
-                let tcp_tester = self.tcp_tester;
-                thread::spawn(move || {
-                    tcp_tester.run_client();
-                });
+            // Spawn host-side client. Runs concurrently with the VM; retries
+            // connect+first-read until the guest is listening (see TcpTester::run_client).
+            let tcp_tester = self.tcp_tester;
+            thread::spawn(move || {
+                tcp_tester.run_client();
+            });
 
-                setup_kernel_and_enter(ctx, test_setup, assets)?;
-            }
-            Ok(())
+            setup_kernel_and_enter(test_setup, assets, vec![net_device])
         }
 
         fn check(self: Box<Self>, stdout: Vec<u8>, _test_setup: TestSetup) -> TestOutcome {
@@ -94,8 +81,8 @@ mod host {
 #[guest]
 mod guest {
     use super::*;
-    use crate::Test;
     use crate::freebsd_network::configure_virtio_net_ip;
+    use crate::Test;
 
     impl Test for TestFreeBsdGvproxyTcpGuestListen {
         fn in_guest(self: Box<Self>) {
