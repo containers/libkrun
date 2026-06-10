@@ -2,11 +2,11 @@
 use crossbeam_channel::Sender;
 use std::cmp;
 use std::io::Write;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
-use utils::eventfd::{EFD_NONBLOCK, EventFd};
+use utils::eventfd::{EventFd, EFD_NONBLOCK};
 #[cfg(target_os = "macos")]
 use utils::worker_message::WorkerMessage;
 use virtio_bindings::{virtio_config::VIRTIO_F_VERSION_1, virtio_ring::VIRTIO_RING_F_EVENT_IDX};
@@ -16,10 +16,10 @@ use super::super::{
     ActivateError, ActivateResult, DeviceQueue, DeviceState, FsError, QueueConfig, VirtioDevice,
     VirtioShmRegion,
 };
-use super::ExportTable;
 use super::passthrough;
 use super::virtual_entry::VirtualDirEntry;
 use super::worker::FsWorker;
+use super::ExportTable;
 use super::{defs, defs::uapi};
 use crate::virtio::InterruptTransport;
 
@@ -115,6 +115,15 @@ impl Fs {
         cfg.export_table = Some(export_table);
 
         cfg.export_fsid
+    }
+
+    /// Add a virtual entry (synthetic file/dir) to the root of this filesystem.
+    pub fn add_virtual_entry(&mut self, entry: VirtualDirEntry) {
+        self.virtual_entries.push(entry);
+    }
+
+    pub fn virtual_entries_mut(&mut self) -> &mut Vec<VirtualDirEntry> {
+        &mut self.virtual_entries
     }
 
     /// Replace the exit code handle. Used by the API layer to wire

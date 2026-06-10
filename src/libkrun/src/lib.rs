@@ -1,15 +1,22 @@
 pub mod api;
 pub use api::*;
 
-// Re-export ffier hidden modules from submodules to crate root
-// (the bridge macros in the cdylib crate look for $crate::_ffier_<name>)
-pub use api::devices::_ffier_balloon_device;
-pub use api::devices::_ffier_console_builder;
-pub use api::devices::_ffier_console_device;
-pub use api::devices::_ffier_fs_device;
-pub use api::devices::_ffier_mmio_device_manager;
-pub use api::devices::_ffier_rng_device;
-pub use api::payload::_ffier_init;
-pub use api::payload::_ffier_init_builder;
-pub use api::vmm_builder::_ffier_vmm;
-pub use api::vmm_builder::_ffier_vmm_builder;
+// Workaround: `pub mod devices` in api/mod.rs shadows the external `devices`
+// crate, so we re-export device internals from crate root where the name
+// isn't shadowed.
+#[doc(hidden)]
+pub mod reexports {
+    #[cfg(feature = "net")]
+    pub use devices::virtio::net::device::VirtioNetBackend;
+    pub use devices::virtio::port_io;
+    pub use devices::virtio::TsiFlags;
+}
+
+/// Standard virtio-net features for host-guest networking.
+#[cfg(feature = "net")]
+pub const COMPAT_NET_FEATURES: u32 = (1 << 0)  // CSUM
+    | (1 << 1)  // GUEST_CSUM
+    | (1 << 7)  // GUEST_TSO4
+    | (1 << 10) // GUEST_UFO
+    | (1 << 11) // HOST_TSO4
+    | (1 << 14); // HOST_UFO

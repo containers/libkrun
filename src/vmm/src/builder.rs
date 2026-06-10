@@ -1292,7 +1292,7 @@ pub fn create_vcpus_x86_64(
         )
         .map_err(Error::Vcpu)?;
 
-        vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config, kernel_boot)
+        vcpu.configure_x86_64(guest_mem, entry_addr, vcpu_config, kernel_boot, false)
             .map_err(Error::Vcpu)?;
 
         vcpus.push(vcpu);
@@ -1669,103 +1669,6 @@ fn attach_console_devices(
     // The device mutex mustn't be locked here otherwise it will deadlock.
     attach_mmio_device(vmm, format!("hvc{id_number}"), intc, console)
         .map_err(RegisterConsoleDevice)?;
-
-    Ok(())
-}
-
-#[cfg(feature = "net")]
-fn attach_net_devices(
-    vmm: &mut Vmm,
-    net_devices: &NetBuilder,
-    intc: IrqChip,
-) -> Result<(), StartMicrovmError> {
-    for net_device in net_devices.list.iter() {
-        let id = net_device.lock().unwrap().id().to_string();
-
-        attach_mmio_device(vmm, id, intc.clone(), net_device.clone())
-            .map_err(StartMicrovmError::RegisterNetDevice)?;
-    }
-    Ok(())
-}
-
-fn attach_unixsock_vsock_device(
-    vmm: &mut Vmm,
-    unix_vsock: &Arc<Mutex<Vsock>>,
-    event_manager: &mut EventManager,
-    intc: IrqChip,
-) -> std::result::Result<(), StartMicrovmError> {
-    use self::StartMicrovmError::*;
-
-    event_manager
-        .add_subscriber(unix_vsock.clone())
-        .map_err(RegisterEvent)?;
-
-    let id = String::from(unix_vsock.lock().unwrap().id());
-
-    // The device mutex mustn't be locked here otherwise it will deadlock.
-    attach_mmio_device(vmm, id, intc, unix_vsock.clone()).map_err(RegisterVsockDevice)?;
-
-    Ok(())
-}
-
-#[cfg(not(feature = "tee"))]
-fn attach_balloon_device(
-    vmm: &mut Vmm,
-    event_manager: &mut EventManager,
-    intc: IrqChip,
-) -> std::result::Result<(), StartMicrovmError> {
-    use self::StartMicrovmError::*;
-
-    let balloon = Arc::new(Mutex::new(devices::virtio::Balloon::new().unwrap()));
-
-    event_manager
-        .add_subscriber(balloon.clone())
-        .map_err(RegisterEvent)?;
-
-    let id = String::from(balloon.lock().unwrap().id());
-
-    // The device mutex mustn't be locked here otherwise it will deadlock.
-    attach_mmio_device(vmm, id, intc.clone(), balloon).map_err(RegisterBalloonDevice)?;
-
-    Ok(())
-}
-
-#[cfg(feature = "blk")]
-fn attach_block_devices(
-    vmm: &mut Vmm,
-    block_devs: &BlockBuilder,
-    intc: IrqChip,
-) -> std::result::Result<(), StartMicrovmError> {
-    use self::StartMicrovmError::*;
-
-    for block in block_devs.list.iter() {
-        let id = String::from(block.lock().unwrap().id());
-
-        // The device mutex mustn't be locked here otherwise it will deadlock.
-        attach_mmio_device(vmm, id, intc.clone(), block.clone()).map_err(RegisterBlockDevice)?;
-    }
-
-    Ok(())
-}
-
-#[cfg(not(feature = "tee"))]
-fn attach_rng_device(
-    vmm: &mut Vmm,
-    event_manager: &mut EventManager,
-    intc: IrqChip,
-) -> std::result::Result<(), StartMicrovmError> {
-    use self::StartMicrovmError::*;
-
-    let rng = Arc::new(Mutex::new(devices::virtio::Rng::new().unwrap()));
-
-    event_manager
-        .add_subscriber(rng.clone())
-        .map_err(RegisterEvent)?;
-
-    let id = String::from(rng.lock().unwrap().id());
-
-    // The device mutex mustn't be locked here otherwise it will deadlock.
-    attach_mmio_device(vmm, id, intc.clone(), rng).map_err(RegisterRngDevice)?;
 
     Ok(())
 }

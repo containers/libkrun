@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::os::fd::{FromRawFd, RawFd};
 use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
 
@@ -6,7 +7,7 @@ use devices::legacy::{IrqChip, IrqChipDevice};
 use kernel::cmdline::Cmdline;
 use polly::event_manager::EventManager;
 use utils::eventfd::EventFd;
-use vmm::builder::{self, choose_payload, create_guest_memory, load_cmdline};
+use vmm::builder::{self, create_guest_memory, load_cmdline};
 use vmm::device_manager::mmio::MMIODeviceManager;
 use vmm::vstate::VcpuConfig;
 use vmm::Vmm as InnerVmm;
@@ -19,50 +20,100 @@ use super::payload::{KrunPayload, Payload};
 // VmmBuilder
 // ---------------------------------------------------------------------------
 
+/// Builder for constructing and launching a virtual machine.
+///
+/// Configure the VM's resources (vCPUs, RAM), payload (what to run inside),
+/// and devices, then call [`build`](VmmBuilder::build) to create the VM.
+///
+/// # Example
+///
+/// ```no_run
+/// let mut rootfs = FsDevice::new("/dev/root", "/path/to/rootfs")?;
+/// let config = InitConfig::builder()
+///     .entrypoint(&["/bin/sh"])
+///     .build();
+/// rootfs.inject(&config.guest_files());
+///
+/// let mut console_builder = ConsoleDevice::builder();
+/// console_builder.add_tty_port("tty0", tty_fd)?;
+/// let console = console_builder.build()?;
+///
+/// let payload = Krunfw::load();
+///
+/// let mut devices = MmioDeviceManager::new();
+/// devices.add(rootfs);
+/// devices.add(console);
+///
+/// let mut vmm = VmmBuilder::new()
+///     .vcpus(2)?
+///     .ram_mib(512)?
+///     .payload(payload)
+///     .devices(devices)
+///     .build()?;
+/// vmm.run();
+/// ```
 pub struct VmmBuilder<'a> {
     vcpus: Option<u8>,
     ram_mib: Option<u32>,
     payload: Option<Box<dyn KrunPayload>>,
     device_manager: Option<Box<dyn DeviceManager<'a> + 'a>>,
+    /// Optional raw fd to use as serial console (COM1) input.
+    /// Ownership of the fd is transferred to the VM on build.
+    serial_input_fd: Option<std::os::fd::RawFd>,
 }
 
 #[ffier::exportable]
 impl<'a> VmmBuilder<'a> {
+    /// Create a new VM builder with no configuration.
     pub fn new() -> Self {
         VmmBuilder {
             vcpus: None,
             ram_mib: None,
             payload: None,
             device_manager: None,
+            serial_input_fd: None,
         }
     }
 
+    /// Set the number of virtual CPUs. Must be at least 1.
     pub fn vcpus(mut self, count: u8) -> Result<Self, Error> {
         if count == 0 {
-            return Err(Error::OutOfRange);
+            return Err(Error::OutOfRange());
         }
         self.vcpus = Some(count);
         Ok(self)
     }
 
+    /// Set the amount of guest RAM in mebibytes. Must be at least 1.
     pub fn ram_mib(mut self, mib: u32) -> Result<Self, Error> {
         if mib == 0 {
-            return Err(Error::OutOfRange);
+            return Err(Error::OutOfRange());
         }
         self.ram_mib = Some(mib);
         Ok(self)
     }
 
+    /// Set the payload to run inside the VM.
+    ///
+    /// Currently the only payload type is `Init`, which runs a process
+    /// as PID 1 inside the guest using the built-in krun init.
     pub fn payload(mut self, payload: impl Payload) -> Self {
         self.payload = Some(payload.into_payload());
         self
     }
 
+    /// Set the device manager containing all virtio devices.
+    ///
+    /// The device manager determines which transport bus is used (currently
+    /// only [`MmioDeviceManager`] for virtio-mmio).
     pub fn devices(mut self, devices: MmioDeviceManager<'a>) -> Self {
         self.device_manager = Some(Box::new(devices));
         self
     }
 
+    /// Build the VM, creating guest memory, attaching devices, and starting
+    /// vCPUs. All required fields (`vcpus`, `ram_mib`, `payload`, `devices`)
+    /// must have been set.
     pub fn build(self) -> Result<Vmm<'a>, Error> {
         build_vm(self).map_err(|e| {
             log::error!("{e}");
@@ -71,19 +122,41 @@ impl<'a> VmmBuilder<'a> {
     }
 }
 
+impl<'a> VmmBuilder<'a> {
+    /// Set a file descriptor to use as the serial console (COM1) input.
+    ///
+    /// Ownership of the fd is transferred to the VM on [`build`](Self::build).
+    /// Used for FreeBSD guests that require serial console input (e.g. a pipe
+    /// read end to prevent kqueue busy-spin on macOS).
+    pub fn serial_input_fd(mut self, fd: RawFd) -> Self {
+        self.serial_input_fd = Some(fd);
+        self
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Vmm — the running VM handle
 // ---------------------------------------------------------------------------
 
+/// A running virtual machine.
+///
+/// Returned by [`VmmBuilder::build`]. Call [`run`](Vmm::run) to enter the
+/// event loop and execute the guest payload.
 pub struct Vmm<'a> {
     #[allow(dead_code)]
     inner: Arc<Mutex<InnerVmm>>,
     event_manager: EventManager,
+    /// Keep the worker channel sender alive so the worker thread's receiver
+    /// doesn't get `RecvError` from a dropped channel.
+    #[allow(dead_code)]
+    _worker_sender: crossbeam_channel::Sender<utils::worker_message::WorkerMessage>,
     _lifetime: PhantomData<&'a ()>,
 }
 
 #[ffier::exportable]
 impl<'a> Vmm<'a> {
+    /// Run the VM event loop. This call blocks until the VM exits or a
+    /// fatal error occurs.
     pub fn run(&mut self) {
         loop {
             if let Err(e) = self.event_manager.run() {
@@ -101,34 +174,23 @@ impl<'a> Vmm<'a> {
 fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
     let vcpus_count = builder_cfg
         .vcpus
-        .ok_or_else(|| DetailedError::new(Error::MissingConfig, "vcpus not set"))?;
+        .ok_or_else(|| DetailedError::new(Error::MissingConfig(), "vcpus not set"))?;
     let ram_mib = builder_cfg
         .ram_mib
-        .ok_or_else(|| DetailedError::new(Error::MissingConfig, "ram_mib not set"))?;
+        .ok_or_else(|| DetailedError::new(Error::MissingConfig(), "ram_mib not set"))?;
     let payload = builder_cfg
         .payload
-        .ok_or_else(|| DetailedError::new(Error::MissingConfig, "payload not set"))?;
+        .ok_or_else(|| DetailedError::new(Error::MissingConfig(), "payload not set"))?;
     let device_manager = builder_cfg.device_manager.ok_or_else(|| {
         DetailedError::new(
-            Error::MissingConfig,
+            Error::MissingConfig(),
             "no device manager set (call .devices())",
         )
     })?;
+    let serial_input_fd = builder_cfg.serial_input_fd;
 
-    // 1. Load kernel (payload-specific: krunfw, external kernel, etc.)
-    let kernel_bundle = payload.load_kernel()?;
-
-    // 2. Choose payload type
-    let payload_type = choose_payload(
-        Some(&kernel_bundle),
-        #[cfg(feature = "tee")]
-        None,
-        #[cfg(feature = "tee")]
-        None,
-        None, // external_kernel
-        None, // firmware_config
-    )
-    .map_err(|e| DetailedError::new(Error::BootError, format!("{e:?}")))?;
+    // 1. Load kernel + choose payload type (handles both krunfw and external kernels)
+    let (kernel_bundle, payload_type) = payload.load_kernel_and_choose_payload()?;
 
     // 3. Collect shm sizes from device manager requirements
     let requirements = device_manager.requirements();
@@ -146,9 +208,10 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
     let (gpu_virgl_flags, gpu_shm_size): (Option<u32>, Option<usize>) = (None, None);
 
     // 4. Create guest memory
+    let kernel_bundle_ref = kernel_bundle.as_ref();
     let (guest_memory, arch_memory_info, shm_manager, payload_config) = create_guest_memory(
         ram_mib as usize,
-        Some(&kernel_bundle),
+        kernel_bundle_ref,
         #[cfg(feature = "tee")]
         None,
         #[cfg(feature = "tee")]
@@ -159,7 +222,7 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
         gpu_shm_size,
         &payload_type,
     )
-    .map_err(|e| DetailedError::new(Error::BootError, format!("{e:?}")))?;
+    .map_err(|e| DetailedError::new(Error::BootError(), format!("{e:?}")))?;
 
     // 5. Build kernel command line (payload-specific base + env vars)
     let mut kernel_cmdline = Cmdline::new(arch::CMDLINE_MAX_SIZE);
@@ -173,10 +236,10 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
     log::info!("kernel cmdline: {}", kernel_cmdline.as_str());
     log::info!(
         "kernel bundle: host=0x{:x} guest=0x{:x} entry=0x{:x} size={}",
-        kernel_bundle.host_addr,
-        kernel_bundle.guest_addr,
-        kernel_bundle.entry_addr,
-        kernel_bundle.size
+        kernel_bundle.as_ref().map_or(0, |b| b.host_addr),
+        kernel_bundle.as_ref().map_or(0, |b| b.guest_addr),
+        kernel_bundle.as_ref().map_or(0, |b| b.entry_addr),
+        kernel_bundle.as_ref().map_or(0, |b| b.size),
     );
     log::info!("payload entry_addr: 0x{:x}", payload_config.entry_addr.0);
     log::info!(
@@ -189,17 +252,30 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
     // 6. Set up VM
     #[cfg(not(feature = "tee"))]
     let vm = builder::setup_vm(&guest_memory, false)
-        .map_err(|e| DetailedError::new(Error::HypervisorError, format!("{e:?}")))?;
+        .map_err(|e| DetailedError::new(Error::HypervisorError(), format!("{e:?}")))?;
 
     let mut event_manager = EventManager::new()
-        .map_err(|e| DetailedError::new(Error::Internal, format!("EventManager: {e:?}")))?;
+        .map_err(|e| DetailedError::new(Error::Internal(), format!("EventManager: {e:?}")))?;
 
-    // 7. Create legacy serial device on COM1 (no output — kernel console goes via hvc0)
-    let serial_devices = vec![builder::setup_serial_device(&mut event_manager, None, None)
-        .map_err(|e| DetailedError::new(Error::Internal, format!("serial: {e:?}")))?];
+    // 7. Create legacy serial device on COM1.
+    // For krunfw payloads: no input (console goes via hvc0 virtio console).
+    // For external kernel payloads (e.g. FreeBSD): take ownership of the pipe fd
+    // provided by the caller via serial_input_fd().
+    let serial_input: Option<Box<dyn devices::legacy::ReadableFd + Send>> =
+        if let Some(fd) = serial_input_fd {
+            // SAFETY: Caller transferred ownership of this fd via serial_input_fd().
+            let file = unsafe { std::fs::File::from_raw_fd(fd) };
+            Some(Box::new(file))
+        } else {
+            None
+        };
+    let serial_devices = vec![
+        builder::setup_serial_device(&mut event_manager, serial_input, None)
+            .map_err(|e| DetailedError::new(Error::Internal(), format!("serial: {e:?}")))?,
+    ];
 
     let exit_evt = EventFd::new(utils::eventfd::EFD_NONBLOCK)
-        .map_err(|e| DetailedError::new(Error::Internal, format!("eventfd: {e}")))?;
+        .map_err(|e| DetailedError::new(Error::Internal(), format!("eventfd: {e}")))?;
 
     // 8. Create internal device managers (MMIO bus, PIO bus)
     #[cfg(target_arch = "x86_64")]
@@ -213,9 +289,9 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
             serial_devices,
             exit_evt
                 .try_clone()
-                .map_err(|e| DetailedError::new(Error::Internal, format!("eventfd: {e}")))?,
+                .map_err(|e| DetailedError::new(Error::Internal(), format!("eventfd: {e}")))?,
         )
-        .map_err(|e| DetailedError::new(Error::Internal, format!("pio: {e:?}")))?
+        .map_err(|e| DetailedError::new(Error::Internal(), format!("pio: {e:?}")))?
     };
 
     #[allow(unused_mut)]
@@ -228,6 +304,7 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
         vcpu_count: vcpus_count,
         ht_enabled: false,
         cpu_template: None,
+        nested_enabled: false,
     };
 
     // 9. Create vCPUs + interrupt controller (arch-specific)
@@ -240,7 +317,7 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
 
         let ioapic = Box::new(
             KvmIoapic::new(vm.fd())
-                .map_err(|e| DetailedError::new(Error::HypervisorError, format!("{e:?}")))?,
+                .map_err(|e| DetailedError::new(Error::HypervisorError(), format!("{e:?}")))?,
         );
         intc = Arc::new(Mutex::new(IrqChipDevice::new(ioapic)));
 
@@ -251,7 +328,7 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
             &mut mmio_device_manager,
             Some(intc.clone()),
         )
-        .map_err(|e| DetailedError::new(Error::Internal, format!("{e:?}")))?;
+        .map_err(|e| DetailedError::new(Error::Internal(), format!("{e:?}")))?;
 
         vcpus = builder::create_vcpus_x86_64(
             &vm,
@@ -264,7 +341,7 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
             #[cfg(feature = "tee")]
             crossbeam_channel::unbounded().0,
         )
-        .map_err(|e| DetailedError::new(Error::HypervisorError, format!("{e:?}")))?;
+        .map_err(|e| DetailedError::new(Error::HypervisorError(), format!("{e:?}")))?;
     }
 
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
@@ -278,7 +355,7 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
             payload_config.entry_addr,
             &exit_evt,
         )
-        .map_err(|e| DetailedError::new(Error::HypervisorError, format!("{e:?}")))?;
+        .map_err(|e| DetailedError::new(Error::HypervisorError(), format!("{e:?}")))?;
 
         intc = {
             let gic = match KvmGicV3::new(vm.fd(), vcpus_count as u64) {
@@ -295,7 +372,7 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
             intc.clone(),
             serial_devices,
         )
-        .map_err(|e| DetailedError::new(Error::Internal, format!("{e:?}")))?;
+        .map_err(|e| DetailedError::new(Error::Internal(), format!("{e:?}")))?;
     }
 
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -321,7 +398,7 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
             vcpu_list.clone(),
             false, // nested_enabled
         )
-        .map_err(|e| DetailedError::new(Error::HypervisorError, format!("{e:?}")))?;
+        .map_err(|e| DetailedError::new(Error::HypervisorError(), format!("{e:?}")))?;
 
         builder::attach_legacy_devices(
             &vm,
@@ -332,7 +409,7 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
             &mut event_manager,
             None, // shutdown_efd
         )
-        .map_err(|e| DetailedError::new(Error::Internal, format!("{e:?}")))?;
+        .map_err(|e| DetailedError::new(Error::Internal(), format!("{e:?}")))?;
     }
 
     // 10. Construct Vmm struct
@@ -363,7 +440,7 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
         &shm_manager,
         intc.clone(),
         #[cfg(target_os = "macos")]
-        Some(worker_sender),
+        Some(worker_sender.clone()),
     )?;
 
     // 12. Append "-- args" epilog (must come after device attachment,
@@ -380,7 +457,7 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
 
     // 13. Write kernel cmdline to guest memory (x86_64)
     #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
-    load_cmdline(&vmm).map_err(|e| DetailedError::new(Error::BootError, format!("{e:?}")))?;
+    load_cmdline(&vmm).map_err(|e| DetailedError::new(Error::BootError(), format!("{e:?}")))?;
 
     // 14. Configure system
     vmm.configure_system(
@@ -388,29 +465,31 @@ fn build_vm(builder_cfg: VmmBuilder<'_>) -> Result<Vmm<'_>, DetailedError> {
         &intc,
         &payload_config.initrd_config,
         &None, // smbios_oem_strings
+        false, // pvh
     )
-    .map_err(|e| DetailedError::new(Error::Internal, format!("{e:?}")))?;
+    .map_err(|e| DetailedError::new(Error::Internal(), format!("{e:?}")))?;
 
     // 15. Start vCPUs
     vmm.start_vcpus(vcpus)
-        .map_err(|e| DetailedError::new(Error::Internal, format!("{e:?}")))?;
+        .map_err(|e| DetailedError::new(Error::Internal(), format!("{e:?}")))?;
 
     // 16. Register with EventManager and start worker thread
     #[allow(clippy::arc_with_non_send_sync)]
     let vmm = Arc::new(Mutex::new(vmm));
     event_manager
         .add_subscriber(vmm.clone())
-        .map_err(|e| DetailedError::new(Error::Internal, format!("{e:?}")))?;
+        .map_err(|e| DetailedError::new(Error::Internal(), format!("{e:?}")))?;
 
     // Start the VMM worker thread. It processes messages from devices that
     // need VMM-level operations (macOS GPU memory mapping, x86_64 GSI routing,
     // TEE memory conversion).
     vmm::worker::start_worker_thread(vmm.clone(), worker_receiver)
-        .map_err(|e| DetailedError::new(Error::Internal, format!("worker thread: {e}")))?;
+        .map_err(|e| DetailedError::new(Error::Internal(), format!("worker thread: {e}")))?;
 
     Ok(Vmm {
         inner: vmm,
         event_manager,
+        _worker_sender: worker_sender,
         _lifetime: PhantomData,
     })
 }
