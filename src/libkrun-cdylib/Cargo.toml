@@ -17,12 +17,12 @@ path = "src/gen_rust_client.rs"
 
 [dependencies]
 krun = { package = "libkrun", path = "../libkrun" }
-ffier = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }
-ffier-bridge = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }
-ffier-bridge-macros = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }
-ffier-gen-c-header = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }
-ffier-gen-rust-client = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }
-ffier-schema = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }
+ffier = { git = "https://github.com/mtjhrc/ffier.git", rev = "be3aadd" }
+ffier-bridge = { git = "https://github.com/mtjhrc/ffier.git", rev = "be3aadd" }
+ffier-bridge-macros = { git = "https://github.com/mtjhrc/ffier.git", rev = "be3aadd" }
+ffier-gen-c-header = { git = "https://github.com/mtjhrc/ffier.git", rev = "be3aadd" }
+ffier-gen-rust-client = { git = "https://github.com/mtjhrc/ffier.git", rev = "be3aadd" }
+ffier-schema = { git = "https://github.com/mtjhrc/ffier.git", rev = "be3aadd" }
 serde_json = "1"
 libc = ">=0.2.39"
 log = "0.4"

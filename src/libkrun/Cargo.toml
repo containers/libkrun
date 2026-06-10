@@ -24,9 +24,8 @@ timesync = ["devices/timesync", "init-blob/timesync"]
 [dependencies]
 crossbeam-channel = ">=0.5.15"
 env_logger = "0.11"
-env_logger = "0.11"
-ffier = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }
-ffier-builtins = { git = "file:///home/mhrica/Dev2/ffier/ffier.git", rev = "ade8d24" }
+ffier = { git = "https://github.com/mtjhrc/ffier.git", rev = "be3aadd" }
+ffier-builtins = { git = "https://github.com/mtjhrc/ffier.git", rev = "be3aadd" }
 krun-init-blob-via-cdylib-weak = { path = "../../init/init-blob-via-cdylib-weak" }
 libc = ">=0.2.39"
 libloading = "0.8"

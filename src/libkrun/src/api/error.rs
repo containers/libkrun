@@ -1,52 +1,53 @@
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, ffier::FfiError)]
+#[non_exhaustive]
 pub enum Error {
     // Configuration (100-199)
     #[ffier(code = 100)]
-    InvalidParam,
+    InvalidParam(),
     #[ffier(code = 101)]
-    DuplicateDevice,
+    DuplicateDevice(),
     #[ffier(code = 102)]
-    DeviceLimitExceeded,
+    DeviceLimitExceeded(),
     #[ffier(code = 103)]
-    MissingConfig,
+    MissingConfig(),
     #[ffier(code = 104)]
-    ConflictingConfig,
+    ConflictingConfig(),
     #[ffier(code = 105)]
-    OutOfRange,
+    OutOfRange(),
 
     // Resources (200-299)
     #[ffier(code = 200)]
-    FileNotFound,
+    FileNotFound(),
     #[ffier(code = 201)]
-    PermissionDenied,
+    PermissionDenied(),
     #[ffier(code = 202)]
-    ResourceAlloc,
+    ResourceAlloc(),
     #[ffier(code = 203)]
-    BadFd,
+    BadFd(),
 
     // Devices (300-399)
     #[ffier(code = 300)]
-    BackendUnavailable,
+    BackendUnavailable(),
     #[ffier(code = 301, message = "feature not enabled in this build")]
-    FeatureDisabled,
+    FeatureDisabled(),
     #[ffier(code = 302)]
-    DiskFormatError,
+    DiskFormatError(),
 
     // Runtime (400-499)
     #[ffier(code = 400)]
-    AlreadyStarted,
+    AlreadyStarted(),
     #[ffier(code = 401)]
-    ValidationFailed,
+    ValidationFailed(),
     #[ffier(code = 402)]
-    HypervisorError,
+    HypervisorError(),
     #[ffier(code = 403)]
-    BootError,
+    BootError(),
 
     // Internal (900-999)
     #[ffier(code = 900)]
-    Internal,
+    Internal(),
 }
 
 impl fmt::Display for Error {
