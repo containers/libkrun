@@ -995,18 +995,6 @@ int32_t krun_get_max_vcpus(void);
 int32_t krun_split_irqchip(uint32_t ctx_id, bool enable);
 
 /**
- * Do not inject the default init binary (/init.krun) into the root
- * filesystem. Must be called before configuring the root filesystem.
- *
- * Arguments:
- *  "ctx_id" - the configuration context ID.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- */
-int32_t krun_disable_implicit_init(uint32_t ctx_id);
-
-/**
  * Append an argument to the kernel command line.
  *
  * May be called multiple times; each argument is appended in order,
@@ -1020,26 +1008,6 @@ int32_t krun_disable_implicit_init(uint32_t ctx_id);
  *  Zero on success or a negative error number on failure.
  */
 int32_t krun_append_kernel_cmdline(uint32_t ctx_id, const char *arg);
-
-/**
- * Get a pointer to the built-in default init binary.
- *
- * This is the same binary that libkrun injects as /init.krun by default.
- * Callers that use krun_disable_implicit_init() can use this to inject the
- * init binary themselves (e.g. via krun_fs_add_overlay_file with custom
- * settings).
- *
- * The returned pointer is valid for the lifetime of the process (static data).
- *
- * Arguments:
- *  "data_out" - receives a pointer to the init binary bytes.
- *  "len_out"  - receives the length in bytes.
- *
- * Returns:
- *  Zero on success or a negative error number on failure.
- *  -EINVAL  - data_out or len_out is NULL
- */
-int32_t krun_get_default_init(const uint8_t **data_out, size_t *len_out);
 
 /**
  * Add a virtual overlay file to a virtiofs device.

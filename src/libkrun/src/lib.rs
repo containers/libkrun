@@ -90,23 +90,6 @@ static KRUN_NITRO_DEBUG: Mutex<bool> = Mutex::new(false);
 // Path to the init binary to be executed inside the VM.
 const INIT_PATH: &str = "/init.krun";
 
-#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-const DEFAULT_INIT_PAYLOAD: &[u8] = init_blob::INIT_BINARY;
-
-#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-fn init_virtual_entry() -> VirtualDirEntry {
-    VirtualDirEntry {
-        name: CString::new("init.krun").unwrap(),
-        entry: VirtualEntry {
-            mode: 0o755,
-            one_shot: true,
-            content: VirtualEntryContent::File {
-                data: DEFAULT_INIT_PAYLOAD,
-            },
-        },
-    }
-}
-
 static KRUNFW: LazyLock<Option<libloading::Library>> =
     LazyLock::new(|| unsafe { libloading::Library::new(KRUNFW_NAME).ok() });
 
@@ -170,8 +153,6 @@ struct ContextConfig {
     console_output: Option<PathBuf>,
     vmm_uid: Option<libc::uid_t>,
     vmm_gid: Option<libc::gid_t>,
-    #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-    disable_implicit_init: bool,
     /// Extra kernel command-line arguments appended via `krun_append_kernel_cmdline`.
     #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
     extra_kernel_cmdline: Vec<String>,
@@ -612,17 +593,12 @@ pub unsafe extern "C" fn krun_add_virtiofs3(
 
         match CTX_MAP.lock().unwrap().entry(ctx_id) {
             Entry::Occupied(mut ctx_cfg) => {
-                let cfg = ctx_cfg.get_mut();
-                let mut virtual_entries = Vec::new();
-                if tag == "/dev/root" && !cfg.disable_implicit_init {
-                    virtual_entries.push(init_virtual_entry());
-                }
-                cfg.vmr.add_fs_device(FsDeviceConfig {
+                ctx_cfg.get_mut().vmr.add_fs_device(FsDeviceConfig {
                     fs_id: tag.to_string(),
                     shared_dir: path.map(|p| p.to_string()),
                     shm_size: shm,
                     read_only,
-                    virtual_entries,
+                    virtual_entries: Vec::new(),
                 });
             }
             Entry::Vacant(_) => return -libc::ENOENT,
@@ -2230,10 +2206,7 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
                 // and config are applied separately via Config::apply().
                 // Use a NullFs (no host directory) with the inode overlay.
                 let mut virtual_entries = Vec::new();
-                if !ctx_cfg.disable_implicit_init {
-                    virtual_entries.push(init_virtual_entry());
-                }
-                // init.c needs these directories as mount points before
+                // The init binary needs these directories as mount points before
                 // pivoting to the block device root.
                 for name in ["dev", "proc", "sys", "newroot"] {
                     virtual_entries.push(VirtualDirEntry {
@@ -2266,19 +2239,6 @@ pub unsafe extern "C" fn krun_set_root_disk_remount(
     }
 }
 
-#[unsafe(no_mangle)]
-#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-pub extern "C" fn krun_disable_implicit_init(ctx_id: u32) -> i32 {
-    match CTX_MAP.lock().unwrap().entry(ctx_id) {
-        Entry::Occupied(mut ctx_cfg) => {
-            ctx_cfg.get_mut().disable_implicit_init = true;
-        }
-        Entry::Vacant(_) => return -libc::ENOENT,
-    }
-
-    KRUN_SUCCESS
-}
-
 /// Append an argument to the kernel command line.
 ///
 /// May be called multiple times; each argument is appended in order,
@@ -2305,7 +2265,6 @@ pub unsafe extern "C" fn krun_append_kernel_cmdline(ctx_id: u32, c_arg: *const c
 
     KRUN_SUCCESS
 }
-
 /// Resolve a path like "a/b/c" into parent directory children + leaf name.
 /// Errors with a libc errno if any intermediate component is missing or not a Dir.
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
@@ -2357,7 +2316,6 @@ fn fs_add_overlay_entry(ctx_id: u32, fs_tag: &str, path: &str, entry: VirtualEnt
     }
     KRUN_SUCCESS
 }
-
 
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
@@ -2442,22 +2400,6 @@ pub unsafe extern "C" fn krun_fs_add_overlay_dir(
     )
 }
 
-#[allow(clippy::missing_safety_doc)]
-#[unsafe(no_mangle)]
-#[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
-pub unsafe extern "C" fn krun_get_default_init(
-    data_out: *mut *const u8,
-    len_out: *mut size_t,
-) -> i32 {
-    if data_out.is_null() || len_out.is_null() {
-        return -libc::EINVAL;
-    }
-    unsafe {
-        *data_out = DEFAULT_INIT_PAYLOAD.as_ptr();
-        *len_out = DEFAULT_INIT_PAYLOAD.len();
-    }
-    KRUN_SUCCESS
-}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn krun_add_vsock(ctx_id: u32, tsi_features: u32) -> i32 {
@@ -2845,27 +2787,4 @@ fn krun_start_enter_nitro(ctx_id: u32) -> i32 {
     }
 }
 
-#[cfg(all(test, not(feature = "tee")))]
-mod test_disable_implicit_init {
-    use super::*;
 
-    #[test]
-    fn test_disable_implicit_init() {
-        let ctx = unsafe { krun_create_ctx() } as u32;
-        unsafe {
-            krun_disable_implicit_init(ctx);
-            krun_add_virtiofs3(ctx, c"/dev/root".as_ptr(), c"/tmp".as_ptr(), 0, false);
-        }
-
-        let ctx_map = CTX_MAP.lock().unwrap();
-        let cfg = ctx_map.get(&ctx).unwrap();
-        assert_eq!(cfg.vmr.fs.len(), 1);
-        assert!(
-            cfg.vmr.fs[0].virtual_entries.is_empty(),
-            "root virtiofs should not inject init.krun after krun_disable_implicit_init()"
-        );
-        drop(ctx_map);
-
-        assert_eq!(krun_free_ctx(ctx), KRUN_SUCCESS);
-    }
-}
