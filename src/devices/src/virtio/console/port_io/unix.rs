@@ -1,7 +1,6 @@
 use libc::{
     F_GETFL, F_SETFL, O_NONBLOCK, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO, TIOCGWINSZ, fcntl,
 };
-use log::Level;
 use nix::errno::Errno;
 use nix::ioctl_read_bad;
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
@@ -9,27 +8,11 @@ use nix::unistd::{dup, isatty};
 use std::fs::File;
 use std::io::{self, ErrorKind};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
-use utils::eventfd::EFD_NONBLOCK;
-use utils::eventfd::EventFd;
+use utils::eventfd::{EFD_NONBLOCK, EventFd};
 use vm_memory::bitmap::Bitmap;
 use vm_memory::{VolatileMemoryError, VolatileSlice, WriteVolatile};
 
-pub trait PortInput {
-    fn read_volatile(&mut self, buf: &mut VolatileSlice) -> Result<usize, io::Error>;
-
-    fn wait_until_readable(&self, stopfd: Option<&EventFd>);
-}
-
-pub trait PortOutput {
-    fn write_volatile(&mut self, buf: &VolatileSlice) -> Result<usize, io::Error>;
-
-    fn wait_until_writable(&self);
-}
-
-/// Terminal properties associated with this port
-pub trait PortTerminalProperties: Send + Sync {
-    fn get_win_size(&self) -> (u16, u16);
-}
+use super::{PortInput, PortInputEmpty, PortOutput, PortTerminalProperties};
 
 pub fn stdin() -> Result<Box<dyn PortInput + Send>, nix::Error> {
     let fd = dup_raw_fd_into_owned(STDIN_FILENO)?;
@@ -62,10 +45,6 @@ pub fn term_fd(
     Ok(Box::new(PortTerminalPropertiesFd(fd)))
 }
 
-pub fn term_fixed_size(width: u16, height: u16) -> Box<dyn PortTerminalProperties + Send + Sync> {
-    Box::new(PortTerminalPropertiesFixed((width, height)))
-}
-
 pub fn input_empty() -> Result<Box<dyn PortInput + Send>, nix::Error> {
     Ok(Box::new(PortInputEmpty {}))
 }
@@ -78,10 +57,6 @@ pub fn output_to_raw_fd_dup(fd: RawFd) -> Result<Box<dyn PortOutput + Send>, nix
     let fd = dup_raw_fd_into_owned(fd)?;
     make_non_blocking(&fd)?;
     Ok(Box::new(PortOutputFd(fd)))
-}
-
-pub fn output_to_log_as_err() -> Box<dyn PortOutput + Send> {
-    Box::new(PortOutputLog::new())
 }
 
 struct PortInputFd(OwnedFd);
@@ -134,6 +109,23 @@ impl PortInput for PortInputFd {
     }
 }
 
+impl PortInput for PortInputEmpty {
+    fn read_volatile(&mut self, _buf: &mut VolatileSlice) -> Result<usize, io::Error> {
+        Ok(0)
+    }
+
+    fn wait_until_readable(&self, stopfd: Option<&EventFd>) {
+        if let Some(stopfd) = stopfd {
+            // SAFETY: we trust stopfd won't go away to avoid a dup call here.
+            let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stopfd.as_raw_fd()) };
+            let mut poll_fds = [PollFd::new(borrowed_fd, PollFlags::POLLIN)];
+            poll(&mut poll_fds, PollTimeout::NONE).expect("Failed to poll");
+        } else {
+            std::thread::sleep(std::time::Duration::MAX);
+        }
+    }
+}
+
 struct PortOutputFd(OwnedFd);
 
 impl AsRawFd for PortOutputFd {
@@ -181,47 +173,18 @@ fn make_non_blocking(as_rw_fd: &impl AsRawFd) -> Result<(), nix::Error> {
     Ok(())
 }
 
-// Utility to relay log from the VM (the kernel boot log and messages from init)
-// to the rust log
-#[derive(Default)]
-pub struct PortOutputLog {
-    buf: Vec<u8>,
-}
+struct PortTerminalPropertiesFd(OwnedFd);
 
-impl PortOutputLog {
-    const FORCE_FLUSH_TRESHOLD: usize = 512;
-    const LOG_TARGET: &'static str = "init_or_kernel";
+impl PortTerminalProperties for PortTerminalPropertiesFd {
+    fn get_win_size(&self) -> (u16, u16) {
+        let mut ws: WS = WS::default();
 
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn force_flush(&mut self) {
-        log::log!(target: PortOutputLog::LOG_TARGET, Level::Error, "[missing newline]{}", String::from_utf8_lossy(&self.buf));
-        self.buf.clear();
-    }
-}
-
-impl PortOutput for PortOutputLog {
-    fn write_volatile(&mut self, buf: &VolatileSlice) -> Result<usize, io::Error> {
-        self.buf.write_volatile(buf).map_err(io::Error::other)?;
-
-        let mut start = 0;
-        for (i, ch) in self.buf.iter().cloned().enumerate() {
-            if ch == b'\n' {
-                log::log!(target: PortOutputLog::LOG_TARGET, Level::Error, "{}", String::from_utf8_lossy(&self.buf[start..i]));
-                start = i + 1;
-            }
+        if let Err(err) = unsafe { tiocgwinsz(self.0.as_raw_fd(), &mut ws) } {
+            log::error!("Couldn't get terminal dimensions: {err}");
+            return (0, 0);
         }
-        self.buf.drain(0..start);
-        // Make sure to not grow the internal buffer forever!
-        if self.buf.len() > PortOutputLog::FORCE_FLUSH_TRESHOLD {
-            self.force_flush()
-        }
-        Ok(buf.len())
+        (ws.cols, ws.rows)
     }
-
-    fn wait_until_writable(&self) {}
 }
 
 pub struct PortInputSigInt {
@@ -270,59 +233,6 @@ impl PortInput for PortInputSigInt {
     }
 }
 
-pub struct PortInputEmpty {}
-
-impl PortInputEmpty {
-    pub fn new() -> Self {
-        PortInputEmpty {}
-    }
-}
-
-impl Default for PortInputEmpty {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PortInput for PortInputEmpty {
-    fn read_volatile(&mut self, _buf: &mut VolatileSlice) -> Result<usize, io::Error> {
-        Ok(0)
-    }
-
-    fn wait_until_readable(&self, stopfd: Option<&EventFd>) {
-        if let Some(stopfd) = stopfd {
-            // SAFETY: we trust stopfd won't go away to avoid a dup call here.
-            let borrowed_fd = unsafe { BorrowedFd::borrow_raw(stopfd.as_raw_fd()) };
-            let mut poll_fds = [PollFd::new(borrowed_fd, PollFlags::POLLIN)];
-            poll(&mut poll_fds, PollTimeout::NONE).expect("Failed to poll");
-        } else {
-            std::thread::sleep(std::time::Duration::MAX);
-        }
-    }
-}
-
-struct PortTerminalPropertiesFixed((u16, u16));
-
-impl PortTerminalProperties for PortTerminalPropertiesFixed {
-    fn get_win_size(&self) -> (u16, u16) {
-        self.0
-    }
-}
-
-struct PortTerminalPropertiesFd(OwnedFd);
-
-impl PortTerminalProperties for PortTerminalPropertiesFd {
-    fn get_win_size(&self) -> (u16, u16) {
-        let mut ws: WS = WS::default();
-
-        if let Err(err) = unsafe { tiocgwinsz(self.0.as_raw_fd(), &mut ws) } {
-            error!("Couldn't get terminal dimensions: {err}");
-            return (0, 0);
-        }
-        (ws.cols, ws.rows)
-    }
-}
-
 #[repr(C)]
 #[derive(Default)]
 struct WS {
@@ -331,4 +241,5 @@ struct WS {
     xpixel: u16,
     ypixel: u16,
 }
+
 ioctl_read_bad!(tiocgwinsz, TIOCGWINSZ, WS);

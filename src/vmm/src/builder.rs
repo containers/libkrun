@@ -12,11 +12,23 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::{self, IsTerminal, Read};
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
 use std::os::fd::{BorrowedFd, FromRawFd};
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, BorrowedHandle, FromRawHandle};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
+#[cfg(windows)]
+use utils::windows::SendHandle;
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+#[cfg(windows)]
+use windows_sys::Win32::System::Console::{
+    GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+};
 
 use super::{Error, Vmm};
 
@@ -83,9 +95,11 @@ use krun_display::DisplayBackend;
 use krun_display::IntoDisplayBackend;
 #[cfg(feature = "amd-sev")]
 use kvm_bindings::KVM_MAX_CPUID_ENTRIES;
+#[cfg(unix)]
 use libc::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 #[cfg(target_arch = "x86_64")]
 use linux_loader::loader::{self, KernelLoader};
+#[cfg(unix)]
 use nix::unistd::isatty;
 use polly::event_manager::{Error as EventManagerError, EventManager};
 use utils::eventfd::EventFd;
@@ -102,6 +116,9 @@ use vm_memory::GuestRegionMmap;
 #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
 use vm_memory::mmap::MmapRegion;
 use vm_memory::{GuestAddress, GuestMemoryMmap};
+
+#[cfg(all(target_arch = "x86_64", target_os = "windows"))]
+use arch::x86_64::layout::AP_TRAMPOLINE_START;
 
 /// Errors associated with starting the instance.
 #[derive(Debug)]
@@ -744,6 +761,7 @@ pub fn build_microvm(
     // and set raw mode on them later.
     let mut serial_ttys = Vec::new();
 
+    #[cfg(unix)]
     for s in &vm_resources.serial_consoles {
         let input: Option<Box<dyn devices::legacy::ReadableFd + Send>> = if s.input_fd >= 0 {
             let file = unsafe { File::from_raw_fd(s.input_fd) };
@@ -760,6 +778,34 @@ pub fn build_microvm(
         } else {
             None
         };
+
+        serial_devices.push(setup_serial_device(event_manager, input, output)?);
+    }
+
+    #[cfg(windows)]
+    for s in &vm_resources.serial_consoles {
+        let input: Option<Box<dyn devices::legacy::ReadableFd + Send>> =
+            if is_valid_handle(s.input_handle.as_raw_handle()) {
+                if unsafe {
+                    BorrowedHandle::borrow_raw(s.input_handle.as_raw_handle()).is_terminal()
+                } {
+                    serial_ttys.push(s.input_handle);
+                }
+                Some(Box::new(unsafe {
+                    File::from_raw_handle(s.input_handle.as_raw_handle())
+                }))
+            } else {
+                None
+            };
+
+        let output: Option<Box<dyn io::Write + Send>> =
+            if is_valid_handle(s.output_handle.as_raw_handle()) {
+                Some(Box::new(unsafe {
+                    File::from_raw_handle(s.output_handle.as_raw_handle())
+                }))
+            } else {
+                None
+            };
 
         serial_devices.push(setup_serial_device(event_manager, input, output)?);
     }
@@ -2127,6 +2173,7 @@ fn attach_fs_devices(
     Ok(())
 }
 
+#[cfg(unix)]
 fn autoconfigure_console_ports(
     vmm: &mut Vmm,
     vm_resources: &VmResources,
@@ -2243,6 +2290,122 @@ fn autoconfigure_console_ports(
     }
 }
 
+#[cfg(windows)]
+fn is_valid_handle(h: *mut core::ffi::c_void) -> bool {
+    !h.is_null() && h != INVALID_HANDLE_VALUE
+}
+
+#[cfg(target_os = "windows")]
+fn autoconfigure_console_ports(
+    vmm: &mut Vmm,
+    vm_resources: &VmResources,
+    cfg: Option<&DefaultVirtioConsoleConfig>,
+    creating_implicit_console: bool,
+) -> std::result::Result<Vec<PortDescription>, StartMicrovmError> {
+    use self::StartMicrovmError::*;
+
+    let mut console_output_path: Option<PathBuf> = None;
+    if let Some(path) = vm_resources.console_output.clone() {
+        if !vm_resources.disable_implicit_console && creating_implicit_console {
+            console_output_path = Some(path)
+        }
+    }
+
+    if let Some(console_output_path) = console_output_path {
+        let file = File::create(console_output_path).map_err(OpenConsoleFile)?;
+        // Manually emulate our Legacy behavior: In the case of output_path we have always used the
+        // stdin to determine the console size
+        let stdin_h = unsafe { BorrowedHandle::borrow_raw(GetStdHandle(STD_INPUT_HANDLE)) };
+        let term_h = if stdin_h.is_terminal() {
+            port_io::term_handle(stdin_h.as_raw_handle()).unwrap()
+        } else {
+            port_io::term_fixed_size(0, 0)
+        };
+        Ok(vec![PortDescription::console(
+            Some(port_io::input_empty().unwrap()),
+            Some(port_io::output_file(file).unwrap()),
+            term_h,
+        )])
+    } else {
+        let (input_h, output_h, err_h) = match cfg {
+            Some(c) => (
+                c.input_handle.as_raw_handle(),
+                c.output_handle.as_raw_handle(),
+                c.err_handle.as_raw_handle(),
+            ),
+            None => unsafe {
+                (
+                    GetStdHandle(STD_INPUT_HANDLE),
+                    GetStdHandle(STD_OUTPUT_HANDLE),
+                    GetStdHandle(STD_ERROR_HANDLE),
+                )
+            },
+        };
+        let input_is_terminal = (unsafe { BorrowedHandle::borrow_raw(input_h) }).is_terminal();
+        let output_is_terminal = (unsafe { BorrowedHandle::borrow_raw(output_h) }).is_terminal();
+        let error_is_terminal = (unsafe { BorrowedHandle::borrow_raw(err_h) }).is_terminal();
+
+        let term_h = if input_is_terminal {
+            Some(SendHandle::new(input_h))
+        } else if output_is_terminal {
+            Some(SendHandle::new(output_h))
+        } else if error_is_terminal {
+            Some(SendHandle::new(err_h))
+        } else {
+            None
+        };
+
+        let forwarding_sigint = false;
+        let console_input = if input_is_terminal {
+            Some(port_io::input_to_handle_dup(input_h).unwrap())
+        } else {
+            Some(port_io::input_empty().unwrap())
+        };
+
+        let console_output = if output_is_terminal {
+            Some(port_io::output_to_handle_dup(output_h).unwrap())
+        } else {
+            Some(port_io::output_to_log_as_err())
+        };
+
+        let terminal_properties = term_h
+            .map(|h| port_io::term_handle(h.as_raw_handle()).unwrap())
+            .unwrap_or_else(|| port_io::term_fixed_size(0, 0));
+
+        setup_terminal_raw_mode(vmm, term_h, forwarding_sigint);
+
+        let mut ports = vec![PortDescription::console(
+            console_input,
+            console_output,
+            terminal_properties,
+        )];
+
+        if is_valid_handle(input_h) && !input_is_terminal {
+            ports.push(PortDescription::input_pipe(
+                "krun-stdin",
+                port_io::input_to_handle_dup(input_h).unwrap(),
+            ));
+        }
+
+        if is_valid_handle(output_h) && !output_is_terminal {
+            ports.push(PortDescription::output_pipe(
+                "krun-stdout",
+                port_io::output_to_handle_dup(output_h).unwrap(),
+            ));
+        };
+
+        if is_valid_handle(err_h) && !error_is_terminal {
+            ports.push(PortDescription::output_pipe(
+                "krun-stderr",
+                port_io::output_to_handle_dup(err_h).unwrap(),
+            ));
+        }
+
+        Ok(ports)
+    }
+}
+
+#[cfg(unix)]
 fn setup_terminal_raw_mode(
     vmm: &mut Vmm,
     term_fd: Option<BorrowedFd<'_>>,
@@ -2267,6 +2430,29 @@ fn setup_terminal_raw_mode(
     }
 }
 
+#[cfg(target_os = "windows")]
+fn setup_terminal_raw_mode(
+    vmm: &mut Vmm,
+    term_handle: Option<SendHandle>,
+    handle_signals_by_terminal: bool,
+) {
+    if let Some(term_handle) = term_handle {
+        match term_set_raw_mode(term_handle, handle_signals_by_terminal) {
+            Ok(old_mode) => {
+                vmm.exit_observers.push(Arc::new(Mutex::new(move || {
+                    if let Err(e) = term_restore_mode(term_handle, &old_mode) {
+                        log::error!("Failed to restore terminal mode: {e}")
+                    }
+                })));
+            }
+            Err(e) => {
+                log::error!("Failed to set terminal to raw mode: {e}")
+            }
+        };
+    }
+}
+
+#[cfg(unix)]
 fn create_explicit_ports(
     vmm: &mut Vmm,
     port_configs: &[PortConfig],
@@ -2302,6 +2488,58 @@ fn create_explicit_ports(
                     None
                 } else {
                     Some(port_io::output_to_raw_fd_dup(*output_fd).unwrap())
+                },
+                terminal: None,
+            },
+        };
+
+        ports.push(port_desc);
+    }
+
+    Ok(ports)
+}
+
+#[cfg(target_os = "windows")]
+fn create_explicit_ports(
+    vmm: &mut Vmm,
+    port_configs: &[PortConfig],
+) -> std::result::Result<Vec<PortDescription>, StartMicrovmError> {
+    let mut ports = Vec::with_capacity(port_configs.len());
+
+    for port_cfg in port_configs {
+        let port_desc = match port_cfg {
+            PortConfig::Tty { name, tty_handle } => {
+                assert!(
+                    is_valid_handle(tty_handle.as_raw_handle()),
+                    "PortConfig::Tty must have a valid tty_handle"
+                );
+                let term_h = SendHandle::new(tty_handle.as_raw_handle());
+                setup_terminal_raw_mode(vmm, Some(term_h), false);
+
+                PortDescription {
+                    name: name.clone().into(),
+                    input: Some(port_io::input_to_handle_dup(tty_handle.as_raw_handle()).unwrap()),
+                    output: Some(
+                        port_io::output_to_handle_dup(tty_handle.as_raw_handle()).unwrap(),
+                    ),
+                    terminal: Some(port_io::term_handle(tty_handle.as_raw_handle()).unwrap()),
+                }
+            }
+            PortConfig::InOut {
+                name,
+                input_handle,
+                output_handle,
+            } => PortDescription {
+                name: name.clone().into(),
+                input: if !is_valid_handle(input_handle.as_raw_handle()) {
+                    None
+                } else {
+                    Some(port_io::input_to_handle_dup(input_handle.as_raw_handle()).unwrap())
+                },
+                output: if !is_valid_handle(output_handle.as_raw_handle()) {
+                    None
+                } else {
+                    Some(port_io::output_to_handle_dup(output_handle.as_raw_handle()).unwrap())
                 },
                 terminal: None,
             },

@@ -11,6 +11,8 @@ use super::super::{
 };
 use super::{defs, defs::uapi};
 use crate::virtio::InterruptTransport;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Memory::DiscardVirtualMemory;
 
 // Inflate queue.
 pub(crate) const IFQ_INDEX: usize = 0;
@@ -97,12 +99,17 @@ impl Balloon {
                 let advice = libc::MADV_DONTNEED;
                 #[cfg(target_os = "macos")]
                 let advice = libc::MADV_FREE;
+                #[cfg(unix)]
                 unsafe {
                     libc::madvise(
                         host_addr as *mut libc::c_void,
                         desc.len.try_into().unwrap(),
                         advice,
                     )
+                };
+                #[cfg(target_os = "windows")]
+                unsafe {
+                    DiscardVirtualMemory(host_addr as *mut core::ffi::c_void, desc.len as usize)
                 };
             }
 
