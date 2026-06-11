@@ -113,7 +113,7 @@ When TSI is enabled, the VMM acts as a proxy for AF_INET, AF_INET6 and AF_UNIX s
 * C Library static libraries, as the [init](init/init.c) binary is statically linked (package ```glibc-static``` in Fedora)
 * patchelf
 
-On Debian/Ubuntu that might look something like this:
+On Debian/Ubuntu:
 
 ```sh
 apt install patchelf build-essential clang libclang-dev libc6-dev
