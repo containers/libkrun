@@ -69,13 +69,16 @@ struct LinuxDirent64 {
 unsafe impl ByteValued for LinuxDirent64 {}
 
 macro_rules! scoped_cred {
-    ($name:ident, $ty:ty, $syscall_nr:expr_2021) => {
+    ($name:ident, $ty:ty, $syscall_nr:expr_2021, $get_current:expr_2021) => {
         #[derive(Debug)]
-        struct $name;
+        struct $name {
+            old: $ty,
+        }
 
         impl $name {
             // Changes the effective uid/gid of the current thread to `val`.  Changes
-            // the thread's credentials back to root when the returned struct is dropped.
+            // the thread's credentials back to the previous value when the returned
+            // struct is dropped.
             fn new(val: $ty) -> io::Result<Option<$name>> {
                 // We want credential changes to be per-thread because otherwise
                 // we might interfere with operations being carried out on other
@@ -89,11 +92,22 @@ macro_rules! scoped_cred {
                 // setfsgid systems calls.   However since those calls have no way to
                 // return an error, it's preferable to do this instead.
 
+                // Remember the current effective id so Drop can restore it.
+                // Restoring a hardcoded 0 instead is wrong when the server
+                // runs as an unprivileged user granted CAP_SETUID/CAP_SETGID:
+                // the first Drop parks the thread at euid 0, the next switch
+                // to a non-zero uid then clears the thread's effective
+                // capability set (see capabilities(7), "Effect of user ID
+                // changes on capabilities"), and the restore after that fails
+                // with EPERM -- leaving the worker thread stuck with the guest
+                // uid's credentials for every subsequent request.
+                let old = unsafe { $get_current() } as $ty;
+
                 // This call is safe because it doesn't modify any memory and we
                 // check the return value.
                 let res = unsafe { libc::syscall($syscall_nr, -1, val, -1) };
                 if res == 0 {
-                    Ok(Some($name))
+                    Ok(Some($name { old }))
                 } else {
                     Err(io::Error::last_os_error())
                 }
@@ -102,10 +116,10 @@ macro_rules! scoped_cred {
 
         impl Drop for $name {
             fn drop(&mut self) {
-                let res = unsafe { libc::syscall($syscall_nr, -1, 0, -1) };
+                let res = unsafe { libc::syscall($syscall_nr, -1, self.old, -1) };
                 if res < 0 {
                     error!(
-                        "failed to change credentials back to root: {}",
+                        "failed to restore credentials: {}",
                         io::Error::last_os_error(),
                     );
                 }
@@ -113,8 +127,8 @@ macro_rules! scoped_cred {
         }
     };
 }
-scoped_cred!(ScopedUid, libc::uid_t, libc::SYS_setresuid);
-scoped_cred!(ScopedGid, libc::gid_t, libc::SYS_setresgid);
+scoped_cred!(ScopedUid, libc::uid_t, libc::SYS_setresuid, libc::geteuid);
+scoped_cred!(ScopedGid, libc::gid_t, libc::SYS_setresgid, libc::getegid);
 
 #[must_use]
 pub struct ScopedCaps {
@@ -2143,5 +2157,114 @@ impl FileSystem for PassthroughFs {
             }
             _ => Err(io::Error::from_raw_os_error(libc::EOPNOTSUPP)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A non-zero uid the server can be made to run as, plus a guest
+    // uid distinct from it and from root. Both must be mappable when
+    // the test runs inside a user namespace (e.g. `buildah unshare`),
+    // so keep them inside the conventional 65536-wide subid range.
+    const SERVER_UID: libc::uid_t = 1;
+    const SERVER_GID: libc::gid_t = 1;
+    const GUEST_UID: libc::uid_t = 1000;
+
+    /// Regression test for the `scoped_cred` credential restore.
+    ///
+    /// The fs server switches the worker thread's effective uid per
+    /// request (`ScopedUid`) and restores it on drop. When the server
+    /// runs as a non-root user that holds CAP_SETUID — e.g. an
+    /// unprivileged daemon granted the capability via systemd's
+    /// `AmbientCapabilities=` — restoring to a hardcoded euid 0 (the
+    /// old behavior) wedges the thread: the next switch from euid 0 to
+    /// a non-zero uid clears its effective capability set, the restore
+    /// after that fails EPERM, and the thread is stranded at the guest
+    /// uid, failing every later request (including ones for guest
+    /// root). Restoring the *previous* euid keeps switching between
+    /// non-zero uids only, which never clears the capabilities.
+    ///
+    /// This drives the real `ScopedUid` through repeated switches and
+    /// asserts the thread is left back at the server uid. Credential
+    /// changes are per-thread (raw syscalls, by design), so it runs on
+    /// a dedicated thread and leaves the rest of the test binary
+    /// untouched. It needs CAP_SETUID and the ability to move to a
+    /// non-zero uid; without them (a plain `cargo test` as a normal
+    /// user) it skips rather than fails.
+    #[test]
+    fn scoped_uid_restores_server_uid_without_wedging() {
+        let outcome = std::thread::spawn(scoped_uid_no_wedge_body)
+            .join()
+            .expect("worker thread panicked");
+        match outcome {
+            Ok(()) => {}
+            Err(skip) => eprintln!("SKIP scoped_uid_restores_server_uid_without_wedging: {skip}"),
+        }
+    }
+
+    /// Establish the non-root-with-CAP_SETUID substrate on the current
+    /// thread, then exercise `ScopedUid`. `Err(reason)` means the
+    /// substrate could not be set up and the test should skip; a real
+    /// regression (the thread left wedged) panics via `assert` so the
+    /// test fails.
+    fn scoped_uid_no_wedge_body() -> Result<(), String> {
+        if !has_cap(None, CapSet::Effective, Capability::CAP_SETUID).map_err(|e| e.to_string())? {
+            return Err("missing CAP_SETUID (run as root or under a userns with caps)".into());
+        }
+
+        // Keep the permitted caps across the upcoming uid change.
+        if unsafe { libc::prctl(libc::PR_SET_KEEPCAPS, 1, 0, 0, 0) } != 0 {
+            return Err(format!("PR_SET_KEEPCAPS: {}", io::Error::last_os_error()));
+        }
+        // Per-thread setresgid/setresuid via raw syscalls, mirroring how
+        // `scoped_cred` changes only the calling thread's credentials.
+        // gid first — once euid is non-zero the right to setgid may be
+        // gone. A failure here is a substrate problem (e.g. the target
+        // uid is not mapped into the namespace), so it skips.
+        if unsafe { libc::syscall(libc::SYS_setresgid, SERVER_GID, SERVER_GID, SERVER_GID) } != 0 {
+            return Err(format!("setresgid: {}", io::Error::last_os_error()));
+        }
+        if unsafe { libc::syscall(libc::SYS_setresuid, SERVER_UID, SERVER_UID, SERVER_UID) } != 0 {
+            return Err(format!("setresuid: {}", io::Error::last_os_error()));
+        }
+        // The euid 0 -> non-zero move cleared the effective set; raise
+        // back the caps the server relies on from the retained permitted
+        // set. This is the state an AmbientCapabilities= daemon boots in.
+        for cap in [Capability::CAP_SETUID, Capability::CAP_SETGID] {
+            caps::raise(None, CapSet::Effective, cap).map_err(|e| e.to_string())?;
+        }
+        assert_eq!(
+            unsafe { libc::geteuid() },
+            SERVER_UID,
+            "precondition: thread should now run as the server uid"
+        );
+
+        // From here the substrate is in place: anything wrong below is a
+        // real regression and must fail (assert), not skip.
+        //
+        // The server's per-request switch: a handful as a non-zero guest
+        // uid. Two already suffice (the first restore parks euid at the
+        // old hardcoded 0, the second switch then clears the caps), but
+        // run more so a wedge is unmistakable.
+        for i in 0..4 {
+            let scoped = ScopedUid::new(GUEST_UID)
+                .expect("switching to the guest uid should succeed while caps are held");
+            assert_eq!(
+                unsafe { libc::geteuid() },
+                GUEST_UID,
+                "switch #{i} should land on the guest uid"
+            );
+            drop(scoped);
+        }
+
+        assert_eq!(
+            unsafe { libc::geteuid() },
+            SERVER_UID,
+            "worker thread wedged after repeated switches: euid was not restored to \
+             the server uid (the scoped_cred Drop regressed to restoring euid 0)"
+        );
+        Ok(())
     }
 }
