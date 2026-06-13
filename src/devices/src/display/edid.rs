@@ -16,7 +16,7 @@
 //! "detailed" timing information is first, so we provide a single block of detailed timing
 //! information and no other form of timing information.
 //!
-use super::display::{EdidParams, PhysicalSize};
+use super::types::{EdidParams, PhysicalSize};
 
 const EDID_DATA_LENGTH: usize = 128;
 const DEFAULT_HORIZONTAL_BLANKING: u16 = 560;

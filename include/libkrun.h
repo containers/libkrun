@@ -741,6 +741,7 @@ int krun_add_input_device_fd(uint32_t ctx_id, int input_fd);
  */
 #define KRUN_VIRTIO_DEVICE_CONSOLE 3
 #define KRUN_VIRTIO_DEVICE_RNG 4
+#define KRUN_VIRTIO_DEVICE_GPU 16
 #define KRUN_VIRTIO_DEVICE_RTC 17
 #define KRUN_VIRTIO_DEVICE_INPUT 18
 #define KRUN_VIRTIO_DEVICE_VSOCK 19
@@ -796,6 +797,13 @@ int krun_add_input_device_fd(uint32_t ctx_id, int input_fd);
  */
 #define KRUN_VHOST_USER_CAN_NUM_QUEUES 3
 #define KRUN_VHOST_USER_CAN_QUEUE_SIZES ((uint16_t[]){64, 64, 64})
+
+/**
+ * Vhost-user GPU device default queue configuration.
+ * GPU device uses 2 queues: control (idx 0), cursor (idx 1).
+ */
+#define KRUN_VHOST_USER_GPU_NUM_QUEUES 2
+#define KRUN_VHOST_USER_GPU_QUEUE_SIZES ((uint16_t[]){1024, 1024})
 
 /**
  * Add a vhost-user device to the VM.

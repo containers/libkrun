@@ -1,4 +1,5 @@
 use super::edid::EdidInfo;
+use super::types::EdidParams;
 use krun_display::{
     DisplayBackendBasicFramebuffer, DisplayBackendError, DisplayBackendNew, Rect, ResourceFormat,
 };
@@ -27,27 +28,6 @@ impl DisplayInfo {
 pub enum DisplayInfoEdid {
     Generated(EdidParams),
     Provided(Box<[u8]>),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct EdidParams {
-    pub refresh_rate: u32,
-    pub physical_size: PhysicalSize,
-}
-
-impl Default for EdidParams {
-    fn default() -> Self {
-        EdidParams {
-            refresh_rate: 60,
-            physical_size: PhysicalSize::Dpi(300),
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum PhysicalSize {
-    Dpi(u32),
-    DimensionsMillimeters(u16, u16),
 }
 
 impl DisplayInfo {
