@@ -20,6 +20,7 @@ use super::worker::NetWorker;
 use super::unixstream::Unixstream;
 use std::cmp;
 use std::io::Write;
+use std::mem::size_of;
 #[cfg(unix)]
 use std::os::fd::RawFd;
 #[cfg(windows)]
@@ -165,6 +166,10 @@ impl VirtioDevice for Net {
 
     fn queue_config(&self) -> &[QueueConfig] {
         &QUEUE_CONFIG
+    }
+
+    fn config_len(&self) -> Option<u32> {
+        Some(size_of::<VirtioNetConfig>() as u32)
     }
 
     fn read_config(&self, offset: u64, mut data: &mut [u8]) {
