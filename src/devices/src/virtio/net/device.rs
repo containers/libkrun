@@ -18,13 +18,12 @@ use super::worker::NetWorker;
 
 #[cfg(windows)]
 use super::unixstream::Unixstream;
+use std::cmp;
+use std::io::Write;
 #[cfg(unix)]
 use std::os::fd::RawFd;
 #[cfg(windows)]
 use std::os::windows::io::{AsSocket, BorrowedSocket, OwnedSocket, RawSocket};
-
-use std::cmp;
-use std::io::Write;
 use std::path::PathBuf;
 use virtio_bindings::virtio_net::VIRTIO_NET_F_MAC;
 use virtio_bindings::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
@@ -93,6 +92,8 @@ pub struct Net {
 
     #[cfg(windows)]
     worker_socket: Option<OwnedSocket>,
+    #[cfg(windows)]
+    worker: Option<NetWorker>,
 }
 
 impl Net {
@@ -125,6 +126,8 @@ impl Net {
             config,
             #[cfg(windows)]
             worker_socket: None,
+            #[cfg(windows)]
+            worker: None,
         })
     }
 
@@ -198,48 +201,81 @@ impl VirtioDevice for Net {
         })?;
 
         #[cfg(windows)]
-        let worker_socket = match &self.cfg_backend {
-            VirtioNetBackend::UnixstreamFd(fd) => unsafe { BorrowedSocket::borrow_raw(*fd) },
-            VirtioNetBackend::UnixstreamPath(path) => {
-                if self.worker_socket.is_none() {
-                    let stream =
-                        Unixstream::open(path.clone()).map_err(|_| ActivateError::BadActivate)?;
-                    self.worker_socket = Some(stream.fd);
-                }
-                self.worker_socket
-                    .as_ref()
-                    .expect("worker_socket is initialized")
-                    .as_socket()
+        {
+            if self.worker.is_some() {
+                error!("virtio-net worker already exists");
+                return Err(ActivateError::BadActivate);
             }
-        };
 
-        match NetWorker::new(
-            rx_q,
-            tx_q,
-            interrupt.clone(),
-            mem.clone(),
-            self.acked_features,
-            #[cfg(windows)]
-            worker_socket,
-            #[cfg(not(windows))]
-            self.cfg_backend.clone(),
-        ) {
-            Ok(worker) => {
-                worker.run();
-                self.device_state = DeviceState::Activated(mem, interrupt);
-                Ok(())
-            }
-            Err(err) => {
-                error!(
-                    "Error activating virtio-net ({}) backend: {err:?}",
-                    self.id()
-                );
-                Err(ActivateError::BadActivate)
+            let worker_socket = match &self.cfg_backend {
+                VirtioNetBackend::UnixstreamFd(fd) => unsafe { BorrowedSocket::borrow_raw(*fd) },
+                VirtioNetBackend::UnixstreamPath(path) => {
+                    if self.worker_socket.is_none() {
+                        let stream = Unixstream::open(path.clone())
+                            .map_err(|_| ActivateError::BadActivate)?;
+                        self.worker_socket = Some(stream.fd);
+                    }
+                    self.worker_socket
+                        .as_ref()
+                        .expect("worker_socket is initialized")
+                        .as_socket()
+                }
+            };
+
+            let worker = NetWorker::start(
+                rx_q,
+                tx_q,
+                interrupt.clone(),
+                mem.clone(),
+                self.acked_features,
+                worker_socket,
+            )?;
+            self.worker = Some(worker);
+            self.device_state = DeviceState::Activated(mem, interrupt);
+            Ok(())
+        }
+
+        #[cfg(not(windows))]
+        {
+            match NetWorker::new(
+                rx_q,
+                tx_q,
+                interrupt.clone(),
+                mem.clone(),
+                self.acked_features,
+                self.cfg_backend.clone(),
+            ) {
+                Ok(worker) => {
+                    worker.run();
+                    self.device_state = DeviceState::Activated(mem, interrupt);
+                    Ok(())
+                }
+                Err(err) => {
+                    error!(
+                        "Error activating virtio-net ({}) backend: {err:?}",
+                        self.id()
+                    );
+                    Err(ActivateError::BadActivate)
+                }
             }
         }
     }
 
     fn is_activated(&self) -> bool {
         self.device_state.is_activated()
+    }
+
+    fn reset(&mut self) -> bool {
+        #[cfg(windows)]
+        {
+            if let Some(worker) = self.worker.take() {
+                worker.stop();
+            }
+            self.acked_features = 0;
+            self.device_state = DeviceState::Inactive;
+            true
+        }
+        #[cfg(not(windows))]
+        false
     }
 }
