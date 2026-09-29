@@ -325,14 +325,15 @@ EXTRA_LIBPATH_Darwin = /opt/homebrew/opt/libkrunfw/lib:/opt/homebrew/opt/llvm/li
 # so we pass the path via LIBKRUN_LIB_PATH and let run.sh set the real variable.
 
 # Static test runs normally need no $(TEST_PREFIX) at all, but a custom
-# libkrunfw (LIBKRUNFW_SRC=) is still dlopen'd by libkrun at runtime, so it
-# must be built and installed into $(TEST_PREFIX) for those runs too.
+# libkrunfw is still dlopen'd by libkrun at runtime. Include a copy already
+# installed in $(TEST_PREFIX), even when LIBKRUNFW_SRC is omitted later.
 ifdef LIBKRUNFW_SRC
-TEST_LIBPATH = $$(realpath ../$(TEST_PREFIX)/$(LIBDIR_$(OS)))/:$(EXTRA_LIBPATH_$(OS))
 TEST_STATIC_DEPS = $(TEST_PREFIX)-libkrunfw
+endif
+ifneq ($(strip $(LIBKRUNFW_SRC) $(wildcard $(TEST_PREFIX)/$(LIBDIR_$(OS))/libkrunfw*)),)
+TEST_LIBPATH = $$(realpath ../$(TEST_PREFIX)/$(LIBDIR_$(OS)))/:$(EXTRA_LIBPATH_$(OS))
 else
 TEST_LIBPATH = $(EXTRA_LIBPATH_$(OS))
-TEST_STATIC_DEPS =
 endif
 
 ifeq ($(FFI),1)
