@@ -4,6 +4,11 @@ use test_vm_config::TestVmConfig;
 mod test_vsock_guest_connect;
 use test_vsock_guest_connect::TestVsockGuestConnect;
 
+#[cfg(target_os = "linux")]
+mod test_vsock_host_close;
+#[cfg(target_os = "linux")]
+use test_vsock_host_close::TestVsockHostClose;
+
 #[cfg(any(feature = "host", target_os = "linux"))]
 mod test_vsock_host_connect_refused;
 #[cfg(any(feature = "host", target_os = "linux"))]
@@ -84,6 +89,8 @@ pub fn test_cases() -> Vec<TestCase> {
             }),
         ),
         TestCase::new("vsock-guest-connect", Box::new(TestVsockGuestConnect)),
+        #[cfg(target_os = "linux")]
+        TestCase::new("vsock-host-close", Box::new(TestVsockHostClose)),
         #[cfg(any(feature = "host", target_os = "linux"))]
         TestCase::new(
             "vsock-host-connect-refused",
