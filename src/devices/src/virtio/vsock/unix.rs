@@ -238,7 +238,10 @@ impl UnixProxy {
                 }
                 Err(e) => {
                     debug!("recv_pkt: recv error: {e:?}");
-                    RecvPkt::Error
+                    match e {
+                        Errno::EAGAIN | Errno::EINTR => RecvPkt::Error,
+                        _ => RecvPkt::Close,
+                    }
                 }
             }
         } else {
@@ -487,6 +490,10 @@ impl Proxy for UnixProxy {
         self.peer_buf_alloc = pkt.buf_alloc();
         self.peer_fwd_cnt = Wrapping(pkt.fwd_cnt());
 
+        if self.status != ProxyStatus::WaitingCreditUpdate || self.peer_avail_credit() == 0 {
+            return ProxyUpdate::default();
+        }
+
         self.status = ProxyStatus::Connected;
 
         ProxyUpdate {
@@ -578,7 +585,14 @@ impl Proxy for UnixProxy {
     fn process_event(&mut self, evset: EventSet) -> ProxyUpdate {
         let mut update = ProxyUpdate::default();
 
-        if evset.contains(EventSet::HANG_UP) {
+        // A hung-up stream can still contain data, including more than the guest
+        // currently has buffers or credit for. Only recv() can establish EOF.
+        if evset.contains(EventSet::HANG_UP)
+            && !matches!(
+                self.status,
+                ProxyStatus::Connected | ProxyStatus::WaitingCreditUpdate
+            )
+        {
             debug!("process_event: HANG_UP");
 
             if self.status == ProxyStatus::Connecting {
@@ -595,7 +609,7 @@ impl Proxy for UnixProxy {
             return update;
         }
 
-        if evset.contains(EventSet::IN) {
+        if evset.intersects(EventSet::IN | EventSet::HANG_UP) {
             debug!("process_event: IN");
             if self.status == ProxyStatus::Connected {
                 let (signal_queue, wait_credit) = self.recv_pkt();
@@ -620,6 +634,7 @@ impl Proxy for UnixProxy {
                     self.push_reset();
                     update.signal_queue = true;
                     update.polling = Some((self.id(), self.fd.as_raw_fd(), EventSet::empty()));
+                    update.remove_proxy = ProxyRemoval::Deferred;
                     return update;
                 } else if self.status == ProxyStatus::WaitingCreditUpdate {
                     debug!("process_event: WaitingCreditUpdate");
