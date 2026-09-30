@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4, SocketAddrV6};
 use std::num::Wrapping;
 use std::os::fd::{FromRawFd, OwnedFd};
@@ -56,6 +57,7 @@ pub struct TsiStreamProxy {
     peer_buf_alloc: u32,
     peer_fwd_cnt: Wrapping<u32>,
     peer_shutdown: u32,
+    host_read_closed: bool,
     push_cnt: Wrapping<u32>,
     pending_accepts: u64,
     unixsock_path: Option<PathBuf>,
@@ -137,6 +139,7 @@ impl TsiStreamProxy {
             peer_buf_alloc: 0,
             peer_fwd_cnt: Wrapping(0),
             peer_shutdown: 0,
+            host_read_closed: false,
             push_cnt: Wrapping(0),
             pending_accepts: 0,
             unixsock_path: None,
@@ -176,6 +179,7 @@ impl TsiStreamProxy {
             peer_buf_alloc: 0,
             peer_fwd_cnt: Wrapping(0),
             peer_shutdown: 0,
+            host_read_closed: false,
             push_cnt: Wrapping(0),
             pending_accepts: 0,
             unixsock_path: None,
@@ -287,7 +291,7 @@ impl TsiStreamProxy {
         (Wrapping(self.peer_buf_alloc) - (self.rx_cnt - self.peer_fwd_cnt)).0 as usize
     }
 
-    fn recv_to_pkt(&self, pkt: &mut VsockPacket) -> RecvPkt {
+    fn recv_to_pkt(&self, pkt: &mut VsockPacket) -> io::Result<RecvPkt> {
         if let Some(buf) = pkt.buf_mut() {
             let peer_credit = self.peer_avail_credit();
             let max_len = std::cmp::min(buf.len(), peer_credit);
@@ -300,7 +304,7 @@ impl TsiStreamProxy {
             );
 
             if max_len == 0 {
-                return RecvPkt::WaitForCredit;
+                return Ok(RecvPkt::WaitForCredit);
             }
 
             match recv(
@@ -312,19 +316,17 @@ impl TsiStreamProxy {
                     debug!("recv cnt={cnt}");
                     if cnt > 0 {
                         debug!("recv rx_cnt={}", self.rx_cnt);
-                        RecvPkt::Read(cnt)
+                        Ok(RecvPkt::Read(cnt))
                     } else {
-                        RecvPkt::Close
+                        Ok(RecvPkt::Close)
                     }
                 }
-                Err(e) => {
-                    debug!("recv_pkt: recv error: {e:?}");
-                    RecvPkt::Error
-                }
+                Err(Errno::EAGAIN | Errno::EINTR) => Ok(RecvPkt::Error),
+                Err(e) => Err(e.into()),
             }
         } else {
             debug!("recv_pkt: pkt without buf");
-            RecvPkt::Error
+            Ok(RecvPkt::Error)
         }
     }
 
@@ -333,24 +335,36 @@ impl TsiStreamProxy {
         let mut wait_credit = false;
         let mut queue = self.queue.lock().unwrap();
 
-        while let Some(head) = queue.pop(&self.mem) {
+        while !self.host_read_closed {
+            let Some(head) = queue.pop(&self.mem) else {
+                break;
+            };
             let len = match VsockPacket::from_rx_virtq_head(&head) {
                 Ok(mut pkt) => match self.recv_to_pkt(&mut pkt) {
-                    RecvPkt::WaitForCredit => {
+                    Ok(RecvPkt::WaitForCredit) => {
                         wait_credit = true;
                         0
                     }
-                    RecvPkt::Read(cnt) => {
+                    Ok(RecvPkt::Read(cnt)) => {
                         self.rx_cnt += Wrapping(cnt as u32);
                         self.init_data_pkt(&mut pkt);
                         pkt.set_len(cnt as u32);
                         pkt.hdr().len() + cnt
                     }
-                    RecvPkt::Close => {
+                    Ok(RecvPkt::Close) => {
+                        self.host_read_closed = true;
+                        self.init_data_pkt(&mut pkt);
+                        pkt.set_op(uapi::VSOCK_OP_SHUTDOWN)
+                            .set_flags(uapi::VSOCK_FLAGS_SHUTDOWN_SEND)
+                            .set_len(0);
+                        pkt.hdr().len()
+                    }
+                    Ok(RecvPkt::Error) => 0,
+                    Err(e) => {
+                        debug!("recv_pkt: socket error: {e}");
                         self.status = ProxyStatus::Closed;
                         0
                     }
-                    RecvPkt::Error => 0,
                 },
                 Err(e) => {
                     debug!("recv_pkt: RX queue error: {e:?}");
@@ -551,7 +565,11 @@ impl Proxy for TsiStreamProxy {
         // Now that the vsock transport is fully established, start listening
         // for events in the TCP socket again.
         Some(ProxyUpdate {
-            polling: Some((self.id, self.fd.as_raw_fd(), EventSet::IN)),
+            polling: Some((
+                self.id,
+                self.fd.as_raw_fd(),
+                EventSet::IN | EventSet::READ_HANG_UP,
+            )),
             ..Default::default()
         })
     }
@@ -717,10 +735,18 @@ impl Proxy for TsiStreamProxy {
         self.peer_buf_alloc = pkt.buf_alloc();
         self.peer_fwd_cnt = Wrapping(pkt.fwd_cnt());
 
+        if self.host_read_closed || self.status == ProxyStatus::Closed {
+            return ProxyUpdate::default();
+        }
+
         self.status = ProxyStatus::Connected;
 
         ProxyUpdate {
-            polling: Some((self.id, self.fd.as_raw_fd(), EventSet::IN)),
+            polling: Some((
+                self.id,
+                self.fd.as_raw_fd(),
+                EventSet::IN | EventSet::READ_HANG_UP,
+            )),
             ..Default::default()
         }
     }
@@ -753,7 +779,11 @@ impl Proxy for TsiStreamProxy {
         self.switch_to_connected();
 
         ProxyUpdate {
-            polling: Some((self.id, self.fd.as_raw_fd(), EventSet::IN)),
+            polling: Some((
+                self.id,
+                self.fd.as_raw_fd(),
+                EventSet::IN | EventSet::READ_HANG_UP,
+            )),
             push_accept: Some((self.id, self.parent_id)),
             ..Default::default()
         }
@@ -826,7 +856,12 @@ impl Proxy for TsiStreamProxy {
     fn process_event(&mut self, evset: EventSet) -> ProxyUpdate {
         let mut update = ProxyUpdate::default();
 
-        if evset.contains(EventSet::HANG_UP) {
+        if evset.contains(EventSet::HANG_UP)
+            && !matches!(
+                self.status,
+                ProxyStatus::Connected | ProxyStatus::WaitingCreditUpdate
+            )
+        {
             debug!("process_event: HANG_UP");
             if self.status == ProxyStatus::Connecting {
                 self.push_connect_rsp(-libc::ECONNREFUSED);
@@ -845,7 +880,7 @@ impl Proxy for TsiStreamProxy {
             return update;
         }
 
-        if evset.contains(EventSet::IN) {
+        if evset.intersects(EventSet::IN | EventSet::READ_HANG_UP | EventSet::HANG_UP) {
             debug!("process_event: IN");
             if self.status == ProxyStatus::Connected {
                 let (signal_queue, wait_credit) = self.recv_pkt();
@@ -869,9 +904,10 @@ impl Proxy for TsiStreamProxy {
                     self.push_reset();
                     update.signal_queue = true;
                     update.polling = Some((self.id(), self.fd.as_raw_fd(), EventSet::empty()));
+                    update.remove_proxy = ProxyRemoval::Deferred;
                     return update;
-                } else if self.status == ProxyStatus::WaitingCreditUpdate {
-                    debug!("process_event: WaitingCreditUpdate");
+                } else if self.host_read_closed || self.status == ProxyStatus::WaitingCreditUpdate {
+                    debug!("process_event: disabling read polling");
                     update.polling = Some((self.id(), self.fd.as_raw_fd(), EventSet::empty()));
                 }
             } else if self.status == ProxyStatus::Listening
