@@ -477,16 +477,17 @@ impl TsiStreamProxy {
         let recv_off = pkt.flags() & uapi::VSOCK_FLAGS_SHUTDOWN_RCV != 0;
         let send_off = pkt.flags() & uapi::VSOCK_FLAGS_SHUTDOWN_SEND != 0;
 
-        let how = if recv_off && send_off {
-            Shutdown::Both
-        } else if recv_off {
-            Shutdown::Read
-        } else {
-            Shutdown::Write
-        };
-
-        if let Err(e) = shutdown(self.fd.as_raw_fd(), how) {
-            warn!("error sending shutdown to socket: {e}");
+        // Shutdown each direction independently: on macOS, shutdown(SHUT_BOTH) on a
+        // CLOSE_WAIT socket returns ENOTCONN, preventing the FIN from being sent.
+        if send_off {
+            if let Err(e) = shutdown(self.fd.as_raw_fd(), Shutdown::Write) {
+                debug!("error sending shutdown(Write) to socket: {e}");
+            }
+        }
+        if recv_off {
+            if let Err(e) = shutdown(self.fd.as_raw_fd(), Shutdown::Read) {
+                debug!("error sending shutdown(Read) to socket: {e}");
+            }
         }
     }
 }
