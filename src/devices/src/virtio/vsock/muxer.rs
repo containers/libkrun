@@ -628,6 +628,8 @@ impl VsockMuxer {
         let update = self.proxy_map.read().unwrap().get(&id).map(|proxy| {
             let mut proxy = proxy.lock().unwrap();
             let mut update = proxy.update_peer_credit(pkt);
+            // Apply the polling change under the proxy lock so a later event on
+            // the same connection cannot rearm it after we stopped polling.
             if let Some((id, fd, events)) = update.polling.take() {
                 self.update_polling(id, fd, events);
             }

@@ -736,7 +736,10 @@ impl Proxy for TsiStreamProxy {
         self.peer_buf_alloc = pkt.buf_alloc();
         self.peer_fwd_cnt = Wrapping(pkt.fwd_cnt());
 
-        if self.host_read_closed || self.status == ProxyStatus::Closed {
+        if self.host_read_closed
+            || self.status != ProxyStatus::WaitingCreditUpdate
+            || self.peer_avail_credit() == 0
+        {
             return ProxyUpdate::default();
         }
 
@@ -857,6 +860,9 @@ impl Proxy for TsiStreamProxy {
     fn process_event(&mut self, evset: EventSet) -> ProxyUpdate {
         let mut update = ProxyUpdate::default();
 
+        // A hung-up stream can still hold unread data: Linux reports EPOLLIN
+        // together with EPOLLHUP even while the peer keeps unread bytes buffered.
+        // Only recv() can establish EOF, so stay in the draining states.
         if evset.contains(EventSet::HANG_UP)
             && !matches!(
                 self.status,
