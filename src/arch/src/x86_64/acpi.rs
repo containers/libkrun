@@ -6,9 +6,10 @@ use std::result;
 use acpi_tables::Aml;
 use acpi_tables::aml::{
     AddressSpace, AddressSpaceCacheable, Device, EISAName, IO, Interrupt, Memory32Fixed, Name,
-    PackageBuilder, Path, ResourceTemplate, Scope, ZERO,
+    Package, PackageBuilder, Path, ResourceTemplate, Scope, ZERO,
 };
 use acpi_tables::fadt::{FADTBuilder, Flags};
+use acpi_tables::gas::{AccessSize, AddressSpace as AmlAddressSpace, GAS};
 use acpi_tables::madt::{
     EnabledStatus, IoApic, LocalInterruptController, MADT, ProcessorLocalApic,
 };
@@ -31,6 +32,12 @@ const IO_APIC_DEFAULT_PHYS_BASE: u32 = 0xfec0_0000;
 const MAX_SUPPORTED_CPUS: u32 = 254;
 /// IAPC_BOOT_ARCH bit 1: 8042 present on ports 0x60/0x64 (`ACPI_FADT_8042`).
 const IAPC_BOOT_ARCH_8042: u16 = 1 << 1;
+/// I/O base for hardware-reduced ACPI sleep registers.
+const PM1A_CNT_BLK: u32 = 0x604;
+/// Hardware-reduced ACPI sleep control register.
+const SLEEP_CONTROL_REG: u32 = PM1A_CNT_BLK;
+/// Hardware-reduced ACPI sleep status register.
+const SLEEP_STATUS_REG: u32 = PM1A_CNT_BLK + 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PciFunctionInfo {
@@ -140,8 +147,11 @@ fn build_dsdt(virtio_mmio_devices: &[(u64, u32)], pci_host: Option<&PciHostInfo>
     }
 
     let scope_bytes = Scope::raw(Path::new("\\_SB_"), aml_body);
+    // Both sleep types are zero, matching AcpiPm's S5 encoding.
+    let s5 = Package::new(vec![&0u8, &0u8]);
 
     let mut dsdt = Sdt::new(*b"DSDT", 36, 2, *b"LIBKRN", *b"KRUNDSDT", 1);
+    Name::new(Path::new("_S5_"), &s5).to_aml_bytes(&mut dsdt);
     dsdt.append_slice(&scope_bytes);
     dsdt.as_slice().to_vec()
 }
@@ -156,6 +166,20 @@ fn build_fadt(dsdt_addr: u64) -> Vec<u8> {
         .dsdt_64(dsdt_addr)
         .flag(Flags::HwReducedAcpi);
     builder.iapc_boot_arch = IAPC_BOOT_ARCH_8042.into();
+    builder.sleep_control_reg = GAS::new(
+        AmlAddressSpace::SystemIo,
+        8,
+        0,
+        AccessSize::ByteAccess,
+        SLEEP_CONTROL_REG.into(),
+    );
+    builder.sleep_status_reg = GAS::new(
+        AmlAddressSpace::SystemIo,
+        8,
+        0,
+        AccessSize::ByteAccess,
+        SLEEP_STATUS_REG.into(),
+    );
     let fadt = builder.finalize();
     let mut bytes = Vec::new();
     fadt.to_aml_bytes(&mut bytes);
@@ -351,6 +375,7 @@ mod tests {
         assert!(length > 36);
 
         assert!(bytes.len() > 100);
+        assert!(bytes.windows(4).any(|window| window == b"_S5_"));
     }
 
     #[test]
