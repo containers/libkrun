@@ -19,11 +19,23 @@ use vm_memory::GuestMemoryMmap;
 pub struct QueueConfig {
     /// Maximum size of the queue.
     pub size: u16,
+    /// Notifications must exit to the VMM instead of using ioeventfd.
+    pub synchronous: bool,
 }
 
 impl QueueConfig {
     pub const fn new(size: u16) -> Self {
-        Self { size }
+        Self {
+            size,
+            synchronous: false,
+        }
+    }
+
+    pub const fn new_sync(size: u16) -> Self {
+        Self {
+            size,
+            synchronous: true,
+        }
     }
 }
 
@@ -163,6 +175,12 @@ pub trait VirtioDevice: AsAny + Send {
     /// Get base and size of the SHM region
     fn shm_region(&self) -> Option<&VirtioShmRegion> {
         None
+    }
+
+    /// Complete a synchronous queue notification before returning to the guest.
+    /// Return false if this queue cannot be handled synchronously.
+    fn handle_sync(&mut self, _queue_idx: u32) -> bool {
+        false
     }
 }
 

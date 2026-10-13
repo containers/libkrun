@@ -272,6 +272,13 @@ impl MmioTransport {
         &self.queue_evts
     }
 
+    /// Whether queue notifications must exit to the notifying vCPU thread.
+    pub fn queue_is_sync(&self, index: usize) -> bool {
+        self.queue_config
+            .get(index)
+            .is_some_and(|config| config.synchronous)
+    }
+
     fn check_device_status(&self, set: u32, clr: u32) -> bool {
         self.device_status & (set | clr) == set
     }
@@ -319,6 +326,7 @@ impl MmioTransport {
         if self.locked_device().is_activated() {
             debug!("reset device while it's still in active state");
         }
+        self.locked_device().set_acked_features(0);
         self.features_select = 0;
         self.acked_features_select = 0;
         self.queue_select = 0;
@@ -505,11 +513,14 @@ impl BusDevice for MmioTransport {
                     0x38 => self.update_queue_field(|q| q.size = v as u16),
                     0x44 => self.update_queue_field(|q| q.ready = v == 1),
                     0x50 => {
-                        // Queue notification - write to the eventfd for the specified queue.
-                        if let Some(eventfd) = self.queue_evts.get(v as usize) {
-                            eventfd.write(1).unwrap();
-                        } else {
-                            warn!("invalid queue index for notification: {v}");
+                        let handled_sync =
+                            self.queue_is_sync(v as usize) && self.locked_device().handle_sync(v);
+                        if !handled_sync {
+                            if let Some(eventfd) = self.queue_evts.get(v as usize) {
+                                eventfd.write(1).unwrap();
+                            } else {
+                                warn!("invalid queue index for notification: {v}");
+                            }
                         }
                     }
                     0x64 => {
