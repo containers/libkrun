@@ -255,14 +255,130 @@ impl VirtioDevice for Balloon {
     fn is_activated(&self) -> bool {
         self.device_state.is_activated()
     }
+
+    fn reset(&mut self) -> bool {
+        #[cfg(target_os = "macos")]
+        self.reclaim.reset();
+
+        if let Some(queues) = self.queues.take() {
+            for queue in queues {
+                while queue.event.read().is_ok() {}
+            }
+        }
+        while self.activate_evt.read().is_ok() {}
+        self.acked_features = 0;
+        self.device_state = DeviceState::Inactive;
+        true
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    use polly::event_manager::EventManager;
+    use utils::eventfd::EFD_NONBLOCK;
+    use vm_memory::GuestAddress;
+
     use super::super::test_util::TestDevice;
     use super::*;
+    use crate::virtio::Queue;
+    use crate::virtio::device::{InterruptHandler, InterruptType};
 
     const MIB: u64 = 1 << 20;
+
+    struct TestInterrupt;
+
+    impl InterruptHandler for TestInterrupt {
+        fn try_signal(&self, _interrupt: InterruptType) -> Result<(), crate::Error> {
+            Ok(())
+        }
+    }
+
+    fn queue_events() -> Vec<Arc<EventFd>> {
+        (0..defs::NUM_QUEUES)
+            .map(|_| Arc::new(EventFd::new(EFD_NONBLOCK).unwrap()))
+            .collect()
+    }
+
+    fn activate(balloon: &mut Balloon, events: &[Arc<EventFd>]) {
+        let mem = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 1 << 20)]).unwrap();
+        let queues = events
+            .iter()
+            .zip(&defs::QUEUE_CONFIG)
+            .map(|(event, config)| DeviceQueue::new(Queue::new(config.size), event.clone()))
+            .collect();
+        let interrupt = InterruptTransport::from_handler(Arc::new(TestInterrupt));
+        balloon.activate(mem, interrupt, queues).unwrap();
+    }
+
+    fn process_event(manager: &mut EventManager) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while manager.run_with_timeout(100).unwrap() == 0 {
+            assert!(Instant::now() < deadline, "balloon event was not processed");
+        }
+    }
+
+    #[test]
+    fn test_reset_drains_queue_notifications_and_allows_reactivation() {
+        let balloon = Arc::new(Mutex::new(Balloon::new().unwrap()));
+        let mut manager = EventManager::new().unwrap();
+        manager.add_subscriber(balloon.clone()).unwrap();
+        let events = queue_events();
+        activate(&mut balloon.lock().unwrap(), &events);
+        process_event(&mut manager);
+
+        for event in &events {
+            event.write(1).unwrap();
+            event.write(1).unwrap();
+        }
+        assert!(balloon.lock().unwrap().reset());
+        assert!(!balloon.lock().unwrap().is_activated());
+        assert!(balloon.lock().unwrap().queues.is_none());
+        assert_eq!(manager.run_with_timeout(0).unwrap(), 0);
+
+        activate(&mut balloon.lock().unwrap(), &events);
+        assert_eq!(manager.run_with_timeout(0).unwrap(), 0);
+        events[STQ_INDEX].write(1).unwrap();
+        process_event(&mut manager);
+        assert_eq!(manager.run_with_timeout(0).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_reset_before_activation_event_drains_notifications() {
+        let balloon = Arc::new(Mutex::new(Balloon::new().unwrap()));
+        let mut manager = EventManager::new().unwrap();
+        manager.add_subscriber(balloon.clone()).unwrap();
+        let events = queue_events();
+        activate(&mut balloon.lock().unwrap(), &events);
+        events[FRQ_INDEX].write(1).unwrap();
+        assert!(balloon.lock().unwrap().reset());
+        assert_eq!(manager.run_with_timeout(0).unwrap(), 0);
+        assert!(balloon.lock().unwrap().reset());
+
+        activate(&mut balloon.lock().unwrap(), &events);
+        process_event(&mut manager);
+        assert_eq!(manager.run_with_timeout(0).unwrap(), 0);
+        events[STQ_INDEX].write(1).unwrap();
+        process_event(&mut manager);
+        assert_eq!(manager.run_with_timeout(0).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_reset_clears_negotiated_features() {
+        let mut balloon = Balloon::new().unwrap();
+        let version_1 = 1 << uapi::VIRTIO_F_VERSION_1;
+        balloon.ack_features_by_page(0, 1 << uapi::VIRTIO_BALLOON_F_REPORTING);
+        balloon.ack_features_by_page(1, 1);
+        activate(&mut balloon, &queue_events());
+
+        assert!(balloon.reset());
+        assert_eq!(balloon.acked_features(), 0);
+        balloon.ack_features_by_page(0, 0);
+        balloon.ack_features_by_page(1, 1);
+        assert_eq!(balloon.acked_features(), version_1);
+    }
 
     #[test]
     fn test_report_is_used_and_signaled() {

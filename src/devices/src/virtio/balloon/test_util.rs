@@ -36,8 +36,10 @@ pub(super) struct TestDevice<'a> {
 impl<'a> TestDevice<'a> {
     /// Attaches and activates a balloon whose free page reporting queue is at the start of `mem`.
     pub(super) fn new(mem: &'a GuestMemoryMmap) -> Self {
-        let mut balloon = Balloon::new().unwrap();
+        Self::with_balloon(mem, Balloon::new().unwrap())
+    }
 
+    pub(super) fn with_balloon(mem: &'a GuestMemoryMmap, mut balloon: Balloon) -> Self {
         let frq = VirtQueue::new(GuestAddress(0), mem, 16);
         let queues = (0..NUM_QUEUES)
             .map(|i| {
