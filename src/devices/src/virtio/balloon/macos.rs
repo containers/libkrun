@@ -38,15 +38,15 @@ pub(super) struct FreePageReclaim {
 }
 
 struct Reclaimer {
-    reports: Sender<Report>,
+    requests: Sender<ReclaimRequest>,
     done: PollableChannelReciever<u16>,
     /// Reports sent to the thread that aren't done yet.
     in_flight: usize,
 }
 
-struct Report {
-    head: u16,
-    ranges: Vec<Range<u64>>,
+enum ReclaimRequest {
+    Report { head: u16, ranges: Vec<Range<u64>> },
+    Flush(Sender<()>),
 }
 
 impl FreePageReclaim {
@@ -105,7 +105,10 @@ impl FreePageReclaim {
     fn submit(&mut self, head: u16, ranges: Vec<Range<u64>>) -> bool {
         match &mut self.reclaimer {
             Some(reclaimer) if !ranges.is_empty() => {
-                reclaimer.reports.send(Report { head, ranges }).unwrap();
+                reclaimer
+                    .requests
+                    .send(ReclaimRequest::Report { head, ranges })
+                    .unwrap();
                 reclaimer.in_flight += 1;
                 true
             }
@@ -124,18 +127,31 @@ impl FreePageReclaim {
     pub(super) fn done_fd(&self) -> Option<RawFd> {
         self.reclaimer.as_ref().map(|r| r.done.as_raw_fd())
     }
+
+    pub(super) fn reset(&mut self) {
+        let Some(reclaimer) = &mut self.reclaimer else {
+            return;
+        };
+
+        // Reset returns reported pages to the guest, so their reclamation must finish first.
+        let (flushed, flush_done) = unbounded();
+        let _ = reclaimer.requests.send(ReclaimRequest::Flush(flushed));
+        let _ = flush_done.recv();
+        while let Ok(Some(_)) = reclaimer.done.try_recv() {}
+        reclaimer.in_flight = 0;
+    }
 }
 
 impl Reclaimer {
     fn new(map_sender: Sender<WorkerMessage>) -> Result<Self> {
         let (done_sender, done) = pollable_channel().map_err(BalloonError::EventFd)?;
-        let (reports, report_receiver) = unbounded();
+        let (requests, request_receiver) = unbounded();
         thread::Builder::new()
             .name("balloon reclaim".into())
-            .spawn(move || reclaim(report_receiver, map_sender, done_sender))
+            .spawn(move || reclaim(request_receiver, map_sender, done_sender))
             .map_err(BalloonError::ReclaimThread)?;
         Ok(Self {
-            reports,
+            requests,
             done,
             in_flight: 0,
         })
@@ -143,12 +159,19 @@ impl Reclaimer {
 }
 
 fn reclaim(
-    reports: Receiver<Report>,
+    requests: Receiver<ReclaimRequest>,
     map_sender: Sender<WorkerMessage>,
     done: PollableChannelSender<u16>,
 ) {
-    for report in reports {
-        for range in report.ranges {
+    for request in requests {
+        let (head, ranges) = match request {
+            ReclaimRequest::Report { head, ranges } => (head, ranges),
+            ReclaimRequest::Flush(flushed) => {
+                flushed.send(()).unwrap();
+                continue;
+            }
+        };
+        for range in ranges {
             let (reply_sender, reply) = unbounded();
             if map_sender
                 .send(WorkerMessage::ReclaimMemory(
@@ -165,7 +188,7 @@ fn reclaim(
                 return;
             }
         }
-        done.send(report.head).unwrap();
+        done.send(head).unwrap();
     }
 }
 
@@ -224,13 +247,17 @@ impl Balloon {
 #[cfg(test)]
 mod tests {
     use std::ops::{Deref, DerefMut};
+    use std::os::fd::AsFd;
     use std::thread::sleep;
     use std::time::{Duration, Instant};
 
+    use crossbeam_channel::RecvTimeoutError;
+    use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
     use vm_memory::{Bytes, GuestMemoryMmap};
 
     use super::super::test_util;
     use super::*;
+    use crate::virtio::VirtioDevice;
 
     const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -296,8 +323,8 @@ mod tests {
         let (map_sender, map_receiver) = unbounded();
         let reclaimer = Reclaimer::new(map_sender).unwrap();
         reclaimer
-            .reports
-            .send(Report {
+            .requests
+            .send(ReclaimRequest::Report {
                 head: 7,
                 ranges: vec![0x8000_0000..0x8020_0000, 0x8040_0000..0x8080_0000],
             })
@@ -327,34 +354,34 @@ mod tests {
 
     #[test]
     fn test_reclaim_stops_when_vmm_channel_is_closed() {
-        let (reports, report_receiver) = unbounded();
-        reports
-            .send(Report {
+        let (requests, request_receiver) = unbounded();
+        requests
+            .send(ReclaimRequest::Report {
                 head: 7,
                 ranges: vec![0x8000_0000..0x8020_0000, 0x8040_0000..0x8080_0000],
             })
             .unwrap();
-        drop(reports);
+        drop(requests);
 
         let (map_sender, map_receiver) = unbounded();
         drop(map_receiver);
         let (done_sender, done) = pollable_channel().unwrap();
 
-        reclaim(report_receiver, map_sender, done_sender);
+        reclaim(request_receiver, map_sender, done_sender);
 
         assert_eq!(done.try_recv().unwrap(), None);
     }
 
     #[test]
     fn test_reclaim_stops_when_vmm_drops_reply() {
-        let (reports, report_receiver) = unbounded();
-        reports
-            .send(Report {
+        let (requests, request_receiver) = unbounded();
+        requests
+            .send(ReclaimRequest::Report {
                 head: 7,
                 ranges: vec![0x8000_0000..0x8020_0000, 0x8040_0000..0x8080_0000],
             })
             .unwrap();
-        drop(reports);
+        drop(requests);
 
         let (map_sender, map_receiver) = unbounded();
         let (done_sender, done) = pollable_channel().unwrap();
@@ -363,7 +390,7 @@ mod tests {
             assert!(matches!(message, WorkerMessage::ReclaimMemory(..)));
         });
 
-        reclaim(report_receiver, map_sender, done_sender);
+        reclaim(request_receiver, map_sender, done_sender);
         worker.join().unwrap();
 
         assert_eq!(done.try_recv().unwrap(), None);
@@ -427,6 +454,72 @@ mod tests {
     }
 
     #[test]
+    fn test_reset_waits_for_reclaim_and_allows_reactivation() {
+        let mem = guest_memory();
+        let TestDevice { mut dev, worker } =
+            TestDevice::new(&mem, Some(FreePageReportingMode::Replace));
+        let done_fd = dev.balloon.reclaim.done_fd();
+        dev.report(&[(0x40_0000, 2 << 20), (0x80_0000, 2 << 20)]);
+        assert!(!dev.balloon.process_frq());
+
+        let (reset_done, reset_result) = unbounded();
+        thread::scope(|scope| {
+            scope.spawn(|| reset_done.send(dev.balloon.reset()).unwrap());
+            for expected in [(0x40_0000, 2 << 20), (0x80_0000, 2 << 20)] {
+                let WorkerMessage::ReclaimMemory(reply_sender, guest_addr, len) =
+                    worker.recv_timeout(TIMEOUT).unwrap()
+                else {
+                    panic!("unexpected worker message");
+                };
+                assert_eq!((guest_addr, len), expected);
+                assert_eq!(
+                    reset_result.recv_timeout(Duration::from_millis(20)),
+                    Err(RecvTimeoutError::Timeout)
+                );
+                reply_sender.send(true).unwrap();
+            }
+            assert!(reset_result.recv_timeout(TIMEOUT).unwrap());
+        });
+
+        assert!(!dev.balloon.is_activated());
+        assert!(dev.balloon.queues.is_none());
+        assert_eq!(dev.used(), 0);
+        assert!(!dev.signaled());
+        assert_eq!(dev.balloon.reclaim.done_fd(), done_fd);
+        let reclaimer = dev.balloon.reclaim.reclaimer.as_ref().unwrap();
+        assert_eq!(reclaimer.in_flight, 0);
+        assert!(reclaimer.done.is_empty());
+        let mut poll_fds = [PollFd::new(reclaimer.done.as_fd(), PollFlags::POLLIN)];
+        assert_eq!(poll(&mut poll_fds, PollTimeout::ZERO).unwrap(), 0);
+
+        let mut dev = TestDevice {
+            dev: test_util::TestDevice::with_balloon(&mem, dev.balloon),
+            worker,
+        };
+        dev.handle_reclaim_done();
+        assert_eq!(dev.used(), 0);
+        assert!(!dev.signaled());
+
+        dev.report(&[(0x40_0000, 2 << 20)]);
+        assert!(!dev.balloon.process_frq());
+        let WorkerMessage::ReclaimMemory(reply_sender, _, _) =
+            dev.worker.recv_timeout(TIMEOUT).unwrap()
+        else {
+            panic!("unexpected worker message");
+        };
+        reply_sender.send(true).unwrap();
+        let deadline = Instant::now() + TIMEOUT;
+        while dev.used() == 0 {
+            assert!(Instant::now() < deadline, "report not used after reset");
+            sleep(Duration::from_millis(1));
+            dev.handle_reclaim_done();
+        }
+        assert_eq!(dev.used(), 1);
+        assert!(dev.signaled());
+        assert_eq!(dev.in_flight(), 0);
+    }
+
+    #[test]
     fn test_adjacent_ranges_reclaimed_at_once() {
         let mem = guest_memory();
         let mut dev = TestDevice::new(&mem, Some(FreePageReportingMode::Replace));
@@ -470,7 +563,7 @@ mod tests {
         assert_eq!(dev.in_flight(), MAX_IN_FLIGHT);
         assert_eq!(usize::from(dev.pending(&mem)), reports - MAX_IN_FLIGHT);
         let reclaimer = dev.balloon.reclaim.reclaimer.as_ref().unwrap();
-        assert!(reclaimer.reports.len() <= MAX_IN_FLIGHT);
+        assert!(reclaimer.requests.len() <= MAX_IN_FLIGHT);
 
         // Notifying the device again doesn't make it take more.
         assert!(!dev.balloon.process_frq());

@@ -172,16 +172,17 @@ impl Balloon {
 impl Subscriber for Balloon {
     fn process(&mut self, event: &EpollEvent, event_manager: &mut EventManager) {
         let source = event.fd();
-        let ifq = self.queue_event(IFQ_INDEX).as_raw_fd();
-        let dfq = self.queue_event(DFQ_INDEX).as_raw_fd();
-        let stq = self.queue_event(STQ_INDEX).as_raw_fd();
-        let phq = self.queue_event(PHQ_INDEX).as_raw_fd();
-        let frq = self.queue_event(FRQ_INDEX).as_raw_fd();
         let activate_evt = self.activate_evt.as_raw_fd();
         #[cfg(target_os = "macos")]
         let reclaim_done = self.reclaim.done_fd();
 
         if self.is_activated() {
+            let ifq = self.queue_event(IFQ_INDEX).as_raw_fd();
+            let dfq = self.queue_event(DFQ_INDEX).as_raw_fd();
+            let stq = self.queue_event(STQ_INDEX).as_raw_fd();
+            let phq = self.queue_event(PHQ_INDEX).as_raw_fd();
+            let frq = self.queue_event(FRQ_INDEX).as_raw_fd();
+
             match source {
                 _ if source == ifq => self.handle_ifq_event(event),
                 _ if source == dfq => self.handle_dfq_event(event),
