@@ -14,7 +14,7 @@ use virtio_bindings::virtio_ring::VIRTIO_RING_F_EVENT_IDX;
 
 use super::device_status;
 use super::*;
-use crate::bus::BusDevice;
+use crate::bus::{BusDevice, BusWriteAction};
 use crate::legacy::IrqChip;
 use utils::{byte_order, eventfd::EventFd};
 use vm_memory::{GuestAddress, GuestMemoryMmap};
@@ -480,7 +480,18 @@ impl BusDevice for MmioTransport {
         };
     }
 
-    fn write(&mut self, _vcpuid: u64, offset: u64, data: &[u8]) {
+    fn write(&mut self, vcpuid: u64, offset: u64, data: &[u8]) {
+        if let Some(action) = self.prepare_write(vcpuid, offset, data) {
+            action.execute();
+        }
+    }
+
+    fn prepare_write(
+        &mut self,
+        _vcpuid: u64,
+        offset: u64,
+        data: &[u8],
+    ) -> Option<Arc<dyn BusWriteAction>> {
         fn hi(v: &mut GuestAddress, x: u32) {
             *v = (*v & 0xffff_ffff) | (u64::from(x) << 32)
         }
@@ -513,14 +524,16 @@ impl BusDevice for MmioTransport {
                     0x38 => self.update_queue_field(|q| q.size = v as u16),
                     0x44 => self.update_queue_field(|q| q.ready = v == 1),
                     0x50 => {
-                        let handled_sync =
-                            self.queue_is_sync(v as usize) && self.locked_device().handle_sync(v);
-                        if !handled_sync {
-                            if let Some(eventfd) = self.queue_evts.get(v as usize) {
-                                eventfd.write(1).unwrap();
-                            } else {
-                                warn!("invalid queue index for notification: {v}");
+                        if self.queue_is_sync(v as usize) {
+                            let action = self.locked_device().sync_queue(v);
+                            if action.is_some() {
+                                return action;
                             }
+                        }
+                        if let Some(eventfd) = self.queue_evts.get(v as usize) {
+                            eventfd.write(1).unwrap();
+                        } else {
+                            warn!("invalid queue index for notification: {v}");
                         }
                     }
                     0x64 => {
@@ -558,6 +571,7 @@ impl BusDevice for MmioTransport {
                 );
             }
         }
+        None
     }
 
     fn interrupt(&self, irq_mask: u32) -> std::io::Result<()> {

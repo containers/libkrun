@@ -3,8 +3,8 @@ use crossbeam_channel::Sender;
 use std::cmp;
 use std::io::Write;
 use std::mem::offset_of;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -29,6 +29,7 @@ use super::server::Server;
 use super::virtual_entry::VirtualDirEntry;
 use super::worker::{FsServer, FsWorker};
 use super::{defs, defs::uapi};
+use crate::BusWriteAction;
 use crate::virtio::InterruptTransport;
 use crate::virtio::passthrough::PermissionSemantics;
 
@@ -52,6 +53,75 @@ impl Default for VirtioFsConfig {
 
 unsafe impl ByteValued for VirtioFsConfig {}
 
+struct FsSyncRuntime {
+    active: AtomicBool,
+    mem: GuestMemoryMmap,
+    server: Arc<FsServer>,
+    allow_idmap: bool,
+    shm_region: Option<VirtioShmRegion>,
+    exit_code: Arc<AtomicI32>,
+    #[cfg(target_os = "macos")]
+    map_sender: Option<Sender<WorkerMessage>>,
+}
+
+impl FsSyncRuntime {
+    fn process_queue(&self, queue: &mut Queue) {
+        while let Some(head) = queue.pop(&self.mem) {
+            let reader = Reader::new(&self.mem, head.clone())
+                .map_err(FsError::QueueReader)
+                .unwrap();
+            let writer = Writer::new(&self.mem, head.clone())
+                .map_err(FsError::QueueWriter)
+                .unwrap();
+
+            let len = match self.server.handle_message(
+                reader,
+                writer,
+                self.allow_idmap,
+                &self.shm_region,
+                &self.exit_code,
+                #[cfg(target_os = "macos")]
+                &self.map_sender,
+            ) {
+                Ok(len) => len,
+                Err(e) => {
+                    error!("error handling message: {e:?}");
+                    0
+                }
+            };
+
+            if let Err(e) = queue.add_used(&self.mem, head.index, len as u32) {
+                error!("failed to add used elements to the queue: {e:?}");
+            }
+        }
+    }
+}
+
+struct FsSyncQueue {
+    // Dispatch must not wait for an executing queue while holding the transport lock.
+    ready: bool,
+    queue: Mutex<Queue>,
+    runtime: Arc<FsSyncRuntime>,
+}
+
+impl BusWriteAction for FsSyncQueue {
+    fn execute(&self) {
+        let mut queue = self.queue.lock().unwrap();
+        // A notification may have been selected before reset but not yet executed.
+        if !self.runtime.active.load(Ordering::Acquire) {
+            return;
+        }
+
+        loop {
+            queue.disable_notification(&self.runtime.mem).unwrap();
+            self.runtime.process_queue(&mut queue);
+            if !queue.enable_notification(&self.runtime.mem).unwrap() {
+                break;
+            }
+        }
+    }
+}
+
 pub struct Fs {
     avail_features: u64,
     acked_features: u64,
@@ -68,8 +138,8 @@ pub struct Fs {
     exit_code: Arc<AtomicI32>,
     #[cfg(target_os = "macos")]
     map_sender: Option<Sender<WorkerMessage>>,
-    sync_queues: Vec<Queue>,
-    server: Option<Arc<FsServer>>,
+    sync_queues: Vec<Arc<FsSyncQueue>>,
+    sync_runtime: Option<Arc<FsSyncRuntime>>,
 }
 
 impl Fs {
@@ -133,7 +203,7 @@ impl Fs {
             #[cfg(target_os = "macos")]
             map_sender: None,
             sync_queues: Vec::new(),
-            server: None,
+            sync_runtime: None,
         })
     }
 
@@ -175,66 +245,6 @@ impl Fs {
 
     fn sync_enabled(&self) -> bool {
         self.acked_features & (1u64 << uapi::VIRTIO_FS_F_SYNC) != 0
-    }
-
-    fn handle_sync_event(&mut self, queue_index: usize) {
-        debug!("Fs: synchronous queue event: {queue_index}");
-        let mem = match &self.device_state {
-            DeviceState::Activated(mem, _) => mem.clone(),
-            DeviceState::Inactive => unreachable!(),
-        };
-
-        loop {
-            self.sync_queues[queue_index]
-                .disable_notification(&mem)
-                .unwrap();
-
-            self.process_sync_queue(queue_index);
-
-            if !self.sync_queues[queue_index]
-                .enable_notification(&mem)
-                .unwrap()
-            {
-                break;
-            }
-        }
-    }
-
-    fn process_sync_queue(&mut self, queue_index: usize) {
-        let mem = match &self.device_state {
-            DeviceState::Activated(mem, _) => mem.clone(),
-            DeviceState::Inactive => unreachable!(),
-        };
-
-        let queue = &mut self.sync_queues[queue_index];
-        while let Some(head) = queue.pop(&mem) {
-            let reader = Reader::new(&mem, head.clone())
-                .map_err(FsError::QueueReader)
-                .unwrap();
-            let writer = Writer::new(&mem, head.clone())
-                .map_err(FsError::QueueWriter)
-                .unwrap();
-
-            let len = match self.server.as_ref().unwrap().handle_message(
-                reader,
-                writer,
-                self.allow_idmap,
-                &self.shm_region,
-                &self.exit_code,
-                #[cfg(target_os = "macos")]
-                &self.map_sender,
-            ) {
-                Ok(len) => len,
-                Err(e) => {
-                    error!("error handling message: {e:?}");
-                    0
-                }
-            };
-
-            if let Err(e) = queue.add_used(&mem, head.index, len as u32) {
-                error!("failed to add used elements to the queue: {e:?}");
-            }
-        }
     }
 }
 
@@ -300,9 +310,6 @@ impl VirtioDevice for Fs {
 
         let mut queues = queues;
         let sync_queues = queues.split_off(self.first_sync_queue());
-        if self.sync_enabled() {
-            self.sync_queues = sync_queues.into_iter().map(|dq| dq.queue).collect();
-        }
 
         // Extract queues and eventfds from DeviceQueues.
         let mut worker_queues = Vec::with_capacity(queues.len());
@@ -345,7 +352,29 @@ impl VirtioDevice for Fs {
             ))),
         };
         let server = Arc::new(server);
-        self.server = Some(server.clone());
+        if self.sync_enabled() {
+            let runtime = Arc::new(FsSyncRuntime {
+                active: AtomicBool::new(true),
+                mem: mem.clone(),
+                server: server.clone(),
+                allow_idmap: self.allow_idmap,
+                shm_region: self.shm_region.clone(),
+                exit_code: self.exit_code.clone(),
+                #[cfg(target_os = "macos")]
+                map_sender: self.map_sender.clone(),
+            });
+            self.sync_queues = sync_queues
+                .into_iter()
+                .map(|dq| {
+                    Arc::new(FsSyncQueue {
+                        ready: dq.queue.ready,
+                        queue: Mutex::new(dq.queue),
+                        runtime: runtime.clone(),
+                    })
+                })
+                .collect();
+            self.sync_runtime = Some(runtime);
+        }
 
         let worker = FsWorker::new(
             worker_queues,
@@ -375,6 +404,13 @@ impl VirtioDevice for Fs {
     }
 
     fn reset(&mut self) -> bool {
+        if let Some(runtime) = &self.sync_runtime {
+            runtime.active.store(false, Ordering::Release);
+        }
+        // Stop admission on every queue before waiting for in-flight handlers.
+        for queue in &self.sync_queues {
+            drop(queue.queue.lock().unwrap());
+        }
         if let Some(worker) = self.worker_thread.take() {
             let _ = self.worker_stopfd.write(1);
             if let Err(e) = worker.join() {
@@ -382,24 +418,22 @@ impl VirtioDevice for Fs {
             }
         }
         self.sync_queues.clear();
-        self.server = None;
+        self.sync_runtime = None;
         self.acked_features = 0;
         self.device_state = DeviceState::Inactive;
         true
     }
 
-    fn handle_sync(&mut self, queue_idx: u32) -> bool {
+    fn sync_queue(&self, queue_idx: u32) -> Option<Arc<dyn BusWriteAction>> {
         if !self.sync_enabled() || !self.is_activated() {
-            return false;
+            return None;
         }
-        let Some(index) = (queue_idx as usize).checked_sub(self.first_sync_queue()) else {
-            return false;
-        };
-        if !self.sync_queues.get(index).is_some_and(|queue| queue.ready) {
-            return false;
+        let index = (queue_idx as usize).checked_sub(self.first_sync_queue())?;
+        let queue = self.sync_queues.get(index)?;
+        if !queue.ready {
+            return None;
         }
-        self.handle_sync_event(index);
-        true
+        Some(queue.clone())
     }
 }
 

@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use super::{ActivateResult, InterruptTransport, Queue};
+use crate::BusWriteAction;
 use crate::virtio::AsAny;
 use utils::eventfd::EventFd;
 use vm_memory::GuestMemoryMmap;
@@ -177,10 +178,10 @@ pub trait VirtioDevice: AsAny + Send {
         None
     }
 
-    /// Complete a synchronous queue notification before returning to the guest.
-    /// Return false if this queue cannot be handled synchronously.
-    fn handle_sync(&mut self, _queue_idx: u32) -> bool {
-        false
+    /// Select a synchronous queue handler without executing it under the device lock.
+    /// Reset must invalidate outstanding handlers and wait for active executions.
+    fn sync_queue(&self, _queue_idx: u32) -> Option<Arc<dyn BusWriteAction>> {
+        None
     }
 }
 
