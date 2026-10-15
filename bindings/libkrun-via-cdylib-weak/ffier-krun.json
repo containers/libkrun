@@ -143,6 +143,13 @@
       },
       "bless": "vtable_handle"
     },
+    "FreePageReportingMode": {
+      "kind": {
+        "enum": {
+          "alias_of": "u32"
+        }
+      }
+    },
     "FsDevice": {
       "kind": {
         "handle": {
@@ -1658,6 +1665,32 @@
             "c_convention": "handle_or_null"
           },
           "ffi_name": "krun_balloon_device_new"
+        },
+        {
+          "name": "set_free_page_reporting_mode",
+          "doc": [
+            " Set how memory that the guest reports as free is given back to the host. Defaults to",
+            " [`FreePageReportingMode::Default`], which madvise()s it on Linux and macOS, and",
+            " discards it with DiscardVirtualMemory() on Windows.",
+            "",
+            " On macOS, madvise() doesn't release guest memory that the guest has written to.",
+            " [`FreePageReportingMode::Replace`] has the VMM replace the reported pages with fresh",
+            " memory instead, which does release them. This costs a few system calls per report, and",
+            " the guest's next access to each page faults it in again. Other platforms don't implement",
+            " [`FreePageReportingMode::Replace`], and use [`FreePageReportingMode::Default`] instead."
+          ],
+          "receiver": "mut",
+          "params": [
+            {
+              "name": "mode",
+              "param_kind": "regular",
+              "type": "FreePageReportingMode"
+            }
+          ],
+          "ret": {
+            "return_kind": "void"
+          },
+          "ffi_name": "krun_balloon_device_set_free_page_reporting_mode"
         }
       ],
       "cfg": "not(feature = \"tee\")"
@@ -2625,6 +2658,21 @@
           "name": "Full",
           "c_name": "KRUN_SYNC_MODE_FULL",
           "value": 2
+        }
+      ]
+    },
+    {
+      "name": "FreePageReportingMode",
+      "variants": [
+        {
+          "name": "Default",
+          "c_name": "KRUN_FREE_PAGE_REPORTING_MODE_DEFAULT",
+          "value": 0
+        },
+        {
+          "name": "Replace",
+          "c_name": "KRUN_FREE_PAGE_REPORTING_MODE_REPLACE",
+          "value": 1
         }
       ]
     },

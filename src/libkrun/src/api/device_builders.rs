@@ -25,6 +25,8 @@ use crate::vmm::device_manager::shm::ShmManager;
 #[cfg(any(feature = "gpu", feature = "vhost-user"))]
 use devices::display::{DisplayInfo, DisplayInfoEdid, PhysicalSize};
 use devices::legacy::IrqChip;
+#[cfg(not(feature = "tee"))]
+use devices::virtio::balloon::FreePageReportingMode;
 #[cfg(feature = "blk")]
 use devices::virtio::block::{DiskFormat, SyncMode};
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]
@@ -1242,6 +1244,25 @@ impl BalloonDevice {
         Ok(Self {
             inner: Arc::new(Mutex::new(balloon)),
         })
+    }
+
+    /// Set how memory that the guest reports as free is given back to the host. Defaults to
+    /// [`FreePageReportingMode::Default`], which madvise()s it on Linux and macOS, and
+    /// discards it with DiscardVirtualMemory() on Windows.
+    ///
+    /// On macOS, madvise() doesn't release guest memory that the guest has written to.
+    /// [`FreePageReportingMode::Replace`] has the VMM replace the reported pages with fresh
+    /// memory instead, which does release them. This costs a few system calls per report, and
+    /// the guest's next access to each page faults it in again. Other platforms don't implement
+    /// [`FreePageReportingMode::Replace`], and use [`FreePageReportingMode::Default`] instead.
+    pub fn set_free_page_reporting_mode(&mut self, mode: FreePageReportingMode) {
+        #[cfg(target_os = "macos")]
+        self.inner
+            .lock()
+            .unwrap()
+            .set_free_page_reporting_mode(mode);
+        #[cfg(not(target_os = "macos"))]
+        let _ = mode;
     }
 }
 

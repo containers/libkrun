@@ -140,6 +140,11 @@ typedef void (*krun_free_object_array_fn)(KrunObjectArray a);
 #define KRUN_SYNC_MODE_RELAXED 1
 #define KRUN_SYNC_MODE_FULL 2
 
+/* FreePageReportingMode --------------------------------------------- */
+
+#define KRUN_FREE_PAGE_REPORTING_MODE_DEFAULT 0
+#define KRUN_FREE_PAGE_REPORTING_MODE_REPLACE 1
+
 /* LogLevel ---------------------------------------------------------- */
 
 #define KRUN_LOG_LEVEL_OFF 0
@@ -472,6 +477,19 @@ typedef void (*krun_vmm_handle_destroy_fn)(KrunVmmHandle handle);
 
 KrunBalloonDevice krun_balloon_device_new(KrunError* err_out);
 typedef KrunBalloonDevice (*krun_balloon_device_new_fn)(KrunError* err_out);
+/**
+ * Set how memory that the guest reports as free is given back to the host. Defaults to
+ * [`FreePageReportingMode::Default`], which madvise()s it on Linux and macOS, and
+ * discards it with DiscardVirtualMemory() on Windows.
+ *
+ * On macOS, madvise() doesn't release guest memory that the guest has written to.
+ * [`FreePageReportingMode::Replace`] has the VMM replace the reported pages with fresh
+ * memory instead, which does release them. This costs a few system calls per report, and
+ * the guest's next access to each page faults it in again. Other platforms don't implement
+ * [`FreePageReportingMode::Replace`], and use [`FreePageReportingMode::Default`] instead.
+ */
+void krun_balloon_device_set_free_page_reporting_mode(KrunBalloonDevice handle, uint32_t mode);
+typedef void (*krun_balloon_device_set_free_page_reporting_mode_fn)(KrunBalloonDevice handle, uint32_t mode);
 void krun_balloon_device_destroy(KrunBalloonDevice handle);
 typedef void (*krun_balloon_device_destroy_fn)(KrunBalloonDevice handle);
 
