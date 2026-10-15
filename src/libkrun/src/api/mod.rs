@@ -49,6 +49,8 @@ pub use device_builders::{ConsoleBuilder, ConsoleDevice};
 pub use device_builders::{DisplayBackend, DisplayInfoBuilder};
 #[cfg(feature = "gpu")]
 pub use device_builders::{GpuDevice, VirglRendererFlags};
+#[cfg(not(feature = "tee"))]
+pub use devices::virtio::balloon::FreePageReportingMode;
 #[cfg(feature = "blk")]
 pub use devices::virtio::block::{DiskFormat, SyncMode};
 pub use error::VmmError;
@@ -131,6 +133,8 @@ ffier::library_definition!("krun", library_tag = 1,
     enum devices::virtio::block::DiskFormat,
     #[cfg(feature = "blk")]
     enum devices::virtio::block::SyncMode,
+    #[cfg(not(feature = "tee"))]
+    enum devices::virtio::balloon::FreePageReportingMode,
     enum crate::api::logging::LogLevel,
     enum crate::api::logging::LogStyle,
     fn crate::api::logging::init_log,
