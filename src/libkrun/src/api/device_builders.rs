@@ -1250,6 +1250,12 @@ impl BalloonDevice {
 impl<'a> AttachDevice<'a> for BalloonDevice {
     #[cfg_attr(feature = "ffi", ffier(skip))]
     fn attach(self: Box<Self>, ctx: &mut AttachContext) -> Result<(), VmmError> {
+        #[cfg(target_os = "macos")]
+        self.inner
+            .lock()
+            .unwrap()
+            .set_map_sender(ctx.map_sender().expect("macOS requires map_sender"))
+            .map_err(|e| VmmError::Internal(format!("balloon: {e:?}")))?;
         ctx.subscribe_events(self.inner.clone())?;
         ctx.register("balloon", self.inner)
     }
