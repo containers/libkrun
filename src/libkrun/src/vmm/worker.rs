@@ -27,15 +27,9 @@ pub fn start_worker_thread(
     std::thread::Builder::new()
         .name("vmm worker".into())
         .spawn(move || {
-            loop {
-                let received = receiver.recv();
-                match received {
-                    Err(e) => error!("error receiving message from vmm worker thread: {e:?}"),
-                    #[cfg(target_os = "macos")]
-                    Ok(message) => vmm.lock().unwrap().match_worker_message(message),
-                    #[cfg(target_os = "linux")]
-                    Ok(message) => vmm.lock().unwrap().match_worker_message(message),
-                }
+            // This ends once every sender is gone, as no message can arrive anymore.
+            for message in receiver {
+                vmm.lock().unwrap().match_worker_message(message);
             }
         })?;
     Ok(())
