@@ -652,7 +652,9 @@ fn renew_loop(sock: &OwnedFd, mac: [u8; 16], mut lease: Lease) {
 /// This function:
 /// 1. Binds a UDP socket to the interface using SO_BINDTODEVICE
 /// 2. Sends a DHCP DISCOVER message with Rapid Commit option
-/// 3. Retransmits the DISCOVER for up to DHCP_RETRY_WINDOW:
+/// 3. When `renew` is set, retransmits the DISCOVER for up to
+///    DHCP_RETRY_WINDOW (a lost first request is otherwise fatal on a physical
+///    network):
 ///     - If DHCPACK (Rapic Commit): applies configuration directly
 ///     - If DHCPOFFER: sends DHCPREQUEST and waits for DHCPACK
 ///     - If no response: returns success (VM may be IPv6-only)
@@ -661,7 +663,10 @@ fn renew_loop(sock: &OwnedFd, mac: [u8; 16], mut lease: Lease) {
 ///     - Default gateway route
 ///     - DNS servers (overwriting /etc/resolv.conf)
 ///     - Interface MTU
-pub fn do_dhcp(iface: &str) -> anyhow::Result<()> {
+///
+/// When `renew` is set, a worker is also forked to keep the lease renewed
+/// (RFC 2131 section 4.4.5) so the server keeps listing the VM as a client.
+pub fn do_dhcp(iface: &str, renew: bool) -> anyhow::Result<()> {
     let iface_index =
         if_::if_nametoindex(iface).with_context(|| format!("if_nametoindex({iface})"))?;
 
@@ -759,8 +764,8 @@ pub fn do_dhcp(iface: &str) -> anyhow::Result<()> {
         match socket::recvfrom::<SockaddrIn>(sock.as_raw_fd(), &mut response) {
             Ok(r) => break r,
             Err(Errno::EAGAIN) => {
-                if Instant::now() >= deadline {
-                    return Ok(()); // no DHCP server answered within the window
+                if !renew || Instant::now() >= deadline {
+                    return Ok(()); // no DHCP server answered
                 }
             }
             Err(e) => bail!("recvfrom: {e}"),
@@ -804,7 +809,7 @@ pub fn do_dhcp(iface: &str) -> anyhow::Result<()> {
                         }
                     }
                     Err(Errno::EAGAIN) => {
-                        if Instant::now() >= deadline {
+                        if !renew || Instant::now() >= deadline {
                             bail!("no DHCPACK received");
                         }
                     }
@@ -820,8 +825,9 @@ pub fn do_dhcp(iface: &str) -> anyhow::Result<()> {
         _ => bail!("unexpected DHCP message type {msg_type}"),
     };
 
-    // A zero or infinite lease has nothing to renew.
-    if lease.lease_secs > 0 && lease.lease_secs != u32::MAX {
+    // Only keep the lease alive when the caller asks for it; a zero or
+    // infinite lease has nothing to renew.
+    if renew && lease.lease_secs > 0 && lease.lease_secs != u32::MAX {
         spawn_renewer(&sock, pkt.chaddr, lease);
     }
 

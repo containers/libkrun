@@ -222,7 +222,10 @@ mod host {
             #[cfg(feature = "dynamic-linking")]
             require_symbols().unwrap();
 
-            let init_config = init_config_builder(&test_setup, &[]).dhcp(true).build();
+            let init_config = init_config_builder(&test_setup, &[])
+                .dhcp(true)
+                .dhcp_renew(true)
+                .build();
             let stdin = std::io::stdin();
             let stdout = std::io::stdout();
             let stderr = std::io::stderr();
