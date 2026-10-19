@@ -22,7 +22,7 @@ pub mod virtio;
 #[cfg(windows)]
 pub mod windows_console;
 
-pub use self::bus::{Bus, BusDevice, Error as BusError};
+pub use self::bus::{Bus, BusDevice, BusWriteAction, Error as BusError};
 
 #[derive(Debug)]
 pub enum Error {
