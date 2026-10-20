@@ -1,7 +1,20 @@
 mod device;
 mod event_handler;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(test)]
+mod test_util;
+#[cfg(target_os = "windows")]
+mod windows;
+
+#[cfg(target_os = "linux")]
+use self::linux::FreePageReclaim;
+#[cfg(target_os = "macos")]
+use self::macos::FreePageReclaim;
+#[cfg(target_os = "windows")]
+use self::windows::FreePageReclaim;
 
 pub use self::defs::uapi::VIRTIO_ID_BALLOON as TYPE_BALLOON;
 pub use self::device::Balloon;
