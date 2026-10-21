@@ -10,6 +10,7 @@ use std::convert::From;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::mem::size_of;
+use std::num::NonZeroUsize;
 #[cfg(target_os = "linux")]
 use std::os::linux::fs::MetadataExt;
 #[cfg(target_os = "macos")]
@@ -248,6 +249,7 @@ pub struct Block {
     worker_thread: Option<JoinHandle<()>>,
     worker_stopfd: EventFd,
     parallel_reads: bool,
+    read_pool_size: Option<NonZeroUsize>,
 
     // Virtio fields.
     pub(crate) avail_features: u64,
@@ -277,6 +279,7 @@ impl Block {
         direct_io: bool,
         sync_mode: SyncMode,
         parallel_reads: bool,
+        read_pool_size: Option<NonZeroUsize>,
     ) -> io::Result<Block> {
         let disk_image = OpenOptions::new()
             .read(true)
@@ -366,6 +369,7 @@ impl Block {
             worker_thread: None,
             worker_stopfd: EventFd::new(EFD_NONBLOCK)?,
             parallel_reads,
+            read_pool_size,
         })
     }
 
@@ -468,6 +472,7 @@ impl VirtioDevice for Block {
             disk,
             self.worker_stopfd.try_clone().unwrap(),
             self.parallel_reads,
+            self.read_pool_size,
         );
         self.worker_thread = Some(worker.run());
 

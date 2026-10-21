@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::io::IsTerminal;
 use std::marker::PhantomData;
+#[cfg(feature = "blk")]
+use std::num::NonZeroUsize;
 #[cfg(all(feature = "net", not(target_os = "windows")))]
 use std::os::fd::OwnedFd;
 #[cfg(target_os = "linux")]
@@ -1431,6 +1433,7 @@ pub struct BlockDevice {
     direct_io: bool,
     sync_mode: SyncMode,
     parallel_reads: bool,
+    read_pool_size: Option<NonZeroUsize>,
 }
 
 #[cfg_attr(feature = "ffi", ffier::export(cfg = "feature = \"blk\""))]
@@ -1449,6 +1452,7 @@ impl BlockDevice {
             direct_io: false,
             sync_mode: SyncMode::default(),
             parallel_reads: false,
+            read_pool_size: None,
         })
     }
 
@@ -1473,8 +1477,18 @@ impl BlockDevice {
     /// Serve guest reads on a host thread pool with out-of-order completion.
     ///
     /// Disabled by default. Writes, flushes, and discards stay on the device thread.
+    /// The pool size is automatic unless overridden with [`set_read_pool_size`](Self::set_read_pool_size).
     pub fn set_parallel_reads(&mut self, enabled: bool) {
         self.parallel_reads = enabled;
+    }
+
+    /// Set the requested number of worker threads for parallel reads.
+    ///
+    /// Only applies when parallel reads are enabled. If the requested size is greater than the
+    /// available host parallelism, or it cannot be determined, reads remain serialized. Pass 0
+    /// to restore automatic pool sizing.
+    pub fn set_read_pool_size(&mut self, size: usize) {
+        self.read_pool_size = NonZeroUsize::new(size);
     }
 }
 
@@ -1495,6 +1509,7 @@ impl<'a> AttachDevice<'a> for BlockDevice {
             self.direct_io,
             self.sync_mode,
             self.parallel_reads,
+            self.read_pool_size,
         )
         .map_err(|e| VmmError::Internal(format!("block: {e}")))?;
 

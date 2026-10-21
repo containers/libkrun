@@ -546,9 +546,19 @@ typedef void (*krun_block_device_set_sync_mode_fn)(KrunBlockDevice handle, uint3
  * Serve guest reads on a host thread pool with out-of-order completion.
  *
  * Disabled by default. Writes, flushes, and discards stay on the device thread.
+ * The pool size is automatic unless overridden with [`set_read_pool_size`](Self::set_read_pool_size).
  */
 void krun_block_device_set_parallel_reads(KrunBlockDevice handle, bool enabled);
 typedef void (*krun_block_device_set_parallel_reads_fn)(KrunBlockDevice handle, bool enabled);
+/**
+ * Set the requested number of worker threads for parallel reads.
+ *
+ * Only applies when parallel reads are enabled. If the requested size is greater than the
+ * available host parallelism, or it cannot be determined, reads remain serialized. Pass 0
+ * to restore automatic pool sizing.
+ */
+void krun_block_device_set_read_pool_size(KrunBlockDevice handle, size_t size);
+typedef void (*krun_block_device_set_read_pool_size_fn)(KrunBlockDevice handle, size_t size);
 void krun_block_device_destroy(KrunBlockDevice handle);
 typedef void (*krun_block_device_destroy_fn)(KrunBlockDevice handle);
 

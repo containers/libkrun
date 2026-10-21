@@ -8,6 +8,7 @@ use crate::virtio::InterruptTransport;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use std::collections::TryReserveError;
 use std::io::{self, Write};
+use std::num::NonZeroUsize;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 use std::result;
@@ -226,6 +227,7 @@ pub struct BlockWorker {
     disk: DiskProperties,
     stop_fd: EventFd,
     parallel_reads: bool,
+    read_pool_size: Option<NonZeroUsize>,
 }
 
 impl BlockWorker {
@@ -236,6 +238,7 @@ impl BlockWorker {
         disk: DiskProperties,
         stop_fd: EventFd,
         parallel_reads: bool,
+        read_pool_size: Option<NonZeroUsize>,
     ) -> Self {
         Self {
             device_queue,
@@ -244,6 +247,7 @@ impl BlockWorker {
             disk,
             stop_fd,
             parallel_reads,
+            read_pool_size,
         }
     }
 
@@ -258,10 +262,9 @@ impl BlockWorker {
         let virtq_ev_fd = self.device_queue.event.as_raw_fd();
         let stop_ev_fd = self.stop_fd.as_raw_fd();
         let read_pool_size = if self.parallel_reads {
-            Some(
-                thread::available_parallelism()
-                    .map(|n| n.get().clamp(2, 8))
-                    .unwrap_or(4),
+            resolve_read_pool_size(
+                self.read_pool_size,
+                thread::available_parallelism().ok().map(|n| n.get()),
             )
         } else {
             None
@@ -596,6 +599,18 @@ impl BlockWorker {
     }
 }
 
+fn resolve_read_pool_size(
+    requested: Option<NonZeroUsize>,
+    available_parallelism: Option<usize>,
+) -> Option<usize> {
+    match requested {
+        Some(requested) => available_parallelism
+            .filter(|available| *available >= requested.get())
+            .map(|_| requested.get()),
+        None => Some(available_parallelism.map(|n| n.clamp(2, 8)).unwrap_or(4)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -693,6 +708,7 @@ mod tests {
                 test_disk(false),
                 EventFd::new(EFD_NONBLOCK).unwrap(),
                 parallel,
+                None,
             );
             let mut pool = parallel.then(|| ReadPool::new(2, &worker.disk));
             worker.dispatch_request(&mem, pool.as_mut(), head);
@@ -769,6 +785,23 @@ mod tests {
         assert!(ReadBufferPermit::try_acquire(2 * 1024 * 1024).is_none());
         drop(permit);
         assert!(ReadBufferPermit::try_acquire(2 * 1024 * 1024).is_some());
+    }
+
+    #[test]
+    fn explicit_read_pool_size_requires_enough_available_parallelism() {
+        assert_eq!(
+            resolve_read_pool_size(NonZeroUsize::new(4), Some(4)),
+            Some(4)
+        );
+        assert_eq!(resolve_read_pool_size(NonZeroUsize::new(5), Some(4)), None);
+        assert_eq!(resolve_read_pool_size(NonZeroUsize::new(4), None), None);
+    }
+
+    #[test]
+    fn automatic_read_pool_size_uses_existing_sizing() {
+        assert_eq!(resolve_read_pool_size(None, Some(1)), Some(2));
+        assert_eq!(resolve_read_pool_size(None, Some(16)), Some(8));
+        assert_eq!(resolve_read_pool_size(None, None), Some(4));
     }
 
     #[test]
