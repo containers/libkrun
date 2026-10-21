@@ -16,7 +16,7 @@ use std::os::linux::fs::MetadataExt;
 use std::os::macos::fs::MetadataExt;
 use std::path::PathBuf;
 use std::result;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use std::thread::JoinHandle;
 
 use imago::{
@@ -78,18 +78,18 @@ impl CacheType {
 /// Helper object for setting up all `Block` fields derived from its backing file.
 pub(crate) struct DiskProperties {
     cache_type: CacheType,
-    pub(crate) file: Arc<Mutex<FormatAccess<Box<dyn DynStorage>>>>,
+    pub(crate) file: Arc<RwLock<FormatAccess<Box<dyn DynStorage>>>>,
     nsectors: u64,
     image_id: Vec<u8>,
 }
 
 impl DiskProperties {
     pub fn new(
-        disk_image: Arc<Mutex<FormatAccess<Box<dyn DynStorage>>>>,
+        disk_image: Arc<RwLock<FormatAccess<Box<dyn DynStorage>>>>,
         disk_image_id: Vec<u8>,
         cache_type: CacheType,
     ) -> io::Result<Self> {
-        let disk_size = disk_image.lock().unwrap().size();
+        let disk_size = disk_image.read().unwrap().size();
 
         // We only support disk size, which uses the first two words of the configuration space.
         // If the image is not a multiple of the sector size, the tail bits are not exposed.
@@ -183,11 +183,11 @@ impl Drop for DiskProperties {
         match self.cache_type {
             CacheType::Writeback => {
                 // flush() first to force any cached data out.
-                if self.file.lock().unwrap().flush().is_err() {
+                if self.file.write().unwrap().flush().is_err() {
                     error!("Failed to flush block data on drop.");
                 }
                 // Sync data out to physical media on host.
-                if self.file.lock().unwrap().sync().is_err() {
+                if self.file.write().unwrap().sync().is_err() {
                     error!("Failed to sync block data on drop.")
                 }
             }
@@ -243,7 +243,7 @@ pub struct Block {
     // Host file and properties.
     disk: Option<DiskProperties>,
     cache_type: CacheType,
-    disk_image: Arc<Mutex<FormatAccess<Box<dyn DynStorage>>>>,
+    disk_image: Arc<RwLock<FormatAccess<Box<dyn DynStorage>>>>,
     disk_image_id: Vec<u8>,
     worker_thread: Option<JoinHandle<()>>,
     worker_stopfd: EventFd,
@@ -317,7 +317,7 @@ impl Block {
             }
         };
 
-        let disk_image = Arc::new(Mutex::new(disk_image));
+        let disk_image = Arc::new(RwLock::new(disk_image));
 
         let disk_properties =
             DiskProperties::new(disk_image.clone(), disk_image_id.clone(), cache_type)?;
