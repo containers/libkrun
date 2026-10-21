@@ -47,6 +47,13 @@ Create an `MmioDeviceManager` with `MmioDeviceManager::new()` (C API: `krun_mmio
 - **Acceleration & GUI**: `GpuDevice` (Venus / native context) and `InputDevice` (mouse/keyboard).
 - **vhost-user**: `VhostUserDevice` for external virtio backends (RNG, RTC, GPU, Sound, CAN, Media).
 - **Utilities**: `RngDevice` (virtio-rng) and `BalloonDevice` (virtio-balloon page reporting).
+- **Implicit devices**: on Linux/KVM, a virtio-rtc device is attached to guests
+  that run the libkrunfw kernel. It offers a UTC clock with an alarm, a TAI
+  clock and a monotonic clock, which the guest sees as PTP clocks and an RTC.
+  It does not support cross-timestamping, and it is not configurable through
+  the device API. Guests with an external kernel or firmware (e.g. FreeBSD,
+  which has no virtio-rtc driver) get the legacy RTC instead: PL031 on
+  aarch64, CMOS on x86_64.
 
 ## 4. VMM Builder
 

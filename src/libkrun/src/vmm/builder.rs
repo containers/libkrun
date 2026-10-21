@@ -217,6 +217,9 @@ pub enum StartMicrovmError {
     RegisterNetDevice(device_manager::mmio::Error),
     /// Cannot initialize a MMIO Rng device or add a device to the MMIO Bus.
     RegisterRngDevice(device_manager::mmio::Error),
+    /// Cannot initialize the default MMIO RTC device or add it to the MMIO Bus.
+    #[cfg(target_os = "linux")]
+    RegisterRtcDevice(device_manager::mmio::Error),
     /// Cannot initialize a vhost-user device or add a device to the MMIO Bus.
     RegisterVhostUserDevice(device_manager::mmio::Error),
     /// Cannot initialize a MMIO Vsock Device or add a device to the MMIO Bus.
@@ -494,6 +497,15 @@ impl Display for StartMicrovmError {
                     "Cannot initialize a MMIO Rng Device or add a device to the MMIO Bus. {err_msg}"
                 )
             }
+            #[cfg(target_os = "linux")]
+            RegisterRtcDevice(ref err) => {
+                let mut err_msg = format!("{err}");
+                err_msg = err_msg.replace('\"', "");
+                write!(
+                    f,
+                    "Cannot initialize the default MMIO RTC device or add it to the MMIO Bus. {err_msg}"
+                )
+            }
             RegisterVhostUserDevice(ref err) => {
                 let mut err_msg = err.to_string();
                 err_msg = err_msg.replace('\"', "");
@@ -601,6 +613,16 @@ pub enum Payload {
 }
 
 impl Payload {
+    /// Whether the guest is known to have a virtio-rtc driver.
+    ///
+    /// Only the libkrunfw kernel is: its configuration enables the driver. An
+    /// external kernel (e.g. FreeBSD, which has no virtio-rtc driver) or an OS
+    /// that boots from firmware gets the legacy RTC instead.
+    #[cfg(target_os = "linux")]
+    fn uses_virtio_rtc(&self) -> bool {
+        !matches!(self, Self::ExternalKernel(_) | Self::Firmware)
+    }
+
     fn is_external_kernel(&self) -> bool {
         #[cfg(not(target_os = "windows"))]
         {
@@ -765,6 +787,8 @@ pub fn build_microvm(
     device_manager: Box<dyn crate::api::device_builders::DeviceManager<'_> + '_>,
 ) -> std::result::Result<Arc<Mutex<Vmm>>, StartMicrovmError> {
     let payload = choose_payload(vm_resources)?;
+    #[cfg(target_os = "linux")]
+    let use_virtio_rtc = payload.uses_virtio_rtc();
 
     #[cfg(all(
         target_arch = "x86_64",
@@ -1284,6 +1308,7 @@ pub fn build_microvm(
             &mut kernel_cmdline,
             intc.clone(),
             serial_devices,
+            !use_virtio_rtc,
         )?;
     }
 
@@ -1342,6 +1367,7 @@ pub fn build_microvm(
             &mut kernel_cmdline,
             intc.clone(),
             serial_devices,
+            !use_virtio_rtc,
         )?;
     }
 
@@ -1385,6 +1411,27 @@ pub fn build_microvm(
         setup_terminal_raw_mode(&mut vmm, Some(serial_tty), false);
         #[cfg(windows)]
         setup_terminal_raw_mode(&mut vmm, Some(serial_tty.as_handle()), false);
+    }
+
+    // virtio-rtc is the RTC device of the libkrunfw kernel on Linux/KVM
+    // (x86_64, aarch64, riscv64, including under tee), replacing the legacy
+    // PL031 that used to be attached on aarch64. Guests that are not known to
+    // have a virtio-rtc driver (see `Payload::uses_virtio_rtc`) keep the
+    // legacy RTC: PL031 on aarch64, CMOS on x86_64. HVF/macOS and WHP/Windows
+    // keep their existing RTC devices. Unlike user-facing devices (Rng,
+    // Balloon, ...), it is not exposed through the device builder API. It is
+    // attached before the virtio-mmio devices are collected for the kernel
+    // command line and the ACPI tables below.
+    #[cfg(target_os = "linux")]
+    if use_virtio_rtc {
+        let rtc = Arc::new(Mutex::new(devices::virtio::Rtc::new().map_err(|e| {
+            StartMicrovmError::Internal(Error::EventFd(io::Error::other(format!("rtc: {e:?}"))))
+        })?));
+        event_manager
+            .add_subscriber(rtc.clone())
+            .map_err(StartMicrovmError::RegisterEvent)?;
+        attach_mmio_device(&mut vmm, "rtc".to_string(), intc.clone(), rtc)
+            .map_err(StartMicrovmError::RegisterRtcDevice)?;
     }
 
     device_manager
@@ -2336,6 +2383,7 @@ fn attach_legacy_devices(
     kernel_cmdline: &mut kernel::cmdline::Cmdline,
     intc: IrqChip,
     serial: Vec<Arc<Mutex<Serial>>>,
+    #[cfg_attr(not(target_arch = "aarch64"), allow(unused_variables))] legacy_rtc: bool,
 ) -> std::result::Result<(), StartMicrovmError> {
     for s in serial {
         mmio_device_manager
@@ -2344,11 +2392,15 @@ fn attach_legacy_devices(
             .map_err(StartMicrovmError::Internal)?;
     }
 
-    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
-    mmio_device_manager
-        .register_mmio_rtc(vm.fd())
-        .map_err(Error::RegisterMMIODevice)
-        .map_err(StartMicrovmError::Internal)?;
+    // The PL031 RTC is only for guests without a virtio-rtc driver; the others
+    // get virtio-rtc, attached in `build_microvm`.
+    #[cfg(target_arch = "aarch64")]
+    if legacy_rtc {
+        mmio_device_manager
+            .register_mmio_rtc(vm.fd())
+            .map_err(Error::RegisterMMIODevice)
+            .map_err(StartMicrovmError::Internal)?;
+    }
 
     Ok(())
 }
@@ -2659,6 +2711,21 @@ pub mod tests {
             #[cfg(feature = "tee")]
             None,
         )
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_uses_virtio_rtc() {
+        // Guests that are not known to have a virtio-rtc driver (e.g. FreeBSD,
+        // loaded as an external kernel) keep the legacy RTC.
+        assert!(!Payload::ExternalKernel(ExternalKernel::default()).uses_virtio_rtc());
+        assert!(!Payload::Firmware.uses_virtio_rtc());
+        // The libkrunfw kernel has the driver.
+        assert!(Payload::Empty.uses_virtio_rtc());
+        #[cfg(all(target_arch = "x86_64", not(feature = "tee")))]
+        assert!(Payload::KernelMmap.uses_virtio_rtc());
+        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+        assert!(Payload::KernelCopy.uses_virtio_rtc());
     }
 
     #[test]
