@@ -116,6 +116,18 @@ impl Fs {
         defs::FS_DEV_ID
     }
 
+    /// Report every file of the shared directory as owned by `uid` and `gid`, with the
+    /// simplified permission semantics, before the device is activated. Has no effect on a
+    /// device without a shared directory.
+    pub fn set_fixed_owner(&mut self, uid: u32, gid: u32) {
+        if let Some(cfg) = self.passthrough_cfg.as_mut() {
+            cfg.semantics = PermissionSemantics::LinuxSimplifiedOwnedBy(uid, gid);
+            // The owner no longer depends on the caller, so attributes stay cacheable.
+            cfg.attr_timeout = Duration::from_secs(5);
+        }
+        self.allow_idmap = false;
+    }
+
     pub fn set_shm_region(&mut self, shm_region: VirtioShmRegion) {
         self.shm_region = Some(shm_region);
     }

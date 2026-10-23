@@ -294,6 +294,10 @@ pub enum PermissionSemantics {
     ///    requesting the operation within the guest (obtained from `Context`).
     ///  - Permissions bits are stored in the host, not as extended attributes.
     LinuxSimplified,
+
+    /// As `LinuxSimplified`, but every file is reported as owned by this uid and gid instead of
+    /// by the requesting process, so attributes stay the same for every caller and can be cached.
+    LinuxSimplifiedOwnedBy(u32, u32),
 }
 
 /// Options that configure the behavior of the file system.
