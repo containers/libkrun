@@ -48,6 +48,7 @@ Each variant generates a dynamic library with a different name (and ```soname```
 * virtio-vsock (for TSI and socket redirection)
 * virtio-balloon (only free-page reporting)
 * virtio-rng
+* virtio-rtc (automatically attached on Linux/KVM for libkrunfw guests)
 * other virtio devices via vhost-user support
 
 ## Networking
