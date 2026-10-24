@@ -735,6 +735,53 @@ mod guest {
     /// name with `to_str().unwrap()`, which panicked the fs worker thread on
     /// the first such name and left every later request hanging, so with
     /// the harness's trace logging this subtest never returns on that bug.
+    /// A file the guest holds open stays usable after its name is unlinked, and a file that
+    /// is not open is gone with its name.
+    fn test_unlink_open_and_closed_files() {
+        let dir = "/test_unlink_open_and_closed_files";
+        fs::create_dir(dir).expect("mkdir");
+
+        let open_path = format!("{dir}/open");
+        fs::write(&open_path, b"before").expect("write open");
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&open_path)
+            .expect("open");
+        fs::remove_file(&open_path).expect("unlink open file");
+        assert!(fs::metadata(&open_path).is_err(), "name gone");
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .expect("read after unlink");
+        assert_eq!(contents, "before");
+        file.write_all(b"after").expect("write after unlink");
+        assert_eq!(file.metadata().expect("fstat after unlink").len(), 11);
+        drop(file);
+
+        let closed_path = format!("{dir}/closed");
+        fs::write(&closed_path, b"x").expect("write closed");
+        fs::remove_file(&closed_path).expect("unlink closed file");
+        assert!(fs::metadata(&closed_path).is_err(), "closed file gone");
+        fs::write(&closed_path, b"again").expect("recreate the name");
+        assert_eq!(fs::read(&closed_path).expect("read recreated"), b"again");
+
+        fs::remove_dir_all(dir).expect("remove_dir_all");
+    }
+
+    /// A directory removed while it is the working directory stays usable through `.`, as on
+    /// any Linux file system.
+    fn test_rmdir_working_directory() {
+        let dir = "/test_rmdir_working_directory";
+        fs::create_dir(dir).expect("mkdir");
+        std::env::set_current_dir(dir).expect("chdir");
+        fs::remove_dir(dir).expect("rmdir the working directory");
+        let removed = fs::metadata(".");
+        std::env::set_current_dir("/").expect("chdir back");
+        let removed = removed.expect("stat . after the working directory was removed");
+        assert!(removed.is_dir());
+        assert!(fs::metadata(dir).is_err(), "the name is gone");
+    }
+
     fn test_non_utf8_file_names() {
         use std::ffi::OsStr;
         use std::os::unix::ffi::OsStrExt;
@@ -797,6 +844,11 @@ mod guest {
                 ),
                 ("uid_gid_mapping_chown", test_uid_gid_mapping_chown),
                 ("non_utf8_file_names", test_non_utf8_file_names),
+                (
+                    "unlink_open_and_closed_files",
+                    test_unlink_open_and_closed_files,
+                ),
+                ("rmdir_working_directory", test_rmdir_working_directory),
             ]);
         }
     }
