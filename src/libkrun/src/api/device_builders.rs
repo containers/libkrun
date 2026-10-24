@@ -655,6 +655,23 @@ impl<'a> FsDevice<'a> {
     pub fn set_dax_window_size(&mut self, bytes: u64) {
         self.shm_size = Some(bytes as usize);
     }
+
+    /// Report every file in the shared directory as owned by `uid` and `gid`.
+    ///
+    /// Use this when one guest user should own a host directory that the host user owns: the
+    /// guest sees `uid`:`gid` as the owner of every file, while files are created and changed on
+    /// the host as the user running libkrun. Ownership changes from the guest are not kept, and
+    /// extended attributes are not available. Unlike reporting the requesting process as the
+    /// owner, a fixed owner keeps file attributes cacheable in the guest.
+    ///
+    /// The guest sees every set-user-ID and set-group-ID file in the directory as owned by `uid`
+    /// and `gid`, so with a `uid` of 0 such a file runs as root in the guest. Mount the share
+    /// with `nosuid` unless the guest should allow that.
+    ///
+    /// Takes effect on macOS hosts. On Linux the host's ownership is passed through unchanged.
+    pub fn set_fixed_owner(&mut self, uid: u32, gid: u32) {
+        self.inner.lock().unwrap().set_fixed_owner(uid, gid);
+    }
 }
 
 #[cfg(not(any(feature = "tee", feature = "aws-nitro")))]

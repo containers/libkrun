@@ -72,6 +72,11 @@ mod test_virtiofs_root_ro;
 #[cfg(any(feature = "host", target_os = "linux"))]
 use test_virtiofs_root_ro::TestVirtiofsRootRo;
 
+#[cfg(any(feature = "host", target_os = "linux"))]
+mod test_virtiofs_fixed_owner;
+#[cfg(any(feature = "host", target_os = "linux"))]
+use test_virtiofs_fixed_owner::TestVirtiofsFixedOwner;
+
 mod test_augmentfs;
 use test_augmentfs::TestAugmentFs;
 
@@ -189,6 +194,8 @@ pub fn test_cases() -> Vec<TestCase> {
         TestCase::new("multiport-console", Box::new(TestMultiportConsole)),
         #[cfg(any(feature = "host", target_os = "linux"))]
         TestCase::new("virtiofs-root-ro", Box::new(TestVirtiofsRootRo)),
+        #[cfg(any(feature = "host", target_os = "linux"))]
+        TestCase::new("virtiofs-fixed-owner", Box::new(TestVirtiofsFixedOwner)),
         TestCase::new("augmentfs", Box::new(TestAugmentFs)),
         TestCase::new("root-disk-remount", Box::new(TestRootDiskRemount)),
         #[cfg(any(feature = "host", target_os = "linux"))]
