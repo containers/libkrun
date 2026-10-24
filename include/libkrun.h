@@ -249,6 +249,23 @@ typedef void (*krun_fs_device_set_overlay_fn)(KrunFsDevice handle, KrunFsOverlay
  */
 void krun_fs_device_set_dax_window_size(KrunFsDevice handle, uint64_t bytes);
 typedef void (*krun_fs_device_set_dax_window_size_fn)(KrunFsDevice handle, uint64_t bytes);
+/**
+ * Report every file in the shared directory as owned by `uid` and `gid`.
+ *
+ * Use this when one guest user should own a host directory that the host user owns: the
+ * guest sees `uid`:`gid` as the owner of every file, while files are created and changed on
+ * the host as the user running libkrun. Ownership changes from the guest are not kept, and
+ * extended attributes are not available. Unlike reporting the requesting process as the
+ * owner, a fixed owner keeps file attributes cacheable in the guest.
+ *
+ * The guest sees every set-user-ID and set-group-ID file in the directory as owned by `uid`
+ * and `gid`, so with a `uid` of 0 such a file runs as root in the guest. Mount the share
+ * with `nosuid` unless the guest should allow that.
+ *
+ * Takes effect on macOS hosts. On Linux the host's ownership is passed through unchanged.
+ */
+void krun_fs_device_set_fixed_owner(KrunFsDevice handle, uint32_t uid, uint32_t gid);
+typedef void (*krun_fs_device_set_fixed_owner_fn)(KrunFsDevice handle, uint32_t uid, uint32_t gid);
 void krun_fs_device_destroy(KrunFsDevice handle);
 typedef void (*krun_fs_device_destroy_fn)(KrunFsDevice handle);
 

@@ -386,7 +386,9 @@ fn set_stat(
 ) -> io::Result<()> {
     match semantics {
         PermissionSemantics::LinuxComplete => set_xattr_stat(ctx, file, st, owner, mode),
-        PermissionSemantics::LinuxSimplified => set_host_stat(file, owner, mode),
+        PermissionSemantics::LinuxSimplified | PermissionSemantics::LinuxSimplifiedOwnedBy(..) => {
+            set_host_stat(file, owner, mode)
+        }
     }
 }
 
@@ -433,9 +435,9 @@ fn fstat(
                     let (uid, gid, mode) = get_xattr_fstat(fd, st)?;
                     stat_xattr_common(&mut st, uid, gid, mode)
                 }
-                PermissionSemantics::LinuxSimplified => {
-                    st.st_uid = ctx.uid;
-                    st.st_gid = ctx.gid;
+                PermissionSemantics::LinuxSimplified
+                | PermissionSemantics::LinuxSimplifiedOwnedBy(..) => {
+                    (st.st_uid, st.st_gid) = semantics.fixed_owner(ctx);
                     Ok(st)
                 }
             }
@@ -467,9 +469,9 @@ fn lstat(
                     let (uid, gid, mode) = get_xattr_lstat(c_path, st)?;
                     stat_xattr_common(&mut st, uid, gid, mode)
                 }
-                PermissionSemantics::LinuxSimplified => {
-                    st.st_uid = ctx.uid;
-                    st.st_gid = ctx.gid;
+                PermissionSemantics::LinuxSimplified
+                | PermissionSemantics::LinuxSimplifiedOwnedBy(..) => {
+                    (st.st_uid, st.st_gid) = semantics.fixed_owner(ctx);
                     Ok(st)
                 }
             }
@@ -542,6 +544,20 @@ pub enum PermissionSemantics {
     ///    requesting the operation within the guest (obtained from `Context`).
     ///  - Permissions bits are stored in the host, not as extended attributes.
     LinuxSimplified,
+
+    /// As `LinuxSimplified`, but every file is reported as owned by this uid and gid instead of
+    /// by the requesting process, so attributes stay the same for every caller and can be cached.
+    LinuxSimplifiedOwnedBy(u32, u32),
+}
+
+impl PermissionSemantics {
+    /// The owner to report for every file, when the semantics fix one.
+    fn fixed_owner(self, ctx: &Context) -> (u32, u32) {
+        match self {
+            PermissionSemantics::LinuxSimplifiedOwnedBy(uid, gid) => (uid, gid),
+            _ => (ctx.uid, ctx.gid),
+        }
+    }
 }
 
 /// Options that configure the behavior of the file system.
@@ -1525,7 +1541,8 @@ impl FileSystem for PassthroughFs {
 
         let (host_mode, complete) = match self.cfg.semantics {
             PermissionSemantics::LinuxComplete => (0o700, true),
-            PermissionSemantics::LinuxSimplified => ((mode & !umask) as u16, false),
+            PermissionSemantics::LinuxSimplified
+            | PermissionSemantics::LinuxSimplifiedOwnedBy(..) => ((mode & !umask) as u16, false),
         };
 
         // Safe because this doesn't modify any memory and we check the return value.
@@ -1644,7 +1661,8 @@ impl FileSystem for PassthroughFs {
                 };
                 (mode, true)
             }
-            PermissionSemantics::LinuxSimplified => (mode & !(umask & 0o777), false),
+            PermissionSemantics::LinuxSimplified
+            | PermissionSemantics::LinuxSimplifiedOwnedBy(..) => (mode & !(umask & 0o777), false),
         };
 
         // Safe because this doesn't modify any memory and we check the return value. We don't
@@ -2056,7 +2074,8 @@ impl FileSystem for PassthroughFs {
             if ((flags as i32) & bindings::LINUX_RENAME_WHITEOUT) != 0 {
                 let (host_mode, complete) = match self.cfg.semantics {
                     PermissionSemantics::LinuxComplete => (0o600, true),
-                    PermissionSemantics::LinuxSimplified => {
+                    PermissionSemantics::LinuxSimplified
+                    | PermissionSemantics::LinuxSimplifiedOwnedBy(..) => {
                         (((libc::S_IFCHR | 0o600) as u32), false)
                     }
                 };
@@ -2113,7 +2132,8 @@ impl FileSystem for PassthroughFs {
             PermissionSemantics::LinuxComplete => {
                 self.mknod_complete(ctx, parent, name, mode, rdev, umask, extensions)
             }
-            PermissionSemantics::LinuxSimplified => {
+            PermissionSemantics::LinuxSimplified
+            | PermissionSemantics::LinuxSimplifiedOwnedBy(..) => {
                 self.mknod_simplified(ctx, parent, name, mode, rdev, umask, extensions)
             }
         }
