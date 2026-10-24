@@ -637,6 +637,9 @@ pub struct PassthroughFs {
     inode_alloc: Arc<InodeAllocator>,
 
     handles: RwLock<BTreeMap<Handle, Arc<HandleData>>>,
+    // Held for reading from opening a file until its handle is in `handles`, and for writing
+    // while an unlink decides from `handles` that it needs no preserved descriptor.
+    open_unlink: RwLock<()>,
     next_handle: AtomicU64,
 
     map_windows: Mutex<HashMap<u64, u64>>,
@@ -671,6 +674,7 @@ impl PassthroughFs {
             inode_alloc,
 
             handles: RwLock::new(BTreeMap::new()),
+            open_unlink: RwLock::new(()),
             next_handle: AtomicU64::new(1),
 
             map_windows: Mutex::new(HashMap::new()),
@@ -852,6 +856,7 @@ impl PassthroughFs {
     ) -> io::Result<(Option<Handle>, OpenOptions)> {
         let flags = self.parse_open_flags(flags as i32);
 
+        let _open = self.open_unlink.read().unwrap();
         let file = RwLock::new(self.open_inode(inode, flags)?);
 
         // If O_TRUNC and kill_priv (OPEN_KILL_SUIDGID), clear security.capability and suid/sgid
@@ -929,6 +934,37 @@ impl PassthroughFs {
         Ok((st, self.cfg.attr_timeout))
     }
 
+    /// Whether the guest holds an open handle on the inode at `c_path`. Any doubt answers
+    /// yes, so the caller keeps the inode reachable after an unlink.
+    fn has_open_handle(&self, c_path: &CStr) -> bool {
+        let mut st = MaybeUninit::<libc::stat>::zeroed();
+        // Safe because this doesn't modify any memory but `st`, and we check the return value.
+        let res = unsafe { libc::lstat(c_path.as_ptr(), st.as_mut_ptr()) };
+        if res != 0 {
+            return true;
+        }
+        // Safe because fstatat succeeded, so it initialized `st`.
+        let st = unsafe { st.assume_init() };
+        let altkey = InodeAltKey {
+            ino: st.st_ino,
+            dev: st.st_dev as _,
+        };
+        let Some(inode) = self
+            .inodes
+            .read()
+            .unwrap()
+            .get_alt(&altkey)
+            .map(|data| data.inode)
+        else {
+            return false;
+        };
+        self.handles
+            .read()
+            .unwrap()
+            .values()
+            .any(|handle| handle.inode == inode)
+    }
+
     fn grab_unlinked_fd(&self, parent_fd: RawFd, name: &CStr) -> io::Result<RawFd> {
         let fd = unsafe {
             libc::openat(
@@ -978,6 +1014,26 @@ impl PassthroughFs {
         flags: libc::c_int,
     ) -> io::Result<()> {
         let ihandle = self.inode_to_handle(parent, true)?;
+
+        // A file the guest has no open handle on is not reachable after the unlink, so it needs
+        // no preserved file descriptor, and one unlinkat by path does the whole job. A
+        // directory can stay reachable without a handle, as a process's working directory, so
+        // rmdir always keeps the descriptor.
+        if flags & libc::AT_REMOVEDIR == 0
+            && let InodeHandle::Path(_) = ihandle
+        {
+            let c_path = self.name_to_path(parent, name)?;
+            let _unlink = self.open_unlink.write().unwrap();
+            if !self.has_open_handle(&c_path) {
+                // Safe because this doesn't modify any memory and we check the return value.
+                let res = unsafe { libc::unlinkat(libc::AT_FDCWD, c_path.as_ptr(), flags) };
+                return if res == 0 {
+                    Ok(())
+                } else {
+                    Err(linux_error(io::Error::last_os_error()))
+                };
+            }
+        }
 
         let (fd, close_fd) = match ihandle {
             InodeHandle::Path(c_path) => unsafe {
@@ -1647,6 +1703,7 @@ impl FileSystem for PassthroughFs {
             PermissionSemantics::LinuxSimplified => (mode & !(umask & 0o777), false),
         };
 
+        let _open = self.open_unlink.read().unwrap();
         // Safe because this doesn't modify any memory and we check the return value. We don't
         // really check `flags` because if the kernel can't handle poorly specified flags then we
         // have much bigger problems.
